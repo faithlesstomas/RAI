@@ -4,3 +4,9 @@ rich
 click
 ollama
 packaging # agno missed dep.... ??
+ddgs
+wikipedia
+arxiv
+pypdf
+tavily-python
+

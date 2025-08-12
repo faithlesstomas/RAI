@@ -1,89 +1,158 @@
 #!/usr/bin/env python
-
+""" rai - Rich AI CLI assistant
+"""
+import os
 import sys
+from dotenv import load_dotenv
 
 # Komponenty od Agno, Rich i Click
 from agno.agent import Agent
 from agno.models.ollama import Ollama
+
+# from agno.tool import tool # <- not working !!!
+
+from agno.tools.calculator import CalculatorTools
+from agno.tools.duckduckgo import DuckDuckGoTools
+from agno.tools.wikipedia import WikipediaTools
+from agno.tools.arxiv import ArxivTools
+from agno.tools.tavily import TavilyTools
+from agno.tools.reasoning import ReasoningTools
+
 from rich.console import Console
 from rich.markdown import Markdown
 from rich.panel import Panel
+
 import click
 
-# Inicjalizacja konsoli globalnie, aby była dostępna wszędzie
+# global console
 console = Console()
 
-def setup_agent(system_prompt):
-    """Inicjalizuje agenta Agno i prawidłowo ustawia jego kontekst."""
-    try:
-        # ZMIANA #1: Prompt systemowy jest przekazywany bezpośrednio do konfiguracji modelu.
-        # To jest czyste, proste i poprawne podejście.
-        agent = Agent(
-            model=Ollama(id="gemma2:2b")
-        )
-        return agent
+base_tools=[
+    # count_files_in_path,
+    CalculatorTools(
+        enable_all=True,
+        exclude_tools=["exponentiate", "factorial", "is_prime", "square_root"],
+    ),
+    ArxivTools(),
+    WikipediaTools(),
+    # DuckDuckGoTools(include_tools=["duckduckgo_search"]),
+]
 
+
+# @tool
+# def count_files_in_path(path: str = ".") -> str:
+#     """Zwraca liczbę plików w podanym katalogu."""
+#     try:
+#         count = len([n for n in os.listdir(path) if os.path.isfile(os.path.join(path, n))])
+#         return f"Dir '{path}' contains {count} files."
+#     except Exception as e:
+#         return f"Błąd: {e}"
+
+def setup_agent(system_prompt, model_id):
+    """Inicjalizuje agenta Agno, ustawiając model, prompt i narzędzia."""
+    load_dotenv() # Upewnijmy się, że zmienne środowiskowe są załadowane
+
+    # Sprawdzenie klucza API dla Tavily
+    # if not os.getenv("TAVILY_API_KEY"):
+    #     console.print("[bold red]BŁĄD: Nie znaleziono klucza TAVILY_API_KEY w pliku .env![/bold red]")
+    #     sys.exit(1)
+
+    if os.getenv("TAVILY_API_KEY"):
+        tools = base_tools.append(TavilyTools())
+    else:
+        tools = base_tools
+        console.print("[bold yellow]WARNING: Missing TAVILY_API_KEY env variable. Tavily will be disabled![/bold yellow]")
+
+    try:
+        agent = Agent(
+            # model=Ollama(id=model_id, system=system_prompt),
+            model=Ollama(id=model_id),
+            tools=tools,
+            show_tool_calls=True,
+            markdown=True,
+        )
+
+        return agent
     except Exception as e:
         console.print(f"[bold red]BŁĄD: Nie udało się zainicjalizować agenta: {e}[/bold red]")
         console.print("[yellow]Czy na pewno serwer Ollama jest uruchomiony i posiada wskazany model?[/yellow]")
         sys.exit(1)
 
+# Funkcje run_single_query i run_interactive_chat pozostają BEZ ZMIAN!
+# To pokazuje potęgę abstrakcji Agno - nie musimy nic zmieniać w logice czatu.
+
 def run_single_query(agent, prompt):
-    """Wykonuje pojedyncze zapytanie i wyświetla odpowiedź."""
-    with console.status("[bold blue]AI myśli...[/bold blue]", spinner="dots"):
-        response = agent.run(prompt)
-
+    """Wykonuje pojedyncze zapytanie i wyświetla odpowiedź strumieniowo."""
     console.print("\n[bold blue]Asystent AI:[/]")
+    try:
+        # Używamy agent.run(stream=True), które zwraca iterator
+        response_stream = agent.run(prompt, stream=True)
 
-    # ZMIANA #2: Wyciągamy treść tekstową z obiektu odpowiedzi.
-    markdown_response = Markdown(response.content)
-    console.print(markdown_response)
+        # Iterujemy po fragmentach odpowiedzi
+        for response_chunk in response_stream:
+            # Sprawdzamy, czy fragment zawiera treść do wyświetlenia
+            if response_chunk.content:
+                # Drukujemy fragment na bieżąco, bez buforowania
+                console.out(response_chunk.content, end="", style="bright_blue")
+
+        # Dodajemy nową linię na końcu odpowiedzi
+        console.print()
+
+    except Exception as e:
+        console.print(f"\n[bold red]Wystąpił błąd podczas strumieniowania: {e}[/bold red]")
+
+# Funkcje run_single_query i run_interactive_chat pozostają BEZ ZMIAN!
+# To pokazuje potęgę abstrakcji Agno - nie musimy nic zmieniać w logice czatu.
 
 def run_interactive_chat(agent):
-    """Uruchamia pętlę interaktywnego czatu."""
-    welcome_message = "[bold]Witaj w Asystencie AI![/bold]\n\nZasilany lokalnie przez [cyan]Ollama[/cyan] i [cyan]Agno[/cyan].\nWpisz 'wyjdź', aby zakończyć."
-    console.print(Panel(welcome_message, title="Asystent CLI - Działa!", border_style="green"))
+    """Uruchamia pętlę interaktywnego czatu z odpowiedzią strumieniową."""
+    welcome_message = "[bold]Witaj w Super-Asystencie![/bold]\n\nPotrafię liczyć pliki ORAZ szukać w internecie!\nZapytaj mnie o pogodę lub o najnowsze wiadomości."
+    console.print(Panel(welcome_message, title="Asystent z Toolkitami", border_style="magenta"))
 
     while True:
         try:
             user_input = console.input("[bold green]Ty:[/]")
             if user_input.lower() in ["wyjdź", "exit", "quit", "q"]:
                 break
-
             if not user_input.strip():
                 continue
 
-            with console.status("[bold blue]AI myśli...[/bold blue]", spinner="dots"):
-                response = agent.run(user_input)
-
             console.print("\n[bold blue]Asystent AI:[/]")
+            # Removed console.status block
+            response_stream = agent.run(user_input, stream=True)
+            for response_chunk in response_stream:
+                if response_chunk.content:
+                    console.out(response_chunk.content, end="", style="bright_blue")
 
-            # ZMIANA #3: Również tutaj wyciągamy treść z obiektu odpowiedzi.
-            markdown_response = Markdown(response.content)
-            console.print(markdown_response)
-            console.print("---")
-        except KeyboardInterrupt:
+            console.print("\n---")
+
+        except (KeyboardInterrupt, EOFError):
             break
     console.print("\n[yellow]Do widzenia![/yellow]")
+
 
 @click.command()
 @click.argument('prompt', required=False)
 @click.option(
     '-s', '--system',
-    default="Jesteś pomocnym asystentem AI. Odpowiadaj zwięźle i precyzyjnie.",
+    # ZMIANA #4: Ulepszamy domyślny system prompt, aby zachęcić AI do szukania w sieci
+    default="Jesteś wszechstronnym asystentem AI. Gdy użytkownik o coś pyta, najpierw sprawdź, czy możesz użyć dostępnych narzędzi. Do odpowiadania na pytania o aktualne wydarzenia, pogodę lub fakty, używaj narzędzia do przeszukiwania internetu.",
     help="Definiuje prompt systemowy dla AI."
 )
-
-def main(prompt, system):
+@click.option(
+    '-m', '--model',
+    default="gemma2:9b",
+    help="ID modelu Ollama, który ma być użyty (np. gemma2:9b, llama3.2)."
+)
+def main(prompt, system, model):
     """
-    Asystent AI w wierszu poleceń, zasilany przez lokalny model Ollama i framework Agno.
-
-    Jeśli podasz PROMPT, wykona pojedyncze zapytanie.
-    W przeciwnym razie, uruchomi tryb interaktywnego czatu.
+    Asystent AI w wierszu poleceń z obsługą narzędzi i gotowych toolkitów.
     """
-    agent = setup_agent(system_prompt=system)
+    console.print(f"[dim]Używam modelu: [bold]{model}[/bold][/dim]")
+    agent = setup_agent(system_prompt=system, model_id=model)
 
     if prompt:
+        # ... (bez zmian)
         if not sys.stdin.isatty():
             piped_content = sys.stdin.read()
             full_prompt = f"{prompt}\n\nOto treść do przetworzenia:\n\n---\n{piped_content}"
@@ -92,6 +161,7 @@ def main(prompt, system):
             run_single_query(agent, prompt)
     else:
         run_interactive_chat(agent)
+
 
 if __name__ == "__main__":
     main()
