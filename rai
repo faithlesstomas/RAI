@@ -4,13 +4,11 @@
 import os
 import sys
 from dotenv import load_dotenv
+import io
+from contextlib import redirect_stdout
 
-# Komponenty od Agno, Rich i Click
 from agno.agent import Agent
 from agno.models.ollama import Ollama
-
-# from agno.tool import tool # <- not working !!!
-
 from agno.tools.calculator import CalculatorTools
 from agno.tools.duckduckgo import DuckDuckGoTools
 from agno.tools.wikipedia import WikipediaTools
@@ -39,6 +37,7 @@ base_tools=[
 ]
 
 
+# TODO : test defining own tools
 # @tool
 # def count_files_in_path(path: str = ".") -> str:
 #     """Zwraca liczbę plików w podanym katalogu."""
@@ -51,11 +50,6 @@ base_tools=[
 def setup_agent(system_prompt, model_id):
     """Inicjalizuje agenta Agno, ustawiając model, prompt i narzędzia."""
     load_dotenv() # Upewnijmy się, że zmienne środowiskowe są załadowane
-
-    # Sprawdzenie klucza API dla Tavily
-    # if not os.getenv("TAVILY_API_KEY"):
-    #     console.print("[bold red]BŁĄD: Nie znaleziono klucza TAVILY_API_KEY w pliku .env![/bold red]")
-    #     sys.exit(1)
 
     if os.getenv("TAVILY_API_KEY"):
         tools = base_tools.append(TavilyTools())
@@ -78,31 +72,26 @@ def setup_agent(system_prompt, model_id):
         console.print("[yellow]Czy na pewno serwer Ollama jest uruchomiony i posiada wskazany model?[/yellow]")
         sys.exit(1)
 
-# Funkcje run_single_query i run_interactive_chat pozostają BEZ ZMIAN!
-# To pokazuje potęgę abstrakcji Agno - nie musimy nic zmieniać w logice czatu.
-
 def run_single_query(agent, prompt):
     """Wykonuje pojedyncze zapytanie i wyświetla odpowiedź strumieniowo."""
     console.print("\n[bold blue]Asystent AI:[/]")
     try:
-        # Używamy agent.run(stream=True), które zwraca iterator
-        response_stream = agent.run(prompt, stream=True)
+        f = io.StringIO()
+        with redirect_stdout(f):
+            response_stream = agent.run(prompt, stream=True)
 
-        # Iterujemy po fragmentach odpowiedzi
+        tool_output = f.getvalue()
+        if tool_output:
+            console.print(Panel(tool_output.strip(), title="[bold yellow]Wywołanie Narzędzia[/bold yellow]", border_style="yellow"))
+
         for response_chunk in response_stream:
-            # Sprawdzamy, czy fragment zawiera treść do wyświetlenia
             if response_chunk.content:
-                # Drukujemy fragment na bieżąco, bez buforowania
                 console.out(response_chunk.content, end="", style="bright_blue")
 
-        # Dodajemy nową linię na końcu odpowiedzi
         console.print()
 
     except Exception as e:
         console.print(f"\n[bold red]Wystąpił błąd podczas strumieniowania: {e}[/bold red]")
-
-# Funkcje run_single_query i run_interactive_chat pozostają BEZ ZMIAN!
-# To pokazuje potęgę abstrakcji Agno - nie musimy nic zmieniać w logice czatu.
 
 def run_interactive_chat(agent):
     """Uruchamia pętlę interaktywnego czatu z odpowiedzią strumieniową."""
@@ -118,8 +107,13 @@ def run_interactive_chat(agent):
                 continue
 
             console.print("\n[bold blue]Asystent AI:[/]")
-            # Removed console.status block
-            response_stream = agent.run(user_input, stream=True)
+            f = io.StringIO()
+            with redirect_stdout(f):
+                response_stream = agent.run(user_input, stream=True)
+            tool_output = f.getvalue()
+            if tool_output:
+                console.print(Panel(tool_output.strip(), title="[bold yellow]Wywołanie Narzędzia[/bold yellow]", border_style="yellow"))
+
             for response_chunk in response_stream:
                 if response_chunk.content:
                     console.out(response_chunk.content, end="", style="bright_blue")
@@ -152,7 +146,6 @@ def main(prompt, system, model):
     agent = setup_agent(system_prompt=system, model_id=model)
 
     if prompt:
-        # ... (bez zmian)
         if not sys.stdin.isatty():
             piped_content = sys.stdin.read()
             full_prompt = f"{prompt}\n\nOto treść do przetworzenia:\n\n---\n{piped_content}"
