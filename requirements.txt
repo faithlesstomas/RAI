@@ -1,0 +1,6 @@
+dotenv
+agno
+rich
+click
+ollama
+packaging # agno missed dep.... ??
