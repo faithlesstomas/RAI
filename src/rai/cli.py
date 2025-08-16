@@ -59,7 +59,7 @@ def setup_agent(system_prompt, model_id):
     load_dotenv() # Upewnijmy się, że zmienne środowiskowe są załadowane
 
     if os.getenv("TAVILY_API_KEY"):
-        tools = base_tools.append(TavilyTools())
+        tools = base_tools + [TavilyTools()]
     else:
         tools = base_tools
         console.print("[bold yellow]WARNING: Missing TAVILY_API_KEY env variable. Tavily will be disabled![/bold yellow]")
