@@ -30,181 +30,13 @@ from rich.panel import Panel
 
 import click
 
-import pydbus
-from gi.repository import GLib
+from .tools import send_notification, take_screenshot, weather
 
 # global console
 console = Console(force_terminal=True)
 
 
-# TODO : test defining own tools
-# @tool
-# def count_files_in_path(path: str = ".") -> str:
-#     """Zwraca liczbę plików w podanym katalogu."""
-#     try:
-#         count = len([n for n in os.listdir(path) if os.path.isfile(os.path.join(path, n))])
-#         return f"Dir '{path}' contains {count} files."
-#     except Exception as e:
-#         return f"Błąd: {e}"
 
-@tool
-def send_notification(summary: str, body: str, app_name: str = "AI Assistant") -> str:
-    """
-    Sends a desktop notification to the GNOME (or Freedesktop.org compatible) notification system.
-
-    Args:
-        summary (str): The bold title of the notification.
-        body (str): The main text content of the notification.
-        app_name (str): The name of the application sending the notification. Defaults to "AI Assistant".
-
-    Returns:
-        str: A message indicating success or failure.
-    """
-    try:
-        bus = pydbus.SessionBus()
-        notifications = bus.get("org.freedesktop.Notifications", "/org/freedesktop/Notifications")
-
-        # Arguments for Notify method:
-        # app_name (string)
-        # replaces_id (uint32)
-        # app_icon (string)
-        # summary (string)
-        # body (string)
-        # actions (array of strings)
-        # hints (dict of variants)
-        # expire_timeout (int32)
-        notifications.Notify(
-            app_name,
-            0,  # replaces_id
-            "", # app_icon
-            summary,
-            body,
-            [], # actions
-            {},
-            -1  # expire_timeout (-1 for default)
-        )
-        return f"Notification sent: Summary='{summary}', Body='{body}'"
-    except Exception as e:
-        return f"Failed to send notification: {e}. Ensure a notification daemon is running."
-
-@tool
-def take_screenshot(delay: int = 0) -> str:
-    """
-    Takes a full-screen screenshot using the `gnome-screenshot` command-line tool.
-    The screenshot is saved to a temporary file.
-
-    Args:
-        delay (int): Delay in seconds before taking the screenshot. Defaults to 0.
-
-    Returns:
-        str: The absolute path to the saved screenshot file on success, or an error message on failure.
-    """
-    try:
-        # Generate a unique filename in /tmp
-        timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
-        filename = os.path.join("/tmp", f"screenshot_{timestamp}.png")
-
-        command = ["/usr/bin/gnome-screenshot"]
-        if delay > 0:
-            command.extend(["-d", str(delay)])
-        command.append(filename)
-
-        # Execute the command
-        result = subprocess.run(command, capture_output=True, text=True)
-
-        # --- DEBUGOWANIE ---
-        print(f"DEBUG: gnome-screenshot stdout: {result.stdout.strip()}")
-        print(f"DEBUG: gnome-screenshot stderr: {result.stderr.strip()}")
-        print(f"DEBUG: gnome-screenshot returncode: {result.returncode}")
-        # --- KONIEC DEBUGOWANIA ---
-
-        if result.returncode == 0:
-            # gnome-screenshot prints the filename to stdout on success
-            return f"Screenshot saved to: {filename}"
-        else:
-            return f"Failed to take screenshot: {result.stderr.strip()}"
-
-    except Exception as e:
-        return f"Failed to take screenshot: {e}. Ensure gnome-screenshot is installed and available in PATH."
-
-#### TOOLS
-
-
-# Inicjalizacja pętli zdarzeń GLib
-loop = GLib.MainLoop()
-
-
-@tool
-def weather(location: str | None = "current_location") -> str:
-    # ZMIANA 1: Poprawiony docstring, aby był bardziej precyzyjny dla AI.
-    """
-    Retrieves current weather information directly from the GNOME desktop system.
-
-    This tool is ideal for questions about the weather at the user's current location
-    or other locations configured in their GNOME settings. It provides system-specific data.
-
-    Args:
-        location (str | None): The name of the city to get weather for. Defaults to "current_location"
-                               to fetch weather for the primary location configured in GNOME.
-
-    Returns:
-        str: A JSON string containing a dictionary with weather data on success,
-             or a dictionary with an "error" key on failure.
-             Example success: '{"location": "Warsaw", "temperature_c": 15, "conditions": "Clear"}'
-             Example error:   '{"error": "Location not found."}'
-    """
-    bus = pydbus.SessionBus()
-    # ZMIANA 6: Obsłuż przypadek, gdy model nie poda lokalizacji (location=None)
-    if not location:
-        location = "current_location"
-    try:
-        weather_service = bus.get('org.gnome.Shell.Weather')
-        weather_info_variant = weather_service.GetWeatherInfo()
-
-        if not weather_info_variant:
-            # ZMIANA 2: Zwracaj błąd w formacie JSON.
-            return json.dumps({"error": "No weather information configured in the GNOME system."})
-
-        found_location_info = None
-        if location == "current_location":
-            if weather_info_variant:
-                # Weź pierwszą skonfigurowaną lokalizację jako domyślną
-                first_location_id = list(weather_info_variant.keys())[0]
-                found_location_info = weather_info_variant[first_location_id]
-        else:
-            for loc_id, info in weather_info_variant.items():
-                if info.get('name', '').lower() == location.lower():
-                    found_location_info = info
-                    break
-
-        if not found_location_info:
-            available_locations = [info.get('name', 'Unknown') for info in weather_info_variant.values()]
-            return json.dumps({
-                "error": f"Weather information not found for location: {location}.",
-                "available_locations": available_locations
-            })
-
-        # ZMIANA 3: Zamiast formatować tekst, buduj słownik. Używaj .get() dla bezpieczeństwa.
-        info = found_location_info
-        weather_data = {
-            "location": info.get('name'),
-            "temperature_c": info.get('main', {}).get('temp'),
-            "feels_like_c": info.get('main', {}).get('temp_feels_like'),
-            "conditions": info.get('description'),
-            "wind_speed_kmh": info.get('wind', {}).get('speed'),
-            "pressure_hpa": info.get('main', {}).get('pressure'),
-            "humidity_percent": info.get('main', {}).get('humidity'),
-        }
-        # ZMIANA 4: Zwróć słownik jako string JSON. To najlepsza praktyka dla narzędzi AI.
-        return json.dumps(weather_data, indent=2)
-
-    except Exception as e:
-        # ZMIANA 5: Złap wyjątek i również zwróć go jako błąd w formacie JSON.
-        return json.dumps({
-            "error": "An error occurred while retrieving weather from GNOME.",
-            "details": str(e),
-            "suggestion": "Ensure you are running a GNOME desktop environment and that the 'org.gnome.Shell.Weather' service is available via DBus."
-        })
 
 base_tools=[
     send_notification, # Nowy tool do wysyłania powiadomień
@@ -241,6 +73,7 @@ def setup_agent(system_prompt, model_id):
             markdown=True,
             add_history_to_messages=True,
             session_id="my_chat_session",
+            instructions=system_prompt,
         )
         # Pre-flight check for tool support
         try:
@@ -266,7 +99,7 @@ def setup_agent(system_prompt, model_id):
         console.print("[yellow]Czy na pewno serwer Ollama jest uruchomiony i posiada wskazany model?[/yellow]")
         sys.exit(1)
 
-def run_single_query(agent, prompt):
+def run_single_query(agent, prompt, system):
     """Wykonuje pojedyncze zapytanie i wyświetla odpowiedź strumieniowo."""
     console.print("\n[bold blue]Asystent AI:[/]")
     try:
@@ -289,7 +122,7 @@ def run_single_query(agent, prompt):
         console.print(f"\n[bold red]Wystąpił nieoczekiwany błąd podczas strumieniowania: {e}[/bold red]")
 
 
-def run_interactive_chat(agent):
+def run_interactive_chat(agent, system):
     """Uruchamia pętlę interaktywnego czatu z odpowiedzią strumieniową."""
     welcome_message = "[bold]Witaj w Super-Asystencie![/bold]\n\nPotrafię liczyć pliki ORAZ szukać w internecie!\nZapytaj mnie o pogodę lub o najnowsze wiadomości."
     console.print(Panel(welcome_message, title="Asystent z Toolkitami", border_style="magenta"))
@@ -306,6 +139,7 @@ def run_interactive_chat(agent):
             f = io.StringIO()
             with redirect_stdout(f):
                 response_stream = agent.run(user_input, stream=True)
+
             tool_output = f.getvalue()
             if tool_output:
                 console.print(Panel(tool_output.strip(), title="[bold yellow]Wywołanie Narzędzia[/bold yellow]", border_style="yellow"))
@@ -323,6 +157,8 @@ def run_interactive_chat(agent):
         except Exception as e:
             console.print(f"\n[bold red]Wystąpił nieoczekiwany błąd podczas strumieniowania: {e}[/bold red]")
 
+
+
     console.print("\n[yellow]Do widzenia![/yellow]")
 
 
@@ -331,7 +167,7 @@ def run_interactive_chat(agent):
 @click.option(
     '-s', '--system',
     # ZMIANA #4: Ulepszamy domyślny system prompt, aby zachęcić AI do szukania w sieci
-    default="Jesteś wszechstronnym asystentem AI. Gdy użytkownik o coś pyta, najpierw sprawdź, czy możesz użyć dostępnych narzędzi. Do odpowiadania na pytania o aktualne wydarzenia, pogodę lub fakty, używaj narzędzia do przeszukiwania internetu.",
+    default="You are versatile and helpful AI assistant.",
     help="Definiuje prompt systemowy dla AI."
 )
 @click.option(
@@ -372,11 +208,11 @@ def main(prompt, system, model):
         if not sys.stdin.isatty():
             piped_content = sys.stdin.read()
             full_prompt = f"{prompt}\n\nOto treść do przetworzenia:\n\n---\n{piped_content}"
-            run_single_query(agent, full_prompt)
+            run_single_query(agent, full_prompt, system)
         else:
-            run_single_query(agent, prompt)
+            run_single_query(agent, prompt, system)
     else:
-        run_interactive_chat(agent)
+        run_interactive_chat(agent, system)
 
 
 if __name__ == "__main__":

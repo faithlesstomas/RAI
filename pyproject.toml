@@ -1,0 +1,30 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "rai-cli"
+version = "0.1.0"
+description = "Rich AI CLI assistant using Agno framework"
+readme = "README.md"
+requires-python = ">=3.10"
+license = {text = "MIT"}
+
+dependencies = [
+    "dotenv",
+    "agno",
+    "rich",
+    "click",
+    "ollama",
+    "packaging",
+    "duckduckgo-search",
+    "wikipedia",
+    "arxiv",
+    "pypdf",
+    "tavily-python",
+    "pydbus",
+    "pygobject",
+]
+
+[project.scripts]
+rai = "rai.cli:main"
