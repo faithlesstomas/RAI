@@ -9,4 +9,5 @@ wikipedia
 arxiv
 pypdf
 tavily-python
-
+pydbus
+pygobject
