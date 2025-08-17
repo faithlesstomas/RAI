@@ -1,3 +1,4 @@
+"""Tools for the RAI CLI assistant."""
 import os
 import json
 import datetime
@@ -32,7 +33,10 @@ def send_notification(summary: str, body: str, app_name: str = "AI Assistant") -
             {}, # hints
             -1  # expire_timeout (-1 for default)
         )
-        return f"Notification sent: Summary='{summary}', Body='{body}'"
+        return (
+            f"Notification sent: Summary='{summary}', "
+            f"Body='{body}'"
+        )
     except Exception as e:
         return f"Failed to send notification: {e}. Ensure a notification daemon is running."
 
@@ -55,15 +59,18 @@ def take_screenshot(delay: int = 0) -> str:
         if delay > 0:
             command.extend(["-d", str(delay)])
         command.append(filename)
-        result = subprocess.run(command, capture_output=True, text=True)
+        result = subprocess.run(command, capture_output=True, text=True, check=True)
         if result.returncode == 0:
             return f"Screenshot saved to: {filename}"
-        else:
-            return f"Failed to take screenshot: {result.stderr.strip()}"
+        return f"Failed to take screenshot: {result.stderr.strip()}"
     except Exception as e:
-        return f"Failed to take screenshot: {e}. Ensure gnome-screenshot is installed and available in PATH."
+        return (
+            f"Failed to take screenshot: {e}. "
+            "Ensure gnome-screenshot is installed "
+            "and available in PATH."
+        )
 
-# Inicjalizacja pętli zdarzeń GLib
+# GLib event loop initialization
 loop = GLib.MainLoop()
 
 @tool
@@ -71,12 +78,14 @@ def weather(location: str | None = "current_location") -> str:
     """
     Retrieves current weather information directly from the GNOME desktop system.
 
-    This tool is ideal for questions about the weather at the user's current location
-    or other locations configured in their GNOME settings. It provides system-specific data.
+    This tool is ideal for questions about the weather at the user's current
+    location or other locations configured in their GNOME settings. It provides
+    system-specific data.
 
     Args:
-        location (str | None): The name of the city to get weather for. Defaults to "current_location"
-                               to fetch weather for the primary location configured in GNOME.
+        location (str | None): The name of the city to get weather for. Defaults to
+                               "current_location" to fetch weather for the primary
+                               location configured in GNOME.
 
     Returns:
         str: A JSON string containing a dictionary with weather data on success,
@@ -92,7 +101,9 @@ def weather(location: str | None = "current_location") -> str:
         weather_info_variant = weather_service.GetWeatherInfo()
 
         if not weather_info_variant:
-            return json.dumps({"error": "No weather information configured in the GNOME system."})
+            return json.dumps({
+                "error": "No weather information configured in the GNOME system."
+            })
 
         found_location_info = None
         if location == "current_location":
@@ -100,15 +111,19 @@ def weather(location: str | None = "current_location") -> str:
                 first_location_id = list(weather_info_variant.keys())[0]
                 found_location_info = weather_info_variant[first_location_id]
         else:
-            for loc_id, info in weather_info_variant.items():
+            for _, info in weather_info_variant.items():
                 if info.get('name', '').lower() == location.lower():
                     found_location_info = info
                     break
 
         if not found_location_info:
-            available_locations = [info.get('name', 'Unknown') for info in weather_info_variant.values()]
+            available_locations = [
+                info.get('name', '') for info in weather_info_variant.values()
+            ]
             return json.dumps({
-                "error": f"Weather information not found for location: {location}.",
+                "error": (
+                    f"Weather information not found for location: {location}."
+                ),
                 "available_locations": available_locations
             })
 
@@ -128,5 +143,8 @@ def weather(location: str | None = "current_location") -> str:
         return json.dumps({
             "error": "An error occurred while retrieving weather from GNOME.",
             "details": str(e),
-            "suggestion": "Ensure you are running a GNOME desktop environment and that the 'org.gnome.Shell.Weather' service is available via DBus."
+            "suggestion": (
+                "Ensure you are running a GNOME desktop environment and that the "
+                "'org.gnome.Shell.Weather' service is available via DBus."
+            )
         })
