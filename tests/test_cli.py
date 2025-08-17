@@ -1,19 +1,15 @@
 import pytest
 from unittest.mock import MagicMock, patch
 from click.testing import CliRunner
-import sys
-import os
 
 # Import the main function from cli.py
-from src.rai.cli import main, setup_agent, run_single_query, run_interactive_chat
-from agno.tools.tavily import TavilyTools
+from rai.cli import main, setup_agent, run_single_query, run_interactive_chat
 from ollama import ResponseError
-from rich.panel import Panel
 
 # Mock the global console object
 @pytest.fixture
 def mock_console():
-    with patch('src.rai.cli.console') as mock_console:
+    with patch('rai.cli.console') as mock_console:
         # Mock console.input to provide predefined inputs for interactive chat
         mock_console.input.side_effect = ["test query", "exit"]
         yield mock_console
@@ -21,26 +17,26 @@ def mock_console():
 # Mock the base_tools list to prevent actual tool initialization
 @pytest.fixture
 def mock_base_tools():
-    with patch('src.rai.cli.base_tools', new=[]) as mock_tools:
+    with patch('rai.cli.base_tools', new=[]) as mock_tools:
         yield mock_tools
 
 # Mock load_dotenv to prevent actual .env loading
 @pytest.fixture
 def mock_load_dotenv():
-    with patch('src.rai.cli.load_dotenv') as mock_load:
+    with patch('rai.cli.load_dotenv') as mock_load:
         yield mock_load
 
 # Mock ollama.list to control available models
 @pytest.fixture
 def mock_ollama_list():
-    with patch('src.rai.cli.ollama.list') as mock_list:
+    with patch('rai.cli.ollama.list') as mock_list:
         mock_list.return_value = {'models': [{'model': 'gemma2:9b'}]}
         yield mock_list
 
 # Mock agno.agent.Agent
 @pytest.fixture
 def mock_agent():
-    with patch('src.rai.cli.Agent') as mock_agent_class:
+    with patch('rai.cli.Agent') as mock_agent_class:
         mock_instance = MagicMock()
         # Ensure agent.run returns an iterable that doesn't raise an error when list() is called
         mock_instance.run.return_value = [MagicMock(content="")] # A list containing a mock response chunk
@@ -50,32 +46,32 @@ def mock_agent():
 # Mock agno.models.ollama.Ollama
 @pytest.fixture
 def mock_ollama_model():
-    with patch('src.rai.cli.Ollama') as mock_ollama_model_class:
+    with patch('rai.cli.Ollama') as mock_ollama_model_class:
         mock_ollama_model_class.return_value = MagicMock()
         yield mock_ollama_model_class
 
 # Mock sys.exit
 @pytest.fixture
 def mock_sys_exit():
-    with patch('src.rai.cli.sys.exit') as mock_exit:
+    with patch('rai.cli.sys.exit') as mock_exit:
         yield mock_exit
 
 # Mock os.getenv
 @pytest.fixture
 def mock_os_getenv():
-    with patch('src.rai.cli.os.getenv') as mock_getenv:
+    with patch('rai.cli.os.getenv') as mock_getenv:
         yield mock_getenv
 
 @pytest.fixture
 def mock_tavily_tools():
-    with patch('src.rai.cli.TavilyTools') as MockTavilyTools:
+    with patch('rai.cli.TavilyTools') as MockTavilyTools:
         mock_instance = MagicMock()
         MockTavilyTools.return_value = mock_instance
         yield mock_instance
 
 @pytest.fixture
 def mock_panel():
-    with patch('src.rai.cli.Panel') as MockPanel:
+    with patch('rai.cli.Panel') as MockPanel:
         mock_instance = MagicMock()
         MockPanel.return_value = mock_instance
         yield MockPanel
@@ -87,7 +83,7 @@ class TestMain:
         result = runner.invoke(main)
 
         assert result.exit_code == 0
-        mock_console.print.assert_any_call("[dim]Używam modelu: [bold]gemma2:9b[/bold][/dim]")
+        mock_console.print.assert_any_call("[dim]Using model: [bold]gemma2:9b[/bold][/dim]")
         mock_ollama_list.assert_called_once()
         mock_agent.assert_called_once()
         mock_ollama_model.assert_called_once()
@@ -97,13 +93,13 @@ class TestMain:
         mock_agent.run.return_value = [MagicMock(content="Agent response")]
 
         # Call the interactive chat function
-        run_interactive_chat(mock_agent, system="test system prompt")
+        run_interactive_chat(mock_agent)
 
         # Assertions
-        mock_console.input.assert_any_call("[bold green]Ty:[/]")
+        mock_console.input.assert_any_call("[bold green]You:[/]")
         mock_agent.run.assert_called_with("test query", stream=True)
         mock_console.out.assert_called_with("Agent response", end="", style="bright_blue")
-        mock_console.print.assert_any_call("\n[yellow]Do widzenia![/yellow]")
+        mock_console.print.assert_any_call("\n[yellow]Goodbye![/yellow]")
 
 
 class TestSetupAgent:
@@ -146,7 +142,6 @@ class TestSetupAgent:
     def test_setup_agent_model_no_tools_support(self, mock_os_getenv, mock_load_dotenv, mock_agent, mock_ollama_model, mock_base_tools, mock_console):
         mock_os_getenv.return_value = "TAVILY_KEY"
         # Simulate ResponseError indicating no tool support
-        # Simulate ResponseError indicating no tool support
         from ollama import ResponseError # Ensure ResponseError is imported
         mock_error = ResponseError("Mock error message", 500) # Create a real instance
         mock_error.error = "does not support tools" # Set the error attribute
@@ -154,7 +149,7 @@ class TestSetupAgent:
 
         agent = setup_agent(system_prompt="test prompt", model_id="test_model")
 
-        mock_console.print.assert_called_with(f"[bold yellow]WARNING: Model 'test_model' does not support tools. Running in no-tools mode.[/bold yellow]")
+        mock_console.print.assert_called_with("[bold yellow]WARNING: Model 'test_model' does not support tools. Running in no-tools mode.[/bold yellow]")
         # Assert agent was re-initialized without tools
         mock_agent.assert_called_with(
             model=mock_ollama_model.return_value,
@@ -170,16 +165,15 @@ class TestSetupAgent:
         mock_os_getenv.return_value = "TAVILY_KEY"
         mock_agent.return_value.run.side_effect = Exception("General error") # Simulate a general exception
 
-        agent = setup_agent(system_prompt="test prompt", model_id="test_model")
+        setup_agent(system_prompt="test prompt", model_id="test_model")
 
-        mock_console.print.assert_any_call(f"[bold red]BŁĄD: Nie udało się zainicjalizować agenta: General error[/bold red]")
+        mock_console.print.assert_any_call("[bold red]ERROR: Failed to initialize agent: General error[/bold red]")
         mock_sys_exit.assert_called_once_with(1)
-        assert agent is None # sys.exit is called, so agent should not be returned
 
 
 class TestRunSingleQuery:
-    @patch('src.rai.cli.io.StringIO')
-    @patch('src.rai.cli.redirect_stdout')
+    @patch('rai.cli.io.StringIO')
+    @patch('rai.cli.redirect_stdout')
     def test_run_single_query_success_with_tool_output(self, mock_redirect_stdout, mock_string_io, mock_console, mock_agent, mock_panel):
         # Mock StringIO to capture tool output
         mock_string_io_instance = MagicMock()
@@ -189,20 +183,20 @@ class TestRunSingleQuery:
         # Mock agent.run to return a response with content
         mock_agent.run.return_value = [MagicMock(content="Agent response")]
 
-        run_single_query(mock_agent, prompt="test prompt", system="test system")
+        run_single_query(mock_agent, prompt="test prompt")
 
-        mock_console.print.assert_any_call("\n[bold blue]Asystent AI:[/]")
+        mock_console.print.assert_any_call("\n[bold blue]AI Assistant:[/]")
         mock_string_io.assert_called_once()
         mock_redirect_stdout.assert_called_once_with(mock_string_io_instance)
         mock_agent.run.assert_called_with("test prompt", stream=True)
         mock_string_io_instance.getvalue.assert_called_once()
-        mock_panel.assert_called_once_with("Tool output captured", title="[bold yellow]Wywołanie Narzędzia[/bold yellow]", border_style="yellow")
+        mock_panel.assert_called_once_with("Tool output captured", title="[bold yellow]Tool Call[/bold yellow]", border_style="yellow")
         mock_console.print.assert_any_call(mock_panel.return_value)
         mock_console.out.assert_called_with("Agent response", end="", style="bright_blue")
         mock_console.print.assert_any_call() # For the final newline
 
-    @patch('src.rai.cli.io.StringIO')
-    @patch('src.rai.cli.redirect_stdout')
+    @patch('rai.cli.io.StringIO')
+    @patch('rai.cli.redirect_stdout')
     def test_run_single_query_success_no_tool_output(self, mock_redirect_stdout, mock_string_io, mock_console, mock_agent, mock_panel):
         # Mock StringIO to capture no tool output
         mock_string_io_instance = MagicMock()
@@ -212,31 +206,31 @@ class TestRunSingleQuery:
         # Mock agent.run to return a response with content
         mock_agent.run.return_value = [MagicMock(content="Agent response")]
 
-        run_single_query(mock_agent, prompt="test prompt", system="test system")
+        run_single_query(mock_agent, prompt="test prompt")
 
-        mock_console.print.assert_any_call("\n[bold blue]Asystent AI:[/]")
+        mock_console.print.assert_any_call("\n[bold blue]AI Assistant:[/]")
         mock_string_io_instance.getvalue.assert_called_once()
         mock_panel.assert_not_called() # Assert that Panel was NOT called
         mock_console.out.assert_called_with("Agent response", end="", style="bright_blue")
         mock_console.print.assert_any_call() # For the final newline
 
-    @patch('src.rai.cli.io.StringIO')
-    @patch('src.rai.cli.redirect_stdout')
+    @patch('rai.cli.io.StringIO')
+    @patch('rai.cli.redirect_stdout')
     def test_run_single_query_ollama_response_error(self, mock_redirect_stdout, mock_string_io, mock_console, mock_agent):
         # Simulate ResponseError
-        mock_agent.run.side_effect = ResponseError("Ollama error", 400)
+        error = ResponseError("Ollama error", 400)
+        mock_agent.run.side_effect = error
 
-        run_single_query(mock_agent, prompt="test prompt", system="test system")
+        run_single_query(mock_agent, prompt="test prompt")
 
-        mock_console.print.assert_any_call(f"\n[bold red]Wystąpił błąd API Ollama (status: 400): Ollama error[/bold red]")
+        mock_console.print.assert_any_call(f"\n[bold red]Ollama API error (status: {error.status_code}): {error.error}[/bold red]")
 
-    @patch('src.rai.cli.io.StringIO')
-    @patch('src.rai.cli.redirect_stdout')
+    @patch('rai.cli.io.StringIO')
+    @patch('rai.cli.redirect_stdout')
     def test_run_single_query_general_exception(self, mock_redirect_stdout, mock_string_io, mock_console, mock_agent):
-        mock_agent.run.side_effect = Exception("General error")
+        error = Exception("General error")
+        mock_agent.run.side_effect = error
 
-        run_single_query(mock_agent, prompt="test prompt", system="test system")
+        run_single_query(mock_agent, prompt="test prompt")
 
-        mock_console.print.assert_any_call(f"\n[bold red]Wystąpił nieoczekiwany błąd podczas strumieniowania: General error[/bold red]")
-
-
+        mock_console.print.assert_any_call(f"\n[bold red]An unexpected error occurred during streaming: {error}[/bold red]")

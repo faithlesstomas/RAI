@@ -1,13 +1,13 @@
-import pytest
 from unittest.mock import MagicMock, patch
 import json
+from subprocess import CalledProcessError
 
 # Import the tools from the src.rai.tools module
-from src.rai.tools import send_notification, take_screenshot, weather
+from rai.tools import send_notification, take_screenshot, weather
 
 
 class TestSendNotification:
-    @patch('src.rai.tools.pydbus.SessionBus')
+    @patch('rai.tools.pydbus.SessionBus')
     def test_send_notification_success(self, mock_session_bus):
         # Setup mocks
         mock_notifications = MagicMock()
@@ -26,7 +26,7 @@ class TestSendNotification:
         )
         assert "Notification sent" in result
 
-    @patch('src.rai.tools.pydbus.SessionBus')
+    @patch('rai.tools.pydbus.SessionBus')
     def test_send_notification_failure(self, mock_session_bus):
         # Simulate an exception during DBus call
         mock_session_bus.return_value.get.side_effect = Exception("DBus error")
@@ -41,9 +41,9 @@ class TestSendNotification:
 
 
 class TestTakeScreenshot:
-    @patch('src.rai.tools.subprocess.run')
-    @patch('src.rai.tools.os.path.join', return_value='/tmp/screenshot_test.png')
-    @patch('src.rai.tools.datetime')
+    @patch('rai.tools.subprocess.run')
+    @patch('rai.tools.os.path.join', return_value='/tmp/screenshot_test.png')
+    @patch('rai.tools.datetime')
     def test_take_screenshot_success(self, mock_datetime, mock_join, mock_subprocess_run):
         # Setup mocks
         mock_datetime.datetime.now.strftime.return_value = "20250816_120000"
@@ -56,13 +56,13 @@ class TestTakeScreenshot:
         # Assertions
         mock_subprocess_run.assert_called_once_with(
             ["/usr/bin/gnome-screenshot", "/tmp/screenshot_test.png"],
-            capture_output=True, text=True
+            capture_output=True, text=True, check=True
         )
         assert "Screenshot saved to: /tmp/screenshot_test.png" in result
 
-    @patch('src.rai.tools.subprocess.run')
-    @patch('src.rai.tools.os.path.join', return_value='/tmp/screenshot_test.png')
-    @patch('src.rai.tools.datetime')
+    @patch('rai.tools.subprocess.run')
+    @patch('rai.tools.os.path.join', return_value='/tmp/screenshot_test.png')
+    @patch('rai.tools.datetime')
     def test_take_screenshot_with_delay(self, mock_datetime, mock_join, mock_subprocess_run):
         # Setup mocks
         mock_datetime.datetime.now.strftime.return_value = "20250816_120000"
@@ -75,29 +75,27 @@ class TestTakeScreenshot:
         # Assertions
         mock_subprocess_run.assert_called_once_with(
             ["/usr/bin/gnome-screenshot", "-d", "5", "/tmp/screenshot_test.png"],
-            capture_output=True, text=True
+            capture_output=True, text=True, check=True
         )
         assert "Screenshot saved to: /tmp/screenshot_test.png" in result
 
-    @patch('src.rai.tools.subprocess.run')
-    @patch('src.rai.tools.os.path.join', return_value='/tmp/screenshot_test.png')
-    @patch('src.rai.tools.datetime')
+    @patch('rai.tools.subprocess.run')
+    @patch('rai.tools.os.path.join', return_value='/tmp/screenshot_test.png')
+    @patch('rai.tools.datetime')
     def test_take_screenshot_failure(self, mock_datetime, mock_join, mock_subprocess_run):
         # Simulate a failed subprocess run
         mock_datetime.datetime.now.strftime.return_value = "20250816_120000"
-        mock_subprocess_run.return_value.returncode = 1
-        mock_subprocess_run.return_value.stdout = ""
-        mock_subprocess_run.return_value.stderr = "Error taking screenshot\n"
+        mock_subprocess_run.side_effect = CalledProcessError(1, "gnome-screenshot", stderr="Error taking screenshot")
 
         result = take_screenshot.entrypoint(delay=0)
 
         # Assertions
         assert "Failed to take screenshot" in result
-        assert "Error taking screenshot" in result
+        assert "Command 'gnome-screenshot' returned non-zero exit status 1" in result
 
 
 class TestWeather:
-    @patch('src.rai.tools.pydbus.SessionBus')
+    @patch('rai.tools.pydbus.SessionBus')
     def test_weather_success_current_location(self, mock_session_bus):
         # Setup mocks for successful weather retrieval
         mock_weather_service = MagicMock()
@@ -123,7 +121,7 @@ class TestWeather:
         assert parsed_result['temperature_c'] == 15
         assert parsed_result['conditions'] == 'Clear sky'
 
-    @patch('src.rai.tools.pydbus.SessionBus')
+    @patch('rai.tools.pydbus.SessionBus')
     def test_weather_success_specific_location(self, mock_session_bus):
         # Setup mocks for successful weather retrieval for a specific location
         mock_weather_service = MagicMock()
@@ -148,7 +146,7 @@ class TestWeather:
         assert parsed_result['temperature_c'] == 10
         assert parsed_result['conditions'] == 'Cloudy'
 
-    @patch('src.rai.tools.pydbus.SessionBus')
+    @patch('rai.tools.pydbus.SessionBus')
     def test_weather_no_info_configured(self, mock_session_bus):
         # Simulate no weather info configured in GNOME
         mock_weather_service = MagicMock()
@@ -162,7 +160,7 @@ class TestWeather:
         assert "error" in parsed_result
         assert "No weather information configured" in parsed_result["error"]
 
-    @patch('src.rai.tools.pydbus.SessionBus')
+    @patch('rai.tools.pydbus.SessionBus')
     def test_weather_location_not_found(self, mock_session_bus):
         # Simulate location not found
         mock_weather_service = MagicMock()
@@ -179,7 +177,7 @@ class TestWeather:
         assert "Weather information not found" in parsed_result["error"]
         assert "available_locations" in parsed_result
 
-    @patch('src.rai.tools.pydbus.SessionBus')
+    @patch('rai.tools.pydbus.SessionBus')
     def test_weather_exception_handling(self, mock_session_bus):
         # Simulate an exception during weather service call
         mock_session_bus.return_value.get.side_effect = Exception("DBus connection error")

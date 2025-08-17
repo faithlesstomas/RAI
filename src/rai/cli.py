@@ -28,11 +28,9 @@ from .tools import send_notification, take_screenshot, weather
 console = Console(force_terminal=True)
 
 
-
-
-base_tools=[
-    send_notification, # New tool for sending notifications
-    take_screenshot, # New tool for taking screenshots
+base_tools = [
+    send_notification,  # New tool for sending notifications
+    take_screenshot,  # New tool for taking screenshots
     # count_files_in_path,
     CalculatorTools(
         enable_all=True,
@@ -42,13 +40,13 @@ base_tools=[
     WikipediaTools(),
     DuckDuckGoTools(),
     WebBrowserTools(),
-    weather, # Custom weather tool
+    weather,  # Custom weather tool
 ]
 
 
 def setup_agent(system_prompt, model_id):
     """Initializes the Agno agent, setting the model, prompt, and tools."""
-    load_dotenv() # Ensure environment variables are loaded
+    load_dotenv()  # Ensure environment variables are loaded
 
     if os.getenv("TAVILY_API_KEY"):
         tools = base_tools + [TavilyTools()]
@@ -76,7 +74,7 @@ def setup_agent(system_prompt, model_id):
         except ResponseError as e:
             if "does not support tools" in str(e.error):
                 console.print(
-                    f"[bold yellow]WARNING: Model '{model_id}' does not support tools. "
+                    f"[bold yellow]WARNING: Model '{model_id}' does not support tools. "\
                     "Running in no-tools mode.[/bold yellow]"
                 )
                 # Initialize again without tools
@@ -91,10 +89,13 @@ def setup_agent(system_prompt, model_id):
                 return agent
             raise
         return agent
-    except Exception as e:
+    except Exception as e:  # pylint: disable=broad-except
         console.print(f"[bold red]ERROR: Failed to initialize agent: {e}[/bold red]")
-        console.print("[yellow]Is the Ollama server running and does it have the specified model?[/yellow]")
+        console.print(
+            "[yellow]Is the Ollama server running and does it have the specified model?[/yellow]"
+        )
         sys.exit(1)
+
 
 def run_single_query(agent, prompt):
     """Executes a single query and streams the response."""
@@ -109,7 +110,7 @@ def run_single_query(agent, prompt):
             tool_panel = Panel(
                 tool_output.strip(),
                 title="[bold yellow]Tool Call[/bold yellow]",
-                border_style="yellow"
+                border_style="yellow",
             )
             console.print(tool_panel)
 
@@ -122,22 +123,21 @@ def run_single_query(agent, prompt):
         console.print(
             f"\n[bold red]Ollama API error (status: {e.status_code}): {e.error}[/bold red]"
         )
-    except Exception as e:
+    except Exception as e:  # pylint: disable=broad-except
         console.print(
-            f"\n[bold red]An unexpected error occurred during streaming: {e}[/bold red]"
+            "\n[bold red]An unexpected error occurred during streaming: "
+            f"{e}[/bold red]"
         )
 
 
 def run_interactive_chat(agent):
     """Starts an interactive chat loop with streaming response."""
     welcome_message = (
-        "[bold]Welcome to Super-Assistant![/bold]\n\n" +        "I can count files AND search the internet!\n" +        "Ask me about the weather or the latest news."
+        "[bold]Welcome to Super-Assistant![/bold]\n\n"
+        + "I can count files AND search the internet!\n"
+        + "Ask me about the weather or the latest news."
     )
-    console.print(Panel(
-        welcome_message,
-        title="Assistant with Toolkits",
-        border_style="magenta"
-    ))
+    console.print(Panel(welcome_message, title="Assistant with Toolkits", border_style="magenta"))
 
     while True:
         try:
@@ -147,18 +147,20 @@ def run_interactive_chat(agent):
             if not user_input.strip():
                 continue
 
-            console.print("\n[bold blue]Asystent AI:[/]")
+            console.print("\n[bold blue]AI Assistant:[/]")
             f = io.StringIO()
             with redirect_stdout(f):
                 response_stream = agent.run(user_input, stream=True)
 
             tool_output = f.getvalue()
             if tool_output:
-                console.print(Panel(
-                    tool_output.strip(),
-                    title="[bold yellow]Tool Call[/bold yellow]",
-                    border_style="yellow"
-                ))
+                console.print(
+                    Panel(
+                        tool_output.strip(),
+                        title="[bold yellow]Tool Call[/bold yellow]",
+                        border_style="yellow",
+                    )
+                )
 
             for response_chunk in response_stream:
                 if response_chunk.content:
@@ -170,37 +172,30 @@ def run_interactive_chat(agent):
             break
         except ResponseError as e:
             console.print(
-                f"\n[bold red]Wystąpił błąd API Ollama (status: {e.status_code}): {e.error}[/bold red]"
+                f"\n[bold red]Ollama API error (status: {e.status_code}): {e.error}[/bold red]"
             )
-        except Exception as e:
-            console.print(f"\n[bold red]Wystąpił nieoczekiwany błąd podczas strumieniowania: {e}[/bold red]")
-
-
+        except Exception as e:  # pylint: disable=broad-except
+            console.print(
+                "\n[bold red]An unexpected error occurred during streaming: "
+                f"{e}[/bold red]"
+            )
 
     console.print("\n[yellow]Goodbye![/yellow]")
 
 
 @click.command()
-@click.argument('prompt', required=False)
+@click.argument("prompt", required=False)
 @click.option(
-    '-s', '--system',
-    # Change #4: Improve the default system prompt to encourage AI to search the web
-    default=(
-        "You are a versatile and helpful AI assistant."
-    ),
-    help=(
-        "Defines the system prompt "
-        "for the AI."
-    )
+    "-s",
+    "--system",
+    default="You are a versatile and helpful AI assistant.",
+    help="Defines the system prompt for the AI.",
 )
 @click.option(
-    '-m', '--model',
+    "-m",
+    "--model",
     default="gemma2:9b",
-    help=(
-        "ID of the Ollama model to be used "
-        "(e.g., gemma2:9b, "
-        "llama3.2)."
-    )
+    help="ID of the Ollama model to be used (e.g., gemma2:9b, llama3.2).",
 )
 def main(prompt, system, model):
     """
@@ -209,7 +204,7 @@ def main(prompt, system, model):
     console.print(f"[dim]Using model: [bold]{model}[/bold][/dim]")
 
     try:
-        available_models = [m['model'] for m in ollama.list()['models']]
+        available_models = [m["model"] for m in ollama.list()["models"]]
         if model not in available_models:
             console.print(
                 f"\n[bold red]Error: Model '{model}' is not available in Ollama.[/bold red]"
@@ -219,7 +214,7 @@ def main(prompt, system, model):
             for m_name in sorted(list(set(available_models))):
                 console.print(f"- {m_name}", highlight=False)
             console.print(
-                f"[yellow]You can download the missing model with the command: "
+                "[yellow]You can download the missing model with the command: "
                 f"[bold]ollama pull {model}[/bold][/yellow]"
             )
             sys.exit(1)
@@ -231,8 +226,12 @@ def main(prompt, system, model):
         console.print(f"Details: {e.error}")
         console.print("[yellow]Ensure the Ollama server is running.[/yellow]")
         sys.exit(1)
-    except Exception as e:
-        console.print(f"\n[bold red]Error: An unexpected problem occurred during model verification.[/bold red]")
+    except Exception as e:  # pylint: disable=broad-except
+        console.print(
+            "\n[bold red]"
+            "Error: An unexpected problem occurred during model verification."
+            "[/bold red]"
+        )
         console.print(f"Details: {e}")
         console.print("[yellow]Ensure the Ollama server is running.[/yellow]")
         sys.exit(1)
@@ -244,8 +243,8 @@ def main(prompt, system, model):
             piped_content = sys.stdin.read()
             full_prompt = (
                 f"{prompt}\n\nHere is the content to process:\n"
-                + "\n---\n" +
-                f"{piped_content}"
+                + "\n---\n"
+                + f"{piped_content}"
             )
             run_single_query(agent, full_prompt)
         else:
@@ -255,4 +254,4 @@ def main(prompt, system, model):
 
 
 if __name__ == "__main__":
-    main()
+    main()  # pylint: disable=no-value-for-parameter
