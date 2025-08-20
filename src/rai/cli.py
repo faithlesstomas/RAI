@@ -114,7 +114,8 @@ def check_model_tool_support(model_id: str) -> bool:
 
 def run_single_query(agent, prompt):
     """Executes a single query, handling potential image data from tools."""
-    console.print("\n[bold]AI Assistant: [/]")
+    console.print(f"\n[bold green]Prompt: [/] {prompt}")
+    console.print("\n[bold]AI Assistant (<model_id>): [/]") # TODO: print model name too
     try:
         # --- First Pass: Run with tools to get potential image data ---
         string_io = io.StringIO()
