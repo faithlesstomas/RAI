@@ -1,10 +1,12 @@
 """Tools for the RAI CLI assistant."""
-import os
-import json
+import base64
 import datetime
+import json
+import os
 import subprocess
-from agno.tools import tool
+
 import pydbus
+from agno.tools import tool
 from gi.repository import GLib
 
 
@@ -49,30 +51,51 @@ def send_notification(summary: str, body: str, app_name: str = "AI Assistant") -
 @tool
 def take_screenshot(delay: int = 0) -> str:
     """
-    Takes a full-screen screenshot using the `gnome-screenshot` command-line tool.
-    The screenshot is saved to a temporary file.
+    Takes a full-screen screenshot, encodes it in base64,
+    and returns it for a multimodal model to process.
 
     Args:
         delay (int): Delay in seconds before taking the screenshot. Defaults to 0.
 
     Returns:
-        str: The absolute path to the saved screenshot file on success,
-             or an error message on failure.
+        str: A JSON string containing the status and either the base64-encoded
+             image or an error message.
     """
+    filename = ""
     try:
         timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
         filename = os.path.join("/tmp", f"screenshot_{timestamp}.png")
-        command = ["/usr/bin/gnome-screenshot"]
+        command = ["/usr/bin/gnome-screenshot", "--file", filename]
         if delay > 0:
             command.extend(["-d", str(delay)])
-        command.append(filename)
+
         subprocess.run(command, capture_output=True, text=True, check=True)
-        return f"Screenshot saved to: {filename}"
+
+        if not os.path.exists(filename):
+            return json.dumps({
+                "status": "error",
+                "message": f"Screenshot file not found at: {filename} after capture."
+            })
+
+        with open(filename, "rb") as image_file:
+            encoded_string = base64.b64encode(image_file.read()).decode('utf-8')
+
+        os.remove(filename)
+
+        return json.dumps({
+            "type": "image_data",
+            "format": "png",
+            "base64": encoded_string
+        })
+
     except Exception as e:  # pylint: disable=broad-except
-        return (
-            f"Failed to take screenshot: {e}. "
-            "Ensure gnome-screenshot is installed and available in PATH."
-        )
+        if filename and os.path.exists(filename):
+            os.remove(filename)
+        return json.dumps({
+            "status": "error",
+            "message": f"Failed to take screenshot: {e}. "
+                       "Ensure gnome-screenshot is installed and available in PATH."
+        })
 
 
 # GLib event loop initialization
@@ -96,9 +119,6 @@ def weather(location: str | None = "current_location") -> str:
     Returns:
         str: A JSON string containing a dictionary with weather data on success,
              or a dictionary with an "error" key on failure.
-             Example success: 
-             '{"location": "Warsaw", "temperature_c": 15, "conditions": "Clear"}'
-             Example error:   '{"error": "Location not found."}'
     """
     bus = pydbus.SessionBus()
     if not location:
@@ -129,7 +149,7 @@ def weather(location: str | None = "current_location") -> str:
             ]
             return json.dumps(
                 {
-                    "error": f"Weather information not found for location: {location}.",
+                    "error": f"Weather for {location} not found.",
                     "available_locations": available_locations,
                 }
             )
