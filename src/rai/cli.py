@@ -16,7 +16,11 @@ from rich.panel import Panel
 
 from agno.agent import Agent
 from agno.media import Image
+from agno.models.anthropic import Claude
+from agno.models.google import Gemini
+from agno.models.groq import Groq
 from agno.models.ollama import Ollama
+from agno.models.openai import Chat as OpenAIChat
 from agno.tools.arxiv import ArxivTools
 from agno.tools.calculator import CalculatorTools
 from agno.tools.duckduckgo import DuckDuckGoTools
@@ -55,7 +59,12 @@ base_tools = [
 ]
 
 
-def setup_agent(system_prompt, model_id, enable_tools: bool = True):
+def setup_agent(
+    system_prompt: str,
+    model_id: str,
+    backend: str,
+    enable_tools: bool = True,
+):
     """Initializes the Agno agent, setting the model, prompt, and tools."""
     load_dotenv()
 
@@ -70,9 +79,44 @@ def setup_agent(system_prompt, model_id, enable_tools: bool = True):
                 "Tavily will be disabled![/bold yellow]"
             )
 
+    model_instance = None
+    if backend == "ollama":
+        model_instance = Ollama(id=model_id)
+    elif backend == "gemini":
+        if not os.getenv("GOOGLE_API_KEY"):
+            console.print(
+                "[bold red]ERROR: GOOGLE_API_KEY environment variable not set.[/bold red]"
+            )
+            sys.exit(1)
+        model_instance = Gemini(id=model_id)
+    elif backend == "anthropic":
+        if not os.getenv("ANTHROPIC_API_KEY"):
+            console.print(
+                "[bold red]ERROR: ANTHROPIC_API_KEY environment variable not set.[/bold red]"
+            )
+            sys.exit(1)
+        model_instance = Claude(id=model_id)
+    elif backend == "openai":
+        if not os.getenv("OPENAI_API_KEY"):
+            console.print(
+                "[bold red]ERROR: OPENAI_API_KEY environment variable not set.[/bold red]"
+            )
+            sys.exit(1)
+        model_instance = OpenAIChat(id=model_id)
+    elif backend == "groq":
+        if not os.getenv("GROQ_API_KEY"):
+            console.print(
+                "[bold red]ERROR: GROQ_API_KEY environment variable not set.[/bold red]"
+            )
+            sys.exit(1)
+        model_instance = Groq(id=model_id)
+    else:
+        console.print(f"[bold red]ERROR: Unsupported backend '{backend}'.[/bold red]")
+        sys.exit(1)
+
     try:
         agent = Agent(
-            model=Ollama(id=model_id),
+            model=model_instance,
             tools=agent_tools,
             show_tool_calls=True,
             markdown=True,
@@ -192,43 +236,54 @@ def run_interactive_chat(agent):
     default="gemma3:1b",
     help="ID of the Ollama model to be used (e.g., gemma2:9b, llama3.2).",
 )
-def main(prompt, system, model):
+@click.option(
+    "-b",
+    "--backend",
+    default="ollama",
+    type=click.Choice(["ollama", "gemini", "anthropic", "openai", "groq"]),
+    help="The LLM backend to use.",
+)
+def main(prompt, system, model, backend):
     """
     AI assistant in the command line with tool support and ready-made toolkits.
     """
-    console.print(f"[dim]Using model: [bold]{model}[/bold][/dim]")
+    console.print(f"[dim]Using model: [bold]{model}[/bold] on backend: [bold]{backend}[/bold][/dim]")
 
-    try:
-        available_models = [m["model"] for m in ollama.list()["models"]]
-        model_found = any(m.startswith(model) for m in available_models)
+    has_tools = True  # Assume tools are supported by default for non-ollama backends
+    if backend == "ollama":
+        try:
+            available_models = [m["model"] for m in ollama.list()["models"]]
+            model_found = any(m.startswith(model) for m in available_models)
 
-        if not model_found:
+            if not model_found:
+                console.print(
+                    f"\n[bold red]Error: Model '{model}' is not available in Ollama.[/bold red]"
+                )
+                console.print("\n[bold green]Available models:[/bold green]")
+                for m_name in sorted(list(set(available_models))):
+                    console.print(f"- {m_name}", highlight=False)
+                console.print(
+                    f"[yellow]You can download the missing model with the command: "
+                    f"[bold]ollama pull {model}[/bold][/yellow]"
+                )
+                sys.exit(1)
+        except ResponseError as e:
             console.print(
-                f"\n[bold red]Error: Model '{model}' is not available in Ollama.[/bold red]"
-            )
-            console.print("\n[bold green]Available models:[/bold green]")
-            for m_name in sorted(list(set(available_models))):
-                console.print(f"- {m_name}", highlight=False)
-            console.print(
-                f"[yellow]You can download the missing model with the command: "
-                f"[bold]ollama pull {model}[/bold][/yellow]"
+                f"\n[bold red]Error: Failed to connect to Ollama server to verify model "
+                f"(status: {e.status_code}).[/bold red]"
             )
             sys.exit(1)
-    except ResponseError as e:
-        console.print(
-            f"\n[bold red]Error: Failed to connect to Ollama server to verify model "
-            f"(status: {e.status_code}).[/bold red]"
-        )
-        sys.exit(1)
 
-    has_tools = check_model_tool_support(model)
-    if not has_tools:
-        console.print(
-            f"[yellow]Warning: Model '{model}' may not support tools. "
-            "Proceeding in text-only mode.[/yellow]"
-        )
+        has_tools = check_model_tool_support(model)
+        if not has_tools:
+            console.print(
+                f"[yellow]Warning: Model '{model}' may not support tools. "
+                "Proceeding in text-only mode.[/yellow]"
+            )
 
-    agent = setup_agent(system_prompt=system, model_id=model, enable_tools=has_tools)
+    agent = setup_agent(
+        system_prompt=system, model_id=model, enable_tools=has_tools, backend=backend
+    )
 
     if prompt:
         if not sys.stdin.isatty():
