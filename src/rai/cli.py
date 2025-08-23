@@ -12,6 +12,7 @@ import ollama
 from dotenv import load_dotenv
 from ollama import ResponseError
 from rich.console import Console
+from rich.markdown import Markdown
 from rich.panel import Panel
 
 from agno.agent import Agent
@@ -20,7 +21,7 @@ from agno.models.anthropic import Claude
 from agno.models.google import Gemini
 from agno.models.groq import Groq
 from agno.models.ollama import Ollama
-from agno.models.openai import Chat as OpenAIChat
+from agno.models.openai.chat import OpenAIChat
 from agno.tools.arxiv import ArxivTools
 from agno.tools.calculator import CalculatorTools
 from agno.tools.duckduckgo import DuckDuckGoTools
@@ -156,7 +157,7 @@ def check_model_tool_support(model_id: str) -> bool:
         return False
 
 
-def run_single_query(agent, prompt):
+def run_single_query(agent, prompt, no_markdown: bool):
     """Executes a single query, handling potential image data from tools."""
     console.print(f"\n[bold green]Prompt: [/] {prompt}")
     console.print("\n[bold]AI Assistant (<model_id>): [/]") # TODO: print model name too
@@ -192,11 +193,15 @@ def run_single_query(agent, prompt):
             response_stream = agent.run(prompt, images=[img], stream=True)
             for response_chunk in response_stream:
                 if response_chunk.content:
-                    # console.out(response_chunk.content, end="", style="bright_blue")
-                    console.out(response_chunk.content, end="")
+                    if not no_markdown:
+                        console.print(Markdown(response_chunk.content), end="")
+                    else:
+                        console.print(response_chunk.content, end="")
         elif initial_response and initial_response.content:
-            # console.out(initial_response.content, style="bright_blue")
-            console.out(initial_response.content)
+            if not no_markdown:
+                console.print(Markdown(initial_response.content))
+            else:
+                console.print(initial_response.content)
 
         console.print()
 
@@ -208,7 +213,7 @@ def run_single_query(agent, prompt):
         console.print(f"\n[bold red]An unexpected error occurred: {e}[/bold red]")
 
 
-def run_interactive_chat(agent):
+def run_interactive_chat(agent, no_markdown: bool):
     """Starts an interactive chat loop with streaming response."""
     console.print("[yellow]Interactive chat does not support image analysis yet.[/yellow]")
     while True:
@@ -216,7 +221,7 @@ def run_interactive_chat(agent):
             user_input = console.input("[bold green]You: [/]")
             if user_input.lower() in ["exit", "quit", "q"]:
                 break
-            run_single_query(agent, user_input)
+            run_single_query(agent, user_input, no_markdown=no_markdown)
         except (KeyboardInterrupt, EOFError):
             break
     console.print("\n[yellow]Goodbye![/yellow]")
@@ -243,7 +248,12 @@ def run_interactive_chat(agent):
     type=click.Choice(["ollama", "gemini", "anthropic", "openai", "groq"]),
     help="The LLM backend to use.",
 )
-def main(prompt, system, model, backend):
+@click.option(
+    "--no-markdown",
+    is_flag=True,
+    help="Disable Markdown rendering for LLM responses.",
+)
+def main(prompt, system, model, backend, no_markdown):
     """
     AI assistant in the command line with tool support and ready-made toolkits.
     """
@@ -289,11 +299,11 @@ def main(prompt, system, model, backend):
         if not sys.stdin.isatty():
             piped_content = sys.stdin.read()
             full_prompt = f"{prompt}\n\n---BEGIN CONTENT---\n{piped_content}\n---END CONTENT---"
-            run_single_query(agent, full_prompt)
+            run_single_query(agent, full_prompt, no_markdown=no_markdown)
         else:
-            run_single_query(agent, prompt)
+            run_single_query(agent, prompt, no_markdown=no_markdown)
     else:
-        run_interactive_chat(agent)
+        run_interactive_chat(agent, no_markdown=no_markdown)
 
 
 if __name__ == "__main__":
