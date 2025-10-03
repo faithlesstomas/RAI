@@ -1,20 +1,14 @@
- #!/usr/bin/env python
-""" rai - Rich AI CLI assistant
 """
+rai - Rich AI CLI assistant """
+
 import io
+import json
 import os
 import sys
-import json
-from contextlib import redirect_stdout
+from contextlib import nullcontext, redirect_stdout
 
 import click
 import ollama
-from dotenv import load_dotenv
-from ollama import ResponseError
-from rich.console import Console
-from rich.markdown import Markdown
-from rich.panel import Panel
-
 from agno.agent import Agent
 from agno.media import Image
 from agno.models.anthropic import Claude
@@ -22,23 +16,26 @@ from agno.models.google import Gemini
 from agno.models.groq import Groq
 from agno.models.ollama import Ollama
 from agno.models.openai.chat import OpenAIChat
+from agno.storage.sqlite import SqliteStorage
 from agno.tools.arxiv import ArxivTools
 from agno.tools.calculator import CalculatorTools
 from agno.tools.duckduckgo import DuckDuckGoTools
-from agno.tools.tavily import TavilyTools
-from agno.tools.webbrowser import WebBrowserTools
-from agno.tools.wikipedia import WikipediaTools
 from agno.tools.file import FileTools
 from agno.tools.python import PythonTools
 from agno.tools.shell import ShellTools
-from agno.storage.sqlite import SqliteStorage
+from agno.tools.tavily import TavilyTools
+from agno.tools.webbrowser import WebBrowserTools
+from agno.tools.wikipedia import WikipediaTools
+from dotenv import load_dotenv
+from ollama import ResponseError
+from rich.console import Console
+from rich.markdown import Markdown
+from rich.panel import Panel
 
-
-# from .tools import send_notification, take_screenshot, weather
 from .tools import send_notification, take_screenshot
 
-# global console
 console = Console(force_terminal=True)
+error_console = Console(stderr=True, force_terminal=True)
 
 
 base_tools = [
@@ -46,7 +43,6 @@ base_tools = [
     take_screenshot,
     CalculatorTools(
         enable_all=True,
-        # exclude_tools=["exponentiate", "factorial", "is_prime", "square_root"],
     ),
     ArxivTools(),
     WikipediaTools(),
@@ -55,8 +51,6 @@ base_tools = [
     FileTools(),
     PythonTools(),
     ShellTools(),
-    # weather, <-- disabled until fixing issue with dbus for org.gnome.Weather
-    #              is this only ubunut issue or sth. else?
 ]
 
 
@@ -65,6 +59,8 @@ def setup_agent(
     model_id: str,
     backend: str,
     enable_tools: bool = True,
+    quiet: bool = False,
+    json_output: bool = False,
 ):
     """Initializes the Agno agent, setting the model, prompt, and tools."""
     load_dotenv()
@@ -75,159 +71,269 @@ def setup_agent(
             agent_tools = base_tools + [TavilyTools()]
         else:
             agent_tools = base_tools
-            console.print(
-                "[bold yellow]WARNING: Missing TAVILY_API_KEY env variable. "
-                "Tavily will be disabled![/bold yellow]"
-            )
+            if not quiet:
+                error_console.print(
+                    "[bold yellow]WARNING: Missing TAVILY_API_KEY env variable. "
+                    "Tavily will be disabled![/bold yellow]"
+                )
 
-    model_instance = None
-    if backend == "ollama":
-        model_instance = Ollama(id=model_id)
-    elif backend == "gemini":
-        if not os.getenv("GOOGLE_API_KEY"):
-            console.print(
-                "[bold red]ERROR: GOOGLE_API_KEY environment variable not set.[/bold red]"
-            )
-            sys.exit(1)
-        model_instance = Gemini(id=model_id)
-    elif backend == "anthropic":
-        if not os.getenv("ANTHROPIC_API_KEY"):
-            console.print(
-                "[bold red]ERROR: ANTHROPIC_API_KEY environment variable not set.[/bold red]"
-            )
-            sys.exit(1)
-        model_instance = Claude(id=model_id)
-    elif backend == "openai":
-        if not os.getenv("OPENAI_API_KEY"):
-            console.print(
-                "[bold red]ERROR: OPENAI_API_KEY environment variable not set.[/bold red]"
-            )
-            sys.exit(1)
-        model_instance = OpenAIChat(id=model_id)
-    elif backend == "groq":
-        if not os.getenv("GROQ_API_KEY"):
-            console.print(
-                "[bold red]ERROR: GROQ_API_KEY environment variable not set.[/bold red]"
-            )
-            sys.exit(1)
-        model_instance = Groq(id=model_id)
+    model_map = {
+        "ollama": Ollama,
+        "gemini": Gemini,
+        "anthropic": Claude,
+        "openai": OpenAIChat,
+        "groq": Groq,
+    }
+    api_keys = {
+        "gemini": "GOOGLE_API_KEY",
+        "anthropic": "ANTHROPIC_API_KEY",
+        "openai": "OPENAI_API_KEY",
+        "groq": "GROQ_API_KEY",
+    }
+
+    if backend in api_keys and not os.getenv(api_keys[backend]):
+        error_console.print(
+            f"[bold red]ERROR: {api_keys[backend]} environment variable not set.[/bold red]"
+        )
+        sys.exit(1)
+
+    if backend in model_map:
+        model_instance = model_map[backend](id=model_id)
     else:
-        console.print(f"[bold red]ERROR: Unsupported backend '{backend}'.[/bold red]")
+        error_console.print(f"[bold red]ERROR: Unsupported backend '{backend}'.[/bold red]")
         sys.exit(1)
 
     try:
         agent = Agent(
             model=model_instance,
             tools=agent_tools,
-            show_tool_calls=True,
+            show_tool_calls=not json_output,
             markdown=True,
             add_history_to_messages=True,
             storage=SqliteStorage(
                 table_name="agent_sessions",
                 db_file="tmp/data.db",
-                auto_upgrade_schema=True
+                auto_upgrade_schema=True,
             ),
             session_id="my_chat_session",
             instructions=system_prompt,
         )
         return agent
-    except Exception as e:  # pylint: disable=broad-exception-caught
-        console.print(f"[bold red]ERROR: Failed to initialize agent: {e}[/bold red]")
-        console.print(
-            "[yellow]Is the Ollama server running and does it have the specified model?[/yellow]"
+    except Exception as e:
+        error_console.print(f"[bold red]ERROR: Failed to initialize agent: {e}[/bold red]")
+        error_console.print(
+            "[yellow]Is the Ollama server running and has the model?[/yellow]"
         )
         sys.exit(1)
 
 
 def check_model_tool_support(model_id: str) -> bool:
-    """
-    Checks if the specified Ollama model supports tool use by inspecting its Modelfile.
-    """
+    """Checks if the specified Ollama model supports tool use."""
     try:
         details = ollama.show(model_id)
         modelfile = details.get("modelfile", "")
-        # console.log(f'Modelfile for {model_id}: {modelfile}')
-        # A simple heuristic: check for keywords related to tool use grammar.
         return "tool_use" in str(modelfile)
     except ResponseError:
-        # This can happen if the model is not found, though `main` checks for this.
         return False
-    except Exception:  # pylint: disable=broad-exception-caught
-        # For any other unexpected errors, assume no tool support to be safe.
+    except Exception:
         return False
 
 
-def run_single_query(agent, prompt, no_markdown: bool):
-    """Executes a single query, handling potential image data from tools."""
-    console.print(f"\n[bold green]Prompt: [/] {prompt}")
-    console.print("\n[bold]AI Assistant (<model_id>): [/]") # TODO: print model name too
+def display_response(response, console_instance):
+    """Displays the AI's response to the console."""
+    console_instance.print(Markdown(response.content))
+
+
+def handle_tool_calls(response, _agent, console_instance):
+    """Handles the tool calls from the AI's response."""
+    console_instance.print(
+        Panel(
+            json.dumps(response.tool_calls, indent=2),
+            title="Tool Calls",
+            border_style="yellow",
+        )
+    )
+
+
+def _handle_tool_output(tool_output_str, quiet, json_output, response_data):
+    """Handles the output of tools, extracting image data if present."""
+    image_data = None
+    if not tool_output_str:
+        return None
+
     try:
-        # --- First Pass: Run with tools to get potential image data ---
-        string_io = io.StringIO()
-        with redirect_stdout(string_io):
-            initial_response = agent.run(prompt, stream=False)
+        tool_call_data = json.loads(tool_output_str)
+        if tool_call_data.get("type") == "image_data":
+            image_data = tool_call_data
+    except (json.JSONDecodeError, AttributeError):
+        tool_call_data = None
 
-        tool_output_str = string_io.getvalue().strip()
-        image_data = None
+    if json_output:
+        response_data["tool_call_output"] = (
+            tool_call_data if tool_call_data else tool_output_str
+        )
+    elif not quiet:
+        panel_title = "[bold yellow]Tool Call[/bold yellow]"
+        panel_content = (
+            "Screenshot captured successfully."
+            if image_data
+            else tool_output_str
+        )
+        error_console.print(
+            Panel(panel_content, title=panel_title, border_style="yellow")
+        )
+    return image_data
 
-        if tool_output_str:
-            panel_title = "[bold yellow]Tool Call[/bold yellow]"
-            panel_content = "Screenshot captured successfully."
-            try:
-                tool_json = json.loads(tool_output_str)
-                if tool_json.get("type") == "image_data":
-                    image_data = tool_json
-                else:
-                    panel_content = tool_output_str
-            except (json.JSONDecodeError, AttributeError):
-                panel_content = tool_output_str
 
-            console.print(Panel(panel_content, title=panel_title, border_style="yellow"))
+def _handle_image_response(
+    agent, prompt, image_data, no_markdown, json_output, quiet, status
+):
+    """Handles the response when an image is present."""
+    if not quiet and not json_output:
+        error_console.print("\n[bold]AI Assistant (analyzing image):[/]")
+        if status:
+            status.update("[bold green]AI is analyzing...[/bold green]")
+    img = Image(
+        source=image_data.get("base64"),
+        mime_type=f"image/{image_data.get('format', 'png')}",
+    )
+    response_stream = agent.run(prompt, images=[img], stream=True)
+    full_response_content = "".join(
+        chunk.content for chunk in response_stream if chunk.content
+    )
+    if not json_output:
+        console.print(
+            Markdown(full_response_content)
+            if not no_markdown
+            else full_response_content,
+            end="",
+        )
+    return full_response_content
 
-        if image_data:
-            console.print("\n[bold]AI Assistant (analyzing image):[/]")
-            img = Image(
-                source=image_data.get("base64"),
-                mime_type=f"image/{image_data.get('format', 'png')}"
+
+def run_single_query(
+    agent, prompt, no_markdown, json_output, quiet, non_interactive
+):
+    """Executes a single query, handling image data and tool outputs."""
+    if not quiet and not json_output and non_interactive:
+        error_console.print(f"\n[bold green]Prompt: [/] {prompt}")
+
+    response_data = {"prompt": prompt}
+    status_context = (
+        error_console.status(" thinking... ")
+        if not quiet and not json_output
+        else nullcontext()
+    )
+
+    initial_response = None
+    try:
+        with status_context as status:
+            string_io = io.StringIO()
+            with redirect_stdout(string_io):
+                initial_response = agent.run(prompt, stream=False)
+
+            tool_output_str = string_io.getvalue().strip()
+            image_data = _handle_tool_output(
+                tool_output_str, quiet, json_output, response_data
             )
-            response_stream = agent.run(prompt, images=[img], stream=True)
-            for response_chunk in response_stream:
-                if response_chunk.content:
-                    if not no_markdown:
-                        console.print(Markdown(response_chunk.content), end="")
-                    else:
-                        console.print(response_chunk.content, end="")
-        elif initial_response and initial_response.content:
-            if not no_markdown:
-                console.print(Markdown(initial_response.content))
-            else:
-                console.print(initial_response.content)
 
-        console.print()
+            if image_data:
+                response_data["ai_response"] = _handle_image_response(
+                    agent, prompt, image_data, no_markdown, json_output, quiet, status
+                )
 
     except ResponseError as e:
-        console.print(
-            f"\n[bold red]Ollama API error (status: {e.status_code}): {e.error}[/bold red]"
-        )
-    except Exception as e:  # pylint: disable=broad-exception-caught
-        console.print(f"\n[bold red]An unexpected error occurred: {e}[/bold red]")
+        error_message = f"Ollama API error (status: {e.status_code}): {e.error}"
+        if json_output:
+            response_data["error"] = error_message
+            print(json.dumps(response_data))
+        else:
+            error_console.print(f"\n[bold red]{error_message}[/bold red]")
+        sys.exit(1)
+    except Exception as e:
+        error_message = f"An unexpected error occurred: {e}"
+        if json_output:
+            response_data["error"] = error_message
+            print(json.dumps(response_data))
+        else:
+            error_console.print(f"\n[bold red]{error_message}[/bold red]")
+        sys.exit(1)
+
+    if not non_interactive:
+        if (
+            initial_response
+            and hasattr(initial_response, "tool_calls")
+            and initial_response.tool_calls
+        ):
+            handle_tool_calls(initial_response, agent, console)
+        elif initial_response and initial_response.content:
+            display_response(initial_response, console)
+    else:
+        if initial_response and initial_response.content:
+            console.print(initial_response.content)
+        elif (
+            hasattr(initial_response, "tool_calls")
+            and initial_response.tool_calls
+        ):
+            console.print(json.dumps(initial_response.tool_calls, indent=2))
+            response_data["ai_response"] = initial_response.content
+
+        if json_output:
+            print(json.dumps(response_data))
+        else:
+            error_console.print()
 
 
-def run_interactive_chat(agent, no_markdown: bool):
+def run_interactive_chat(agent, no_markdown, json_output, quiet, non_interactive):
     """Starts an interactive chat loop with streaming response."""
-    console.print("[yellow]Interactive chat does not support image analysis yet.[/yellow]")
+    if not quiet and not json_output:
+        error_console.print("[yellow]Interactive chat does not support images.[/yellow]")
     while True:
         try:
-            user_input = console.input("[bold green]You: [/]")
+            user_input = console.input("> ")
             if user_input.lower() in ["exit", "quit", "q"]:
                 break
-            run_single_query(agent, user_input, no_markdown=no_markdown)
+
+            if user_input.startswith("/"):
+                command_parts = user_input[1:].split(maxsplit=1)
+                command = command_parts[0].lower()
+
+                if command == "help":
+                    error_console.print("[bold green]Available commands:[/bold green]")
+                    error_console.print("  /help - Display this help message.")
+                    error_console.print("  /config - Display current configuration.")
+                    error_console.print("  /exit, /quit, /q - Exit the chat.")
+                elif command == "config":
+                    error_console.print("[bold green]Current Configuration:[/bold green]")
+                    error_console.print(f"  Model: {agent.model.id}")
+                    error_console.print(
+                        f"  Backend: {agent.model.__class__.__name__}"
+                    )
+                    error_console.print(f"  System Prompt: {agent.instructions}")
+                    error_console.print(
+                        f"  Tools Enabled: {agent.tools is not None and len(agent.tools) > 0}"
+                    )
+                elif command in ["exit", "quit", "q"]:
+                    break
+                else:
+                    error_console.print(f"[bold red]Unknown command: {user_input}[/bold red]")
+            else:
+                run_single_query(
+                    agent,
+                    user_input,
+                    no_markdown=no_markdown,
+                    json_output=json_output,
+                    quiet=quiet,
+                    non_interactive=non_interactive,
+                )
         except (KeyboardInterrupt, EOFError):
             break
-    console.print("\n[yellow]Goodbye![/yellow]")
+    if not quiet and not json_output:
+        error_console.print("\n[yellow]Goodbye![/yellow]")
 
 
 @click.command()
+@click.version_option(version="0.1.0")
 @click.argument("prompt", required=False)
 @click.option(
     "-s",
@@ -249,62 +355,81 @@ def run_interactive_chat(agent, no_markdown: bool):
     help="The LLM backend to use.",
 )
 @click.option(
-    "--no-markdown",
-    is_flag=True,
-    help="Disable Markdown rendering for LLM responses.",
+    "--no-markdown", is_flag=True, help="Disable Markdown rendering for LLM responses."
 )
-def main(prompt, system, model, backend, no_markdown):
-    """
-    AI assistant in the command line with tool support and ready-made toolkits.
-    """
-    console.print(f"[dim]Using model: [bold]{model}[/bold] on backend: [bold]{backend}[/bold][/dim]")
+@click.option("--json", "json_output", is_flag=True, help="Output in JSON format.")
+@click.option("--quiet", is_flag=True, help="Suppress informational messages.")
+def main(prompt, system, model, backend, no_markdown, json_output, quiet):
+    """AI assistant in the command line with tool support."""
+    if not quiet:
+        error_console.print(
+            f"[dim]Using model: [bold]{model}[/bold] on backend: [bold]{backend}[/bold][/dim]"
+        )
 
-    has_tools = True  # Assume tools are supported by default for non-ollama backends
+    has_tools = True
     if backend == "ollama":
         try:
             available_models = [m["model"] for m in ollama.list()["models"]]
-            model_found = any(m.startswith(model) for m in available_models)
-
-            if not model_found:
-                console.print(
-                    f"\n[bold red]Error: Model '{model}' is not available in Ollama.[/bold red]"
+            if not any(m.startswith(model) for m in available_models):
+                error_console.print(
+                    f"\n[bold red]Error: Model '{model}' not in Ollama.[/bold red]"
                 )
-                console.print("\n[bold green]Available models:[/bold green]")
-                for m_name in sorted(list(set(available_models))):
-                    console.print(f"- {m_name}", highlight=False)
-                console.print(
-                    f"[yellow]You can download the missing model with the command: "
-                    f"[bold]ollama pull {model}[/bold][/yellow]"
-                )
+                if not quiet:
+                    error_console.print("\n[bold green]Available models:[/bold green]")
+                    for m_name in sorted(list(set(available_models))):
+                        error_console.print(f"- {m_name}", highlight=False)
+                    error_console.print(
+                        f"[yellow]Pull with: [bold]ollama pull {model}[/bold][/yellow]"
+                    )
                 sys.exit(1)
         except ResponseError as e:
-            console.print(
-                f"\n[bold red]Error: Failed to connect to Ollama server to verify model "
-                f"(status: {e.status_code}).[/bold red]"
+            error_console.print(
+                f"\n[bold red]Error connecting to Ollama (status: {e.status_code}).[/bold red]"
             )
             sys.exit(1)
 
         has_tools = check_model_tool_support(model)
-        if not has_tools:
-            console.print(
+        if not has_tools and not quiet:
+            error_console.print(
                 f"[yellow]Warning: Model '{model}' may not support tools. "
-                "Proceeding in text-only mode.[/yellow]"
+                "Text-only mode.[/yellow]"
             )
 
     agent = setup_agent(
-        system_prompt=system, model_id=model, enable_tools=has_tools, backend=backend
+        system_prompt=system,
+        model_id=model,
+        enable_tools=has_tools,
+        backend=backend,
+        quiet=quiet,
+        json_output=json_output,
     )
 
+    is_pipe = not sys.stdin.isatty()
+
+    if not prompt and is_pipe:
+        prompt = sys.stdin.read()
+        quiet = True
+
     if prompt:
-        if not sys.stdin.isatty():
-            piped_content = sys.stdin.read()
-            full_prompt = f"{prompt}\n\n---BEGIN CONTENT---\n{piped_content}\n---END CONTENT---"
-            run_single_query(agent, full_prompt, no_markdown=no_markdown)
-        else:
-            run_single_query(agent, prompt, no_markdown=no_markdown)
+        non_interactive = True
+        run_single_query(
+            agent,
+            prompt,
+            no_markdown=no_markdown,
+            json_output=json_output,
+            quiet=quiet,
+            non_interactive=non_interactive,
+        )
     else:
-        run_interactive_chat(agent, no_markdown=no_markdown)
+        non_interactive = False
+        run_interactive_chat(
+            agent,
+            no_markdown=no_markdown,
+            json_output=json_output,
+            quiet=quiet,
+            non_interactive=non_interactive,
+        )
 
 
 if __name__ == "__main__":
-    main() # pylint: disable=no-value-for-parameter
+    main()  # pylint: disable=no-value-for-parameter

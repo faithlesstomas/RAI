@@ -24,10 +24,12 @@ dependencies = [
     "tavily-python",
     "pydbus",
     "pygobject",
+    "textual",
 ]
 
 [project.scripts]
 rai = "rai.cli:main"
+rai-tui = "rai.tui:run_tui_cli"
 
 [tool.pytest.ini_options]
 pythonpath = ["src"]
