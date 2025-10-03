@@ -44,7 +44,7 @@ CONFIG_FILE = os.path.join(CONFIG_DIR, "config.json")
 def load_config():
     """Loads the configuration from the config file."""
     if not os.path.exists(CONFIG_FILE):
-        return {{}}
+        return {}
     with open(CONFIG_FILE, "r", encoding="utf-8") as f:
         return json.load(f)
 
@@ -299,6 +299,54 @@ def run_single_query(
             error_console.print()
 
 
+def handle_interactive_command(command, agent):
+    """Handles interactive commands."""
+    parts = command.split(maxsplit=1)
+    cmd = parts[0]
+    arg = parts[1] if len(parts) > 1 else None
+
+    config = load_config()
+
+    if cmd == "/help":
+        error_console.print("[bold green]Available commands:[/bold green]")
+        error_console.print("  /help - Display this help message.")
+        error_console.print("  /config - Display current configuration.")
+        error_console.print("  /model [<model_id>] - Get or set the model.")
+        error_console.print("  /backend [<backend_id>] - Get or set the backend.")
+        error_console.print("  /system [<prompt>] - Get or set the system prompt.")
+        error_console.print("  /exit, /quit, /q - Exit the chat.")
+    elif cmd == "/config":
+        error_console.print("[bold green]Current Configuration:[/bold green]")
+        error_console.print(f"  Model: {config.get('model')}")
+        error_console.print(f"  Backend: {config.get('backend')}")
+        error_console.print(f"  System: {config.get('system')}")
+    elif cmd == "/model":
+        if arg:
+            config["model"] = arg
+            save_config(config)
+            error_console.print(f"Model set to: {arg}. Restart for changes to take effect.")
+        else:
+            error_console.print(f"Current model: {config.get('model')}")
+    elif cmd == "/backend":
+        if arg:
+            config["backend"] = arg
+            save_config(config)
+            error_console.print(f"Backend set to: {arg}. Restart for changes to take effect.")
+        else:
+            error_console.print(f"Current backend: {config.get('backend')}")
+    elif cmd == "/system":
+        if arg:
+            config["system"] = arg
+            save_config(config)
+            error_console.print(f"System prompt set. Restart for changes to take effect.")
+        else:
+            error_console.print(f"Current system prompt: {config.get('system')}")
+    elif cmd in ["/exit", "/quit", "/q"]:
+        return False
+    else:
+        error_console.print(f"[bold red]Unknown command: {command}[/bold red]")
+    return True
+
 def run_interactive_chat(agent, no_markdown, json_output, quiet, non_interactive):
     """Starts an interactive chat loop with streaming response."""
     if not quiet and not json_output:
@@ -306,28 +354,9 @@ def run_interactive_chat(agent, no_markdown, json_output, quiet, non_interactive
     while True:
         try:
             user_input = console.input("> ")
-            if user_input.lower() in ["exit", "quit", "q"]:
-                break
-
             if user_input.startswith("/"):
-                command_parts = user_input[1:].split(maxsplit=1)
-                command = command_parts[0].lower()
-
-                if command == "help":
-                    error_console.print("[bold green]Available commands:[/bold green]")
-                    error_console.print("  /help - Display this help message.")
-                    error_console.print("  /config - Display current configuration.")
-                    error_console.print("  /exit, /quit, /q - Exit the chat.")
-                elif command == "config":
-                    config = load_config()
-                    error_console.print("[bold green]Current Configuration:[/bold green]")
-                    error_console.print(f"  Model: {config.get('model')}")
-                    error_console.print(f"  Backend: {config.get('backend')}")
-                    error_console.print(f"  System: {config.get('system')}")
-                elif command in ["exit", "quit", "q"]:
+                if not handle_interactive_command(user_input, agent):
                     break
-                else:
-                    error_console.print(f"[bold red]Unknown command: {user_input}[/bold red]")
             else:
                 run_single_query(
                     agent,
@@ -373,7 +402,18 @@ def run_interactive_chat(agent, no_markdown, json_output, quiet, non_interactive
 @click.option("--list-config", is_flag=True, help="List all configuration parameters.")
 @click.option("--get-config", "get_config_key", help="Get a configuration parameter.")
 @click.option("--set-config", "set_config_pair", help="Set a configuration parameter (KEY=VALUE).")
-def main(prompt, system, model, backend, no_markdown, json_output, quiet, list_config, get_config_key, set_config_pair):
+def main(
+    prompt,
+    system,
+    model,
+    backend,
+    no_markdown,
+    json_output,
+    quiet,
+    list_config,
+    get_config_key,
+    set_config_pair,
+):
     """AI assistant in the command line with tool support."""
     config = load_config()
 
@@ -428,7 +468,7 @@ def main(prompt, system, model, backend, no_markdown, json_output, quiet, list_c
         if not has_tools and not quiet:
             error_console.print(
                 f"[yellow]Warning: Model '{model}' may not support tools. "
-                "Text-only mode.[/yellow]"
+                "Text-only mode." 
             )
 
     agent = setup_agent(

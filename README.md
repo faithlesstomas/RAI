@@ -6,6 +6,7 @@ It provides rich console output using the `rich` library and visualizes tool cal
 ## Features
 
 *   **Local AI Models:** Utilizes locally running Ollama models.
+*   **Multi-Backend Support:** Supports multiple AI backends (Ollama, Gemini, Anthropic, OpenAI, Groq).
 *   **Streaming Responses:** AI responses are streamed in real-time, improving responsiveness.
 *   **Tool Call Visualization:** Agno tool calls (e.g., calculator, web search) are clearly displayed in panels, allowing you to monitor the agent's thought process.
 *   **Integrated Toolkits:** Supports various Agno toolkits, such as:
@@ -14,6 +15,7 @@ It provides rich console output using the `rich` library and visualizes tool cal
     *   `WikipediaTools`
     *   `TavilyTools` (requires API key)
 *   **Rich Console Output:** Uses the `rich` library for coloring, formatting, and structuring output.
+*   **Configuration Management:** Allows setting default model, backend, and system prompt via CLI options.
 
 ## Installation and Usage
 
@@ -37,7 +39,7 @@ It provides rich console output using the `rich` library and visualizes tool cal
     ```
 3.  **Install dependencies:**
     ```bash
-    pip install -r requirements.txt
+    pip install -e .
     ```
 4.  **Configure Tavily API Key (optional):**
     If you want to use Tavily tools (e.g., for web search), create a `.env` file in the project root and add your API key:
@@ -49,7 +51,7 @@ It provides rich console output using the `rich` library and visualizes tool cal
 ### Usage
 
 ```bash
-python rai [OPTIONS] [PROMPT]
+rai [OPTIONS] [PROMPT]
 ```
 
 *   **PROMPT:** If you provide a prompt, the script will execute a single query.
@@ -58,24 +60,25 @@ python rai [OPTIONS] [PROMPT]
 #### Options
 
 *   `-s, --system TEXT`: Defines the system prompt for the AI.
-    *   Default: "You are a versatile AI assistant. When the user asks something, first check if you can use available tools. 
-        For answering questions about current events, weather, or facts, use the web search tool."
-*   `-m, --model TEXT`: ID of the Ollama model to use (e.g., `gemma2:9b`, `llama3.2`).
-    *   Default: `gemma2:9b`
+*   `-m, --model TEXT`: ID of the model to use.
+*   `-b, --backend TEXT`: The LLM backend to use.
+*   `--list-config`: List all configuration parameters.
+*   `--get-config TEXT`: Get a configuration parameter.
+*   `--set-config TEXT`: Set a configuration parameter (KEY=VALUE).
 
 #### Examples
 
 **Single Query:**
 ```bash
-python rai "What is 256 * 178?"
-python rai -m qwen3:20b "What's the weather like in Warsaw today?"
+rai "What is 256 * 178?"
+rai -m qwen3:20b "What's the weather like in Warsaw today?"
 ```
 
 **Interactive Chat Mode:**
 ```bash
-python rai
+rai
 ```
-In chat mode, type `exit`, `quit`, `q`, or `wyjdź` to end.
+In chat mode, type `/help` for a list of commands.
 
 ## Development Plan (Discussion History)
 
@@ -102,8 +105,10 @@ This project evolved through interactions with an AI model (Gemini). Below are t
                 *   Implemented minimalist user prompt (`> `) in interactive chat.
                 *   Removed redundant prompt echo.
                 *   Removed "AI Assistant:" prefix for AI responses.
+                *   Implemented a new command structure for configuration (`--list-config`, `--get-config`, `--set-config`).
+                *   Implemented interactive commands for configuration (`/config`, `/model`, `/backend`, `/system`).
             *   **To do:**
-                *   Implement command handling (e.g., `/help`, `/config`) similar to `gemini-cli`.
+                *   Implement tab completion for interactive commands using `prompt_toolkit`.
                 *   Further refine output for scriptability (e.g., structured tool output in JSON mode).
         *   [ ] **Implement Text-User Interface (TUI):** Develop an interactive TUI using `Textual` (inspired by `gemini-cli`) for a richer terminal experience.
             *   **Status:** In progress (paused).
