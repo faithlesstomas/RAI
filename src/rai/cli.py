@@ -37,6 +37,24 @@ from .tools import send_notification, take_screenshot
 console = Console(force_terminal=True)
 error_console = Console(stderr=True, force_terminal=True)
 
+CONFIG_DIR = os.path.expanduser("~/.config/rai")
+CONFIG_FILE = os.path.join(CONFIG_DIR, "config.json")
+
+
+def load_config():
+    """Loads the configuration from the config file."""
+    if not os.path.exists(CONFIG_FILE):
+        return {{}}
+    with open(CONFIG_FILE, "r", encoding="utf-8") as f:
+        return json.load(f)
+
+
+def save_config(config):
+    """Saves the configuration to the config file."""
+    os.makedirs(CONFIG_DIR, exist_ok=True)
+    with open(CONFIG_FILE, "w", encoding="utf-8") as f:
+        json.dump(config, f, indent=2)
+
 
 base_tools = [
     send_notification,
@@ -215,9 +233,6 @@ def run_single_query(
     agent, prompt, no_markdown, json_output, quiet, non_interactive
 ):
     """Executes a single query, handling image data and tool outputs."""
-    if not quiet and not json_output and non_interactive:
-        error_console.print(f"\n[bold green]Prompt: [/] {prompt}")
-
     response_data = {"prompt": prompt}
     status_context = (
         error_console.status(" thinking... ")
@@ -304,15 +319,11 @@ def run_interactive_chat(agent, no_markdown, json_output, quiet, non_interactive
                     error_console.print("  /config - Display current configuration.")
                     error_console.print("  /exit, /quit, /q - Exit the chat.")
                 elif command == "config":
+                    config = load_config()
                     error_console.print("[bold green]Current Configuration:[/bold green]")
-                    error_console.print(f"  Model: {agent.model.id}")
-                    error_console.print(
-                        f"  Backend: {agent.model.__class__.__name__}"
-                    )
-                    error_console.print(f"  System Prompt: {agent.instructions}")
-                    error_console.print(
-                        f"  Tools Enabled: {agent.tools is not None and len(agent.tools) > 0}"
-                    )
+                    error_console.print(f"  Model: {config.get('model')}")
+                    error_console.print(f"  Backend: {config.get('backend')}")
+                    error_console.print(f"  System: {config.get('system')}")
                 elif command in ["exit", "quit", "q"]:
                     break
                 else:
@@ -338,19 +349,19 @@ def run_interactive_chat(agent, no_markdown, json_output, quiet, non_interactive
 @click.option(
     "-s",
     "--system",
-    default="You are a versatile and helpful AI assistant.",
+    default=None,
     help="Defines the system prompt for the AI.",
 )
 @click.option(
     "-m",
     "--model",
-    default="gemma3:1b",
+    default=None,
     help="ID of the Ollama model to be used (e.g., gemma2:9b, llama3.2).",
 )
 @click.option(
     "-b",
     "--backend",
-    default="ollama",
+    default=None,
     type=click.Choice(["ollama", "gemini", "anthropic", "openai", "groq"]),
     help="The LLM backend to use.",
 )
@@ -359,8 +370,33 @@ def run_interactive_chat(agent, no_markdown, json_output, quiet, non_interactive
 )
 @click.option("--json", "json_output", is_flag=True, help="Output in JSON format.")
 @click.option("--quiet", is_flag=True, help="Suppress informational messages.")
-def main(prompt, system, model, backend, no_markdown, json_output, quiet):
+@click.option("--list-config", is_flag=True, help="List all configuration parameters.")
+@click.option("--get-config", "get_config_key", help="Get a configuration parameter.")
+@click.option("--set-config", "set_config_pair", help="Set a configuration parameter (KEY=VALUE).")
+def main(prompt, system, model, backend, no_markdown, json_output, quiet, list_config, get_config_key, set_config_pair):
     """AI assistant in the command line with tool support."""
+    config = load_config()
+
+    if list_config:
+        print(json.dumps(config, indent=2))
+        return
+    if get_config_key:
+        print(config.get(get_config_key, "not set"))
+        return
+    if set_config_pair:
+        if "=" in set_config_pair:
+            key, val = set_config_pair.split("=", 1)
+            config[key] = val
+            save_config(config)
+            print(f"{key} set to: {val}")
+        else:
+            error_console.print("Invalid format for --set-config. Use KEY=VALUE.")
+        return
+
+    model = model or config.get("model") or "gemma3:1b"
+    backend = backend or config.get("backend") or "ollama"
+    system = system or config.get("system") or "You are a versatile and helpful AI assistant."
+
     if not quiet:
         error_console.print(
             f"[dim]Using model: [bold]{model}[/bold] on backend: [bold]{backend}[/bold][/dim]"
@@ -429,7 +465,6 @@ def main(prompt, system, model, backend, no_markdown, json_output, quiet):
             quiet=quiet,
             non_interactive=non_interactive,
         )
-
 
 if __name__ == "__main__":
     main()  # pylint: disable=no-value-for-parameter
