@@ -25,6 +25,20 @@ dependencies = [
     "pydbus",
     "pygobject",
     "textual",
+    "prompt_toolkit",
+    "sqlalchemy",
+]
+
+[project.optional-dependencies]
+anthropic = ["anthropic"]
+gemini = ["google-generativeai"]
+openai = ["openai"]
+groq = ["groq"]
+all = [
+    "rai-cli[anthanthropic]",
+    "rai-cli[gemini]",
+    "rai-cli[openai]",
+    "rai-cli[groq]",
 ]
 
 [project.scripts]

@@ -128,5 +128,11 @@ This project evolved through interactions with an AI model (Gemini). Below are t
     *   [ ] **Advanced TUI/CLI Modes:**
         *   [ ] **Coding Assistant Mode:** Simple text editor integrated with Git (plus chat in a hideable sidebar).
         *   [ ] **Critic/Commentator Mode:** Assistant that comments and advises in real-time chat but cannot modify code.
+    *   [ ] **IPython/Jupyter Integration:** Create an IPython extension that provides AI assistance via "magic" commands (e.g., `%rai` and `%%rai`). This would allow using the assistant within a powerful, full-featured Python REPL.
     *   [ ] **Improved Error Handling:** More detailed and user-friendly error messages.
     *   [ ] **Conversation Context Management:** More advanced mechanisms for managing chat history for longer and more complex interactions.
+    
+
+### Sources for inspiration in project dev:
+* rich-cli: https://github.com/Textualize/rich-cli
+* gemini-cli: https://github.com/google-gemini/gemini-cli
