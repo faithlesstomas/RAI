@@ -29,6 +29,7 @@ from agno.tools.wikipedia import WikipediaTools
 from dotenv import load_dotenv
 from ollama import ResponseError
 from prompt_toolkit import PromptSession
+from prompt_toolkit.auto_suggest import AutoSuggestFromHistory
 from prompt_toolkit.completion import NestedCompleter, WordCompleter
 from prompt_toolkit.history import FileHistory
 from rich.console import Console
@@ -68,8 +69,10 @@ def _build_completer():
     session_names = list(app_config.get("sessions", {}).keys())
 
     # Use WordCompleter for dynamic parts
-    session_name_completer = WordCompleter(session_names, ignore_case=True)
-    config_key_completer = WordCompleter(["model", "backend", "system"], ignore_case=True)
+    session_name_completer = WordCompleter(
+        session_names, ignore_case=True, match_middle=True
+    )
+    config_key_completer = WordCompleter(["model", "backend", "system"], ignore_case=True, match_middle=True)
 
     return NestedCompleter.from_nested_dict({
         "/help": None,
@@ -254,16 +257,16 @@ def check_model_tool_support(model_id: str) -> bool:
 
 
 
-def _handle_help_command(args):
+def _handle_help_command(args):  # pylint: disable=unused-argument
     """Handles the /help command."""
     # For now, a simple list. Can be expanded later.
     console.print("Available commands:")
-    for cmd in _SLASH_COMMAND_HANDLERS.keys():
+    for cmd in _SLASH_COMMAND_HANDLERS:
         console.print(f"  /{cmd}")
     console.print("  /exit, /quit, /q")
 
 
-def _handle_session_command(args):
+def _handle_session_command(args):  # pylint: disable=too-many-branches
     """Handles /session slash commands."""
     if not args:
         console.print("Usage: /session [list|switch|show|delete|rename] [args...]")
@@ -327,7 +330,7 @@ _SLASH_COMMAND_HANDLERS = {
     "config": _handle_config_command,
 }
 
-def _handle_slash_command(user_input):
+def _handle_slash_command(user_input):  # pylint: disable=too-many-branches
     """Handles slash commands and returns True if the app should exit."""
     parts = user_input.strip()[1:].split()
     if not parts:
@@ -467,7 +470,10 @@ async def run_interactive_chat(agent, quiet: bool, stream: bool, no_markdown_fla
 
     history_file = os.path.join(CONFIG_DIR, "history.txt")
     prompt_session = PromptSession(
-        history=FileHistory(history_file), completer=_build_completer()
+        history=FileHistory(history_file),
+        completer=_build_completer(),
+        complete_while_typing=True,
+        auto_suggest=AutoSuggestFromHistory(),
     )
 
     while True:
@@ -567,7 +573,7 @@ def _initialize_ollama_check(model_id: str, quiet: bool) -> bool:
 
 async def async_main(options: CliOptions):
     """The actual async logic of the application."""
-    config = load_config()
+    app_config = load_config()
 
     # --- New Session and Configuration Logic ---
     session_to_use = "default"
@@ -576,19 +582,19 @@ async def async_main(options: CliOptions):
         session_to_use = options.session_override
     else:
         # Default behavior: use the globally active session
-        session_to_use = config.get("active_session", "default")
+        session_to_use = app_config.get("active_session", "default")
 
-    # Ensure the session definition exists in the config, create it if not.
-    if session_to_use not in config.get("sessions", {}):
-        config.setdefault("sessions", {})[session_to_use] = {
+    # Ensure the session definition exists in the app_config, create it if not.
+    if session_to_use not in app_config.get("sessions", {}):
+        app_config.setdefault("sessions", {})[session_to_use] = {
             "model": "gemma3:1b",
             "backend": "ollama",
             "system": "You are a versatile and helpful AI assistant.",
         }
-        save_config(config)  # Save the config since we added a new session
+        save_config(app_config)  # Save the app_config since we added a new session
 
     # Get the configuration for the session we're using for this run
-    session_config = config["sessions"][session_to_use]
+    session_config = app_config["sessions"][session_to_use]
 
     # Prioritize CLI options > session config
     RAI_CONFIG["model"] = options.model or session_config.get("model")
@@ -608,7 +614,7 @@ async def async_main(options: CliOptions):
     # For single-query mode (options.prompt is not None), session_id remains None for a temporary session.
 
     if not options.quiet and not options.prompt:
-        active_session_name = config.get("active_session", "default")
+        active_session_name = app_config.get("active_session", "default")
         session_display = f"[bold]{session_to_use}[/bold]"
         if session_to_use == active_session_name:
             session_display += " (active)"
@@ -782,9 +788,9 @@ def _rename_session_logic(old_name: str, new_name: str):
     # Perform the rename
     sessions[new_name] = sessions.pop(old_name)
     console.print(
-        f"Session '{old_name}' has been renamed to '[bold green]{new_name}[/bold green]'."
+        f"Session '{old_name}' has been renamed to "
+        f"'[bold green]{new_name}[/bold green]'."
     )
-
     # If the renamed session was the active one, update the active_session key
     if app_config.get("active_session") == old_name:
         app_config["active_session"] = new_name
@@ -861,9 +867,9 @@ def _set_config_logic(key: str, value: str):
     save_config(app_config)
 
     console.print(
-        f"In session '[cyan]{active_session}[/cyan]', set '[bold]{key}[/bold]' to '[green]{value}[/green]'."
+        f"In session '[cyan]{active_session}[/cyan]', set '[bold]{key}[/bold]' to "
+        f"'[green]{value}[/green]'."
     )
-
 
 @config.command(name="set")
 @click.argument("key")
