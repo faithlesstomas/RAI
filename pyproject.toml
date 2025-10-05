@@ -42,7 +42,7 @@ all = [
 ]
 
 [project.scripts]
-rai = "rai.cli:main"
+rai = "rai.cli:cli"
 rai-tui = "rai.tui:run_tui_cli"
 
 [tool.pytest.ini_options]
