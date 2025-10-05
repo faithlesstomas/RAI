@@ -1,18 +1,21 @@
 """
-rai - Rich AI CLI assistant """
+rai - Rich AI CLI assistant - ASYNC version
+"""
 
+import asyncio
 import io
 import json
+import logging
 import os
-import signal
 import sys
-from contextlib import nullcontext, redirect_stdout
+from dataclasses import dataclass
+from typing import Optional
+
+from contextlib import redirect_stdout
 
 import click
 import ollama
 from agno.agent import Agent
-from agno.media import Image
-from agno.models.ollama import Ollama
 from agno.storage.sqlite import SqliteStorage
 from agno.tools.arxiv import ArxivTools
 from agno.tools.calculator import CalculatorTools
@@ -28,16 +31,32 @@ from ollama import ResponseError
 from prompt_toolkit import PromptSession
 from prompt_toolkit.completion import WordCompleter
 from prompt_toolkit.history import FileHistory
-from prompt_toolkit.lexers import Lexer
-from prompt_toolkit.styles import Style
 from rich.console import Console
 from rich.markdown import Markdown
 from rich.panel import Panel
 from rich.rule import Rule
-
 from .tools import send_notification, take_screenshot
 
-console = Console(force_terminal=True)
+
+
+@dataclass
+class CliOptions:  # pylint: disable=too-many-instance-attributes
+    """Dataclass to hold CLI options."""
+
+    prompt: Optional[str] = None
+    system: Optional[str] = None
+    model: Optional[str] = None
+    backend: Optional[str] = None
+    no_markdown: bool = False
+    json_output: bool = False
+    quiet: bool = False
+    list_config: bool = False
+    get_config_key: Optional[str] = None
+    set_config_pair: Optional[str] = None
+    no_stream: bool = False
+
+
+console = Console(force_terminal=True, record=True)
 error_console = Console(stderr=True, force_terminal=True)
 
 CONFIG_DIR = os.path.expanduser("~/.config/rai")
@@ -47,19 +66,17 @@ RAI_CONFIG = {}
 SLASH_COMMANDS = [
     "/help",
     "/config",
-    "/model",
-    "/backend",
-    "/system",
     "/exit",
     "/quit",
     "/q",
 ]
 
 
+# --- Configuration ---
 def load_config():
     """Loads the configuration from the config file."""
     if not os.path.exists(CONFIG_FILE):
-        return {}
+        return {}  # pylint: disable=unhashable-member
     with open(CONFIG_FILE, "r", encoding="utf-8") as f:
         return json.load(f)
 
@@ -71,45 +88,44 @@ def save_config():
         json.dump(RAI_CONFIG, f, indent=2)
 
 
-def on_resize(signum, frame):
-    """Handles terminal resize events."""
-    try:
-        width, _ = os.get_terminal_size()
-        console.width = width
-        error_console.width = width
-    except OSError:
-        pass
+def _setup_tools(enable_tools, quiet):
+    """Sets up the tools for the agent."""
+    messages = []
+    base_tools = [
+        send_notification,
+        take_screenshot,
+        CalculatorTools(enable_all=True),
+        ArxivTools(),
+        WikipediaTools(),
+        DuckDuckGoTools(),
+        WebBrowserTools(),
+        FileTools(),
+        PythonTools(),
+        ShellTools(),
+    ]
+
+    agent_tools = []
+    if enable_tools:
+        if os.getenv("TAVILY_API_KEY"):
+            agent_tools = base_tools + [TavilyTools()]
+        else:
+            agent_tools = base_tools
+            if not quiet and not RAI_CONFIG.get("prompt"):
+                messages.append(
+                    "[bold yellow]WARNING: Missing TAVILY_API_KEY env variable. "
+                    "Tavily will be disabled![/bold yellow]"
+                )
+    return agent_tools, messages
 
 
-base_tools = [
-    send_notification,
-    take_screenshot,
-    CalculatorTools(
-        enable_all=True,
-    ),
-    ArxivTools(),
-    WikipediaTools(),
-    DuckDuckGoTools(),
-    WebBrowserTools(),
-    FileTools(),
-    PythonTools(),
-    ShellTools(),
-]
-
-
-def setup_agent(enable_tools: bool = True, quiet: bool = False, json_output: bool = False):
-    """Initializes the Agno agent, setting the model, prompt, and tools."""
-    load_dotenv()
-    backend = RAI_CONFIG.get("backend")
-    model_id = RAI_CONFIG.get("model")
-    system_prompt = RAI_CONFIG.get("system")
-
-    # FIX: Handle GEMINI_API_KEY compatibility BEFORE the main key check.
+def _setup_model(backend, model_id, quiet):
+    """Sets up the model based on the backend and model ID."""
+    messages = []
     if backend == "gemini" and "GEMINI_API_KEY" in os.environ:
         if "GOOGLE_API_KEY" in os.environ and not quiet:
-            error_console.print(
-                "[bold yellow]INFO: Both GOOGLE_API_KEY and GEMINI_API_KEY are set. "
-                "Prioritizing GEMINI_API_KEY.[/bold yellow]"
+            messages.append(
+                "[bold yellow]INFO: GOOGLE_API_KEY and GEMINI_API_KEY are set. "
+                "Using GEMINI_API_KEY.[/bold yellow]"
             )
         os.environ["GOOGLE_API_KEY"] = os.environ["GEMINI_API_KEY"]
 
@@ -144,39 +160,40 @@ def setup_agent(enable_tools: bool = True, quiet: bool = False, json_output: boo
         sys.exit(1)
 
     try:
-        # Dynamic import
         module_path, class_name = model_map[backend].rsplit(".", 1)
         module = __import__(module_path, fromlist=[class_name])
         model_class = getattr(module, class_name)
+        return model_class(id=model_id), messages
     except ImportError:
         error_console.print(
             f"[bold red]ERROR: Backend '{backend}' requires an optional dependency.[/bold red]"
         )
         if backend in dependency_map:
             error_console.print(
-                f"[yellow]Please install it using: [bold]pip install .[{dependency_map[backend]}][/bold][/yellow]"
+                "[yellow]Please install it using: "
+                f"[bold]pip install .[{dependency_map[backend]}[/bold][/yellow]"
             )
         sys.exit(1)
 
-    agent_tools = []
-    if enable_tools:
-        if os.getenv("TAVILY_API_KEY"):
-            agent_tools = base_tools + [TavilyTools()]
-        else:
-            agent_tools = base_tools
-            if not quiet:
-                error_console.print(
-                    "[bold yellow]WARNING: Missing TAVILY_API_KEY env variable. "
-                    "Tavily will be disabled![/bold yellow]"
-                )
 
-    model_instance = model_class(id=model_id)
+# --- Agent Setup ---
+def setup_agent(enable_tools: bool = True, quiet: bool = False):
+    """Initializes the Agno agent, setting the model, prompt, and tools."""
+    load_dotenv()
+    backend = RAI_CONFIG.get("backend")
+    model_id = RAI_CONFIG.get("model")
+    system_prompt = RAI_CONFIG.get("system")
+
+    model_instance, messages = _setup_model(backend, model_id, quiet)
+
+    agent_tools, tool_messages = _setup_tools(enable_tools, quiet)
+    messages.extend(tool_messages)
 
     try:
         agent = Agent(
             model=model_instance,
             tools=agent_tools,
-            show_tool_calls=not json_output,
+            show_tool_calls=False,
             markdown=True,
             add_history_to_messages=True,
             storage=SqliteStorage(
@@ -187,8 +204,11 @@ def setup_agent(enable_tools: bool = True, quiet: bool = False, json_output: boo
             session_id="my_chat_session",
             instructions=system_prompt,
         )
-        return agent
-    except Exception as e:
+        return agent, messages
+    except ImportError as e:
+        error_console.print(f"[bold red]ERROR: Failed to import agent dependencies: {e}[/bold red]")
+        sys.exit(1)
+    except Exception as e:  # pylint: disable=broad-except
         error_console.print(f"[bold red]ERROR: Failed to initialize agent: {e}[/bold red]")
         if backend == "ollama":
             error_console.print(
@@ -205,407 +225,323 @@ def check_model_tool_support(model_id: str) -> bool:
         return "tool_use" in str(modelfile)
     except ResponseError:
         return False
-    except Exception:
-        return False
 
 
-def display_response(response, console_instance):
-    """Displays the AI's response to the console."""
-    console_instance.print(Markdown(response.content))
+# --- Non-Interactive Mode ---
+def run_single_query(agent, prompt, no_markdown, json_output):
+    """Executes a single query for non-interactive mode."""
+    with redirect_stdout(io.StringIO()):
+        initial_response = agent.run(prompt, stream=False)
 
-
-def handle_tool_calls(response, _agent, console_instance):
-    """Handles the tool calls from the AI's response."""
-    console_instance.print(
-        Panel(
-            json.dumps(response.tool_calls, indent=2),
-            title="Tool Calls",
-            border_style="yellow",
-        )
-    )
-
-
-def _handle_tool_output(tool_output_str, quiet, json_output, response_data):
-    """Handles the output of tools, extracting image data if present."""
-    image_data = None
-    if not tool_output_str:
-        return None
-
-    try:
-        tool_call_data = json.loads(tool_output_str)
-        if tool_call_data.get("type") == "image_data":
-            image_data = tool_call_data
-    except (json.JSONDecodeError, AttributeError):
-        tool_call_data = None
-
-    if json_output:
-        response_data["tool_call_output"] = (
-            tool_call_data if tool_call_data else tool_output_str
-        )
-    elif not quiet:
-        panel_title = "[bold yellow]Tool Call[/bold yellow]"
-        panel_content = (
-            "Screenshot captured successfully."
-            if image_data
-            else tool_output_str
-        )
-        error_console.print(
-            Panel(panel_content, title=panel_title, border_style="yellow")
-        )
-    return image_data
-
-
-def _handle_image_response(
-    agent, prompt, image_data, no_markdown, json_output, quiet, status
-):
-    """Handles the response when an image is present."""
-    if not quiet and not json_output:
-        error_console.print("\n[bold]AI Assistant (analyzing image):[/]")
-        if status:
-            status.update("[bold green]AI is analyzing...[/bold green]")
-    img = Image(
-        source=image_data.get("base64"),
-        mime_type=f"image/{image_data.get('format', 'png')}",
-    )
-    response_stream = agent.run(prompt, images=[img], stream=True)
-    full_response_content = "".join(
-        chunk.content for chunk in response_stream if chunk.content
-    )
-    if not json_output:
-        console.print(
-            Markdown(full_response_content)
-            if not no_markdown
-            else full_response_content,
-            end="",
-        )
-    return full_response_content
-
-
-def run_single_query(
-    agent, prompt, no_markdown, json_output, quiet, non_interactive
-):
-    """Executes a single query, handling image data and tool outputs."""
-    response_data = {"prompt": prompt}
-    status_context = (
-        error_console.status(" thinking... ")
-        if not quiet and not json_output
-        else nullcontext()
-    )
-
-    initial_response = None
-    try:
-        with status_context as status:
-            string_io = io.StringIO()
-            with redirect_stdout(string_io):
-                initial_response = agent.run(prompt, stream=False)
-
-            tool_output_str = string_io.getvalue().strip()
-            image_data = _handle_tool_output(
-                tool_output_str, quiet, json_output, response_data
+    if initial_response and initial_response.content:
+        if json_output:
+            print(json.dumps({"response": initial_response.content}))
+        else:
+            temp_console = Console()
+            temp_console.print(
+                Markdown(initial_response.content)
+                if not no_markdown
+                else initial_response.content
             )
 
-            if image_data:
-                response_data["ai_response"] = _handle_image_response(
-                    agent, prompt, image_data, no_markdown, json_output, quiet, status
-                )
 
-    except ResponseError as e:
-        if json_output:
-            response_data["error"] = error_message
-            print(json.dumps(response_data))
-        else:
-            error_console.print(f"\n[bold red]{error_message}[/bold red]")
-        if non_interactive:
-            sys.exit(1)
-    except Exception as e:
-        error_message = f"An unexpected error occurred: {e}"
-        if json_output:
-            response_data["error"] = error_message
-            print(json.dumps(response_data))
-        else:
-            error_console.print(f"\n[bold red]{error_message}[/bold red]")
-        if non_interactive:
-            sys.exit(1)
-
-    if not non_interactive:
-        if (
-            initial_response
-            and hasattr(initial_response, "tool_calls")
-            and initial_response.tool_calls
-        ):
-            handle_tool_calls(initial_response, agent, console)
-        elif initial_response and initial_response.content:
-            display_response(initial_response, console)
+def _handle_slash_command(user_input):
+    """Handles slash commands and returns True if the app should exit."""
+    if user_input in ["/exit", "/quit", "/q"]:
+        return True
+    if user_input == "/help":
+        console.print("Available commands: /help, /config, /q")
+    elif user_input == "/config":
+        console.print(
+            f"Model: {RAI_CONFIG.get('model')}, Backend: {RAI_CONFIG.get('backend')}"
+        )
     else:
-        if initial_response and initial_response.content:
-            console.print(initial_response.content)
-        elif (
-            hasattr(initial_response, "tool_calls")
-            and initial_response.tool_calls
-        ):
-            console.print(json.dumps(initial_response.tool_calls, indent=2))
-            response_data["ai_response"] = initial_response.content
+        console.print(f"[red]Unknown command: {user_input}[/red]")
+    return False
 
-        if json_output:
-            print(json.dumps(response_data))
+
+async def _handle_stream_response(agent, user_input, no_markdown):
+    """Handles the streaming response from the agent."""
+    response_content = ""  # Accumulate content here
+    response_iterator = await agent.arun(user_input, stream=True)
+
+    # Show spinner while waiting for the FIRST chunk
+    with console.status("[bold green]Assistant is thinking..."):
+        try:
+            # Get the first event from the async iterator
+            first_event = await anext(response_iterator)
+        except StopAsyncIteration:
+            # Handle case where there's no response at all (e.g., empty stream)
+            first_event = None
+
+    # Now, process and print events
+    if first_event:
+        # Debug print removed
+        if first_event.content:
+            response_content += first_event.content
+            console.print(first_event.content, end="")  # Print raw content
+
+        if hasattr(first_event, "tool_calls") and first_event.tool_calls:
+            console.print()  # Add newline before tool calls panel
+            tool_calls_json = json.dumps(first_event.tool_calls, indent=2)
+            console.print(
+                Panel(tool_calls_json, title="Tool Calls", border_style="yellow")
+            )
+
+    # Loop through the rest of the events
+    async for event in response_iterator:
+        # Debug print removed
+        if event.content:
+            response_content += event.content
+            console.print(event.content, end="")  # Print raw content
+
+        if hasattr(event, "tool_calls") and event.tool_calls:
+            console.print()  # Add newline before tool calls panel
+            tool_calls_json = json.dumps(event.tool_calls, indent=2)
+            console.print(
+                Panel(tool_calls_json, title="Tool Calls", border_style="yellow")
+            )
+    # After streaming, print the accumulated content as formatted Markdown
+    if response_content:  # Check if there's any content to print
+        console.print()  # Add newline before LLM response
+        if not no_markdown:
+            console.print(Markdown(response_content))
         else:
-            error_console.print()
+            console.print(response_content)
 
 
+async def _handle_non_stream_response(agent, user_input, no_markdown):
+    """Handles the non-streaming response from the agent."""
+    response = None
+
+    # Setup surgical logging capture for agno's logs
+    log_capture_string = io.StringIO()
+    log_handler = logging.StreamHandler(log_capture_string)
+    agno_logger = logging.getLogger("agno")
+
+    # Store original propagation and handlers
+    original_propagate = agno_logger.propagate
+    original_handlers = agno_logger.handlers[:]  # Make a copy
+
+    # Clear existing handlers and prevent propagation to root
+    agno_logger.propagate = False
+    agno_logger.handlers.clear()
+    agno_logger.addHandler(log_handler)
+
+    original_level = agno_logger.level
+    agno_logger.setLevel(logging.INFO)  # Capture INFO and above
+
+    with console.status("[bold green]Assistant is thinking..."):
+        response = await agent.arun(user_input, stream=False)  # Non-streaming call
+
+    # Restore agno's logger settings
+    agno_logger.removeHandler(log_handler)
+    agno_logger.setLevel(original_level)
+    agno_logger.propagate = original_propagate
+    agno_logger.handlers = original_handlers  # Restore original handlers
+
+    # Get captured logs and print them in a panel
+    captured_agno_logs = log_capture_string.getvalue().strip()
+    if captured_agno_logs:
+        console.print(
+            Panel(captured_agno_logs, title="[dim]Agno Logs[/dim]", border_style="dim")
+        )
+
+    if response and response.content:
+        if not no_markdown:
+            console.print(Markdown(response.content))
+        else:
+            console.print(response.content)
+
+
+# --- Async Interactive Application ---
 # --- Interactive Mode ---
-def handle_interactive_command(command):
-    """Handles interactive commands."""
-    parts = command.split(maxsplit=1)
-    cmd = parts[0]
-    arg = parts[1] if len(parts) > 1 else None
-
-    if cmd == "/help":
-        error_console.print("[bold green]Available commands:[/bold green]")
-        error_console.print("  /help - Display this help message.")
-        error_console.print("  /config - Display current configuration.")
-        error_console.print("  /model [<model_id>] - Get or set the model.")
-        error_console.print("  /backend [<backend_id>] - Get or set the backend.")
-        error_console.print("  /system [<prompt>] - Get or set the system prompt.")
-        error_console.print("  /exit, /quit, /q - Exit the chat.")
-    elif cmd == "/config":
-        error_console.print("[bold green]Current Configuration:[/bold green]")
-        error_console.print(f"  Model: {RAI_CONFIG.get('model')}")
-        error_console.print(f"  Backend: {RAI_CONFIG.get('backend')}")
-        error_console.print(f"  System: {RAI_CONFIG.get('system')}")
-    elif cmd == "/model":
-        if arg:
-            RAI_CONFIG["model"] = arg
-            save_config()
-            error_console.print(f"Model set to: {arg}. Restart for changes to take effect.")
-        else:
-            error_console.print(f"Current model: {RAI_CONFIG.get('model')}")
-    elif cmd == "/backend":
-        if arg:
-            RAI_CONFIG["backend"] = arg
-            save_config()
-            error_console.print(f"Backend set to: {arg}. Restart for changes to take effect.")
-        else:
-            error_console.print(f"Current backend: {RAI_CONFIG.get('backend')}")
-    elif cmd == "/system":
-        if arg:
-            RAI_CONFIG["system"] = arg
-            save_config()
-            error_console.print("System prompt set. Restart for changes to take effect.")
-        else:
-            error_console.print(f"Current system prompt: {RAI_CONFIG.get('system')}")
-    elif cmd in ["/exit", "/quit", "/q"]:
-        return False
-    else:
-        error_console.print(f"[bold red]Unknown command: {command}[/bold red]")
-    return True
-
-
-class CommandLexer(Lexer):
-    def lex_document(self, document):
-        words = document.text.split()
-        text = document.text
-
-        def get_line(lineno):
-            if lineno == 0 and words and words[0] in SLASH_COMMANDS:
-                # Style the first word as a command
-                return [
-                    ("class:command", words[0]),
-                    ("", text[len(words[0]) :]),  # The rest of the text with default style
-                ]
-            # Default style for the whole line
-            return [("", text)]
-
-        return get_line
-
-def run_interactive_chat(agent, no_markdown, json_output, quiet, non_interactive):
-    """Starts an interactive chat loop with advanced prompt_toolkit features."""
-    if not quiet and not json_output:
-        error_console.print("[yellow]Interactive chat does not support images.[/yellow]")
+async def run_interactive_chat(agent, quiet, no_markdown, no_stream):
+    """Starts an interactive chat loop using PromptSession, rich.status, and direct console printing for streaming."""
+    if not quiet:
+        console.print(
+            "**Welcome to Rich AI CLI Assistant!** Type your prompt and press Enter."
+        )
+        console.print(
+            "[dim]Type /help for a list of commands, Ctrl+C or /q to exit.[/dim]"
+        )
 
     history_file = os.path.join(CONFIG_DIR, "history.txt")
-    command_completer = WordCompleter(SLASH_COMMANDS, ignore_case=True)
-    cli_style = Style.from_dict(
-        {
-            "toolbar": "bg:#333333 #ffffff",
-            "command": "#00aa00 bold",
-        }
-    )
-
-    def get_bottom_toolbar():
-        return [
-            (
-                "class:toolbar",
-                f" Model: {RAI_CONFIG.get('model')} | Backend: {RAI_CONFIG.get('backend')} ",
-            )
-        ]
-
     session = PromptSession(
         history=FileHistory(history_file),
-        bottom_toolbar=get_bottom_toolbar,
-        style=cli_style,
-        completer=command_completer,
-        lexer=CommandLexer(),
-        refresh_interval=0.5,
+        completer=WordCompleter(SLASH_COMMANDS, ignore_case=True),
     )
 
     while True:
         try:
-            user_input = session.prompt("> ")
+            user_input = await session.prompt_async("> ")
+            if not user_input.strip():
+                continue
+
+            # Handle Slash Commands
             if user_input.startswith("/"):
-                if not handle_interactive_command(user_input):
+                if _handle_slash_command(user_input):
                     break
-            elif user_input.strip():
-                run_single_query(
-                    agent,
-                    user_input,
-                    no_markdown=no_markdown,
-                    json_output=json_output,
-                    quiet=quiet,
-                    non_interactive=non_interactive,
-                )
-                console.print(Rule(style="dim"))
+                continue
+
+            # --- Process AI Query ---
+            if no_stream:
+                await _handle_non_stream_response(agent, user_input, no_markdown)
+
+            else: # --- OPTION A: Spinner then Stream (current implementation) ---
+                await _handle_stream_response(agent, user_input, no_markdown)
+
+            console.print(Rule(style="dim")) # Print a final rule
+
         except (KeyboardInterrupt, EOFError):
             break
-    if not quiet and not json_output:
-        error_console.print("\n[yellow]Goodbye![/yellow]")
+
+    console.print("\n[yellow]Goodbye![/yellow]")
 
 
+# --- Main CLI ---
 @click.command()
 @click.version_option(version="0.1.0")
 @click.argument("prompt", required=False)
-@click.option(
-    "-s",
-    "--system",
-    default=None,
-    help="Defines the system prompt for the AI.",
+@click.option("-s", "--system", default=None,
+    help="Defines the system prompt for the AI."
 )
-@click.option(
-    "-m",
-    "--model",
-    default=None,
-    help="ID of the Ollama model to be used (e.g., gemma2:9b, llama3.2).",
+@click.option("-m", "--model", default=None,
+    help="ID of the model to use."
 )
-@click.option(
-    "-b",
-    "--backend",
-    default=None,
-    type=click.Choice(["ollama", "gemini", "anthropic", "openai", "groq"]),
-    help="The LLM backend to use.",
+@click.option("-b", "--backend", default=None,
+    type=click.Choice(["ollama", "gemini", "anthropic", "openai", "groq"])
 )
 @click.option(
     "--no-markdown", is_flag=True, help="Disable Markdown rendering for LLM responses."
 )
 @click.option("--json", "json_output", is_flag=True, help="Output in JSON format.")
 @click.option("--quiet", is_flag=True, help="Suppress informational messages.")
-@click.option("--list-config", is_flag=True, help="List all configuration parameters.")
-@click.option("--get-config", "get_config_key", help="Get a configuration parameter.")
-@click.option("--set-config", "set_config_pair", help="Set a configuration parameter (KEY=VALUE).")
-def main(
-    prompt,
-    system,
-    model,
-    backend,
-    no_markdown,
-    json_output,
-    quiet,
-    list_config,
-    get_config_key,
-    set_config_pair,
+@click.option(
+    "--list-config", is_flag=True, help="List all configuration parameters."
+)
+@click.option(
+    "--get-config", "get_config_key", help="Get a configuration parameter."
+)
+@click.option(
+    "--set-config",
+    "set_config_pair",
+    help="Set a configuration parameter (KEY=VALUE).",
+)
+@click.option(
+    "--no-stream",
+    is_flag=True,
+    help="Disable streaming of LLM responses.",
+)
+def main(  # pylint: disable=too-many-arguments,too-many-positional-arguments
+    prompt: Optional[str],
+    system: Optional[str],
+    model: Optional[str],
+    backend: Optional[str],
+    no_markdown: bool,
+    json_output: bool,
+    quiet: bool,
+    list_config: bool,
+    get_config_key: Optional[str],
+    set_config_pair: Optional[str],
+    no_stream: bool,
 ):
     """AI assistant in the command line with tool support."""
-    config = load_config()
+    options = CliOptions(
+        prompt=prompt,
+        system=system,
+        model=model,
+        backend=backend,
+        no_markdown=no_markdown,
+        json_output=json_output,
+        quiet=quiet,
+        list_config=list_config,
+        get_config_key=get_config_key,
+        set_config_pair=set_config_pair,
+        no_stream=no_stream,
+    )
+    asyncio.run(async_main(options))
 
-    if list_config:
+def _handle_config_options(options: CliOptions):
+    """Handles the configuration options."""
+    config = load_config()
+    if options.list_config:
         print(json.dumps(config, indent=2))
-        return
-    if get_config_key:
-        print(config.get(get_config_key, "not set"))
-        return
-    if set_config_pair:
-        if "=" in set_config_pair:
-            key, val = set_config_pair.split("=", 1)
-            # Load current config to update it
+        return True
+    if options.get_config_key:
+        print(config.get(options.get_config_key, "not set"))
+        return True
+    if options.set_config_pair:
+        if "=" in options.set_config_pair:
+            key, val = options.set_config_pair.split("=", 1)
             RAI_CONFIG.update(load_config())
             RAI_CONFIG[key] = val
             save_config()
             print(f"{key} set to: {val}")
         else:
             error_console.print("Invalid format for --set-config. Use KEY=VALUE.")
+        return True
+    return False
+
+
+async def async_main(options: CliOptions):
+    """The actual async logic of the application."""
+    if _handle_config_options(options):
         return
 
-    # Populate the global config
-    RAI_CONFIG["model"] = model or config.get("model") or "gemma3:1b"
-    RAI_CONFIG["backend"] = backend or config.get("backend") or "ollama"
-    RAI_CONFIG["system"] = system or config.get("system") or "You are a versatile and helpful AI assistant."
+    config = load_config()
+    RAI_CONFIG["prompt"] = options.prompt
 
+    RAI_CONFIG["model"] = options.model or config.get("model") or "gemma3:1b"
+    RAI_CONFIG["backend"] = options.backend or config.get("backend") or "ollama"
+    RAI_CONFIG["system"] = (
+        options.system
+        or config.get("system")
+        or "You are a versatile and helpful AI assistant."
+    )
 
-    if not quiet:
+    if not options.quiet and not options.prompt:
         error_console.print(
-            f"[dim]Using model: [bold]{RAI_CONFIG['model']}[/bold] on backend: [bold]{RAI_CONFIG['backend']}[/bold][/dim]"
+            f"[dim]Using model: [bold]{RAI_CONFIG['model']}"
+            f"[/bold] on backend: [bold]{RAI_CONFIG['backend']}[/bold][/dim]"
         )
 
     has_tools = True
-    if RAI_CONFIG["backend"] == "ollama":
+    if RAI_CONFIG["backend"] == "ollama" and not options.prompt:
         try:
-            available_models = [m["model"] for m in ollama.list()["models"]]
-            if not any(m.startswith(RAI_CONFIG["model"]) for m in available_models):
-                error_console.print(
-                    f"\n[bold red]Error: Model '{RAI_CONFIG['model']}' not in Ollama.[/bold red]"
-                )
-                if not quiet:
-                    error_console.print("\n[bold green]Available models:[/bold green]")
-                    for m_name in sorted(list(set(available_models))):
-                        error_console.print(f"- {m_name}", highlight=False)
-                    error_console.print(
-                        f"[yellow]Pull with: [bold]ollama pull {RAI_CONFIG['model']}[/bold][/yellow]"
-                    )
-                sys.exit(1)
-        except ResponseError as e:
+            ollama.show(RAI_CONFIG["model"])
+        except ResponseError:
             error_console.print(
-                f"\n[bold red]Error connecting to Ollama (status: {e.status_code}).[/bold red]"
+                f"\n[bold red]Error: Model '{RAI_CONFIG['model']}' not found in Ollama.[/bold red]"
             )
+            sys.exit(1)
+        except ConnectionError as e:
+            error_console.print(f"\n[bold red]Error connecting to Ollama: {e}[/bold red]")
             sys.exit(1)
 
         has_tools = check_model_tool_support(RAI_CONFIG["model"])
-        if not has_tools and not quiet:
+        if not has_tools and not options.quiet:
             error_console.print(
-                f"[yellow]Warning: Model '{RAI_CONFIG['model']}' may not support tools. "
-                "Text-only mode."
+                f"[yellow]Warning: Model '{RAI_CONFIG['model']}'"
+                + "may not support tools. Text-only mode."
             )
 
-    agent = setup_agent(
+    agent, startup_messages = setup_agent(
         enable_tools=has_tools,
-        quiet=quiet,
-        json_output=json_output,
+        quiet=options.quiet,
     )
 
-    is_pipe = not sys.stdin.isatty()
-
-    if not prompt and is_pipe:
-        prompt = sys.stdin.read()
-        quiet = True
-
-    if prompt:
-        non_interactive = True
+    if options.prompt:
         run_single_query(
             agent,
-            prompt,
-            no_markdown=no_markdown,
-            json_output=json_output,
-            quiet=quiet,
-            non_interactive=non_interactive,
+            options.prompt,
+            no_markdown=options.no_markdown,
+            json_output=options.json_output,
         )
     else:
-        non_interactive = False
-        signal.signal(signal.SIGWINCH, on_resize)
-        on_resize(None, None)  # Set initial size
-        run_interactive_chat(
-            agent,
-            no_markdown=no_markdown,
-            json_output=json_output,
-            quiet=quiet,
-            non_interactive=non_interactive,
-        )
+        for msg in startup_messages:
+            console.print(Panel(msg, border_style="yellow"))
+        await run_interactive_chat(agent, options.quiet, options.no_markdown, options.no_stream)
 
 if __name__ == "__main__":
     main()  # pylint: disable=no-value-for-parameter

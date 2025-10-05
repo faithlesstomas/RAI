@@ -97,18 +97,17 @@ This project evolved through interactions with an AI model (Gemini). Below are t
     *   [ ] **Code Modularization:** Splitting `rai` into smaller, more manageable modules (e.g., `commands/`, `config/`, `utils/`) as the project grows.
     *   [x] **Multi-API/Model Support:** Extending Agno to access other APIs (e.g., Gemini API) and easily switch between them.
     *   [ ] **Multi-Interface Development (CLI, TUI, Web-UI):**
-        *   [x] **Retain existing CLI (`rai` command):** Maintain the current command-line interface for scripting and simple interactions.
-            *   **Status:** Improved.
+        *   [x] **Refactor and Simplify CLI (`rai` command):** Refactor the CLI for a more minimalist, performant, and script-friendly experience.
+            *   **Status:** Mostly complete.
             *   **Done:**
-                *   Added `--version`, `--json`, `--quiet` options.
+                *   Implemented a full `asyncio`-based architecture for improved performance and responsiveness.
+                *   Simplified interactive mode, focusing on a clean prompt over rich (but complex) UI features like toolbars.
+                *   Added `--version`, `--json`, `--quiet`, `--no-stream` options.
                 *   Redirected informational messages to `stderr`.
-                *   Implemented minimalist user prompt (`> `) in interactive chat.
-                *   Removed redundant prompt echo.
-                *   Removed "AI Assistant:" prefix for AI responses.
                 *   Implemented a new command structure for configuration (`--list-config`, `--get-config`, `--set-config`).
-                *   Implemented interactive commands for configuration (`/config`, `/model`, `/backend`, `/system`).
+                *   Implemented interactive commands (`/config`, `/help`, `/q`).
+                *   Implemented tab completion for slash commands using `prompt_toolkit`.
             *   **To do:**
-                *   Implement tab completion for interactive commands using `prompt_toolkit`.
                 *   Further refine output for scriptability (e.g., structured tool output in JSON mode).
         *   [ ] **Implement Text-User Interface (TUI):** Develop an interactive TUI using `Textual` (inspired by `gemini-cli`) for a richer terminal experience.
             *   **Status:** In progress (paused).
