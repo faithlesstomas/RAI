@@ -22,8 +22,6 @@ dependencies = [
     "arxiv",
     "pypdf",
     "tavily-python",
-    "pydbus",
-    "pygobject",
     "textual",
     "prompt_toolkit",
     "sqlalchemy",
@@ -36,11 +34,13 @@ openai = ["openai"]
 groq = ["groq"]
 test = ["pytest"]
 lint = ["ruff", "pylint"]
+gnome-tools = ["pydbus", "pygobject"]
 all = [
     "rai-cli[anthanthropic]",
     "rai-cli[gemini]",
     "rai-cli[openai]",
     "rai-cli[groq]",
+    "rai-cli[gnome-tools]",
 ]
 
 [project.scripts]

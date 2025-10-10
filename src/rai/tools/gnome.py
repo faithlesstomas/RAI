@@ -1,4 +1,4 @@
-"""Tools for the RAI CLI assistant."""
+"""GNOME-specific tools for the RAI CLI assistant."""
 import base64
 import datetime
 import json

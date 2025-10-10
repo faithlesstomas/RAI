@@ -40,7 +40,6 @@ from rich.console import Console
 from rich.markdown import Markdown
 from rich.panel import Panel
 from rich.rule import Rule
-from .tools import send_notification, take_screenshot
 
 
 
@@ -122,8 +121,6 @@ def _setup_tools(enable_tools, quiet):
     """Sets up the tools for the agent."""
     messages = []
     base_tools = [
-        send_notification,
-        take_screenshot,
         CalculatorTools(enable_all=True),
         ArxivTools(),
         WikipediaTools(),
@@ -133,6 +130,16 @@ def _setup_tools(enable_tools, quiet):
         PythonTools(),
         ShellTools(),
     ]
+
+    try:
+        from .tools.gnome import send_notification, take_screenshot, weather
+        base_tools.extend([send_notification, take_screenshot, weather])
+    except ImportError:
+        if not quiet:
+            messages.append(
+                "[bold yellow]WARNING: GNOME tools are not installed. "
+                "To enable them, run: pip install .[gnome-tools][/bold yellow]"
+            )
 
     agent_tools = []
     if enable_tools:
