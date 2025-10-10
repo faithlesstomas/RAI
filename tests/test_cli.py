@@ -14,7 +14,7 @@ def fixture_mock_console():
 @pytest.fixture(name="mock_error_console")
 def fixture_mock_error_console():
     """Fixture for mocking the rich error console."""
-    with patch('rai.cli.error_console') as mock:
+    with patch('rai.core.error_console') as mock:
         yield mock
 
 @pytest.fixture(name="mock_agent")
@@ -26,7 +26,7 @@ def fixture_mock_agent():
 @pytest.fixture(name="mock_sys_exit")
 def fixture_mock_sys_exit():
     """Fixture for mocking sys.exit."""
-    with patch('rai.cli.sys.exit') as mock:
+    with patch('rai.core.sys.exit') as mock:
         yield mock
 
 @pytest.fixture(name="mock_os_getenv")
@@ -63,16 +63,15 @@ class TestSetupAgent:
 
     """Tests for the setup_agent function."""
 
-    @patch('rai.cli._setup_tools')
-    @patch('rai.cli._setup_model')
-
-    def test_setup_agent_logic(self, mock_setup_model, mock_setup_tools, mock_load_dotenv, mock_agent):
+    @patch('rai.core.Agent', spec=Agent)
+    @patch('rai.core._setup_model')
+    @patch('rai.core._setup_tools')
+    def test_setup_agent_logic(self, mock_setup_tools, mock_setup_model, mock_agent, mock_load_dotenv):
         """Test the core logic of agent setup."""
-
         mock_setup_model.return_value = (MagicMock(), [])
         mock_setup_tools.return_value = ([], [])
 
-        with patch.dict('rai.cli.RAI_CONFIG', {
+        with patch.dict('rai.core.RAI_CONFIG', {
             'backend': 'ollama',
             'model': 'test_model',
             'system': 'test prompt'
@@ -85,17 +84,18 @@ class TestSetupAgent:
         assert agent is not None
         assert isinstance(messages, list)
 
-    @patch('rai.cli.Agent', side_effect=Exception("General error"))
-    @patch('rai.cli._setup_tools')
-    @patch('rai.cli._setup_model')
+    @patch('rai.core.sys.exit')
+    @patch('rai.core.Agent', side_effect=Exception("General error"))
+    @patch('rai.core._setup_tools')
+    @patch('rai.core._setup_model')
     def test_setup_agent_exception(self, mock_setup_model, mock_setup_tools,
-                                   mock_agent_ctor, mock_load_dotenv, mock_error_console, mock_sys_exit):
+                                   mock_agent_ctor, mock_sys_exit, mock_load_dotenv, mock_error_console):
         """Test handling of a general exception during agent initialization."""
 
         mock_setup_model.return_value = (MagicMock(), [])
         mock_setup_tools.return_value = ([], [])
 
-        with patch.dict('rai.cli.RAI_CONFIG', {
+        with patch.dict('rai.core.RAI_CONFIG', {
             'backend': 'ollama',
             'model': 'test_model',
             'system': 'test prompt'

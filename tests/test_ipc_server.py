@@ -5,36 +5,46 @@ import os
 import socket
 import time
 from multiprocessing import Process
-from unittest.mock import patch, AsyncMock
+from unittest.mock import patch, AsyncMock, MagicMock
 
 import pytest
 
 # Since tests are run from the root, we can import the server module
 from rai.ipc_server import run_ipc_server, SOCKET_FILE
 
+IPC_SERVER_START_TIMEOUT = 5  # seconds
+
 
 @pytest.fixture
 def ipc_server():
     """A pytest fixture to run the IPC server in a background process."""
     # Run the server in test mode
-    server_process = Process(target=run_ipc_server, args=(True,))
-    server_process.start()
+    with patch('rai.ipc_server.setup_agent') as mock_setup_agent:
+        mock_agent = AsyncMock()
+        mock_response = MagicMock()
+        mock_response.content = "This is a mocked AI response."
+        mock_response.tool_calls = None
+        mock_agent.arun.return_value = mock_response
+        mock_setup_agent.return_value = (mock_agent, [])
+        with patch('rai.core.sys.exit') as mock_exit:
+            server_process = Process(target=run_ipc_server, args=(True,))
+            server_process.start()
 
-    # Wait for the server to start and the socket file to be created
-    start_time = time.time()
-    while not os.path.exists(SOCKET_FILE):
-        if time.time() - start_time > 5: # 5-second timeout
+            # Wait for the server to start and the socket file to be created
+            start_time = time.time()
+            while not os.path.exists(SOCKET_FILE):
+                if time.time() - start_time > IPC_SERVER_START_TIMEOUT:
+                    server_process.terminate()
+                    raise TimeoutError("IPC server failed to start in time.")
+                time.sleep(0.1)
+
+            yield mock_exit, mock_setup_agent # This is where the test runs
+
+            # Teardown: stop the server process
             server_process.terminate()
-            raise TimeoutError("IPC server failed to start in time.")
-        time.sleep(0.1)
-
-    yield # This is where the test runs
-
-    # Teardown: stop the server process
-    server_process.terminate()
-    server_process.join()
-    if os.path.exists(SOCKET_FILE):
-        os.remove(SOCKET_FILE)
+            server_process.join()
+            if os.path.exists(SOCKET_FILE):
+                os.remove(SOCKET_FILE)
 
 
 def run_client_request(request_obj):
@@ -144,7 +154,7 @@ def test_server_with_custom_config(tmp_path):
         # Wait for the server to start
         start_time = time.time()
         while not os.path.exists(SOCKET_FILE):
-            if time.time() - start_time > 5:
+            if time.time() - start_time > IPC_SERVER_START_TIMEOUT:
                 raise TimeoutError("IPC server (custom config) failed to start in time.")
             time.sleep(0.1)
 
