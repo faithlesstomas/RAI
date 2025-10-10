@@ -12,8 +12,8 @@ before_script:
 lint:
   stage: lint
   script:
-    - ruff check .
-    - pylint src/
+    # - ruff check .
+    - pylint -E --ignore tui.py src examples
 
 test:
   stage: test

@@ -59,10 +59,9 @@ def _setup_tools(enable_tools: bool, quiet: bool) -> Tuple[List[Any], List[str]]
     ]
 
     # pylint: disable=import-outside-toplevel
-    # noqa: PLC0415, C0415
-    # noqa: PLC0415, C0415
     try:
-        from .tools.gnome import send_notification, take_screenshot, weather
+        from .tools.gnome import send_notification, take_screenshot, weather # noqa: PLC0415, C0415
+
         base_tools.extend([send_notification, take_screenshot, weather])
     except ImportError:
         if not quiet:
@@ -135,8 +134,11 @@ def setup_agent(
     enable_tools: bool = True, quiet: bool = False, use_markdown: bool = True,
     session_id: Optional[str] = "my_chat_session",
 ) -> Tuple[Agent, List[str]]:
-    """Initializes the Agno agent, setting the model, prompt, and tools."""
+    """Initializes the Agno agent, setting the model, prompt, and tools.
+    """
+
     load_dotenv()
+
     backend = RAI_CONFIG.get("backend")
     model_id = RAI_CONFIG.get("model")
     system_prompt = RAI_CONFIG.get("system")
@@ -154,6 +156,7 @@ def setup_agent(
                 auto_upgrade_schema=True,
             ),
             session_id=session_id, instructions=system_prompt,
+            telemetry=False,
         )
         return agent, messages
     except ImportError as e:

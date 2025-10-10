@@ -29,6 +29,9 @@ from .core import (
     RAI_CONFIG, console, error_console, load_config, save_config, setup_agent
 )
 
+from .ipc_server import run_ipc_server
+
+
 # --- Constants ---
 MIN_RENAME_ARGS = 2
 MIN_SET_CONFIG_ARGS = 2
@@ -609,11 +612,9 @@ def serve_ipc(ctx: click.Context):
     # noqa: PLC0415, C0415
     # noqa: PLC0415, C0415
     # noqa: PLC0415, C0415
-    from .ipc_server import run_ipc_server
     config_path = ctx.obj.get('config_path')
     run_ipc_server(config_path=config_path)
 
 
 if __name__ == "__main__":
-    cli(obj={})
-
+    cli(obj={})  # pylint: disable=no-value-for-parameter
