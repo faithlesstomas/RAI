@@ -34,6 +34,7 @@ anthropic = ["anthropic"]
 gemini = ["google-generativeai"]
 openai = ["openai"]
 groq = ["groq"]
+test = ["pytest"]
 all = [
     "rai-cli[anthanthropic]",
     "rai-cli[gemini]",

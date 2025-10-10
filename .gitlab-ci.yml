@@ -1,0 +1,22 @@
+
+image: python:3.11
+
+stages:
+  - lint
+  - test
+
+before_script:
+  - python -m venv .venv
+  - source .venv/bin/activate
+  - pip install -e .[test]
+
+lint:
+  stage: lint
+  script:
+    - ruff check .
+    - pylint src/
+
+test:
+  stage: test
+  script:
+    - pytest

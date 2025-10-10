@@ -9,13 +9,16 @@ It provides rich console output using the `rich` library and visualizes tool cal
 *   **Multi-Backend Support:** Supports multiple AI backends (Ollama, Gemini, Anthropic, OpenAI, Groq).
 *   **Streaming Responses:** AI responses are streamed in real-time, improving responsiveness.
 *   **Tool Call Visualization:** Agno tool calls (e.g., calculator, web search) are clearly displayed in panels, allowing you to monitor the agent's thought process.
+*   **Session Management:** Full support for creating, switching, renaming, and deleting chat sessions.
+*   **Flexible Configuration:** Manage application settings via CLI commands (`rai config set ...`) or a custom JSON file (`--config path/to/config.json`).
+*   **IPC Server:** Run `rai` as a background server (`rai serve-ipc`) to allow other applications to interact with the agent.
 *   **Integrated Toolkits:** Supports various Agno toolkits, such as:
     *   `CalculatorTools`
     *   `ArxivTools`
     *   `WikipediaTools`
     *   `TavilyTools` (requires API key)
 *   **Rich Console Output:** Uses the `rich` library for coloring, formatting, and structuring output.
-*   **Configuration Management:** Allows setting default model, backend, and system prompt via CLI options.
+*   **Advanced Interactive Prompt:** Features persistent history, auto-suggestions, and dynamic tab-completion for commands and arguments.
 
 ## Installation and Usage
 
@@ -57,14 +60,23 @@ rai [OPTIONS] [PROMPT]
 *   **PROMPT:** If you provide a prompt, the script will execute a single query.
 *   **No PROMPT:** If you don't provide a prompt, the script will start in interactive chat mode.
 
-#### Options
+#### Global Options
 
-*   `-s, --system TEXT`: Defines the system prompt for the AI.
-*   `-m, --model TEXT`: ID of the model to use.
-*   `-b, --backend TEXT`: The LLM backend to use.
-*   `--list-config`: List all configuration parameters.
-*   `--get-config TEXT`: Get a configuration parameter.
-*   `--set-config TEXT`: Set a configuration parameter (KEY=VALUE).
+*   `-s, --system TEXT`: Defines the system prompt for the AI for the current run.
+*   `-m, --model TEXT`: ID of the model to use for the current run.
+*   `-b, --backend TEXT`: The LLM backend to use (e.g., `ollama`, `gemini`).
+*   `--session TEXT`: Switch to a specific session for the current run.
+*   `--config TEXT`: Path to a custom configuration file.
+*   `--no-markdown`: Disable Markdown rendering for LLM responses.
+*   `--json-output`: Output the final response as a JSON object.
+*   `--stream / --no-stream`: Force streaming or non-streaming mode.
+*   `--quiet`: Suppress informational messages.
+
+#### Commands
+
+*   `rai config [show|set|get]`: Manage application configuration.
+*   `rai session [list|show|switch|delete|rename]`: Manage chat sessions.
+*   `rai serve-ipc`: Start the Inter-Process Communication (IPC) server.
 
 #### Examples
 
@@ -78,7 +90,7 @@ rai -m qwen3:20b "What's the weather like in Warsaw today?"
 ```bash
 rai
 ```
-In chat mode, type `/help` for a list of commands.
+In chat mode, type `/` and press `Tab` for a list of commands.
 
 ## Development Plan (Discussion History)
 
@@ -98,39 +110,27 @@ This project evolved through interactions with an AI model (Gemini). Below are t
     *   [x] **Multi-API/Model Support:** Extending Agno to access other APIs (e.g., Gemini API) and easily switch between them.
     *   [ ] **Multi-Interface Development (CLI, TUI, Web-UI):**
         *   [x] **Refactor and Simplify CLI (`rai` command):** Refactor the CLI for a more minimalist, performant, and script-friendly experience.
-            *   **Status:** Mostly complete.
+            *   **Status:** Complete.
             *   **Done:**
-                *   Implemented a full `asyncio`-based architecture for improved performance and responsiveness.
-                *   Simplified interactive mode, focusing on a clean prompt over rich (but complex) UI features like toolbars.
-                *   Added `--version`, `--json`, `--quiet`, `--no-stream` options.
+                *   Implemented a full `asyncio`-based architecture.
+                *   Simplified interactive mode, focusing on a clean prompt.
+                *   Added global options (`--version`, `--json`, `--quiet`, `--no-stream`, etc.).
                 *   Redirected informational messages to `stderr`.
-                *   Implemented a new command structure for configuration (`--list-config`, `--get-config`, `--set-config`).
-                *   Implemented interactive commands (`/config`, `/help`, `/q`).
-                *   Implemented tab completion for slash commands using `prompt_toolkit`.
-            *   **To do:**
-                *   Further refine output for scriptability (e.g., structured tool output in JSON mode).
-        *   [ ] **Implement Text-User Interface (TUI):** Develop an interactive TUI using `Textual` (inspired by `gemini-cli`) for a richer terminal experience.
-            *   **Status:** In progress (paused).
-            *   **Done:**
-                *   Basic layout (header, chat area, input field, status bar).
-                *   Dynamic status bar (displays model, backend, tool status).
-                *   Automatic detection of tool support for Ollama models.
-                *   Configuration screen (changing model, backend, system prompt without restart).
-                *   Unified and improved message styling (dimmed user messages, no redundant prefixes, no `---` separators).
-                *   Attempt to add a processing indicator (`LoadingIndicator`).
-            *   **To do:**
-                *   Fix visibility and functionality of the processing indicator (`LoadingIndicator`).
-                *   Further improvements to chat readability and aesthetics (e.g., more advanced styling of message blocks).
-                *   Implement multi-line text input.
-                *   Improve overall TUI layout and responsiveness.
-        *   [ ] **Future Web User Interface (Web-UI):** Explore the possibility of a web-based interface for broader accessibility.
+                *   Implemented a robust command structure for configuration (`rai config ...`) and sessions (`rai session ...`).
+                *   Implemented interactive slash commands (`/config`, `/session`, `/help`, `/q`).
+                *   Implemented advanced tab completion using `prompt_toolkit`.
+        *   [ ] **Implement Text-User Interface (TUI):** Develop an interactive TUI using `Textual`.
+            *   **Status:** Paused. Development is frozen for now.
+        *   [ ] **Future Web User Interface (Web-UI):** Explore the possibility of a web-based interface.
     *   [ ] **Advanced TUI/CLI Modes:**
         *   [ ] **Coding Assistant Mode:** Simple text editor integrated with Git (plus chat in a hideable sidebar).
         *   [ ] **Critic/Commentator Mode:** Assistant that comments and advises in real-time chat but cannot modify code.
-    *   [ ] **IPython/Jupyter Integration:** Create an IPython extension that provides AI assistance via "magic" commands (e.g., `%rai` and `%%rai`). This would allow using the assistant within a powerful, full-featured Python REPL.
+    *   [ ] **IPython/Jupyter Integration:** Create an IPython extension that provides AI assistance via "magic" commands (e.g., `%rai` and `%%rai`).
+    *   [ ] **IPC Server Enhancements:**
+        *   [ ] Add more commands and capabilities to the IPC server.
+        *   [ ] Create more detailed documentation and examples for using the IPC server.
     *   [ ] **Improved Error Handling:** More detailed and user-friendly error messages.
-    *   [ ] **Conversation Context Management:** More advanced mechanisms for managing chat history for longer and more complex interactions.
-    
+    *   [ ] **Conversation Context Management:** More advanced mechanisms for managing chat history.
 
 ### Sources for inspiration in project dev:
 * rich-cli: https://github.com/Textualize/rich-cli

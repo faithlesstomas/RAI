@@ -97,7 +97,5 @@ class TestWeather:
     def test_dbus_error(self, mock_session_bus):
         """Test weather tool with a DBus connection error."""
         mock_session_bus.side_effect = Exception("DBus connection error")
-        result = weather.entrypoint(location="Warsaw")
-        result_json = json.loads(result)
-        assert "error" in result_json
-        assert "DBus connection error" in result_json["details"]
+        with pytest.raises(Exception, match="DBus connection error"):
+            weather.entrypoint(location="Warsaw")

@@ -1,5 +1,5 @@
 """
-rai - Rich AI CLI assistant - ASYNC version
+rai - Rich AI CLI assistant
 """
 
 import asyncio
@@ -11,10 +11,9 @@ import sys
 from dataclasses import dataclass
 from typing import Optional
 
-
-
 import click
 import ollama
+
 from agno.agent import Agent
 from agno.storage.sqlite import SqliteStorage
 from agno.tools.arxiv import ArxivTools
@@ -26,12 +25,17 @@ from agno.tools.shell import ShellTools
 from agno.tools.tavily import TavilyTools
 from agno.tools.webbrowser import WebBrowserTools
 from agno.tools.wikipedia import WikipediaTools
+
 from dotenv import load_dotenv
 from ollama import ResponseError
+
 from prompt_toolkit import PromptSession
 from prompt_toolkit.auto_suggest import AutoSuggestFromHistory
 from prompt_toolkit.completion import NestedCompleter, WordCompleter
 from prompt_toolkit.history import FileHistory
+from prompt_toolkit.key_binding import KeyBindings
+from prompt_toolkit.keys import Keys
+
 from rich.console import Console
 from rich.markdown import Markdown
 from rich.panel import Panel
@@ -51,21 +55,21 @@ class CliOptions:  # pylint: disable=too-many-instance-attributes
     no_markdown: bool = False
     json_output: bool = False
     quiet: bool = False
-
     stream: bool = False
     session_override: Optional[str] = None
+    config_path: Optional[str] = None
 
 
 console = Console(record=True)
 error_console = Console(stderr=True)
 
 CONFIG_DIR = os.path.expanduser("~/.config/rai")
-CONFIG_FILE = os.path.join(CONFIG_DIR, "config.json")
+DEFAULT_CONFIG_FILE = os.path.join(CONFIG_DIR, "config.json")
 RAI_CONFIG = {}
 
-def _build_completer():
+def _build_completer(config_path: Optional[str] = None):
     """Builds a nested completer for interactive slash commands."""
-    app_config = load_config()
+    app_config = load_config(path=config_path)
     session_names = list(app_config.get("sessions", {}).keys())
 
     # Use WordCompleter for dynamic parts
@@ -95,19 +99,23 @@ def _build_completer():
 
 
 # --- Configuration ---
-def load_config():
-    """Loads the configuration from the config file."""
-    if not os.path.exists(CONFIG_FILE):
+def load_config(path: Optional[str] = None) -> dict:
+    """Loads the configuration from the given path or the default config file."""
+    config_file = path or DEFAULT_CONFIG_FILE
+    if not os.path.exists(config_file):
         return {}  # pylint: disable=unhashable-member
-    with open(CONFIG_FILE, "r", encoding="utf-8") as f:
+    with open(config_file, "r", encoding="utf-8") as f:
         return json.load(f)
 
 
-def save_config(config_data: dict):
-    """Saves the provided configuration data to the config file."""
-    os.makedirs(CONFIG_DIR, exist_ok=True)
-    with open(CONFIG_FILE, "w", encoding="utf-8") as f:
+def save_config(config_data: dict, path: Optional[str] = None):
+    """Saves the provided configuration data to the given path or the default file."""
+    config_file = path or DEFAULT_CONFIG_FILE
+    config_dir = os.path.dirname(config_file)
+    os.makedirs(config_dir, exist_ok=True)
+    with open(config_file, "w", encoding="utf-8") as f:
         json.dump(config_data, f, indent=2)
+
 
 
 def _setup_tools(enable_tools, quiet):
@@ -458,6 +466,29 @@ async def _handle_non_stream_response(agent, user_input, no_markdown):
 
 # --- Async Interactive Application ---
 # --- Interactive Mode ---
+def create_key_bindings():
+    """Creates custom key bindings for the prompt."""
+    kb = KeyBindings()
+
+    @kb.add(Keys.Tab)
+    def _(event):
+        b = event.app.current_buffer
+        # if b.suggestion and b.cursor_position == len(b.text):
+        if b.suggestion:
+            # If there's a suggestion and the cursor is at the end of the line,
+            # accept the suggestion.
+            b.insert_text(b.suggestion.text)
+        else:
+            # If completions are already active, cycle through them.
+            if b.complete_state:
+                b.complete_next()
+            else:
+                # Otherwise, start completion.
+                b.start_completion(select_first=True)
+
+    return kb
+
+
 async def run_interactive_chat(agent, quiet: bool, stream: bool, no_markdown_flag: bool):
     """Runs the main interactive chat loop."""
     if not quiet:
@@ -474,6 +505,7 @@ async def run_interactive_chat(agent, quiet: bool, stream: bool, no_markdown_fla
         completer=_build_completer(),
         complete_while_typing=True,
         auto_suggest=AutoSuggestFromHistory(),
+        key_bindings=create_key_bindings(),
     )
 
     while True:
@@ -517,6 +549,13 @@ async def run_interactive_chat(agent, quiet: bool, stream: bool, no_markdown_fla
     type=click.Choice(["ollama", "gemini", "anthropic", "openai", "groq"]),
 )
 @click.option(
+    "--config",
+    "config_path",
+    default=None,
+    help="Path to a custom configuration file.",
+    type=click.Path(exists=True, dir_okay=False, resolve_path=True),
+)
+@click.option(
     "--no-markdown", is_flag=True, help="Disable Markdown rendering for LLM responses."
 )
 @click.option("--json", "json_output", is_flag=True, help="Output in JSON format.")
@@ -535,6 +574,7 @@ async def run_interactive_chat(agent, quiet: bool, stream: bool, no_markdown_fla
 @click.pass_context
 def cli(ctx, **kwargs):
     """AI assistant in the command line with tool support."""
+    ctx.obj = kwargs  # Initialize context object with all options
     # If a subcommand is invoked (like 'session', 'config'), let it handle execution.
     if ctx.invoked_subcommand is not None:
         return
@@ -573,7 +613,7 @@ def _initialize_ollama_check(model_id: str, quiet: bool) -> bool:
 
 async def async_main(options: CliOptions):
     """The actual async logic of the application."""
-    app_config = load_config()
+    app_config = load_config(path=options.config_path)
 
     # --- New Session and Configuration Logic ---
     session_to_use = "default"
@@ -591,10 +631,11 @@ async def async_main(options: CliOptions):
             "backend": "ollama",
             "system": "You are a versatile and helpful AI assistant.",
         }
-        save_config(app_config)  # Save the app_config since we added a new session
+        save_config(app_config, path=options.config_path)  # Save the app_config since we added a new session
 
     # Get the configuration for the session we're using for this run
     session_config = app_config["sessions"][session_to_use]
+
 
     # Prioritize CLI options > session config
     RAI_CONFIG["model"] = options.model or session_config.get("model")
@@ -907,6 +948,17 @@ def _get_config_logic(key: str):
 def get_config(key):
     """Gets a configuration value from the active session."""
     _get_config_logic(key)
+
+
+@cli.command(name="serve-ipc")
+@click.pass_context
+def serve_ipc(ctx):
+    """
+    Runs the IPC server to allow other processes to interact with the AI agent.
+    """
+    from .ipc_server import run_ipc_server
+    config_path = ctx.obj.get('config_path')
+    run_ipc_server(config_path=config_path)
 
 
 if __name__ == "__main__":
