@@ -35,6 +35,7 @@ gemini = ["google-generativeai"]
 openai = ["openai"]
 groq = ["groq"]
 test = ["pytest"]
+lint = ["ruff", "pylint"]
 all = [
     "rai-cli[anthanthropic]",
     "rai-cli[gemini]",
