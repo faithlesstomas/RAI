@@ -7,3 +7,8 @@ __pycache__/
 # Emacs
 *~
 *#
+.#*
+
+# misc
+.env
+tmp/

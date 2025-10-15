@@ -24,6 +24,7 @@ from prompt_toolkit.keys import Keys
 from rich.markdown import Markdown
 from rich.panel import Panel
 from rich.rule import Rule
+from agno.utils.log import logger # Import logger
 
 from .core import (
     RAI_CONFIG, console, error_console, load_config, save_config, setup_agent
@@ -50,6 +51,7 @@ class CliOptions:  # pylint: disable=too-many-instance-attributes
     stream: bool = False
     session_override: Optional[str] = None
     config_path: Optional[str] = None
+    debug: bool = False
 
 
 def _build_completer(config_path: Optional[str] = None) -> NestedCompleter:
@@ -58,7 +60,7 @@ def _build_completer(config_path: Optional[str] = None) -> NestedCompleter:
     session_names = list(app_config.get("sessions", {}).keys())
     session_name_completer = WordCompleter(session_names, ignore_case=True, match_middle=True)
     config_key_completer = WordCompleter(
-        ["model", "backend", "system"], ignore_case=True, match_middle=True
+        ["model", "backend", "system", "tools"], ignore_case=True, match_middle=True
     )
     return NestedCompleter.from_nested_dict({
         "/help": None, "/exit": None, "/quit": None, "/q": None,
@@ -320,6 +322,7 @@ def _setup_session(app_config: Dict[str, Any], options: CliOptions) -> Tuple[str
         app_config.setdefault("sessions", {})[session_to_use] = {
             "model": "gemma3:1b", "backend": "ollama",
             "system": "You are a versatile and helpful AI assistant.",
+            "tools": ["CalculatorTools", "ArxivTools", "WikipediaTools", "DuckDuckGoTools", "WebBrowserTools", "FileTools", "PythonTools", "ShellTools"],
         }
         save_config(app_config, path=options.config_path)
     return session_to_use, app_config["sessions"][session_to_use]
@@ -327,6 +330,9 @@ def _setup_session(app_config: Dict[str, Any], options: CliOptions) -> Tuple[str
 
 async def async_main(options: CliOptions):
     """The actual async logic of the application."""
+    if options.debug:
+        logger.setLevel(logging.DEBUG)
+        logging.getLogger("gitlab").setLevel(logging.DEBUG)
     app_config = load_config(path=options.config_path)
     session_to_use, session_config = _setup_session(app_config, options)
 
@@ -359,6 +365,8 @@ async def async_main(options: CliOptions):
         enable_tools=has_tools, quiet=options.quiet,
         use_markdown=use_agent_markdown, session_id=session_id,
     )
+
+    logger.debug(f"Agent tools after setup: {agent.tools}")
 
     if options.prompt:
         if is_streaming:
@@ -395,6 +403,7 @@ async def async_main(options: CliOptions):
     "--session", "session_override", default=None,
     help="Run in a specific session for this command only.",
 )
+@click.option("--debug", is_flag=True, help="Enable debug logging.")
 @click.pass_context
 def cli(ctx: click.Context, **kwargs: Any):
     """AI assistant in the command line with tool support."""
@@ -560,12 +569,15 @@ def _set_config_logic(key: str, value: str):
     if active_session not in app_config.get("sessions", {}):
         error_console.print(f"[bold red]Error: Active session '{active_session}' not found.[/bold red]")
         return
-    allowed_keys = ["model", "backend", "system"]
+    allowed_keys = ["model", "backend", "system", "tools"]
     if key not in allowed_keys:
         error_console.print(f"[bold red]Error: Invalid configuration key '{key}'.[/bold red]")
         error_console.print(f"Allowed keys are: {', '.join(allowed_keys)}")
         return
-    app_config["sessions"][active_session][key] = value
+    if key == "tools":
+        app_config["sessions"][active_session][key] = [t.strip() for t in value.split(",")]
+    else:
+        app_config["sessions"][active_session][key] = value
     save_config(app_config)
     console.print(
         f"In session '[cyan]{active_session}[/cyan]', set '[bold]{key}[/bold]' to "

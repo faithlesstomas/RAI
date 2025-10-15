@@ -25,6 +25,7 @@ dependencies = [
     "textual",
     "prompt_toolkit",
     "sqlalchemy",
+    "python-gitlab",
 ]
 
 [project.optional-dependencies]

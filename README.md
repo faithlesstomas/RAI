@@ -108,6 +108,7 @@ This project evolved through interactions with an AI model (Gemini). Below are t
 4.  **Further Development Ideas (Future Directions):**
     *   [ ] **Code Modularization:** Splitting `rai` into smaller, more manageable modules (e.g., `commands/`, `config/`, `utils/`) as the project grows.
     *   [x] **Multi-API/Model Support:** Extending Agno to access other APIs (e.g., Gemini API) and easily switch between them.
+    *   [x] **Add `GitlabTools`:** Implement tools for interacting with the GitLab API.
     *   [ ] **Multi-Interface Development (CLI, TUI, Web-UI):**
         *   [x] **Refactor and Simplify CLI (`rai` command):** Refactor the CLI for a more minimalist, performant, and script-friendly experience.
             *   **Status:** Complete.
@@ -129,7 +130,9 @@ This project evolved through interactions with an AI model (Gemini). Below are t
     *   [ ] **IPC Server Enhancements:**
         *   [ ] Add more commands and capabilities to the IPC server.
         *   [ ] Create more detailed documentation and examples for using the IPC server.
-    *   [ ] **Improved Error Handling:** More detailed and user-friendly error messages.
+    *   [x] **Improved Error Handling:** More detailed and user-friendly error messages.
+        *   Implemented `--debug` flag for detailed logging.
+        *   Added specific error handling for `GitlabTools`.
     *   [ ] **Conversation Context Management:** More advanced mechanisms for managing chat history.
 
 ### Sources for inspiration in project dev:

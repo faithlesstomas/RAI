@@ -4,6 +4,7 @@ Core components for agent setup and configuration management.
 import json
 import os
 import sys
+import logging
 from typing import Any, Dict, List, Optional, Tuple
 
 from agno.agent import Agent
@@ -17,8 +18,10 @@ from agno.tools.shell import ShellTools
 from agno.tools.tavily import TavilyTools
 from agno.tools.webbrowser import WebBrowserTools
 from agno.tools.wikipedia import WikipediaTools
+from rai.tools.gitlab import GitlabTools # Import GitlabTools
 from dotenv import load_dotenv
 from rich.console import Console
+from agno.utils.log import logger # Import logger
 
 # --- Constants ---
 CONFIG_DIR = os.path.expanduser("~/.config/rai")
@@ -50,19 +53,28 @@ def save_config(config_data: Dict[str, Any], path: Optional[str] = None):
 
 
 # --- Tool and Model Setup ---
-def _setup_tools(enable_tools: bool, quiet: bool) -> Tuple[List[Any], List[str]]:
+def _setup_tools(enable_tools: bool, quiet: bool, enabled_tool_names: Optional[List[str]] = None) -> Tuple[List[Any], List[str]]:
     """Sets up the tools for the agent."""
     messages = []
-    base_tools: List[Any] = [
-        CalculatorTools(enable_all=True), ArxivTools(), WikipediaTools(),
-        DuckDuckGoTools(), WebBrowserTools(), FileTools(), PythonTools(), ShellTools()
-    ]
+    all_available_tools: Dict[str, Any] = {
+        "CalculatorTools": CalculatorTools,
+        "ArxivTools": ArxivTools,
+        "WikipediaTools": WikipediaTools,
+        "DuckDuckGoTools": DuckDuckGoTools,
+        "WebBrowserTools": WebBrowserTools,
+        "FileTools": FileTools,
+        "PythonTools": PythonTools,
+        "ShellTools": ShellTools,
+        "GitlabTools": GitlabTools,
+        "TavilyTools": TavilyTools,
+    }
 
-    # pylint: disable=import-outside-toplevel
+    # Dynamically load GNOME tools if available
     try:
         from .tools.gnome import send_notification, take_screenshot, weather # noqa: PLC0415, C0415
-
-        base_tools.extend([send_notification, take_screenshot, weather])
+        all_available_tools["GnomeNotificationTool"] = send_notification
+        all_available_tools["GnomeScreenshotTool"] = take_screenshot
+        all_available_tools["GnomeWeatherTool"] = weather
     except ImportError:
         if not quiet:
             messages.append(
@@ -70,17 +82,51 @@ def _setup_tools(enable_tools: bool, quiet: bool) -> Tuple[List[Any], List[str]]
                 "To enable them, run: pip install .[gnome-tools][/bold yellow]"
             )
 
-    agent_tools = []
+    agent_tools: List[Any] = []
     if enable_tools:
-        if os.getenv("TAVILY_API_KEY"):
-            agent_tools = base_tools + [TavilyTools()]
-        else:
-            agent_tools = base_tools
-            if not quiet and not RAI_CONFIG.get("prompt"):
-                messages.append(
-                    "[bold yellow]WARNING: Missing TAVILY_API_KEY env variable. "
-                    "Tavily will be disabled![/bold yellow]"
-                )
+        tools_to_enable = enabled_tool_names if enabled_tool_names is not None else all_available_tools.keys()
+
+        for tool_name in tools_to_enable:
+            if tool_name not in all_available_tools:
+                if not quiet:
+                    messages.append(f"[bold yellow]WARNING: Unknown tool '{tool_name}' specified in configuration. Skipping.[/bold yellow]")
+                continue
+
+            tool_class = all_available_tools[tool_name]
+            logger.debug(f"Processing tool: {tool_name}")
+
+            # Special handling for tools requiring API keys
+            tools_with_api_keys = {
+                "TavilyTools": ["TAVILY_API_KEY"],
+                "GitlabTools": ["GITLAB_ACCESS_TOKEN"],
+            }
+
+            if tool_name in tools_with_api_keys:
+                required_vars = tools_with_api_keys[tool_name]
+                if all(os.getenv(var) for var in required_vars):
+                    logger.debug(f"{', '.join(required_vars)} found. Attempting to enable {tool_name}.")
+                    try:
+                        agent_tools.append(tool_class())
+                        logger.debug(f"{tool_name} successfully enabled.")
+                    except ValueError as e:
+                        if not quiet:
+                            messages.append(f"[bold yellow]WARNING: {tool_name} disabled due to configuration error: {e}[/bold yellow]")
+                        logger.debug(f"{tool_name} disabled due to configuration error: {e}")
+                else:
+                    if not quiet and not RAI_CONFIG.get("prompt"):
+                        messages.append(
+                            f"[bold yellow]WARNING: Missing {' or '.join(required_vars)} env variable(s). "
+                            f"{tool_name} will be disabled![/bold yellow]"
+                        )
+                    logger.debug(f"{' or '.join(required_vars)} not found. Disabling {tool_name}.")
+            # Handle GNOME tools which are functions, not classes
+            elif tool_name in ["GnomeNotificationTool", "GnomeScreenshotTool", "GnomeWeatherTool"]:
+                # These are already functions, just append them
+                agent_tools.append(tool_class)
+            else:
+                # For other tools, just instantiate them
+                agent_tools.append(tool_class())
+
     return agent_tools, messages
 
 
@@ -142,9 +188,10 @@ def setup_agent(
     backend = RAI_CONFIG.get("backend")
     model_id = RAI_CONFIG.get("model")
     system_prompt = RAI_CONFIG.get("system")
+    enabled_tool_names = RAI_CONFIG.get("tools")
 
     model_instance, messages = _setup_model(backend, model_id, quiet)
-    agent_tools, tool_messages = _setup_tools(enable_tools, quiet)
+    agent_tools, tool_messages = _setup_tools(enable_tools, quiet, enabled_tool_names)
     messages.extend(tool_messages)
 
     try:
