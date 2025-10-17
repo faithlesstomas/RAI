@@ -29,13 +29,14 @@ from agno.utils.log import logger # Import logger
 from .core import (
     RAI_CONFIG, console, error_console, load_config, save_config, setup_agent
 )
-
 from .ipc_server import run_ipc_server
+from .tts import TTS, resolve_voice_path
 
 
 # --- Constants ---
 MIN_RENAME_ARGS = 2
 MIN_SET_CONFIG_ARGS = 2
+DEFAULT_TTS_DATA_DIR = os.path.expanduser("~/.local/share/rai/piper_voices")
 
 
 @dataclass
@@ -52,6 +53,19 @@ class CliOptions:  # pylint: disable=too-many-instance-attributes
     session_override: Optional[str] = None
     config_path: Optional[str] = None
     debug: bool = False
+    tts_voice_id: Optional[str] = None
+
+
+async def _cancel_active_tts_task():
+    """Safely cancels the currently active TTS task."""
+    active_task = RAI_CONFIG.get('active_tts_task')
+    if active_task and not active_task.done():
+        console.print("[dim]Cancelling previous speech...[/dim]")
+        active_task.cancel()
+        try:
+            await active_task
+        except asyncio.CancelledError:
+            pass  # Cancellation is expected
 
 
 def _build_completer(config_path: Optional[str] = None) -> NestedCompleter:
@@ -60,7 +74,9 @@ def _build_completer(config_path: Optional[str] = None) -> NestedCompleter:
     session_names = list(app_config.get("sessions", {}).keys())
     session_name_completer = WordCompleter(session_names, ignore_case=True, match_middle=True)
     config_key_completer = WordCompleter(
-        ["model", "backend", "system", "tools"], ignore_case=True, match_middle=True
+        ["model", "backend", "system", "tools", "tts.data_dir", "tts.default_voice"],
+        ignore_case=True,
+        match_middle=True
     )
     return NestedCompleter.from_nested_dict({
         "/help": None, "/exit": None, "/quit": None, "/q": None,
@@ -187,8 +203,9 @@ def _handle_slash_command(user_input: str) -> bool:
 
 
 # --- Response Handling ---
-async def _handle_stream_response(agent: Agent, user_input: str):
+async def _handle_stream_response(agent: Agent, user_input: str, tts_instance: Optional[TTS] = None):
     """Handles the streaming response from the agent."""
+    full_response = ""
     try:
         response_content_streamed = False
         response_iterator = await agent.arun(user_input, stream=True)
@@ -206,6 +223,7 @@ async def _handle_stream_response(agent: Agent, user_input: str):
             if first_event.content:
                 response_content_streamed = True
                 console.print(first_event.content, end="")
+                full_response += first_event.content
 
         async for event in response_iterator:
             if hasattr(event, "tool_calls") and event.tool_calls:
@@ -214,14 +232,22 @@ async def _handle_stream_response(agent: Agent, user_input: str):
             if event.content:
                 response_content_streamed = True
                 console.print(event.content, end="")
+                full_response += event.content
 
         if response_content_streamed:
             console.print()
+
+        if tts_instance and full_response:
+            await _cancel_active_tts_task()
+            console.print("[dim]Synthesizing speech in the background...[/dim]")
+            new_task = asyncio.create_task(tts_instance.synthesize(full_response))
+            RAI_CONFIG["active_tts_task"] = new_task
+
     except Exception as e:
         error_console.print(f"[bold red]An error occurred during agent execution:[/bold red]\n{e}")
 
 
-async def _handle_non_stream_response(agent: Agent, user_input: str, no_markdown: bool):
+async def _handle_non_stream_response(agent: Agent, user_input: str, no_markdown: bool, tts_instance: Optional[TTS] = None):
     """Handles the non-streaming response from the agent."""
     log_capture_string = io.StringIO()
     log_handler = logging.StreamHandler(log_capture_string)
@@ -244,6 +270,11 @@ async def _handle_non_stream_response(agent: Agent, user_input: str, no_markdown
 
     if response and response.content:
         console.print(Markdown(response.content) if not no_markdown else response.content)
+        if tts_instance:
+            await _cancel_active_tts_task()
+            console.print("[dim]Synthesizing speech in the background...[/dim]")
+            new_task = asyncio.create_task(tts_instance.synthesize(response.content))
+            RAI_CONFIG["active_tts_task"] = new_task
 
 
 # --- Interactive Mode ---
@@ -264,7 +295,7 @@ def create_key_bindings() -> KeyBindings:
     return kb
 
 
-async def run_interactive_chat(agent: Agent, quiet: bool, stream: bool, no_markdown_flag: bool):
+async def run_interactive_chat(agent: Agent, quiet: bool, stream: bool, no_markdown_flag: bool, tts_instance: Optional[TTS] = None):
     """Runs the main interactive chat loop."""
     if not quiet:
         console.print("**Welcome to Rich AI CLI Assistant!** Type your prompt and press Enter.")
@@ -277,23 +308,27 @@ async def run_interactive_chat(agent: Agent, quiet: bool, stream: bool, no_markd
         key_bindings=create_key_bindings(),
     )
 
-    while True:
-        try:
-            user_input = await prompt_session.prompt_async("> ")
-            if not user_input.strip():
-                continue
-            if user_input.startswith("/"):
-                if _handle_slash_command(user_input):
-                    break
-                continue
+    try:
+        while True:
+            try:
+                user_input = await prompt_session.prompt_async("> ")
+                if not user_input.strip():
+                    continue
+                if user_input.startswith("/"):
+                    if _handle_slash_command(user_input):
+                        break
+                    continue
 
-            if stream:
-                await _handle_stream_response(agent, user_input)
-            else:
-                await _handle_non_stream_response(agent, user_input, no_markdown=no_markdown_flag)
-            console.print(Rule(style="dim"))
-        except (KeyboardInterrupt, EOFError):
-            break
+                if stream:
+                    await _handle_stream_response(agent, user_input, tts_instance=tts_instance)
+                else:
+                    await _handle_non_stream_response(agent, user_input, no_markdown=no_markdown_flag, tts_instance=tts_instance)
+                console.print(Rule(style="dim"))
+            except (KeyboardInterrupt, EOFError):
+                break
+    finally:
+        await _cancel_active_tts_task()
+        
     console.print("\n[yellow]Goodbye![/yellow]")
 
 
@@ -318,14 +353,25 @@ def _initialize_ollama_check(model_id: str, quiet: bool) -> bool:
 def _setup_session(app_config: Dict[str, Any], options: CliOptions) -> Tuple[str, Dict[str, Any]]:
     """Determines the session to use and its configuration."""
     session_to_use = options.session_override or app_config.get("active_session", "default")
-    if session_to_use not in app_config.get("sessions", {}):
-        app_config.setdefault("sessions", {})[session_to_use] = {
+    sessions = app_config.setdefault("sessions", {})
+
+    # Ensure the session exists
+    if session_to_use not in sessions:
+        sessions[session_to_use] = {
             "model": "gemma3:1b", "backend": "ollama",
             "system": "You are a versatile and helpful AI assistant.",
             "tools": ["CalculatorTools", "ArxivTools", "WikipediaTools", "DuckDuckGoTools", "WebBrowserTools", "FileTools", "PythonTools", "ShellTools"],
         }
-        save_config(app_config, path=options.config_path)
-    return session_to_use, app_config["sessions"][session_to_use]
+
+    # Ensure the TTS config exists in the session
+    if "tts" not in sessions[session_to_use]:
+        sessions[session_to_use]["tts"] = {
+            "data_dir": DEFAULT_TTS_DATA_DIR,
+            "default_voice": "pl_PL-gosia-medium",
+        }
+
+    save_config(app_config, path=options.config_path)
+    return session_to_use, sessions[session_to_use]
 
 
 async def async_main(options: CliOptions):
@@ -342,6 +388,35 @@ async def async_main(options: CliOptions):
         "system": options.system or session_config.get("system"),
         "prompt": options.prompt,
     })
+
+    # --- TTS Setup ---
+    tts_instance = None
+    RAI_CONFIG["active_tts_task"] = None
+    if options.tts_voice_id:
+        console.print("[dim][TTS Debug] --tts flag detected.[/dim]")
+        tts_config = session_config.get("tts", {})
+        data_dir = tts_config.get("data_dir", DEFAULT_TTS_DATA_DIR)
+        console.print(f"[dim][TTS Debug] Using data_dir: {data_dir}[/dim]")
+
+        # Ensure the data directory exists
+        os.makedirs(data_dir, exist_ok=True)
+
+        voice_id_to_use = options.tts_voice_id
+        if voice_id_to_use == "_default_":
+            voice_id_to_use = tts_config.get("default_voice")
+            console.print(f"[dim][TTS Debug] Using default voice_id: {voice_id_to_use}[/dim]")
+
+        if voice_id_to_use:
+            console.print(f"[dim][TTS Debug] Resolving voice_id: {voice_id_to_use}[/dim]")
+            model_path = resolve_voice_path(voice_id_to_use, data_dir)
+            if model_path:
+                console.print(f"[dim][TTS Debug] Model path resolved: {model_path}[/dim]")
+                tts_instance = TTS(model_path)
+            else:
+                error_console.print(f"[red]TTS Error: Could not resolve voice '{voice_id_to_use}'.[/red]")
+        else:
+            error_console.print("[red]TTS Error: --tts flag used, but no default voice is configured.[/red]")
+
 
     is_streaming = options.stream
     no_markdown_flag = options.no_markdown
@@ -370,14 +445,21 @@ async def async_main(options: CliOptions):
 
     if options.prompt:
         if is_streaming:
-            await _handle_stream_response(agent, options.prompt)
+            await _handle_stream_response(agent, options.prompt, tts_instance=tts_instance)
         else:
-            await _handle_non_stream_response(agent, options.prompt, no_markdown=no_markdown_flag)
+            await _handle_non_stream_response(agent, options.prompt, no_markdown=no_markdown_flag, tts_instance=tts_instance)
+
+        # In non-interactive mode, wait for the TTS task to finish before exiting
+        if RAI_CONFIG.get("active_tts_task") and not RAI_CONFIG["active_tts_task"].done():
+            try:
+                await RAI_CONFIG["active_tts_task"]
+            except asyncio.CancelledError:
+                pass # Task was cancelled, which is fine
     else:
         for msg in startup_messages:
             console.print(Panel(msg, border_style="yellow"))
         await run_interactive_chat(
-            agent, quiet=options.quiet, stream=is_streaming, no_markdown_flag=no_markdown_flag
+            agent, quiet=options.quiet, stream=is_streaming, no_markdown_flag=no_markdown_flag, tts_instance=tts_instance
         )
 
 
@@ -404,6 +486,14 @@ async def async_main(options: CliOptions):
     help="Run in a specific session for this command only.",
 )
 @click.option("--debug", is_flag=True, help="Enable debug logging.")
+@click.option(
+    "--tts",
+    "tts_voice_id",
+    default=None,
+    is_flag=False,
+    flag_value="_default_",  # Special value when only --tts is used
+    help="Enable Text-to-Speech output. Optionally provide a voice ID.",
+)
 @click.pass_context
 def cli(ctx: click.Context, **kwargs: Any):
     """AI assistant in the command line with tool support."""
@@ -561,7 +651,6 @@ def show_config():
     """Shows configuration for the active session."""
     _show_config_logic()
 
-
 def _set_config_logic(key: str, value: str):
     """The actual logic for setting a config value in the active session."""
     app_config = load_config()
@@ -590,7 +679,6 @@ def _set_config_logic(key: str, value: str):
 def set_config(key: str, value: str):
     """Sets a configuration value for the active session."""
     _set_config_logic(key, value)
-
 
 def _get_config_logic(key: str):
     """The actual logic for getting a config value from the active session."""

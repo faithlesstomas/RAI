@@ -1,12 +1,10 @@
 import os
 import pytest
 from unittest.mock import MagicMock, patch
-import gitlab # Import gitlab
+import gitlab
 
-# Adjust the import path for GitlabTools
 from rai.tools.gitlab import GitlabTools
 
-# Mock environment variables for testing
 @pytest.fixture(autouse=True)
 def mock_env_vars():
     with patch.dict(os.environ, {
@@ -27,18 +25,12 @@ def gitlab_tools(mock_gitlab_instance):
     return GitlabTools()
 
 def test_authentication_success(gitlab_tools, mock_gitlab_instance):
-    # Authentication is now lazy, so it shouldn't be called during init
-    mock_gitlab_instance.auth.assert_not_called()
-    # Call a tool method to trigger authentication
-    gitlab_tools.list_projects.entrypoint.__get__(gitlab_tools, GitlabTools)()
     mock_gitlab_instance.auth.assert_called_once()
 
-def test_authentication_failure_no_token(gitlab_tools):
+def test_authentication_failure_no_token():
     with patch.dict(os.environ, {"GITLAB_ACCESS_TOKEN": ""}):
-        # Re-initialize gitlab_tools to pick up the patched env var
-        gitlab_tools_no_token = GitlabTools()
         with pytest.raises(ValueError, match="GITLAB_ACCESS_TOKEN environment variable is not set"):
-            gitlab_tools_no_token.list_projects.entrypoint.__get__(gitlab_tools_no_token, GitlabTools)()
+            GitlabTools()
 
 def test_list_projects(gitlab_tools, mock_gitlab_instance):
     mock_project = MagicMock()
@@ -49,8 +41,8 @@ def test_list_projects(gitlab_tools, mock_gitlab_instance):
     mock_project.description = "A test project"
     mock_gitlab_instance.projects.list.return_value = [mock_project]
 
-    projects = gitlab_tools.list_projects.entrypoint.__get__(gitlab_tools, GitlabTools)(search="Test") # Call .entrypoint() with self bound
-    mock_gitlab_instance.projects.list.assert_called_with(search="Test", owned=False, all=True)
+    projects = gitlab_tools.list_projects(search="Test")
+    mock_gitlab_instance.projects.list.assert_called_with(search="Test", owned=False, iterator=True)
     assert len(projects) == 1
     assert projects[0]["name"] == "Test Project"
 
@@ -66,7 +58,7 @@ def test_get_project(gitlab_tools, mock_gitlab_instance):
     mock_project.last_activity_at = "2023-01-01T00:00:00Z"
     mock_gitlab_instance.projects.get.return_value = mock_project
 
-    project = gitlab_tools.get_project.entrypoint.__get__(gitlab_tools, GitlabTools)("test-group/test-project") # Call .entrypoint() with self bound
+    project = gitlab_tools.get_project("test-group/test-project")
     mock_gitlab_instance.projects.get.assert_called_with("test-group/test-project")
     assert project["name"] == "Test Project"
 
@@ -84,7 +76,7 @@ def test_list_merge_requests(gitlab_tools, mock_gitlab_instance):
     mock_project.mergerequests.list.return_value = [mock_mr]
     mock_gitlab_instance.projects.get.return_value = mock_project
 
-    mrs = gitlab_tools.list_merge_requests.entrypoint.__get__(gitlab_tools, GitlabTools)("test-group/test-project") # Call .entrypoint() with self bound
+    mrs = gitlab_tools.list_merge_requests("test-group/test-project")
     mock_gitlab_instance.projects.get.assert_called_with("test-group/test-project")
     mock_project.mergerequests.list.assert_called_with(state="opened", all=True)
     assert len(mrs) == 1
@@ -107,7 +99,7 @@ def test_get_merge_request(gitlab_tools, mock_gitlab_instance):
     mock_project.mergerequests.get.return_value = mock_mr
     mock_gitlab_instance.projects.get.return_value = mock_project
 
-    mr = gitlab_tools.get_merge_request.entrypoint.__get__(gitlab_tools, GitlabTools)("test-group/test-project", 1) # Call .entrypoint() with self bound
+    mr = gitlab_tools.get_merge_request("test-group/test-project", 1)
     mock_gitlab_instance.projects.get.assert_called_with("test-group/test-project")
     mock_project.mergerequests.get.assert_called_with(1)
     assert mr["title"] == "Test MR"
@@ -126,7 +118,7 @@ def test_list_issues(gitlab_tools, mock_gitlab_instance):
     mock_project.issues.list.return_value = [mock_issue]
     mock_gitlab_instance.projects.get.return_value = mock_project
 
-    issues = gitlab_tools.list_issues.entrypoint.__get__(gitlab_tools, GitlabTools)("test-group/test-project") # Call .entrypoint() with self bound
+    issues = gitlab_tools.list_issues("test-group/test-project")
     mock_gitlab_instance.projects.get.assert_called_with("test-group/test-project")
     mock_project.issues.list.assert_called_with(state="opened", all=True)
     assert len(issues) == 1
@@ -147,7 +139,7 @@ def test_get_issue(gitlab_tools, mock_gitlab_instance):
     mock_project.issues.get.return_value = mock_issue
     mock_gitlab_instance.projects.get.return_value = mock_project
 
-    issue = gitlab_tools.get_issue.entrypoint.__get__(gitlab_tools, GitlabTools)("test-group/test-project", 10) # Call .entrypoint() with self bound
+    issue = gitlab_tools.get_issue("test-group/test-project", 10)
     mock_gitlab_instance.projects.get.assert_called_with("test-group/test-project")
     mock_project.issues.get.assert_called_with(10)
     assert issue["title"] == "Test Issue"
@@ -159,7 +151,7 @@ def test_get_file_content(gitlab_tools, mock_gitlab_instance):
     mock_project.files.get.return_value = mock_file
     mock_gitlab_instance.projects.get.return_value = mock_project
 
-    content = gitlab_tools.get_file_content.entrypoint.__get__(gitlab_tools, GitlabTools)("test-group/test-project", "README.md") # Call .entrypoint() with self bound
+    content = gitlab_tools.get_file_content("test-group/test-project", "README.md")
     mock_gitlab_instance.projects.get.assert_called_with("test-group/test-project")
     mock_project.files.get.assert_called_with(file_path="README.md", ref="main")
     assert content == "file content"
@@ -176,7 +168,7 @@ def test_create_issue(gitlab_tools, mock_gitlab_instance):
     mock_project.issues.create.return_value = mock_issue
     mock_gitlab_instance.projects.get.return_value = mock_project
 
-    issue = gitlab_tools.create_issue.entrypoint.__get__(gitlab_tools, GitlabTools)("test-group/test-project", "New Issue", "New issue description") # Call .entrypoint() with self bound
+    issue = gitlab_tools.create_issue("test-group/test-project", "New Issue", "New issue description")
     mock_gitlab_instance.projects.get.assert_called_with("test-group/test-project")
     mock_project.issues.create.assert_called_with({'title': "New Issue", 'description': "New issue description"})
     assert issue["title"] == "New Issue"
@@ -193,7 +185,7 @@ def test_create_merge_request(gitlab_tools, mock_gitlab_instance):
     mock_project.mergerequests.create.return_value = mock_mr
     mock_gitlab_instance.projects.get.return_value = mock_project
 
-    mr = gitlab_tools.create_merge_request.entrypoint.__get__(gitlab_tools, GitlabTools)( # Call .entrypoint() with self bound
+    mr = gitlab_tools.create_merge_request(
         "test-group/test-project", "feature-branch", "main", "New MR", "New MR description"
     )
     mock_gitlab_instance.projects.get.assert_called_with("test-group/test-project")
@@ -208,59 +200,59 @@ def test_create_merge_request(gitlab_tools, mock_gitlab_instance):
 # Test error handling for all methods
 def test_list_projects_error(gitlab_tools, mock_gitlab_instance):
     mock_gitlab_instance.projects.list.side_effect = gitlab.exceptions.GitlabError("API Error")
-    projects = gitlab_tools.list_projects.entrypoint.__get__(gitlab_tools, GitlabTools)() # Call .entrypoint() with self bound
+    projects = gitlab_tools.list_projects()
     assert projects == []
 
 def test_get_project_error(gitlab_tools, mock_gitlab_instance):
     mock_gitlab_instance.projects.get.side_effect = gitlab.exceptions.GitlabError("API Error")
-    project = gitlab_tools.get_project.entrypoint.__get__(gitlab_tools, GitlabTools)("non-existent/project") # Call .entrypoint() with self bound
+    project = gitlab_tools.get_project("non-existent/project")
     assert project is None
 
 def test_list_merge_requests_error(gitlab_tools, mock_gitlab_instance):
     mock_project = MagicMock()
     mock_project.mergerequests.list.side_effect = gitlab.exceptions.GitlabError("API Error")
     mock_gitlab_instance.projects.get.return_value = mock_project
-    mrs = gitlab_tools.list_merge_requests.entrypoint.__get__(gitlab_tools, GitlabTools)("test-group/test-project") # Call .entrypoint() with self bound
+    mrs = gitlab_tools.list_merge_requests("test-group/test-project")
     assert mrs == []
 
 def test_get_merge_request_error(gitlab_tools, mock_gitlab_instance):
     mock_project = MagicMock()
     mock_project.mergerequests.get.side_effect = gitlab.exceptions.GitlabError("API Error")
     mock_gitlab_instance.projects.get.return_value = mock_project
-    mr = gitlab_tools.get_merge_request.entrypoint.__get__(gitlab_tools, GitlabTools)("test-group/test-project", 999) # Call .entrypoint() with self bound
+    mr = gitlab_tools.get_merge_request("test-group/test-project", 999)
     assert mr is None
 
 def test_list_issues_error(gitlab_tools, mock_gitlab_instance):
     mock_project = MagicMock()
     mock_project.issues.list.side_effect = gitlab.exceptions.GitlabError("API Error")
     mock_gitlab_instance.projects.get.return_value = mock_project
-    issues = gitlab_tools.list_issues.entrypoint.__get__(gitlab_tools, GitlabTools)("test-group/test-project") # Call .entrypoint() with self bound
+    issues = gitlab_tools.list_issues("test-group/test-project")
     assert issues == []
 
 def test_get_issue_error(gitlab_tools, mock_gitlab_instance):
     mock_project = MagicMock()
     mock_project.issues.get.side_effect = gitlab.exceptions.GitlabError("API Error")
     mock_gitlab_instance.projects.get.return_value = mock_project
-    issue = gitlab_tools.get_issue.entrypoint.__get__(gitlab_tools, GitlabTools)("test-group/test-project", 999) # Call .entrypoint() with self bound
+    issue = gitlab_tools.get_issue("test-group/test-project", 999)
     assert issue is None
 
 def test_get_file_content_error(gitlab_tools, mock_gitlab_instance):
     mock_project = MagicMock()
     mock_project.files.get.side_effect = gitlab.exceptions.GitlabError("API Error")
     mock_gitlab_instance.projects.get.return_value = mock_project
-    content = gitlab_tools.get_file_content.entrypoint.__get__(gitlab_tools, GitlabTools)("test-group/test-project", "non-existent.md") # Call .entrypoint() with self bound
+    content = gitlab_tools.get_file_content("test-group/test-project", "non-existent.md")
     assert content is None
 
 def test_create_issue_error(gitlab_tools, mock_gitlab_instance):
     mock_project = MagicMock()
     mock_project.issues.create.side_effect = gitlab.exceptions.GitlabError("API Error")
     mock_gitlab_instance.projects.get.return_value = mock_project
-    issue = gitlab_tools.create_issue.entrypoint.__get__(gitlab_tools, GitlabTools)("test-group/test-project", "Failing Issue") # Call .entrypoint() with self bound
+    issue = gitlab_tools.create_issue("test-group/test-project", "Failing Issue")
     assert issue is None
 
 def test_create_merge_request_error(gitlab_tools, mock_gitlab_instance):
     mock_project = MagicMock()
     mock_project.mergerequests.create.side_effect = gitlab.exceptions.GitlabError("API Error")
     mock_gitlab_instance.projects.get.return_value = mock_project
-    mr = gitlab_tools.create_merge_request.entrypoint.__get__(gitlab_tools, GitlabTools)("test-group/test-project", "bug-fix", "main", "Failing MR") # Call .entrypoint() with self bound
+    mr = gitlab_tools.create_merge_request("test-group/test-project", "bug-fix", "main", "Failing MR")
     assert mr is None

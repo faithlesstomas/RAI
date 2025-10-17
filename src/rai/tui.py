@@ -103,12 +103,24 @@ class RaiTUI(App[None]):
             f"Tools: {'Enabled' if has_tools else 'Disabled'}"
         )
         try:
-            self.agent = setup_agent(
-                system_prompt=self.system_prompt,
-                model_id=self.model_id,
-                backend=self.backend,
+            # Setup the global config that setup_agent uses
+            from rai.core import RAI_CONFIG
+            RAI_CONFIG.update({
+                "system": self.system_prompt,
+                "model": self.model_id,
+                "backend": self.backend,
+                "tools": None, # Let setup_agent decide the default tools
+            })
+
+            agent, messages = setup_agent(
                 enable_tools=has_tools,
+                use_markdown=not self.no_markdown,
             )
+            self.agent = agent
+
+            for msg in messages:
+                self._write_message(msg, message_type="info")
+
             self._write_message(
                 "AI agent reinitialized successfully.", message_type="info"
             )

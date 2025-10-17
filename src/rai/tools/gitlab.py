@@ -30,6 +30,7 @@ import os
 from typing import List, Optional, Dict, Any
 
 import gitlab
+from requests.exceptions import ConnectionError
 from agno.tools import Toolkit
 from agno.utils.log import logger
 
@@ -59,19 +60,19 @@ class GitlabTools(Toolkit):
         gitlab_url = os.getenv("GITLAB_BASE_URL", "https://gitlab.com")
         self.gitlab_url = gitlab_url.strip('"\'').rstrip('/')
         self.gl = None
-        self._get_gitlab_client()
+        self._disabled = False
+        self._get_gitlab_client()  # Initial attempt
 
     def _get_gitlab_client(self):
+        if self._disabled:
+            return None
         if self.gl:
-            logger.debug("GitLab client already initialized.")
             return self.gl
 
         if not self.gitlab_token:
-            logger.debug("GITLAB_ACCESS_TOKEN not set in _get_gitlab_client.")
-            raise ValueError(
-                "GITLAB_ACCESS_TOKEN environment variable is not set. "
-                "Please set it to your GitLab Personal Access Token."
-            )
+            logger.debug("GITLAB_ACCESS_TOKEN not set. Disabling GitlabTools.")
+            self._disabled = True
+            return None
 
         try:
             logger.debug(f"Attempting to initialize GitLab client with URL: {self.gitlab_url}")
@@ -79,9 +80,11 @@ class GitlabTools(Toolkit):
             self.gl.auth()
             logger.debug("GitLab client successfully initialized and authenticated.")
             return self.gl
-        except gitlab.exceptions.GitlabError as e:
-            logger.error(f"Failed to authenticate with GitLab: {e}")
-            raise
+        except (gitlab.exceptions.GitlabError, ConnectionError) as e:
+            logger.warning(f"Disabling GitlabTools. Failed to connect or authenticate with GitLab: {e}")
+            self._disabled = True
+            self.gl = None
+            return None
 
     def list_projects(self, search: Optional[str] = None, owned: bool = False) -> List[Dict[str, Any]]:
         """
@@ -94,9 +97,11 @@ class GitlabTools(Toolkit):
         Returns:
             A list of dictionaries, each representing a project.
         """
+        gl_client = self._get_gitlab_client()
+        if not gl_client:
+            return []
         logger.debug(f"Listing projects with search='{search}' and owned={owned}")
         try:
-            gl_client = self._get_gitlab_client()
             projects_iterator = gl_client.projects.list(search=search, owned=owned, iterator=True)
             projects = []
             for p in projects_iterator:
@@ -123,9 +128,11 @@ class GitlabTools(Toolkit):
         Returns:
             A dictionary representing the project, or None if not found.
         """
+        gl_client = self._get_gitlab_client()
+        if not gl_client:
+            return None
         logger.debug(f"Getting project with project_id_or_path='{project_id_or_path}'")
         try:
-            gl_client = self._get_gitlab_client()
             project = gl_client.projects.get(project_id_or_path)
             project_details = {
                 "id": project.id,
@@ -154,9 +161,11 @@ class GitlabTools(Toolkit):
         Returns:
             A list of dictionaries, each representing a merge request.
         """
+        gl_client = self._get_gitlab_client()
+        if not gl_client:
+            return []
         logger.debug(f"Listing merge requests for project '{project_id_or_path}' with state='{state}'")
         try:
-            gl_client = self._get_gitlab_client()
             project = gl_client.projects.get(project_id_or_path)
             mrs = project.mergerequests.list(state=state, all=True)
             result = [
@@ -189,9 +198,11 @@ class GitlabTools(Toolkit):
         Returns:
             A dictionary representing the merge request, or None if not found.
         """
+        gl_client = self._get_gitlab_client()
+        if not gl_client:
+            return None
         logger.debug(f"Getting merge request iid={mr_iid} for project '{project_id_or_path}'")
         try:
-            gl_client = self._get_gitlab_client()
             project = gl_client.projects.get(project_id_or_path)
             mr = project.mergerequests.get(mr_iid)
             mr_details = {
@@ -224,9 +235,11 @@ class GitlabTools(Toolkit):
         Returns:
             A list of dictionaries, each representing an issue.
         """
+        gl_client = self._get_gitlab_client()
+        if not gl_client:
+            return []
         logger.debug(f"Listing issues for project '{project_id_or_path}' with state='{state}'")
         try:
-            gl_client = self._get_gitlab_client()
             project = gl_client.projects.get(project_id_or_path)
             issues = project.issues.list(state=state, all=True)
             result = [
@@ -259,9 +272,11 @@ class GitlabTools(Toolkit):
         Returns:
             A dictionary representing the issue, or None if not found.
         """
+        gl_client = self._get_gitlab_client()
+        if not gl_client:
+            return None
         logger.debug(f"Getting issue iid={issue_iid} for project '{project_id_or_path}'")
         try:
-            gl_client = self._get_gitlab_client()
             project = gl_client.projects.get(project_id_or_path)
             issue = project.issues.get(issue_iid)
             issue_details = {
@@ -293,9 +308,11 @@ class GitlabTools(Toolkit):
         Returns:
             The content of the file as a string, or None if not found.
         """
+        gl_client = self._get_gitlab_client()
+        if not gl_client:
+            return None
         logger.debug(f"Getting file content for '{file_path}' in project '{project_id_or_path}' at ref '{ref}'")
         try:
-            gl_client = self._get_gitlab_client()
             project = gl_client.projects.get(project_id_or_path)
             file = project.files.get(file_path=file_path, ref=ref)
             content = file.decode().decode('utf-8')
@@ -317,9 +334,11 @@ class GitlabTools(Toolkit):
         Returns:
             A dictionary representing the created issue, or None if creation failed.
         """
+        gl_client = self._get_gitlab_client()
+        if not gl_client:
+            return None
         logger.debug(f"Creating issue with title '{title}' in project '{project_id_or_path}'")
         try:
-            gl_client = self._get_gitlab_client()
             project = gl_client.projects.get(project_id_or_path)
             issue = project.issues.create({'title': title, 'description': description})
             issue_details = {
@@ -357,9 +376,11 @@ class GitlabTools(Toolkit):
         Returns:
             A dictionary representing the created merge request, or None if creation failed.
         """
+        gl_client = self._get_gitlab_client()
+        if not gl_client:
+            return None
         logger.debug(f"Creating merge request with title '{title}' in project '{project_id_or_path}'")
         try:
-            gl_client = self._get_gitlab_client()
             project = gl_client.projects.get(project_id_or_path)
             mr = project.mergerequests.create({
                 'source_branch': source_branch,

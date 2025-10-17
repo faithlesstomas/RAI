@@ -79,7 +79,7 @@ class TestSetupAgent:
             agent, messages = setup_agent()
 
         mock_setup_model.assert_called_once_with('ollama', 'test_model', False)
-        mock_setup_tools.assert_called_once_with(True, False)
+        mock_setup_tools.assert_called_once_with(True, False, None)
         mock_agent.assert_called_once()
         assert agent is not None
         assert isinstance(messages, list)

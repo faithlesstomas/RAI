@@ -36,12 +36,14 @@ groq = ["groq"]
 test = ["pytest"]
 lint = ["ruff", "pylint"]
 gnome-tools = ["pydbus", "pygobject"]
+tts = ["piper-tts", "sounddevice", "requests"]
 all = [
     "rai-cli[anthanthropic]",
     "rai-cli[gemini]",
     "rai-cli[openai]",
     "rai-cli[groq]",
     "rai-cli[gnome-tools]",
+    "rai-cli[tts]",
 ]
 
 [project.scripts]
