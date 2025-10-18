@@ -1,38 +1,61 @@
 """
 The core engine for the RAI platform.
 
-This module provides the abstraction layer for interacting with different
-AI agent frameworks.
+This module discovers and manages framework adapters, and provides the
+main entry point for running chat interactions.
 """
-from typing import Any, Dict
+import pkgutil
+import inspect
+import importlib
+from typing import Any, Dict, Type
 
-from .core import setup_agent
+from . import adapters
+from .adapters.base import BaseAdapter
+
+# A dictionary to hold discovered adapter classes
+_ADAPTERS: Dict[str, Type[BaseAdapter]] = {}
+
+def _discover_adapters():
+    """Dynamically discovers and loads adapter classes."""
+    if _ADAPTERS:
+        return
+
+    # Iterate through the modules in the adapters package
+    for module_info in pkgutil.iter_modules(adapters.__path__, adapters.__name__ + "."):
+        if module_info.name.endswith('.base') or module_info.name.endswith('.__init__'):
+            continue
+
+        # Dynamically import the module
+        module = importlib.import_module(module_info.name)
+
+        for name, obj in inspect.getmembers(module, inspect.isclass):
+            if issubclass(obj, BaseAdapter) and obj is not BaseAdapter:
+                # Use the last part of the module name as the adapter key
+                adapter_name = module_info.name.split('.')[-1]
+                _ADAPTERS[adapter_name] = obj
+
+_discover_adapters()
 
 
 async def run_chat(
     prompt: str,
     session_id: str,
-    # In the future, we'll add a parameter here to select the framework,
-    # e.g., framework: str = "agno"
+    framework: str = "agno",
 ) -> Dict[str, Any]:
     """
-    Runs a chat interaction with the selected AI agent framework.
-
-    This function acts as the abstraction layer. For now, it directly
-    implements the logic for the 'agno' framework.
+    Runs a chat interaction by dispatching to the appropriate framework adapter.
     """
-    # This logic is moved from ipc_server.CommandHandler.handle_chat
-    # Note: We might need to manage the agent instance more globally later.
-    agent, _ = setup_agent(session_id=session_id)
-
     if not prompt:
         return {"status": "error", "error_message": "Missing prompt."}
 
-    ai_response = await agent.arun(prompt)
-    content = ai_response.content if ai_response else ""
-    tool_calls = getattr(ai_response, "tool_calls", None)
+    adapter_class = _ADAPTERS.get(framework)
+    if not adapter_class:
+        return {"status": "error", "error_message": f"Framework '{framework}' not supported."}
 
-    return {
-        "status": "success",
-        "payload": {"content": content, "tool_calls": tool_calls},
-    }
+    try:
+        adapter_instance = adapter_class()
+        payload = await adapter_instance.arun(prompt=prompt, session_id=session_id)
+        return {"status": "success", "payload": payload}
+    except Exception as e:
+        # Basic error handling for now
+        return {"status": "error", "error_message": f"Error running framework '{framework}': {e}"}

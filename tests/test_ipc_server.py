@@ -19,7 +19,7 @@ IPC_SERVER_START_TIMEOUT = 5  # seconds
 def ipc_server():
     """A pytest fixture to run the IPC server in a background process."""
     # Run the server in test mode
-    with patch('rai.engine.setup_agent') as mock_setup_agent:
+    with patch('rai.adapters.agno.setup_agent') as mock_setup_agent:
         mock_agent = AsyncMock()
         mock_response = MagicMock()
         mock_response.content = "This is a mocked AI response."
