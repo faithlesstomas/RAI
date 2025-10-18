@@ -52,6 +52,13 @@ def save_config(config_data: Dict[str, Any], path: Optional[str] = None):
         json.dump(config_data, f, indent=2)
 
 
+def get_session_config(session_id: str, config_path: Optional[str] = None) -> Dict[str, Any]:
+    """Loads the application config and returns the config for a specific session."""
+    app_config = load_config(path=config_path)
+    return app_config.get("sessions", {}).get(session_id, {})
+
+
+
 # --- Tool and Model Setup ---
 def _setup_tools(enable_tools: bool, quiet: bool, enabled_tool_names: Optional[List[str]] = None) -> Tuple[List[Any], List[str]]:
     """Sets up the tools for the agent."""

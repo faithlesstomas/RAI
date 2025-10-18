@@ -37,6 +37,7 @@ test = ["pytest"]
 lint = ["ruff", "pylint"]
 gnome-tools = ["pydbus", "pygobject"]
 tts = ["piper-tts", "sounddevice", "requests"]
+pydantic-ai = ["pydantic-ai"]
 all = [
     "rai-cli[anthanthropic]",
     "rai-cli[gemini]",
@@ -44,6 +45,7 @@ all = [
     "rai-cli[groq]",
     "rai-cli[gnome-tools]",
     "rai-cli[tts]",
+    "rai-cli[pydantic-ai]",
 ]
 
 [project.scripts]
