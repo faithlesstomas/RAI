@@ -43,7 +43,7 @@ def load_config(path: Optional[str] = None) -> Dict[str, Any]:
         return json.load(f)
 
 
-def save_config(config_data: Dict[str, Any], path: Optional[str] = None):
+def save_config(config_data: Dict[str, Any], path: Optional[str] = None) -> None:
     """Saves the provided configuration data to the given path or the default file."""
     config_file = path or DEFAULT_CONFIG_FILE
     config_dir = os.path.dirname(config_file)
@@ -60,7 +60,7 @@ def get_session_config(session_id: str, config_path: Optional[str] = None) -> Di
 
 
 # --- Tool and Model Setup ---
-def _setup_tools(enable_tools: bool, quiet: bool, enabled_tool_names: Optional[List[str]] = None) -> Tuple[List[Any], List[str]]:
+def _setup_tools(enable_tools: bool, quiet: bool, enabled_tool_names: Optional[List[str]] = None) -> Tuple[List[Any], List[str]]:  # noqa: PLR0912
     """Sets up the tools for the agent."""
     messages = []
     all_available_tools: Dict[str, Any] = {

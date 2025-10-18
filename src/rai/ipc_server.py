@@ -23,7 +23,7 @@ console = Console()
 class CommandHandler:
     """Handles processing of commands received by the IPC server."""
 
-    def __init__(self, config_path: Optional[str] = None):
+    def __init__(self, config_path: Optional[str] = None) -> None:
         # The agent is no longer managed here.
         self.config_path = config_path
 
@@ -56,7 +56,7 @@ def _build_error_response(message: str, request_id: Optional[str] = None) -> Dic
     return {"request_id": request_id, "status": "error", "error_message": message}
 
 
-async def _initialize_config(test_mode: bool, config_path: Optional[str]):
+async def _initialize_config(test_mode: bool, config_path: Optional[str]) -> None:
     """Initializes the configuration based on the mode."""
     if test_mode:
         RAI_CONFIG.update({
@@ -81,7 +81,7 @@ async def handle_client(
     writer: asyncio.StreamWriter,
     test_mode: bool = False,
     config_path: Optional[str] = None,
-):
+) -> None:
     """Coroutine to handle a single client connection."""
     peername = writer.get_extra_info("peername")
     console.log(f"IPC: Client connected: {peername}")
@@ -139,7 +139,7 @@ async def handle_client(
         await writer.wait_closed()
 
 
-async def start_server(test_mode: bool = False, config_path: Optional[str] = None):
+async def start_server(test_mode: bool = False, config_path: Optional[str] = None) -> None:
     """Starts the IPC server on the Unix socket."""
     if os.path.exists(SOCKET_FILE):
         os.remove(SOCKET_FILE)
@@ -156,7 +156,7 @@ async def start_server(test_mode: bool = False, config_path: Optional[str] = Non
         await server.serve_forever()
 
 
-def run_ipc_server(test_mode: bool = False, config_path: Optional[str] = None):
+def run_ipc_server(test_mode: bool = False, config_path: Optional[str] = None) -> None:
     """Entry point to run the asyncio server."""
     try:
         asyncio.run(start_server(test_mode=test_mode, config_path=config_path))

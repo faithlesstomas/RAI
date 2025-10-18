@@ -59,7 +59,7 @@ def run_client_request(request_obj):
 
 
 @pytest.mark.usefixtures("ipc_server")
-def test_chat_command_success():
+def test_chat_command_success() -> None:
     """Test a successful 'chat' command interaction."""
     # Define the request
     prompt = "Hello, server!"
@@ -79,7 +79,7 @@ def test_chat_command_success():
 
 
 @pytest.mark.usefixtures("ipc_server")
-def test_unknown_command():
+def test_unknown_command() -> None:
     """Test the server's response to an unknown command."""
     request = {
         "request_id": "test-2",
@@ -95,7 +95,7 @@ def test_unknown_command():
 
 
 @pytest.mark.usefixtures("ipc_server")
-def test_invalid_json():
+def test_invalid_json() -> None:
     """Test the server's response to a malformed JSON string."""
     with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as sock:
         sock.connect(SOCKET_FILE)
@@ -111,7 +111,7 @@ def test_invalid_json():
 
 
 @pytest.mark.usefixtures("ipc_server")
-def test_get_info_command():
+def test_get_info_command() -> None:
     """Test the 'get_info' command."""
     request = {
         "request_id": "test-info-1",
@@ -130,7 +130,7 @@ def test_get_info_command():
     assert payload["server_version"] == "0.1.0"
 
 
-def test_server_with_custom_config(tmp_path):
+def test_server_with_custom_config(tmp_path) -> None:
     """Test running the server with a custom config file path."""
     # Create a temporary config file
     config_content = {

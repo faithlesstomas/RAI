@@ -66,7 +66,7 @@ class TestSetupAgent:
     @patch('rai.core.Agent', spec=Agent)
     @patch('rai.core._setup_model')
     @patch('rai.core._setup_tools')
-    def test_setup_agent_logic(self, mock_setup_tools, mock_setup_model, mock_agent, mock_load_dotenv):
+    def test_setup_agent_logic(self, mock_setup_tools, mock_setup_model, mock_agent, mock_load_dotenv) -> None:
         """Test the core logic of agent setup."""
         mock_setup_model.return_value = (MagicMock(), [])
         mock_setup_tools.return_value = ([], [])
@@ -88,8 +88,8 @@ class TestSetupAgent:
     @patch('rai.core.Agent', side_effect=Exception("General error"))
     @patch('rai.core._setup_tools')
     @patch('rai.core._setup_model')
-    def test_setup_agent_exception(self, mock_setup_model, mock_setup_tools,
-                                   mock_agent_ctor, mock_sys_exit, mock_load_dotenv, mock_error_console):
+    def test_setup_agent_exception(self, mock_setup_model, mock_setup_tools,  # noqa: PLR0913
+                                   mock_agent_ctor, mock_sys_exit, mock_load_dotenv, mock_error_console) -> None:
         """Test handling of a general exception during agent initialization."""
 
         mock_setup_model.return_value = (MagicMock(), [])

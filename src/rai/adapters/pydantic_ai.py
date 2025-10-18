@@ -34,7 +34,7 @@ class PydanticAIAdapter(BaseAdapter):
         # We can optimize this later.
         agent = Agent(model_string)
 
-        ai_response = await agent.arun(prompt)
+        ai_response = await agent.run(prompt)
 
         # The response object in Pydantic AI has an `output` attribute.
         # We will need to investigate how to extract tool call information later.

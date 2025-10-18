@@ -8,6 +8,7 @@ import wave
 import requests
 import json
 import asyncio
+import threading
 from pathlib import Path
 
 from agno.utils.log import logger # Import logger
@@ -27,7 +28,7 @@ HG_BASE_URL = "https://huggingface.co/rhasspy/piper-voices/resolve/main/"
 class TTS:
     """A class to handle Piper TTS operations."""
 
-    def __init__(self, model_path: str):
+    def __init__(self, model_path: str) -> None:
         logger.debug("Initializing TTS instance...")
         self._voice = self._load_voice(model_path)
 
@@ -44,7 +45,7 @@ class TTS:
             logger.error(f"TTS Error loading model: {e}")
             return None
 
-    async def synthesize(self, text: str, output_path: str | None = None):
+    async def synthesize(self, text: str, output_path: str | None = None) -> None:
         """
         Synthesizes text to speech and either plays it or saves it to a file.
         """
@@ -59,11 +60,11 @@ class TTS:
             logger.debug("Synthesizing for direct playback.")
             await self._play_audio(text)
 
-    async def _play_audio(self, text: str):
+    async def _play_audio(self, text: str) -> None:
         """Synthesizes audio and plays it using sounddevice in a non-blocking way."""
         logger.debug("[dim][TTS Debug] TTS._play_audio() called.[/dim]")
         
-        import threading
+
 
         stop_event = threading.Event()
 
@@ -81,7 +82,7 @@ class TTS:
 
             audio_array = np.frombuffer(audio_data, dtype=np.int16)
 
-            def playback_thread_func():
+            def playback_thread_func() -> None:
                 """
                 This function runs in a separate thread. It starts playback and then
                 polls a stop_event to allow for graceful interruption.

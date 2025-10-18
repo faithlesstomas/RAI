@@ -15,8 +15,9 @@ from textual.app import App, ComposeResult
 from textual.containers import Container
 from textual.widgets import Header, Input, LoadingIndicator, RichLog, Static
 
-from rai.cli import check_model_tool_support, setup_agent
+from rai.cli import check_model_tool_support
 from rai.config_screen import ConfigScreen
+from rai.core import RAI_CONFIG, setup_agent
 
 console = Console()
 
@@ -74,7 +75,7 @@ class RaiTUI(App[None]):
         no_markdown: bool,
         *args,
         **kwargs,
-    ):
+    ) -> None:
         super().__init__(*args, **kwargs)
         self.model_id = model_id
         self.backend = backend
@@ -104,7 +105,7 @@ class RaiTUI(App[None]):
         )
         try:
             # Setup the global config that setup_agent uses
-            from rai.core import RAI_CONFIG
+
             RAI_CONFIG.update({
                 "system": self.system_prompt,
                 "model": self.model_id,
@@ -249,7 +250,7 @@ class RaiTUI(App[None]):
             output_log.write(content)
 
 
-def app(model_id: str, backend: str, system_prompt: str, no_markdown: bool):
+def app(model_id: str, backend: str, system_prompt: str, no_markdown: bool) -> None:
     """Entry point for the Textual app."""
     RaiTUI(model_id, backend, system_prompt, no_markdown).run()
 
@@ -279,6 +280,6 @@ def app(model_id: str, backend: str, system_prompt: str, no_markdown: bool):
     is_flag=True,
     help="Disable Markdown rendering for LLM responses.",
 )
-def run_tui_cli(system, model, backend, no_markdown):
+def run_tui_cli(system, model, backend, no_markdown) -> None:
     """Run the Rai TUI application."""
     app(model, backend, system, no_markdown)

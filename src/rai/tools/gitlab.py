@@ -40,7 +40,7 @@ class GitlabTools(Toolkit):
     Requires GITLAB_ACCESS_TOKEN and GITLAB_BASE_URL environment variables to be set.
     """
 
-    def __init__(self, **kwargs):
+    def __init__(self, **kwargs) -> None:
         super().__init__(
             name="gitlab_tools",
             tools=[

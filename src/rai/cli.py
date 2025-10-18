@@ -56,7 +56,7 @@ class CliOptions:  # pylint: disable=too-many-instance-attributes
     tts_voice_id: Optional[str] = None
 
 
-async def _cancel_active_tts_task():
+async def _cancel_active_tts_task() -> None:
     """Safely cancels the currently active TTS task."""
     active_task = RAI_CONFIG.get('active_tts_task')
     if active_task and not active_task.done():
@@ -101,7 +101,7 @@ def check_model_tool_support(model_id: str) -> bool:
 
 
 # --- Slash Command Handlers ---
-def _handle_help_command(_: List[str]):
+def _handle_help_command(_: List[str]) -> None:
     """Handles the /help command."""
     console.print("Available commands:")
     for cmd in _SLASH_COMMAND_HANDLERS:
@@ -109,7 +109,7 @@ def _handle_help_command(_: List[str]):
     console.print("  /exit, /quit, /q")
 
 
-def _handle_session_command(args: List[str]):
+def _handle_session_command(args: List[str]) -> None:
     """Handles /session slash commands."""
     if not args:
         console.print("Usage: /session [list|switch|show|delete|rename] [args...]")
@@ -117,22 +117,22 @@ def _handle_session_command(args: List[str]):
 
     subcommand, *command_args = args
 
-    def _handle_rename():
+    def _handle_rename() -> None:
         if len(command_args) >= MIN_RENAME_ARGS:
             _rename_session_logic(command_args[0], command_args[1])
         else:
             error_console.print("[red]Usage: /session rename <old_name> <new_name>[/red]")
 
-    def _handle_delete():
+    def _handle_delete() -> None:
         if command_args:
             _delete_session_logic(command_args[0])
         else:
             error_console.print("[red]Usage: /session delete <session_name>[/red]")
 
-    def _handle_show():
+    def _handle_show() -> None:
         _show_session_logic(command_args[0] if command_args else None)
 
-    def _handle_switch():
+    def _handle_switch() -> None:
         if command_args:
             _switch_session_logic(command_args[0])
         else:
@@ -150,17 +150,17 @@ def _handle_session_command(args: List[str]):
         error_console.print(f"[red]Unknown session command: {subcommand}[/red]")
 
 
-def _handle_config_command(args: List[str]):
+def _handle_config_command(args: List[str]) -> None:
     """Handles /config slash commands."""
     subcommand, *command_args = (args[0].lower(), args[1:]) if args else ("show", [])
 
-    def _handle_set():
+    def _handle_set() -> None:
         if len(command_args) >= MIN_SET_CONFIG_ARGS:
             _set_config_logic(command_args[0], " ".join(command_args[1:]))
         else:
             error_console.print("[red]Usage: /config set <key> <value>[/red]")
 
-    def _handle_get():
+    def _handle_get() -> None:
         if command_args:
             _get_config_logic(command_args[0])
         else:
@@ -203,7 +203,7 @@ def _handle_slash_command(user_input: str) -> bool:
 
 
 # --- Response Handling ---
-async def _handle_stream_response(agent: Agent, user_input: str, tts_instance: Optional[TTS] = None):
+async def _handle_stream_response(agent: Agent, user_input: str, tts_instance: Optional[TTS] = None) -> None:
     """Handles the streaming response from the agent."""
     full_response = ""
     try:
@@ -247,7 +247,7 @@ async def _handle_stream_response(agent: Agent, user_input: str, tts_instance: O
         error_console.print(f"[bold red]An error occurred during agent execution:[/bold red]\n{e}")
 
 
-async def _handle_non_stream_response(agent: Agent, user_input: str, no_markdown: bool, tts_instance: Optional[TTS] = None):
+async def _handle_non_stream_response(agent: Agent, user_input: str, no_markdown: bool, tts_instance: Optional[TTS] = None) -> None:
     """Handles the non-streaming response from the agent."""
     log_capture_string = io.StringIO()
     log_handler = logging.StreamHandler(log_capture_string)
@@ -283,7 +283,7 @@ def create_key_bindings() -> KeyBindings:
     kb = KeyBindings()
 
     @kb.add(Keys.Tab)
-    def _(event):
+    def _(event) -> None:
         b = event.app.current_buffer
         if b.suggestion:
             b.insert_text(b.suggestion.text)
@@ -295,7 +295,7 @@ def create_key_bindings() -> KeyBindings:
     return kb
 
 
-async def run_interactive_chat(agent: Agent, quiet: bool, stream: bool, no_markdown_flag: bool, tts_instance: Optional[TTS] = None):
+async def run_interactive_chat(agent: Agent, quiet: bool, stream: bool, no_markdown_flag: bool, tts_instance: Optional[TTS] = None) -> None:
     """Runs the main interactive chat loop."""
     if not quiet:
         console.print("**Welcome to Rich AI CLI Assistant!** Type your prompt and press Enter.")
@@ -374,7 +374,7 @@ def _setup_session(app_config: Dict[str, Any], options: CliOptions) -> Tuple[str
     return session_to_use, sessions[session_to_use]
 
 
-async def async_main(options: CliOptions):
+async def async_main(options: CliOptions) -> None:  # noqa: PLR0912, PLR0915
     """The actual async logic of the application."""
     if options.debug:
         logger.setLevel(logging.DEBUG)
@@ -495,7 +495,7 @@ async def async_main(options: CliOptions):
     help="Enable Text-to-Speech output. Optionally provide a voice ID.",
 )
 @click.pass_context
-def cli(ctx: click.Context, **kwargs: Any):
+def cli(ctx: click.Context, **kwargs: Any) -> None:
     """AI assistant in the command line with tool support."""
     ctx.obj = kwargs
     if ctx.invoked_subcommand is not None:
@@ -509,11 +509,11 @@ def cli(ctx: click.Context, **kwargs: Any):
 
 
 @cli.group()
-def session():
+def session() -> None:
     """Manage chat sessions."""
 
 
-def _switch_session_logic(session_name: str):
+def _switch_session_logic(session_name: str) -> None:
     """The actual logic for creating/switching sessions."""
     app_config = load_config()
     if session_name not in app_config.get("sessions", {}):
@@ -530,13 +530,13 @@ def _switch_session_logic(session_name: str):
 
 @session.command(name="switch")
 @click.argument("session_name")
-def switch_session(session_name: str):
+def switch_session(session_name: str) -> None:
     """Creates a new session or switches to an existing one."""
     _switch_session_logic(session_name)
 
 
 
-def _list_sessions_logic():
+def _list_sessions_logic() -> None:
     """The actual logic for listing sessions."""
     app_config = load_config()
     sessions = app_config.get("sessions", {})
@@ -553,12 +553,12 @@ def _list_sessions_logic():
 
 
 @session.command(name="list")
-def list_sessions():
+def list_sessions() -> None:
     """Lists all available sessions."""
     _list_sessions_logic()
 
 
-def _show_session_logic(session_name: Optional[str] = None):
+def _show_session_logic(session_name: Optional[str] = None) -> None:
     """The actual logic for showing a session's configuration."""
     app_config = load_config()
     target_session = session_name or app_config.get("active_session", "default")
@@ -572,12 +572,12 @@ def _show_session_logic(session_name: Optional[str] = None):
 
 @session.command(name="show")
 @click.argument("session_name", required=False)
-def show_session(session_name: Optional[str]):
+def show_session(session_name: Optional[str]) -> None:
     """Shows configuration for a specific or active session."""
     _show_session_logic(session_name)
 
 
-def _delete_session_logic(session_name: str):
+def _delete_session_logic(session_name: str) -> None:
     """The actual logic for deleting a session."""
     app_config = load_config()
     active_session = app_config.get("active_session", "default")
@@ -595,12 +595,12 @@ def _delete_session_logic(session_name: str):
 
 @session.command(name="delete")
 @click.argument("session_name")
-def delete_session(session_name: str):
+def delete_session(session_name: str) -> None:
     """Deletes a specified session."""
     _delete_session_logic(session_name)
 
 
-def _rename_session_logic(old_name: str, new_name: str):
+def _rename_session_logic(old_name: str, new_name: str) -> None:
     """The actual logic for renaming a session."""
     app_config = load_config()
     sessions = app_config.get("sessions", {})
@@ -621,20 +621,20 @@ def _rename_session_logic(old_name: str, new_name: str):
 @session.command(name="rename")
 @click.argument("old_name")
 @click.argument("new_name")
-def rename_session(old_name: str, new_name: str):
+def rename_session(old_name: str, new_name: str) -> None:
     """Renames a session."""
     _rename_session_logic(old_name, new_name)
 
 
 @cli.group(invoke_without_command=True)
 @click.pass_context
-def config(ctx: click.Context):
+def config(ctx: click.Context) -> None:
     """View or manage the configuration of the active session."""
     if ctx.invoked_subcommand is None:
         _show_config_logic()
 
 
-def _show_config_logic():
+def _show_config_logic() -> None:
     """The actual logic for showing the active session's configuration."""
     app_config = load_config()
     active_session = app_config.get("active_session", "default")
@@ -647,11 +647,11 @@ def _show_config_logic():
 
 
 @config.command(name="show")
-def show_config():
+def show_config() -> None:
     """Shows configuration for the active session."""
     _show_config_logic()
 
-def _set_config_logic(key: str, value: str):
+def _set_config_logic(key: str, value: str) -> None:
     """The actual logic for setting a config value in the active session."""
     app_config = load_config()
     active_session = app_config.get("active_session", "default")
@@ -676,11 +676,11 @@ def _set_config_logic(key: str, value: str):
 @config.command(name="set")
 @click.argument("key")
 @click.argument("value")
-def set_config(key: str, value: str):
+def set_config(key: str, value: str) -> None:
     """Sets a configuration value for the active session."""
     _set_config_logic(key, value)
 
-def _get_config_logic(key: str):
+def _get_config_logic(key: str) -> None:
     """The actual logic for getting a config value from the active session."""
     app_config = load_config()
     active_session = app_config.get("active_session", "default")
@@ -697,14 +697,14 @@ def _get_config_logic(key: str):
 
 @config.command(name="get")
 @click.argument("key")
-def get_config(key: str):
+def get_config(key: str) -> None:
     """Gets a configuration value from the active session."""
     _get_config_logic(key)
 
 
 @cli.command(name="serve-ipc")
 @click.pass_context
-def serve_ipc(ctx: click.Context):
+def serve_ipc(ctx: click.Context) -> None:
     """
     Runs the IPC server to allow other processes to interact with the AI agent.
     """

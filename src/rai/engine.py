@@ -15,7 +15,7 @@ from .adapters.base import BaseAdapter
 # A dictionary to hold discovered adapter classes
 _ADAPTERS: Dict[str, Type[BaseAdapter]] = {}
 
-def _discover_adapters():
+def _discover_adapters() -> None:
     """Dynamically discovers and loads adapter classes."""
     if _ADAPTERS:
         return
