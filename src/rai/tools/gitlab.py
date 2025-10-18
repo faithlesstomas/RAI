@@ -70,9 +70,7 @@ class GitlabTools(Toolkit):
             return self.gl
 
         if not self.gitlab_token:
-            logger.debug("GITLAB_ACCESS_TOKEN not set. Disabling GitlabTools.")
-            self._disabled = True
-            return None
+            raise ValueError("GITLAB_ACCESS_TOKEN environment variable is not set")
 
         try:
             logger.debug(f"Attempting to initialize GitLab client with URL: {self.gitlab_url}")

@@ -2,7 +2,7 @@
 IPC Server for the Rich AI Assistant.
 
 This module provides a server that listens on a Unix socket for commands,
-processes them using the Agno agent, and returns the results.
+processes them using the core engine, and returns the results.
 """
 import asyncio
 import json
@@ -13,7 +13,8 @@ from unittest.mock import AsyncMock
 
 from rich.console import Console
 
-from .core import RAI_CONFIG, load_config, setup_agent, console
+from .core import RAI_CONFIG, load_config
+from .engine import run_chat
 
 SOCKET_FILE = "/tmp/rai-ipc.sock"
 console = Console()
@@ -22,30 +23,20 @@ console = Console()
 class CommandHandler:
     """Handles processing of commands received by the IPC server."""
 
-    def __init__(self, agent: Any, config_path: Optional[str] = None):
-        self.agent = agent
+    def __init__(self, config_path: Optional[str] = None):
+        # The agent is no longer managed here.
         self.config_path = config_path
 
     async def handle_chat(self, payload: Dict[str, Any]) -> Dict[str, Any]:
-        """Handles the 'chat' command."""
+        """Handles the 'chat' command by delegating to the engine."""
         prompt = payload.get("prompt")
         session_id = payload.get("session_id", "default-ipc-session")
-
-        if not self.agent or self.agent.session_id != session_id:
-            console.log(f"IPC: Setting up new agent for session: {session_id}")
-            self.agent, _ = setup_agent(session_id=session_id)
 
         if not prompt:
             return _build_error_response("Missing prompt in payload.")
 
-        ai_response = await self.agent.arun(prompt)
-        content = ai_response.content if ai_response else ""
-        tool_calls = getattr(ai_response, "tool_calls", None)
-
-        return {
-            "status": "success",
-            "payload": {"content": content, "tool_calls": tool_calls},
-        }
+        # Delegate the core logic to the new engine function
+        return await run_chat(prompt=prompt, session_id=session_id)
 
     def handle_get_info(self, _payload: Dict[str, Any]) -> Dict[str, Any]:
         """Handles the 'get_info' command."""
@@ -65,23 +56,15 @@ def _build_error_response(message: str, request_id: Optional[str] = None) -> Dic
     return {"request_id": request_id, "status": "error", "error_message": message}
 
 
-async def _initialize_agent_and_config(test_mode: bool, config_path: Optional[str]):
-    """Initializes the agent and configuration based on the mode."""
+async def _initialize_config(test_mode: bool, config_path: Optional[str]):
+    """Initializes the configuration based on the mode."""
     if test_mode:
-        agent = AsyncMock()
-
-        class MockResponse:
-            def __init__(self, content, tool_calls=None):
-                self.content = content
-                self.tool_calls = tool_calls
-
-        agent.arun.return_value = MockResponse("This is a mocked AI response.")
         RAI_CONFIG.update({
             "model": "test-model",
             "backend": "test-backend",
             "system": "test-system-prompt",
         })
-        return agent
+        return
 
     app_config = load_config(path=config_path)
     session_to_use = app_config.get("active_session", "default")
@@ -91,8 +74,6 @@ async def _initialize_agent_and_config(test_mode: bool, config_path: Optional[st
         "backend": session_config.get("backend", "ollama"),
         "system": session_config.get("system", "You are a helpful AI assistant."),
     })
-    # The agent is initialized dynamically in the chat handler based on session_id
-    return None
 
 
 async def handle_client(
@@ -105,8 +86,9 @@ async def handle_client(
     peername = writer.get_extra_info("peername")
     console.log(f"IPC: Client connected: {peername}")
 
-    agent = await _initialize_agent_and_config(test_mode, config_path)
-    command_handler = CommandHandler(agent, config_path)
+    # Initialize config, but agent is no longer needed here
+    await _initialize_config(test_mode, config_path)
+    command_handler = CommandHandler(config_path)
 
     command_map = {
         "chat": command_handler.handle_chat,
