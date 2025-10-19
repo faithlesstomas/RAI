@@ -418,108 +418,114 @@ def _setup_session(app_config: Dict[str, Any], options: CliOptions) -> Tuple[str
 #pylint: disable=too-many-branches,too-many-locals,too-many-statements
 async def async_main(options: CliOptions) -> None:  # noqa: PLR0912, PLR0915
     """The actual async logic of the application."""
-    if options.debug:
-        logger.setLevel(logging.DEBUG)
-        logging.getLogger("gitlab").setLevel(logging.DEBUG)
-    app_config = load_config(path=options.config_path)
-    session_to_use, session_config = _setup_session(app_config, options)
+    agent = None
+    try:
+        if options.debug:
+            logger.setLevel(logging.DEBUG)
+            logging.getLogger("gitlab").setLevel(logging.DEBUG)
+        app_config = load_config(path=options.config_path)
+        session_to_use, session_config = _setup_session(app_config, options)
 
-    RAI_CONFIG.update({
-        "model": options.model or session_config.get("model"),
-        "backend": options.backend or session_config.get("backend"),
-        "system": options.system or session_config.get("system"),
-        "prompt": options.prompt,
-    })
+        RAI_CONFIG.update({
+            "model": options.model or session_config.get("model"),
+            "backend": options.backend or session_config.get("backend"),
+            "system": options.system or session_config.get("system"),
+            "prompt": options.prompt,
+        })
 
-    # --- TTS Setup ---
-    tts_instance = None
-    RAI_CONFIG["active_tts_task"] = None
-    if options.tts_voice_id:
-        console.print("[dim][TTS Debug] --tts flag detected.[/dim]")
-        tts_config = session_config.get("tts", {})
-        data_dir = tts_config.get("data_dir", DEFAULT_TTS_DATA_DIR)
-        console.print(f"[dim][TTS Debug] Using data_dir: {data_dir}[/dim]")
+        # --- TTS Setup ---
+        tts_instance = None
+        RAI_CONFIG["active_tts_task"] = None
+        if options.tts_voice_id:
+            console.print("[dim][TTS Debug] --tts flag detected.[/dim]")
+            tts_config = session_config.get("tts", {})
+            data_dir = tts_config.get("data_dir", DEFAULT_TTS_DATA_DIR)
+            console.print(f"[dim][TTS Debug] Using data_dir: {data_dir}[/dim]")
 
-        # Ensure the data directory exists
-        os.makedirs(data_dir, exist_ok=True)
+            # Ensure the data directory exists
+            os.makedirs(data_dir, exist_ok=True)
 
-        voice_id_to_use = options.tts_voice_id
-        if voice_id_to_use == "_default_":
-            voice_id_to_use = tts_config.get("default_voice")
-            console.print(f"[dim][TTS Debug] Using default voice_id: {voice_id_to_use}[/dim]")
+            voice_id_to_use = options.tts_voice_id
+            if voice_id_to_use == "_default_":
+                voice_id_to_use = tts_config.get("default_voice")
+                console.print(f"[dim][TTS Debug] Using default voice_id: {voice_id_to_use}[/dim]")
 
-        if voice_id_to_use:
-            console.print(f"[dim][TTS Debug] Resolving voice_id: {voice_id_to_use}[/dim]")
-            model_path = resolve_voice_path(voice_id_to_use, data_dir)
-            if model_path:
-                console.print(f"[dim][TTS Debug] Model path resolved: {model_path}[/dim]")
-                tts_instance = TTS(model_path)
+            if voice_id_to_use:
+                console.print(f"[dim][TTS Debug] Resolving voice_id: {voice_id_to_use}[/dim]")
+                model_path = resolve_voice_path(voice_id_to_use, data_dir)
+                if model_path:
+                    console.print(f"[dim][TTS Debug] Model path resolved: {model_path}[/dim]")
+                    tts_instance = TTS(model_path)
+                else:
+                    error_console.print(
+                        f"[red]TTS Error: Could not resolve voice '{voice_id_to_use}'.[/red]"
+                    )
             else:
                 error_console.print(
-                    f"[red]TTS Error: Could not resolve voice '{voice_id_to_use}'.[/red]"
+                    "[red]TTS Error: --tts flag used, but no default voice is configured.[/red]"
                 )
-        else:
+
+
+        is_streaming = options.stream
+        no_markdown_flag = options.no_markdown
+        use_agent_markdown = not (no_markdown_flag or is_streaming)
+        session_id = session_to_use if not options.prompt else None
+
+        if not options.quiet and not options.prompt:
+            active_session_name = app_config.get("active_session", "default")
+            session_display = f"[bold]{session_to_use}[/bold]"
+            if session_to_use == active_session_name:
+                session_display += " (active)"
+            else:
+                session_display += " (override)"
             error_console.print(
-                "[red]TTS Error: --tts flag used, but no default voice is configured.[/red]"
+                f"[dim]Session: {session_display} | Model: [bold]{RAI_CONFIG['model']}[/bold] on "
+                f"backend: [bold]{RAI_CONFIG['backend']}[/bold][/dim]"
             )
 
-
-    is_streaming = options.stream
-    no_markdown_flag = options.no_markdown
-    use_agent_markdown = not (no_markdown_flag or is_streaming)
-    session_id = session_to_use if not options.prompt else None
-
-    if not options.quiet and not options.prompt:
-        active_session_name = app_config.get("active_session", "default")
-        session_display = f"[bold]{session_to_use}[/bold]"
-        if session_to_use == active_session_name:
-            session_display += " (active)"
-        else:
-            session_display += " (override)"
-        error_console.print(
-            f"[dim]Session: {session_display} | Model: [bold]{RAI_CONFIG['model']}[/bold] on "
-            f"backend: [bold]{RAI_CONFIG['backend']}[/bold][/dim]"
+        has_tools = RAI_CONFIG["backend"] != "ollama" or _initialize_ollama_check(
+            RAI_CONFIG["model"],
+            options.quiet
+        )
+        agent, startup_messages = setup_agent(
+            enable_tools=has_tools, quiet=options.quiet,
+            use_markdown=use_agent_markdown, session_id=session_id,
         )
 
-    has_tools = RAI_CONFIG["backend"] != "ollama" or _initialize_ollama_check(
-        RAI_CONFIG["model"],
-        options.quiet
-    )
-    agent, startup_messages = setup_agent(
-        enable_tools=has_tools, quiet=options.quiet,
-        use_markdown=use_agent_markdown, session_id=session_id,
-    )
+        logger.debug("Agent tools after setup: %s", agent.tools)
 
-    logger.debug("Agent tools after setup: %s", agent.tools)
+        if options.prompt:
+            if is_streaming:
+                await _handle_stream_response(agent, options.prompt, tts_instance=tts_instance)
+            else:
+                await _handle_non_stream_response(
+                    agent,
+                    options.prompt,
+                    no_markdown=no_markdown_flag,
+                    tts_instance=tts_instance
+                )
 
-    if options.prompt:
-        if is_streaming:
-            await _handle_stream_response(agent, options.prompt, tts_instance=tts_instance)
+            # In non-interactive mode, wait for the TTS task to finish before exiting
+            if RAI_CONFIG.get("active_tts_task") and not RAI_CONFIG["active_tts_task"].done():
+                try:
+                    await RAI_CONFIG["active_tts_task"]
+                except asyncio.CancelledError:
+                    pass # Task was cancelled, which is fine
         else:
-            await _handle_non_stream_response(
+            for msg in startup_messages:
+                console.print(Panel(msg, border_style="yellow"))
+            await run_interactive_chat(
                 agent,
-                options.prompt,
-                no_markdown=no_markdown_flag,
+                quiet=options.quiet,
+                stream=is_streaming,
+                no_markdown_flag=no_markdown_flag,
                 tts_instance=tts_instance
             )
-
-        # In non-interactive mode, wait for the TTS task to finish before exiting
-        if RAI_CONFIG.get("active_tts_task") and not RAI_CONFIG["active_tts_task"].done():
-            try:
-                await RAI_CONFIG["active_tts_task"]
-            except asyncio.CancelledError:
-                pass # Task was cancelled, which is fine
-    else:
-        for msg in startup_messages:
-            console.print(Panel(msg, border_style="yellow"))
-        await run_interactive_chat(
-            agent,
-            quiet=options.quiet,
-            stream=is_streaming,
-            no_markdown_flag=no_markdown_flag,
-            tts_instance=tts_instance
-        )
-
+    finally:
+        if agent and hasattr(agent, "model"):
+            client = agent.model.get_client()
+            if client and hasattr(client, "aio") and hasattr(client.aio, "aclose"):
+                await client.aio.aclose()
 
 # --- CLI Command Groups ---
 @click.group(invoke_without_command=True)
