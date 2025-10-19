@@ -8,7 +8,7 @@ import sys
 
 SOCKET_FILE = "/tmp/rai-ipc.sock"
 
-def get_server_info(sock):
+def get_server_info(sock) -> None:
     """Sends a get_info request and prints the response."""
     print("\n--- Getting Server Info ---")
     request_obj = {
@@ -29,7 +29,7 @@ def get_server_info(sock):
         else:
             print("Did not receive server info.")
 
-def send_chat_request(sock, prompt: str):
+def send_chat_request(sock, prompt: str) -> None:
     """Sends a chat request and prints the response."""
     print("\n--- Sending Chat Prompt ---")
     request_obj = {
@@ -56,7 +56,7 @@ def send_chat_request(sock, prompt: str):
             print("\nReceived no response from server.")
 
 
-def main():
+def main() -> None:
     """Main function to connect and run requests."""
     try:
         sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)

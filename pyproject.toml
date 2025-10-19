@@ -59,3 +59,9 @@ asyncio_mode = "auto"
 
 [tool.ruff.lint]
 select = ["PL", "ANN"]
+
+
+[tool.pylint]
+max-line-length=108
+
+# [tool.pylint.typing]

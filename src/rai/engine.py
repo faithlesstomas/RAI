@@ -28,7 +28,7 @@ def _discover_adapters() -> None:
         # Dynamically import the module
         module = importlib.import_module(module_info.name)
 
-        for name, obj in inspect.getmembers(module, inspect.isclass):
+        for _, obj in inspect.getmembers(module, inspect.isclass):
             if issubclass(obj, BaseAdapter) and obj is not BaseAdapter:
                 # Use the last part of the module name as the adapter key
                 adapter_name = module_info.name.split('.')[-1]
@@ -37,11 +37,7 @@ def _discover_adapters() -> None:
 _discover_adapters()
 
 
-async def run_chat(
-    prompt: str,
-    session_id: str,
-    framework: str = "agno",
-) -> Dict[str, Any]:
+async def run_chat(prompt: str, session_id: str, framework: str = "agno") -> Dict[str, Any]:
     """
     Runs a chat interaction by dispatching to the appropriate framework adapter.
     """
@@ -52,10 +48,11 @@ async def run_chat(
     if not adapter_class:
         return {"status": "error", "error_message": f"Framework '{framework}' not supported."}
 
+    # TODO: fix dangerous broad-exception-caught warning i this block
     try:
         adapter_instance = adapter_class()
         payload = await adapter_instance.arun(prompt=prompt, session_id=session_id)
         return {"status": "success", "payload": payload}
-    except Exception as e:
+    except Exception as e: # pylint: disable=broad-exception-caught
         # Basic error handling for now
         return {"status": "error", "error_message": f"Error running framework '{framework}': {e}"}

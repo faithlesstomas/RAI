@@ -2,7 +2,7 @@
 from abc import ABC, abstractmethod
 from typing import Any, Dict
 
-class BaseAdapter(ABC):
+class BaseAdapter(ABC): # pylint: disable=too-few-public-methods
     """
     Abstract Base Class for AI framework adapters.
     """
@@ -25,4 +25,3 @@ class BaseAdapter(ABC):
             A dictionary containing the response from the AI, typically
             with keys like 'content' and 'tool_calls'.
         """
-        pass

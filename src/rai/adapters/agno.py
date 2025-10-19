@@ -5,7 +5,7 @@ from .base import BaseAdapter
 from ..core import setup_agent
 
 
-class AgnoAdapter(BaseAdapter):
+class AgnoAdapter(BaseAdapter): # pylint: disable=too-few-public-methods
     """Adapter for running agents using the Agno framework."""
 
     async def arun(

@@ -2,29 +2,33 @@
 This module handles Text-to-Speech (TTS) functionality using Piper TTS.
 """
 
+import asyncio
 import os
 import sys
-import wave
-import requests
-import json
-import asyncio
 import threading
+import wave
 from pathlib import Path
+from typing import Optional
 
-from agno.utils.log import logger # Import logger
+import requests
+from agno.utils.log import logger  # Import logger
 
 try:
-    import sounddevice as sd
     import numpy as np
+    import sounddevice as sd
     from piper.voice import PiperVoice
 except ImportError:
-    logger.error("TTS Error: dependencies are not installed. Please run 'pip install rai-cli[tts]'")
+    logger.error(
+        "TTS Error: dependencies are not installed. Please run 'pip install rai-cli[tts]'"
+    )
     sys.exit(1)
 
 
 VOICES_URL = "https://huggingface.co/rhasspy/piper-voices/raw/main/voices.json"
 HG_BASE_URL = "https://huggingface.co/rhasspy/piper-voices/resolve/main/"
 
+
+# pylint: disable=too-few-public-methods
 class TTS:
     """A class to handle Piper TTS operations."""
 
@@ -32,17 +36,17 @@ class TTS:
         logger.debug("Initializing TTS instance...")
         self._voice = self._load_voice(model_path)
 
-    def _load_voice(self, model_path: str):
+    def _load_voice(self, model_path: str) -> Optional[PiperVoice]:
         """Loads the Piper voice model, handling potential ImportError."""
         try:
-            logger.debug(f"Loading model from: {model_path}")
+            logger.debug("Loading model from: %s", model_path)
             config_path = f"{model_path}.json"
-            logger.debug(f"Using config path: {config_path}")
+            logger.debug("Using config path: %s", config_path)
             voice = PiperVoice.load(model_path=model_path, config_path=config_path)
             logger.debug("Model loaded successfully.")
             return voice
-        except Exception as e:
-            logger.error(f"TTS Error loading model: {e}")
+        except (IOError, ValueError, RuntimeError) as e:
+            logger.error("TTS Error loading model: %s", e)
             return None
 
     async def synthesize(self, text: str, output_path: str | None = None) -> None:
@@ -63,13 +67,12 @@ class TTS:
     async def _play_audio(self, text: str) -> None:
         """Synthesizes audio and plays it using sounddevice in a non-blocking way."""
         logger.debug("[dim][TTS Debug] TTS._play_audio() called.[/dim]")
-        
-
 
         stop_event = threading.Event()
 
         try:
-            def blocking_synthesis():
+
+            def blocking_synthesis() -> bytes:
                 logger.debug("[dim][TTS Debug] Generating audio bytes...[/dim]")
                 audio_chunks = self._voice.synthesize(text)
                 return b"".join(chunk.audio_int16_bytes for chunk in audio_chunks)
@@ -89,7 +92,10 @@ class TTS:
                 """
                 try:
                     sd.play(audio_array, samplerate=self._voice.config.sample_rate)
-                    logger.debug(f"Playing audio with sample rate {self._voice.config.sample_rate}...")
+                    logger.debug(
+                        "Playing audio with sample rate %s...",
+                        self._voice.config.sample_rate,
+                    )
 
                     # Poll until playback is finished or a stop is requested
                     while sd.get_stream().active:
@@ -99,13 +105,14 @@ class TTS:
                             break
                         # Use the event's wait method for a non-busy, interruptible wait
                         stop_event.wait(0.1)  # Poll every 100ms
-                    
-                    logger.debug("Playback thread finished.")
-                except Exception as e:
-                    logger.error(f"[red]Error in playback thread: {e}[/red]")
 
-            # Run the blocking playback function in a separate thread and wait for it to complete.
-            await asyncio.get_running_loop().run_in_executor(None, playback_thread_func)
+                    logger.debug("Playback thread finished.")
+                except Exception as e:  # pylint: disable=broad-except
+                    logger.error("[red]Error in playback thread: %s[/red]", e)
+
+            # Run the blocking playback function in a separate thread
+            loop = asyncio.get_running_loop()
+            await loop.run_in_executor(None, playback_thread_func)
             logger.debug("Playback executor task finished.")
 
         except asyncio.CancelledError:
@@ -113,20 +120,34 @@ class TTS:
             stop_event.set()
             raise
         except ImportError:
-            logger.error("TTS Error: playback dependencies are not installed. Please run 'pip install rai-cli[tts]'")
-        except Exception as e:
-            logger.error(f"TTS Error playing audio: {e}")
+            logger.error(
+                "TTS Error: playback dependencies are not installed. "
+                "Please run 'pip install rai-cli[tts]'"
+            )
+        except Exception as e:  # pylint: disable=broad-except
+            logger.error("TTS Error playing audio: %s", e)
+
+
+def _download_file(url: str, destination: Path) -> None:
+    """Downloads a file from a URL to a destination path."""
+    logger.info("Downloading %s...", destination.name)
+    with requests.get(url, stream=True, timeout=30) as r:
+        r.raise_for_status()
+        with open(destination, "wb") as f:
+            for chunk in r.iter_content(chunk_size=8192):
+                f.write(chunk)
+
 
 def _download_and_find_onnx_path(voice_id: str, data_dir: Path) -> str | None:
     """Downloads all files for a voice and returns the path to the .onnx file."""
     try:
-        logger.debug(f"Fetching voice index from {VOICES_URL}...")
+        logger.debug("Fetching voice index from %s...", VOICES_URL)
         voices_response = requests.get(VOICES_URL, timeout=10)
         voices_response.raise_for_status()
         voices_data = voices_response.json()
 
         if voice_id not in voices_data:
-            logger.error(f"Voice '{voice_id}' not found in the official repository.")
+            logger.error("Voice '%s' not found in the official repository.", voice_id)
             return None
 
         voice_metadata = voices_data[voice_id]
@@ -134,28 +155,24 @@ def _download_and_find_onnx_path(voice_id: str, data_dir: Path) -> str | None:
         voice_dest_dir.mkdir(parents=True, exist_ok=True)
         onnx_path = None
 
-        for remote_path, file_metadata in voice_metadata.get("files", {}).items():
+        for remote_path, _ in voice_metadata.get("files", {}).items():
             file_url = f"{HG_BASE_URL}{remote_path}"
             local_filename = Path(remote_path).name
             file_dest = voice_dest_dir / local_filename
 
             if not file_dest.exists():
-                logger.info(f"Downloading {local_filename}...")
-                with requests.get(file_url, stream=True, timeout=30) as r:
-                    r.raise_for_status()
-                    with open(file_dest, 'wb') as f:
-                        for chunk in r.iter_content(chunk_size=8192):
-                            f.write(chunk)
+                _download_file(file_url, file_dest)
 
             if local_filename.endswith(".onnx"):
                 onnx_path = str(file_dest)
 
-        logger.debug(f"All files for voice '{voice_id}' are present.")
+        logger.debug("All files for voice '%s' are present.", voice_id)
         return onnx_path
 
-    except Exception as e:
-        logger.error(f"An error occurred during voice download: {e}")
+    except (requests.exceptions.RequestException, IOError) as e:
+        logger.error("An error occurred during voice download: %s", e)
         return None
+
 
 def resolve_voice_path(voice_input: str, data_dir_str: str) -> str | None:
     """
@@ -174,5 +191,5 @@ def resolve_voice_path(voice_input: str, data_dir_str: str) -> str | None:
         if onnx_files:
             return str(onnx_files[0])
 
-    logger.debug(f"Voice '{voice_input}' not found locally. Attempting to download...")
+    logger.debug("Voice '%s' not found locally. Attempting to download...", voice_input)
     return _download_and_find_onnx_path(voice_input, data_dir)

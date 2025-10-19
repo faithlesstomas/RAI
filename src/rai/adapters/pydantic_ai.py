@@ -7,7 +7,7 @@ from .base import BaseAdapter
 from ..core import get_session_config
 
 
-class PydanticAIAdapter(BaseAdapter):
+class PydanticAIAdapter(BaseAdapter): #pylint: disable=too-few-public-methods
     """Adapter for running agents using the Pydantic AI framework."""
 
     async def arun(
@@ -21,7 +21,7 @@ class PydanticAIAdapter(BaseAdapter):
         # Get the configuration for the current session
         session_config = get_session_config(session_id)
         backend = session_config.get("backend", "ollama")
-        model = session_config.get("model", "gemma2:9b")
+        model = session_config.get("model", "gemma3:4b")
 
         # Pydantic AI uses a single string for the model, e.g., "ollama/gemma2:9b"
         # or for other backends: "openai:gpt-4o"
