@@ -1,32 +1,24 @@
-# rai - Rich AI CLI Assistant
+# rai - Rich AI Platform
 
-`rai` is an interactive command-line assistant powered by local Ollama language models and the Agno framework. 
-It provides rich console output using the `rich` library and visualizes tool calls, making interaction with AI more transparent.
+`rai` has been refactored into a flexible and powerful AI platform with a client-server architecture. The core of the application is a background server that exposes a stateless, functional API for running AI agents and chains of agents.
 
 ## Features
 
-*   **Local AI Models:** Utilizes locally running Ollama models.
+*   **Client-Server Architecture:** Run `rai` as a background server (`rai serve-ipc`) and interact with it from any client application.
+*   **Stateless, Functional IPC API:** The server exposes a powerful `run` command, allowing clients to dynamically define and execute agents or chains of agents in a single, atomic request.
+*   **Dynamic Agent Configuration:** Configure agent properties like model, backend, system prompt, and tools on-the-fly with each API call.
+*   **Multi-Framework Support:** The server uses an adapter-based design, currently supporting `Agno` and `Pydantic AI` as underlying AI frameworks.
+*   **Agent Chaining:** The `run` command allows defining a sequence of agents, where the output of one becomes the input for the next, enabling complex, multi-step workflows.
 *   **Multi-Backend Support:** Supports multiple AI backends (Ollama, Gemini, Anthropic, OpenAI, Groq).
-*   **Streaming Responses:** AI responses are streamed in real-time, improving responsiveness.
-*   **Tool Call Visualization:** Agno tool calls (e.g., calculator, web search) are clearly displayed in panels, allowing you to monitor the agent's thought process.
-*   **Session Management:** Full support for creating, switching, renaming, and deleting chat sessions.
-*   **Flexible Configuration:** Manage application settings via CLI commands (`rai config set ...`) or a custom JSON file (`--config path/to/config.json`).
-*   **IPC Server:** Run `rai` as a background server (`rai serve-ipc`) to allow other applications to interact with the agent.
-*   **Integrated Toolkits:** Supports various Agno toolkits, such as:
-    *   `CalculatorTools`
-    *   `ArxivTools`
-    *   `WikipediaTools`
-    *   `TavilyTools` (requires API key)
-*   **Rich Console Output:** Uses the `rich` library for coloring, formatting, and structuring output.
-*   **Advanced Interactive Prompt:** Features persistent history, auto-suggestions, and dynamic tab-completion for commands and arguments.
+*   **Rich Console Output:** Uses the `rich` library for coloring, formatting, and structuring output in the legacy CLI mode.
 
 ## Installation and Usage
 
 ### Prerequisites
 
 *   Python 3.9+
-*   [Ollama](https://ollama.com/) server installed and running.
-*   Downloaded Ollama models (e.g., `gemma2:9b`, `qwen3:20b`).
+*   [Ollama](https://ollama.com/) server installed and running (if using the Ollama backend).
+*   Downloaded Ollama models (e.g., `gemma3:4b`).
 
 ### Installation Steps
 
@@ -44,53 +36,34 @@ It provides rich console output using the `rich` library and visualizes tool cal
     ```bash
     pip install -e .
     ```
-4.  **Configure Tavily API Key (optional):**
-    If you want to use Tavily tools (e.g., for web search), create a `.env` file in the project root and add your API key:
-    ```
-    TAVILY_API_KEY="your_tavily_api_key"
-    ```
-    Without this key, Tavily tools will be disabled.
 
 ### Usage
 
+The primary way to use `rai` is by running the IPC server and communicating with it through a client.
+
+**1. Start the IPC Server:**
 ```bash
-rai [OPTIONS] [PROMPT]
+rai serve-ipc
 ```
 
-*   **PROMPT:** If you provide a prompt, the script will execute a single query.
-*   **No PROMPT:** If you don't provide a prompt, the script will start in interactive chat mode.
+**2. Interact with the Server:**
+Use one of the example clients to send requests to the server.
 
-#### Global Options
+*   **Python Client:**
+    ```bash
+    python examples/ipc_client.py
+    ```
+*   **Guile Client:**
+    ```bash
+    guile examples/ipc_client.scm
+    ```
+These clients demonstrate how to call the `run` API to execute single agents or chains.
 
-*   `-s, --system TEXT`: Defines the system prompt for the AI for the current run.
-*   `-m, --model TEXT`: ID of the model to use for the current run.
-*   `-b, --backend TEXT`: The LLM backend to use (e.g., `ollama`, `gemini`).
-*   `--session TEXT`: Switch to a specific session for the current run.
-*   `--config TEXT`: Path to a custom configuration file.
-*   `--no-markdown`: Disable Markdown rendering for LLM responses.
-*   `--json-output`: Output the final response as a JSON object.
-*   `--stream / --no-stream`: Force streaming or non-streaming mode.
-*   `--quiet`: Suppress informational messages.
-
-#### Commands
-
-*   `rai config [show|set|get]`: Manage application configuration.
-*   `rai session [list|show|switch|delete|rename]`: Manage chat sessions.
-*   `rai serve-ipc`: Start the Inter-Process Communication (IPC) server.
-
-#### Examples
-
-**Single Query:**
+**Legacy CLI Mode:**
+For simple, single-shot queries, the direct CLI mode is still available:
 ```bash
 rai "What is 256 * 178?"
-rai -m qwen3:20b "What's the weather like in Warsaw today?"
 ```
-
-**Interactive Chat Mode:**
-```bash
-rai
-```
-In chat mode, type `/` and press `Tab` for a list of commands.
 
 ## Development Plan (Discussion History)
 
@@ -105,74 +78,24 @@ This project evolved through interactions with an AI model (Gemini). Below are t
 3.  [x] **Tool Call Visualization Improvement:**
     *   Capturing `stdout` output generated by `agno` during tool calls.
     *   Formatting and displaying this information in readable `rich.Panel`s to ensure transparency of the agent's thought process.
-4.  [ ] **Architectural Refactor: The Platform Vision (New Direction)**
+4.  [x] **Architectural Refactor: The Platform Vision (New Direction)**
     *   **Goal:** Evolve `rai` from a CLI tool into a flexible and interoperable AI agent platform.
     *   **Core Idea:** Transition to a client-server architecture.
-        *   **`rai-server`:** A background server (via `rai serve-ipc`) will become the core of the application. It will manage agent execution and state.
-        *   **`rai` CLI:** The command-line interface will be refactored into a lean client that communicates with the `rai-server`.
+        *   **`rai-server`:** A background server (via `rai serve-ipc`) is the core of the application. It manages agent execution.
+        *   **`rai` CLI:** The command-line interface is a lean client that communicates with the `rai-server`.
     *   **Multi-Framework Abstraction Layer:**
-        *   Implement a unifying, internal API that abstracts away the specifics of different agent frameworks.
-        *   Create "adapters" for supported frameworks, starting with `Agno` and `Pydantic AI`. This will allow choosing the best engine for a given task.
+        *   Implemented a unifying, internal API that abstracts away the specifics of different agent frameworks.
+        *   Created "adapters" for supported frameworks, starting with `Agno` and `Pydantic AI`.
     *   **Functional IPC API:**
-        *   The `rai-server` will expose its functionality through a stateless, functional API over IPC (e.g., using JSON-RPC).
+        *   The `rai-server` exposes its functionality through a stateless, functional `run` command.
         *   This design is optimized for interoperability, allowing easy integration with other languages and tools, particularly functional languages like **Guile, Scheme, or Elisp (for Emacs)**.
 
-    *   **Proposed IPC API v2 (`run` command):**
-        To fulfill this vision, a new primary API command is proposed: `run`. This command is designed to be stateless and highly flexible, allowing a client to define and execute an agent or a chain of agents in a single, atomic request.
-
-        *   **Command:** `run`
-        *   **Payload Structure:**
-            ```json
-            {
-              "command": "run",
-              "payload": {
-                "input": "The initial text or prompt for the chain.",
-                "chain": [
-                  {
-                    "agent_class": "AgentPydanticAI",
-                    "model": "gpt-4",
-                    "backend": "openai",
-                    "system_prompt": "You are a summarizer. Your goal is to summarize the input text."
-                  },
-                  {
-                    "agent_class": "AgentAgno",
-                    "model": "gemma3:1b",
-                    "backend": "ollama",
-                    "system_prompt": "You are a translator. Your goal is to translate the input text to Polish."
-                  }
-                ]
-              }
-            }
-            ```
-        *   **Description:**
-            *   `input`: The initial prompt that will be passed to the first agent in the chain.
-            *   `chain`: A list of agent configurations to be executed sequentially. The output of one agent becomes the `input` for the next.
-            *   Each object in the `chain` array defines a complete agent configuration for a single step.
-
-        *   **Example Response:**
-            ```json
-            {
-                "status": "success",
-                "payload": {
-                    "content": "Ostateczny wynik po przejściu przez cały łańcuch."
-                }
-            }
-            ```
 5.  **Further Development Ideas (Legacy):**
     *   [ ] **Code Modularization:** Splitting `rai` into smaller, more manageable modules (e.g., `commands/`, `config/`, `utils/`) as the project grows.
     *   [x] **Multi-API/Model Support:** Extending Agno to access other APIs (e.g., Gemini API) and easily switch between them.
     *   [x] **Add `GitlabTools`:** Implement tools for interacting with the GitLab API.
     *   [ ] **Multi-Interface Development (CLI, TUI, Web-UI):**
         *   [x] **Refactor and Simplify CLI (`rai` command):** Refactor the CLI for a more minimalist, performant, and script-friendly experience.
-            *   **Status:** Complete.
-            *   **Done:**
-                *   Implemented a full `asyncio`-based architecture.
-                *   Simplified interactive mode, focusing on a clean prompt.
-                *   Added global options (`--version`, `--json`, `--quiet`, `--no-stream`, etc.).
-                *   Redirected informational messages to `stderr`.
-                *   Implemented a robust command structure for configuration (`rai config ...`) and sessions (`rai session ...`).
-                *   Implemented interactive slash commands (`/config`, `/session`, `/help`, `/q`).
-                *   Implemented advanced tab completion using `prompt_toolkit`.
         *   [ ] **Implement Text-User Interface (TUI):** Develop an interactive TUI using `Textual`.
             *   **Status:** Paused. Development is frozen for now.
         *   [ ] **Future Web User Interface (Web-UI):** Explore the possibility of a web-based interface.
@@ -180,12 +103,10 @@ This project evolved through interactions with an AI model (Gemini). Below are t
         *   [ ] **Coding Assistant Mode:** Simple text editor integrated with Git (plus chat in a hideable sidebar).
         *   [ ] **Critic/Commentator Mode:** Assistant that comments and advises in real-time chat but cannot modify code.
     *   [ ] **IPython/Jupyter Integration:** Create an IPython extension that provides AI assistance via "magic" commands (e.g., `%rai` and `%%rai`).
-    *   [ ] **IPC Server Enhancements:**
-        *   [ ] Add more commands and capabilities to the IPC server.
-        *   [ ] Create more detailed documentation and examples for using the IPC server.
+    *   [x] **IPC Server Enhancements:**
+        *   [x] Add more commands and capabilities to the IPC server (the `run` command).
+        *   [x] Create more detailed documentation and examples for using the IPC server.
     *   [x] **Improved Error Handling:** More detailed and user-friendly error messages.
-        *   Implemented `--debug` flag for detailed logging.
-        *   Added specific error handling for `GitlabTools`.
     *   [ ] **Conversation Context Management:** More advanced mechanisms for managing chat history.
 
 ### Sources for inspiration in project dev:
