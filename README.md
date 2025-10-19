@@ -116,6 +116,48 @@ This project evolved through interactions with an AI model (Gemini). Below are t
     *   **Functional IPC API:**
         *   The `rai-server` will expose its functionality through a stateless, functional API over IPC (e.g., using JSON-RPC).
         *   This design is optimized for interoperability, allowing easy integration with other languages and tools, particularly functional languages like **Guile, Scheme, or Elisp (for Emacs)**.
+
+    *   **Proposed IPC API v2 (`run` command):**
+        To fulfill this vision, a new primary API command is proposed: `run`. This command is designed to be stateless and highly flexible, allowing a client to define and execute an agent or a chain of agents in a single, atomic request.
+
+        *   **Command:** `run`
+        *   **Payload Structure:**
+            ```json
+            {
+              "command": "run",
+              "payload": {
+                "input": "The initial text or prompt for the chain.",
+                "chain": [
+                  {
+                    "agent_class": "AgentPydanticAI",
+                    "model": "gpt-4",
+                    "backend": "openai",
+                    "system_prompt": "You are a summarizer. Your goal is to summarize the input text."
+                  },
+                  {
+                    "agent_class": "AgentAgno",
+                    "model": "gemma3:1b",
+                    "backend": "ollama",
+                    "system_prompt": "You are a translator. Your goal is to translate the input text to Polish."
+                  }
+                ]
+              }
+            }
+            ```
+        *   **Description:**
+            *   `input`: The initial prompt that will be passed to the first agent in the chain.
+            *   `chain`: A list of agent configurations to be executed sequentially. The output of one agent becomes the `input` for the next.
+            *   Each object in the `chain` array defines a complete agent configuration for a single step.
+
+        *   **Example Response:**
+            ```json
+            {
+                "status": "success",
+                "payload": {
+                    "content": "Ostateczny wynik po przejściu przez cały łańcuch."
+                }
+            }
+            ```
 5.  **Further Development Ideas (Legacy):**
     *   [ ] **Code Modularization:** Splitting `rai` into smaller, more manageable modules (e.g., `commands/`, `config/`, `utils/`) as the project grows.
     *   [x] **Multi-API/Model Support:** Extending Agno to access other APIs (e.g., Gemini API) and easily switch between them.

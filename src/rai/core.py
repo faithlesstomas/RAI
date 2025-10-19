@@ -69,10 +69,11 @@ def get_session_config(session_id: str, config_path: Optional[str] = None) -> Di
 
 
 # --- Tool and Model Setup ---
-def _setup_tools(# noqa: PLR0912 # pylint: disable=too-many-branches
+def setup_tools( # noqa: PLR0912 # pylint: disable=too-many-branches
     enable_tools: bool,
     quiet: bool,
     enabled_tool_names: Optional[List[str]] = None,
+    has_prompt: bool = False,
 ) -> Tuple[List[Any], List[str]]:
     """Sets up the tools for the agent."""
     messages = []
@@ -143,7 +144,7 @@ def _setup_tools(# noqa: PLR0912 # pylint: disable=too-many-branches
                             f"{tool_name} disabled due to configuration error: {e}"  # pylint: disable=logging-fstring-interpolation # ruff: noqa: G004
                         )
                 else:
-                    if not quiet and not RAI_CONFIG.get("prompt"):
+                    if not quiet and not has_prompt:
                         messages.append(
                             f"[bold yellow]WARNING: Missing {' or '.join(required_vars)} "
                             "env variable(s). "
@@ -172,7 +173,7 @@ def _setup_tools(# noqa: PLR0912 # pylint: disable=too-many-branches
     return agent_tools, messages
 
 
-def _setup_model(backend: str, model_id: str, quiet: bool) -> Tuple[Any, List[str]]:
+def setup_model(backend: str, model_id: str, quiet: bool) -> Tuple[Any, List[str]]:
     """Sets up the model based on the backend and model ID."""
     messages = []
     if backend == "gemini" and "GEMINI_API_KEY" in os.environ:
@@ -231,24 +232,25 @@ def _setup_model(backend: str, model_id: str, quiet: bool) -> Tuple[Any, List[st
 
 
 # --- Agent Setup ---
-def setup_agent(
-    enable_tools: bool = True,
-    quiet: bool = False,
-    use_markdown: bool = True,
-    session_id: Optional[str] = "my_chat_session",
+def create_agent_from_config(
+    config: Dict[str, Any], session_id: str, use_markdown: bool = True
 ) -> Tuple[Agent, List[str]]:
-    """Initializes the Agno agent, setting the model, prompt, and tools.
-    """
-
+    """Initializes an Agno agent from a dynamic configuration dictionary."""
     load_dotenv()
 
-    backend = RAI_CONFIG.get("backend")
-    model_id = RAI_CONFIG.get("model")
-    system_prompt = RAI_CONFIG.get("system")
-    enabled_tool_names = RAI_CONFIG.get("tools")
+    backend = config.get("backend", "ollama")
+    model_id = config.get("model", "gemma2:9b")
+    system_prompt = config.get("system_prompt", "You are a helpful AI assistant.")
+    enabled_tool_names = config.get("tools")
+    enable_tools = bool(enabled_tool_names)
 
-    model_instance, messages = _setup_model(backend, model_id, quiet)
-    agent_tools, tool_messages = _setup_tools(enable_tools, quiet, enabled_tool_names)
+    model_instance, messages = setup_model(backend, model_id, quiet=True)
+    agent_tools, tool_messages = setup_tools(
+        enable_tools=enable_tools,
+        quiet=True,
+        enabled_tool_names=enabled_tool_names,
+        has_prompt=bool(system_prompt),
+    )
     messages.extend(tool_messages)
 
     try:
@@ -280,3 +282,19 @@ def setup_agent(
                 "[yellow]Is the Ollama server running and is the model pulled?[/yellow]"
             )
         sys.exit(1)
+
+
+def setup_agent(
+    enable_tools: bool = True,
+    quiet: bool = False,
+    use_markdown: bool = True,
+    session_id: Optional[str] = "my_chat_session",
+) -> Tuple[Agent, List[str]]:
+    """Initializes the Agno agent using the global RAI_CONFIG."""
+    config = {
+        "backend": RAI_CONFIG.get("backend"),
+        "model": RAI_CONFIG.get("model"),
+        "system_prompt": RAI_CONFIG.get("system"),
+        "tools": RAI_CONFIG.get("tools"),
+    }
+    return create_agent_from_config(config, session_id, use_markdown)

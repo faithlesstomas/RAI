@@ -7,6 +7,9 @@ class BaseAdapter(ABC): # pylint: disable=too-few-public-methods
     Abstract Base Class for AI framework adapters.
     """
 
+    def __init__(self, agent_config: Dict[str, Any]) -> None:
+        self.config = agent_config
+
     @abstractmethod
     async def arun(
         self,

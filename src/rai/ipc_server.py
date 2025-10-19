@@ -9,12 +9,11 @@ import json
 import os
 from functools import partial
 from typing import Optional, Any, Dict
-from unittest.mock import AsyncMock
 
 from rich.console import Console
 
 from .core import RAI_CONFIG, load_config
-from .engine import run_chat
+from .engine import run_chat, run_chain
 
 SOCKET_FILE = "/tmp/rai-ipc.sock"
 console = Console()
@@ -23,9 +22,28 @@ console = Console()
 class CommandHandler:
     """Handles processing of commands received by the IPC server."""
 
-    def __init__(self, config_path: Optional[str] = None) -> None:
-        # The agent is no longer managed here.
+    def __init__(self, config_path: Optional[str] = None, test_mode: bool = False) -> None:
         self.config_path = config_path
+        if test_mode:
+            self.session_config = {
+                "model": "test-model",
+                "backend": "test-backend",
+                "system": "test-system-prompt",
+            }
+        else:
+            app_config = load_config(path=self.config_path)
+            session_to_use = app_config.get("active_session", "default")
+            self.session_config = app_config.get("sessions", {}).get(session_to_use, {})
+
+    async def handle_run(self, payload: Dict[str, Any]) -> Dict[str, Any]:
+        """Handles the 'run' command by delegating to the engine's run_chain function."""
+        chain_input = payload.get("input")
+        chain_configs = payload.get("chain")
+
+        if not chain_input or not chain_configs:
+            return _build_error_response("Missing 'input' or 'chain' in payload.")
+
+        return await run_chain(chain_input=chain_input, chain_configs=chain_configs)
 
     async def handle_chat(self, payload: Dict[str, Any]) -> Dict[str, Any]:
         """Handles the 'chat' command by delegating to the engine."""
@@ -35,7 +53,6 @@ class CommandHandler:
         if not prompt:
             return _build_error_response("Missing prompt in payload.")
 
-        # Delegate the core logic to the new engine function
         return await run_chat(prompt=prompt, session_id=session_id)
 
     def handle_get_info(self, _payload: Dict[str, Any]) -> Dict[str, Any]:
@@ -43,9 +60,9 @@ class CommandHandler:
         return {
             "status": "success",
             "payload": {
-                "backend": RAI_CONFIG.get("backend"),
-                "model": RAI_CONFIG.get("model"),
-                "system_prompt": RAI_CONFIG.get("system"),
+                "backend": self.session_config.get("backend"),
+                "model": self.session_config.get("model"),
+                "system_prompt": self.session_config.get("system"),
                 "server_version": "0.1.0",  # Hardcoded for now
             },
         }
@@ -54,26 +71,6 @@ class CommandHandler:
 def _build_error_response(message: str, request_id: Optional[str] = None) -> Dict[str, Any]:
     """Builds a standard error response dictionary."""
     return {"request_id": request_id, "status": "error", "error_message": message}
-
-
-async def _initialize_config(test_mode: bool, config_path: Optional[str]) -> None:
-    """Initializes the configuration based on the mode."""
-    if test_mode:
-        RAI_CONFIG.update({
-            "model": "test-model",
-            "backend": "test-backend",
-            "system": "test-system-prompt",
-        })
-        return
-
-    app_config = load_config(path=config_path)
-    session_to_use = app_config.get("active_session", "default")
-    session_config = app_config.get("sessions", {}).get(session_to_use, {})
-    RAI_CONFIG.update({
-        "model": session_config.get("model", "gemma3:1b"),
-        "backend": session_config.get("backend", "ollama"),
-        "system": session_config.get("system", "You are a helpful AI assistant."),
-    })
 
 
 async def handle_client(
@@ -86,11 +83,10 @@ async def handle_client(
     peername = writer.get_extra_info("peername")
     console.log(f"IPC: Client connected: {peername}")
 
-    # Initialize config, but agent is no longer needed here
-    await _initialize_config(test_mode, config_path)
-    command_handler = CommandHandler(config_path)
+    command_handler = CommandHandler(config_path, test_mode)
 
     command_map = {
+        "run": command_handler.handle_run,
         "chat": command_handler.handle_chat,
         "get_info": command_handler.handle_get_info,
     }

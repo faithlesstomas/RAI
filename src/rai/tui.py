@@ -4,6 +4,7 @@
 import io
 import json
 from contextlib import redirect_stdout
+from typing import Any
 
 import click
 from agno.media import Image
@@ -73,8 +74,8 @@ class RaiTUI(App[None]):
         backend: str,
         system_prompt: str,
         no_markdown: bool,
-        *args,
-        **kwargs,
+        *args: Any,
+        **kwargs: Any,
     ) -> None:
         super().__init__(*args, **kwargs)
         self.model_id = model_id
@@ -280,6 +281,6 @@ def app(model_id: str, backend: str, system_prompt: str, no_markdown: bool) -> N
     is_flag=True,
     help="Disable Markdown rendering for LLM responses.",
 )
-def run_tui_cli(system, model, backend, no_markdown) -> None:
+def run_tui_cli(system: str, model: str, backend: str, no_markdown: bool) -> None:
     """Run the Rai TUI application."""
     app(model, backend, system, no_markdown)

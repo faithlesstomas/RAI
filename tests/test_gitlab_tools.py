@@ -2,11 +2,12 @@ import os
 import pytest
 from unittest.mock import MagicMock, patch
 import gitlab
+from typing import Generator
 
 from rai.tools.gitlab import GitlabTools
 
 @pytest.fixture(autouse=True)
-def mock_env_vars():
+def mock_env_vars() -> Generator:
     with patch.dict(os.environ, {
         "GITLAB_ACCESS_TOKEN": "test_token",
         "GITLAB_BASE_URL": "https://gitlab.com",
@@ -14,17 +15,17 @@ def mock_env_vars():
         yield
 
 @pytest.fixture
-def mock_gitlab_instance():
+def mock_gitlab_instance() -> Generator:
     with patch('gitlab.Gitlab') as mock_gitlab_class:
         mock_gl = MagicMock()
         mock_gitlab_class.return_value = mock_gl
         yield mock_gl
 
 @pytest.fixture
-def gitlab_tools(mock_gitlab_instance):
+def gitlab_tools(mock_gitlab_instance: MagicMock) -> GitlabTools:
     return GitlabTools()
 
-def test_authentication_success(gitlab_tools, mock_gitlab_instance) -> None:
+def test_authentication_success(gitlab_tools: GitlabTools, mock_gitlab_instance: MagicMock) -> None:
     mock_gitlab_instance.auth.assert_called_once()
 
 def test_authentication_failure_no_token() -> None:
@@ -32,7 +33,7 @@ def test_authentication_failure_no_token() -> None:
         with pytest.raises(ValueError, match="GITLAB_ACCESS_TOKEN environment variable is not set"):
             GitlabTools()
 
-def test_list_projects(gitlab_tools, mock_gitlab_instance) -> None:
+def test_list_projects(gitlab_tools: GitlabTools, mock_gitlab_instance: MagicMock) -> None:
     mock_project = MagicMock()
     mock_project.id = 1
     mock_project.name = "Test Project"
@@ -46,7 +47,7 @@ def test_list_projects(gitlab_tools, mock_gitlab_instance) -> None:
     assert len(projects) == 1
     assert projects[0]["name"] == "Test Project"
 
-def test_get_project(gitlab_tools, mock_gitlab_instance) -> None:
+def test_get_project(gitlab_tools: GitlabTools, mock_gitlab_instance: MagicMock) -> None:
     mock_project = MagicMock()
     mock_project.id = 1
     mock_project.name = "Test Project"
@@ -62,7 +63,7 @@ def test_get_project(gitlab_tools, mock_gitlab_instance) -> None:
     mock_gitlab_instance.projects.get.assert_called_with("test-group/test-project")
     assert project["name"] == "Test Project"
 
-def test_list_merge_requests(gitlab_tools, mock_gitlab_instance) -> None:
+def test_list_merge_requests(gitlab_tools: GitlabTools, mock_gitlab_instance: MagicMock) -> None:
     mock_project = MagicMock()
     mock_mr = MagicMock()
     mock_mr.id = 101
@@ -82,7 +83,7 @@ def test_list_merge_requests(gitlab_tools, mock_gitlab_instance) -> None:
     assert len(mrs) == 1
     assert mrs[0]["title"] == "Test MR"
 
-def test_get_merge_request(gitlab_tools, mock_gitlab_instance) -> None:
+def test_get_merge_request(gitlab_tools: GitlabTools, mock_gitlab_instance: MagicMock) -> None:
     mock_project = MagicMock()
     mock_mr = MagicMock()
     mock_mr.id = 101
@@ -104,7 +105,7 @@ def test_get_merge_request(gitlab_tools, mock_gitlab_instance) -> None:
     mock_project.mergerequests.get.assert_called_with(1)
     assert mr["title"] == "Test MR"
 
-def test_list_issues(gitlab_tools, mock_gitlab_instance) -> None:
+def test_list_issues(gitlab_tools: GitlabTools, mock_gitlab_instance: MagicMock) -> None:
     mock_project = MagicMock()
     mock_issue = MagicMock()
     mock_issue.id = 201
@@ -124,7 +125,7 @@ def test_list_issues(gitlab_tools, mock_gitlab_instance) -> None:
     assert len(issues) == 1
     assert issues[0]["title"] == "Test Issue"
 
-def test_get_issue(gitlab_tools, mock_gitlab_instance) -> None:
+def test_get_issue(gitlab_tools: GitlabTools, mock_gitlab_instance: MagicMock) -> None:
     mock_project = MagicMock()
     mock_issue = MagicMock()
     mock_issue.id = 201
@@ -144,7 +145,7 @@ def test_get_issue(gitlab_tools, mock_gitlab_instance) -> None:
     mock_project.issues.get.assert_called_with(10)
     assert issue["title"] == "Test Issue"
 
-def test_get_file_content(gitlab_tools, mock_gitlab_instance) -> None:
+def test_get_file_content(gitlab_tools: GitlabTools, mock_gitlab_instance: MagicMock) -> None:
     mock_project = MagicMock()
     mock_file = MagicMock()
     mock_file.decode.return_value = b"file content"
@@ -156,7 +157,7 @@ def test_get_file_content(gitlab_tools, mock_gitlab_instance) -> None:
     mock_project.files.get.assert_called_with(file_path="README.md", ref="main")
     assert content == "file content"
 
-def test_create_issue(gitlab_tools, mock_gitlab_instance) -> None:
+def test_create_issue(gitlab_tools: GitlabTools, mock_gitlab_instance: MagicMock) -> None:
     mock_project = MagicMock()
     mock_issue = MagicMock()
     mock_issue.id = 301
@@ -173,7 +174,7 @@ def test_create_issue(gitlab_tools, mock_gitlab_instance) -> None:
     mock_project.issues.create.assert_called_with({'title': "New Issue", 'description': "New issue description"})
     assert issue["title"] == "New Issue"
 
-def test_create_merge_request(gitlab_tools, mock_gitlab_instance) -> None:
+def test_create_merge_request(gitlab_tools: GitlabTools, mock_gitlab_instance: MagicMock) -> None:
     mock_project = MagicMock()
     mock_mr = MagicMock()
     mock_mr.id = 401
@@ -198,59 +199,59 @@ def test_create_merge_request(gitlab_tools, mock_gitlab_instance) -> None:
     assert mr["title"] == "New MR"
 
 # Test error handling for all methods
-def test_list_projects_error(gitlab_tools, mock_gitlab_instance) -> None:
+def test_list_projects_error(gitlab_tools: GitlabTools, mock_gitlab_instance: MagicMock) -> None:
     mock_gitlab_instance.projects.list.side_effect = gitlab.exceptions.GitlabError("API Error")
     projects = gitlab_tools.list_projects()
     assert projects == []
 
-def test_get_project_error(gitlab_tools, mock_gitlab_instance) -> None:
+def test_get_project_error(gitlab_tools: GitlabTools, mock_gitlab_instance: MagicMock) -> None:
     mock_gitlab_instance.projects.get.side_effect = gitlab.exceptions.GitlabError("API Error")
     project = gitlab_tools.get_project("non-existent/project")
     assert project is None
 
-def test_list_merge_requests_error(gitlab_tools, mock_gitlab_instance) -> None:
+def test_list_merge_requests_error(gitlab_tools: GitlabTools, mock_gitlab_instance: MagicMock) -> None:
     mock_project = MagicMock()
     mock_project.mergerequests.list.side_effect = gitlab.exceptions.GitlabError("API Error")
     mock_gitlab_instance.projects.get.return_value = mock_project
     mrs = gitlab_tools.list_merge_requests("test-group/test-project")
     assert mrs == []
 
-def test_get_merge_request_error(gitlab_tools, mock_gitlab_instance) -> None:
+def test_get_merge_request_error(gitlab_tools: GitlabTools, mock_gitlab_instance: MagicMock) -> None:
     mock_project = MagicMock()
     mock_project.mergerequests.get.side_effect = gitlab.exceptions.GitlabError("API Error")
     mock_gitlab_instance.projects.get.return_value = mock_project
     mr = gitlab_tools.get_merge_request("test-group/test-project", 999)
     assert mr is None
 
-def test_list_issues_error(gitlab_tools, mock_gitlab_instance) -> None:
+def test_list_issues_error(gitlab_tools: GitlabTools, mock_gitlab_instance: MagicMock) -> None:
     mock_project = MagicMock()
     mock_project.issues.list.side_effect = gitlab.exceptions.GitlabError("API Error")
     mock_gitlab_instance.projects.get.return_value = mock_project
     issues = gitlab_tools.list_issues("test-group/test-project")
     assert issues == []
 
-def test_get_issue_error(gitlab_tools, mock_gitlab_instance) -> None:
+def test_get_issue_error(gitlab_tools: GitlabTools, mock_gitlab_instance: MagicMock) -> None:
     mock_project = MagicMock()
     mock_project.issues.get.side_effect = gitlab.exceptions.GitlabError("API Error")
     mock_gitlab_instance.projects.get.return_value = mock_project
     issue = gitlab_tools.get_issue("test-group/test-project", 999)
     assert issue is None
 
-def test_get_file_content_error(gitlab_tools, mock_gitlab_instance) -> None:
+def test_get_file_content_error(gitlab_tools: GitlabTools, mock_gitlab_instance: MagicMock) -> None:
     mock_project = MagicMock()
     mock_project.files.get.side_effect = gitlab.exceptions.GitlabError("API Error")
     mock_gitlab_instance.projects.get.return_value = mock_project
     content = gitlab_tools.get_file_content("test-group/test-project", "non-existent.md")
     assert content is None
 
-def test_create_issue_error(gitlab_tools, mock_gitlab_instance) -> None:
+def test_create_issue_error(gitlab_tools: GitlabTools, mock_gitlab_instance: MagicMock) -> None:
     mock_project = MagicMock()
     mock_project.issues.create.side_effect = gitlab.exceptions.GitlabError("API Error")
     mock_gitlab_instance.projects.get.return_value = mock_project
     issue = gitlab_tools.create_issue("test-group/test-project", "Failing Issue")
     assert issue is None
 
-def test_create_merge_request_error(gitlab_tools, mock_gitlab_instance) -> None:
+def test_create_merge_request_error(gitlab_tools: GitlabTools, mock_gitlab_instance: MagicMock) -> None:
     mock_project = MagicMock()
     mock_project.mergerequests.create.side_effect = gitlab.exceptions.GitlabError("API Error")
     mock_gitlab_instance.projects.get.return_value = mock_project

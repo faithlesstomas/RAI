@@ -2,33 +2,32 @@
 from typing import Any, Dict
 
 from .base import BaseAdapter
-from ..core import setup_agent
+from ..core import create_agent_from_config
 
 
-class AgnoAdapter(BaseAdapter): # pylint: disable=too-few-public-methods
+class AgnoAdapter(BaseAdapter):  # pylint: disable=too-few-public-methods
     """Adapter for running agents using the Agno framework."""
+
+    def __init__(self, agent_config: Dict[str, Any]) -> None:
+        super().__init__(agent_config)
+        # Each adapter instance gets its own agent, configured dynamically.
+        # A session_id is still needed for history management within the agent.
+        session_id = self.config.get("session_id", "default-session")
+        self.agent, _ = create_agent_from_config(self.config, session_id)
 
     async def arun(
         self,
         prompt: str,
-        session_id: str,
+        session_id: str,  # session_id is now mainly for engine-level context
     ) -> Dict[str, Any]:
         """
-        Runs a chat interaction using the Agno agent.
-
-        This logic was previously in the `engine.py` module.
+        Runs a chat interaction using the pre-configured Agno agent.
         """
-        # The setup_agent function handles agent caching and setup internally
-        agent, _ = setup_agent(session_id=session_id)
-
         if not prompt:
-            # This check should ideally be done before calling the adapter
             return {"status": "error", "error_message": "Missing prompt."}
 
-        ai_response = await agent.arun(prompt)
+        ai_response = await self.agent.arun(prompt)
         content = ai_response.content if ai_response else ""
         tool_calls = getattr(ai_response, "tool_calls", None)
 
-        # The adapter's responsibility is to return the raw payload,
-        # the engine will wrap it with status.
         return {"content": content, "tool_calls": tool_calls}
