@@ -117,7 +117,10 @@ async def handle_client(
 
             if handler_method:
                 payload = request.get("payload", {})
-                response_data = await handler_method(payload) if asyncio.iscoroutinefunction(handler_method) else handler_method(payload)
+                if asyncio.iscoroutinefunction(handler_method):
+                    response_data = await handler_method(payload)
+                else:
+                    response_data = handler_method(payload)
                 response = {"request_id": request_id, **response_data}
             else:
                 response = _build_error_response(f"Unknown command: {command_name}", request_id)

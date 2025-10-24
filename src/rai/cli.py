@@ -24,6 +24,7 @@ from rich.panel import Panel
 from rich.rule import Rule
 from agno.agent import Agent
 from agno.utils.log import logger # Import logger
+from pydantic_ai.exceptions import UserError
 
 from .core import (
     RAI_CONFIG, console, error_console, load_config, save_config, setup_agent
@@ -45,6 +46,7 @@ class CliOptions:  # pylint: disable=too-many-instance-attributes
     system: Optional[str] = None
     model: Optional[str] = None
     backend: Optional[str] = None
+    framework: str = "agno"
     no_markdown: bool = False
     json_output: bool = False
     quiet: bool = False
@@ -256,6 +258,11 @@ async def _handle_stream_response(
             new_task = asyncio.create_task(tts_instance.synthesize(full_response))
             RAI_CONFIG["active_tts_task"] = new_task
 
+    except UserError as e:
+        error_message = f"[bold red]An error occurred during agent execution: {e}[/bold red]"
+        if RAI_CONFIG.get("backend") == "ollama":
+            error_message += "\n[yellow]Is the Ollama server running and is the model pulled?[/yellow]"
+        error_console.print(error_message)
     except Exception as e:
         error_console.print(f"[bold red]An error occurred during agent execution:[/bold red]\n{e}")
         raise
@@ -277,6 +284,12 @@ async def _handle_non_stream_response(
     try:
         with console.status("[bold green]Assistant is thinking..."):
             response = await agent.arun(user_input, stream=False)
+    except UserError as e:
+        error_message = f"[bold red]An error occurred during agent execution: {e}[/bold red]"
+        if RAI_CONFIG.get("backend") == "ollama":
+            error_message += "\n[yellow]Is the Ollama server running and is the model pulled?[/yellow]"
+        error_console.print(error_message)
+        return
     except Exception as e: # pylint: disable=broad-exception-caught
         error_console.print(f"[bold red]An error occurred during agent execution:[/bold red]\n{e}")
         return
@@ -392,7 +405,7 @@ def _setup_session(app_config: Dict[str, Any], options: CliOptions) -> Tuple[str
     # Ensure the session exists
     if session_to_use not in sessions:
         sessions[session_to_use] = {
-            "model": "gemma3:1b", "backend": "ollama",
+            "model": "gemma3:4b", "backend": "ollama",
             "system": "You are a versatile and helpful AI assistant.",
             "tools": [
                 "CalculatorTools",
@@ -431,6 +444,8 @@ async def async_main(options: CliOptions) -> None:  # noqa: PLR0912, PLR0915
             "backend": options.backend or session_config.get("backend"),
             "system": options.system or session_config.get("system"),
             "prompt": options.prompt,
+            "tools": session_config.get("tools"),
+            "framework": options.framework,
         })
 
         # --- TTS Setup ---
@@ -488,11 +503,12 @@ async def async_main(options: CliOptions) -> None:  # noqa: PLR0912, PLR0915
             options.quiet
         )
         agent, startup_messages = setup_agent(
+            framework=RAI_CONFIG["framework"],
             enable_tools=has_tools, quiet=options.quiet,
             use_markdown=use_agent_markdown, session_id=session_id,
         )
 
-        logger.debug("Agent tools after setup: %s", agent.tools)
+
 
         if options.prompt:
             if is_streaming:
@@ -536,6 +552,12 @@ async def async_main(options: CliOptions) -> None:  # noqa: PLR0912, PLR0915
 @click.option(
     "-b", "--backend", default=None,
     type=click.Choice(["ollama", "gemini", "anthropic", "openai", "groq"]),
+)
+@click.option(
+    "-f","--framework",
+    default="agno",
+    type=click.Choice(["agno", "pydantic_ai"]),
+    help="Specify the AI framework to use.",
 )
 @click.option(
     "--config", "config_path", default=None, help="Path to a custom configuration file.",
