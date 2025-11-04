@@ -26,6 +26,8 @@ GitLab Authentication Setup Guide
    export GITLAB_BASE_URL="https://YOUR-GITLAB-HOSTNAME"
    export GITLAB_ACCESS_TOKEN="your_token_here"
 """
+# pylint: disable=logging-fstring-interpolation
+
 
 import os
 from typing import Any, Dict, List, Optional
@@ -76,7 +78,7 @@ class GitlabTools(Toolkit):
 
         try:
             logger.debug(
-                f"Attempting to initialize GitLab client with URL: {self.gitlab_url}"  # pylint: disable=logging-fstring-interpolation # ruff: noqa: G004
+                f"Attempting to initialize GitLab client with URL: {self.gitlab_url}"
             )
             self.gl = gitlab.Gitlab(self.gitlab_url, private_token=self.gitlab_token)
             self.gl.auth()
@@ -84,7 +86,7 @@ class GitlabTools(Toolkit):
             return self.gl
         except (gitlab.exceptions.GitlabError, requests_exceptions.ConnectionError) as e:
             logger.warning(
-                f"Disabling GitlabTools. Failed to connect or authenticate with GitLab: {e}"  # pylint: disable=logging-fstring-interpolation # ruff: noqa: G004
+                f"Disabling GitlabTools. Failed to connect or authenticate with GitLab: {e}"
             )
             self._disabled = True
             self.gl = None
@@ -108,9 +110,7 @@ class GitlabTools(Toolkit):
         gl_client = self._get_gitlab_client()
         if not gl_client:
             return []
-        logger.debug(
-            f"Listing projects with search='{search}' and owned={owned}"  # pylint: disable=logging-fstring-interpolation # ruff: noqa: G004
-        )
+        logger.debug(f"Listing projects with search='{search}' and owned={owned}")
         try:
             projects_iterator = gl_client.projects.list(
                 search=search, owned=owned, iterator=True
@@ -126,14 +126,10 @@ class GitlabTools(Toolkit):
                         "description": p.description,
                     }
                 )
-            logger.debug(
-                f"Found {len(projects)} projects."  # pylint: disable=logging-fstring-interpolation # ruff: noqa: G004
-            )
+            logger.debug(f"Found {len(projects)} projects.")
             return projects
         except gitlab.exceptions.GitlabError as e:
-            logger.error(
-                f"Failed to list projects: {e}"  # pylint: disable=logging-fstring-interpolation # ruff: noqa: G004
-            )
+            logger.error(f"Failed to list projects: {e}")
             return []
 
     def get_project(self, project_id_or_path: str) -> Optional[Dict[str, Any]]:
@@ -150,9 +146,7 @@ class GitlabTools(Toolkit):
         gl_client = self._get_gitlab_client()
         if not gl_client:
             return None
-        logger.debug(
-            f"Getting project with project_id_or_path='{project_id_or_path}'"  # pylint: disable=logging-fstring-interpolation # ruff: noqa: G004
-        )
+        logger.debug(f"Getting project with project_id_or_path='{project_id_or_path}'")
         try:
             project = gl_client.projects.get(project_id_or_path)
             project_details = {
@@ -165,14 +159,10 @@ class GitlabTools(Toolkit):
                 "created_at": project.created_at,
                 "last_activity_at": project.last_activity_at,
             }
-            logger.debug(
-                f"Found project: {project_details}"  # pylint: disable=logging-fstring-interpolation # ruff: noqa: G004
-            )
+            logger.debug(f"Found project: {project_details}")
             return project_details
         except gitlab.exceptions.GitlabError as e:
-            logger.error(
-                f"Failed to get project {project_id_or_path}: {e}"  # pylint: disable=logging-fstring-interpolation # ruff: noqa: G004
-            )
+            logger.error(f"Failed to get project {project_id_or_path}: {e}")
             return None
 
     def list_merge_requests(
@@ -195,7 +185,7 @@ class GitlabTools(Toolkit):
         if not gl_client:
             return []
         logger.debug(
-            f"Listing merge requests for project '{project_id_or_path}' with state='{state}'"  # pylint: disable=logging-fstring-interpolation # ruff: noqa: G004
+            f"Listing merge requests for project '{project_id_or_path}' with state='{state}'"
         )
         try:
             project = gl_client.projects.get(project_id_or_path)
@@ -213,13 +203,11 @@ class GitlabTools(Toolkit):
                 }
                 for mr in mrs
             ]
-            logger.debug(
-                f"Found {len(result)} merge requests."  # pylint: disable=logging-fstring-interpolation # ruff: noqa: G004
-            )
+            logger.debug(f"Found {len(result)} merge requests.")
             return result
         except gitlab.exceptions.GitlabError as e:
             logger.error(
-                f"Failed to list merge requests for {project_id_or_path}: {e}"  # pylint: disable=logging-fstring-interpolation # ruff: noqa: G004
+                f"Failed to list merge requests for {project_id_or_path}: {e}"
             )
             return []
 
@@ -242,7 +230,7 @@ class GitlabTools(Toolkit):
         if not gl_client:
             return None
         logger.debug(
-            f"Getting merge request iid={mr_iid} for project '{project_id_or_path}'"  # pylint: disable=logging-fstring-interpolation # ruff: noqa: G004
+            f"Getting merge request iid={mr_iid} for project '{project_id_or_path}'"
         )
         try:
             project = gl_client.projects.get(project_id_or_path)
@@ -260,13 +248,11 @@ class GitlabTools(Toolkit):
                 "source_branch": mr.source_branch,
                 "target_branch": mr.target_branch,
             }
-            logger.debug(
-                f"Found merge request: {mr_details}"  # pylint: disable=logging-fstring-interpolation # ruff: noqa: G004
-            )
+            logger.debug(f"Found merge request: {mr_details}")
             return mr_details
         except gitlab.exceptions.GitlabError as e:
             logger.error(
-                f"Failed to get merge request {mr_iid} for {project_id_or_path}: {e}"  # pylint: disable=logging-fstring-interpolation # ruff: noqa: G004
+                f"Failed to get merge request {mr_iid} for {project_id_or_path}: {e}"
             )
             return None
 
@@ -289,7 +275,7 @@ class GitlabTools(Toolkit):
         if not gl_client:
             return []
         logger.debug(
-            f"Listing issues for project '{project_id_or_path}' with state='{state}'"  # pylint: disable=logging-fstring-interpolation # ruff: noqa: G004
+            f"Listing issues for project '{project_id_or_path}' with state='{state}'"
         )
         try:
             project = gl_client.projects.get(project_id_or_path)
@@ -307,14 +293,10 @@ class GitlabTools(Toolkit):
                 }
                 for issue in issues
             ]
-            logger.debug(
-                f"Found {len(result)} issues."  # pylint: disable=logging-fstring-interpolation # ruff: noqa: G004
-            )
+            logger.debug(f"Found {len(result)} issues.")
             return result
         except gitlab.exceptions.GitlabError as e:
-            logger.error(
-                f"Failed to list issues for {project_id_or_path}: {e}"  # pylint: disable=logging-fstring-interpolation # ruff: noqa: G004
-            )
+            logger.error(f"Failed to list issues for {project_id_or_path}: {e}")
             return []
 
     def get_issue(
@@ -336,7 +318,7 @@ class GitlabTools(Toolkit):
         if not gl_client:
             return None
         logger.debug(
-            f"Getting issue iid={issue_iid} for project '{project_id_or_path}'"  # pylint: disable=logging-fstring-interpolation # ruff: noqa: G004
+            f"Getting issue iid={issue_iid} for project '{project_id_or_path}'"
         )
         try:
             project = gl_client.projects.get(project_id_or_path)
@@ -352,13 +334,11 @@ class GitlabTools(Toolkit):
                 "created_at": issue.created_at,
                 "updated_at": issue.updated_at,
             }
-            logger.debug(
-                f"Found issue: {issue_details}"  # pylint: disable=logging-fstring-interpolation # ruff: noqa: G004
-            )
+            logger.debug(f"Found issue: {issue_details}")
             return issue_details
         except gitlab.exceptions.GitlabError as e:
             logger.error(
-                f"Failed to get issue {issue_iid} for {project_id_or_path}: {e}"  # pylint: disable=logging-fstring-interpolation # ruff: noqa: G004
+                f"Failed to get issue {issue_iid} for {project_id_or_path}: {e}"
             )
             return None
 
@@ -384,19 +364,17 @@ class GitlabTools(Toolkit):
         if not gl_client:
             return None
         logger.debug(
-            f"Getting file content for '{file_path}' in project '{project_id_or_path}' at ref '{ref}'"  # pylint: disable=logging-fstring-interpolation # ruff: noqa: G004
+            f"Getting file content for '{file_path}' in project '{project_id_or_path}' at ref '{ref}'"
         )
         try:
             project = gl_client.projects.get(project_id_or_path)
             file = project.files.get(file_path=file_path, ref=ref)
             content = file.decode().decode("utf-8")
-            logger.debug(
-                f"Got file content of length {len(content)}."  # pylint: disable=logging-fstring-interpolation # ruff: noqa: G004
-            )
+            logger.debug(f"Got file content of length {len(content)}.")
             return content
         except gitlab.exceptions.GitlabError as e:
             logger.error(
-                f"Failed to get file content for {file_path} in {project_id_or_path} (ref: {ref}): {e}"  # pylint: disable=logging-fstring-interpolation # ruff: noqa: G004
+                f"Failed to get file content for {file_path} in {project_id_or_path} (ref: {ref}): {e}"
             )
             return None
 
@@ -421,7 +399,7 @@ class GitlabTools(Toolkit):
         if not gl_client:
             return None
         logger.debug(
-            f"Creating issue with title '{title}' in project '{project_id_or_path}'"  # pylint: disable=logging-fstring-interpolation # ruff: noqa: G004
+            f"Creating issue with title '{title}' in project '{project_id_or_path}'"
         )
         try:
             project = gl_client.projects.get(project_id_or_path)
@@ -434,33 +412,25 @@ class GitlabTools(Toolkit):
                 "web_url": issue.web_url,
                 "author": issue.author["username"],
             }
-            logger.debug(
-                f"Created issue: {issue_details}"  # pylint: disable=logging-fstring-interpolation # ruff: noqa: G004
-            )
+            logger.debug(f"Created issue: {issue_details}")
             return issue_details
         except gitlab.exceptions.GitlabError as e:
-            logger.error(
-                f"Failed to create issue in {project_id_or_path}: {e}"  # pylint: disable=logging-fstring-interpolation # ruff: noqa: G004
-            )
+            logger.error(f"Failed to create issue in {project_id_or_path}: {e}")
             return None
 
     def create_merge_request(
         self,
         project_id_or_path: str,
-        source_branch: str,
-        target_branch: str,
-        title: str,
-        description: Optional[str] = None,
+        mr_data: Dict[str, Any],
     ) -> Optional[Dict[str, Any]]:
         """
         Creates a new merge request in a GitLab project.
 
         Args:
             project_id_or_path: The ID or path with namespace of the project.
-            source_branch: The source branch of the merge request.
-            target_branch: The target branch of the merge request.
-            title: The title of the new merge request.
-            description: The description of the new merge request.
+            mr_data: A dictionary containing the merge request data.
+                     Required keys: [source_branch, target_branch, title]
+                     Optional keys: [description]
 
         Returns:
             A dictionary representing the created merge request, or None if creation
@@ -470,18 +440,11 @@ class GitlabTools(Toolkit):
         if not gl_client:
             return None
         logger.debug(
-            f"Creating merge request with title '{title}' in project '{project_id_or_path}'"  # pylint: disable=logging-fstring-interpolation # ruff: noqa: G004
+            f"Creating merge request with title '{mr_data.get('title')}' in project '{project_id_or_path}'"
         )
         try:
             project = gl_client.projects.get(project_id_or_path)
-            mr = project.mergerequests.create(
-                {
-                    "source_branch": source_branch,
-                    "target_branch": target_branch,
-                    "title": title,
-                    "description": description,
-                }
-            )
+            mr = project.mergerequests.create(mr_data)
             mr_details = {
                 "id": mr.id,
                 "iid": mr.iid,
@@ -490,12 +453,10 @@ class GitlabTools(Toolkit):
                 "web_url": mr.web_url,
                 "author": mr.author["username"],
             }
-            logger.debug(
-                f"Created merge request: {mr_details}"  # pylint: disable=logging-fstring-interpolation # ruff: noqa: G004
-            )
+            logger.debug(f"Created merge request: {mr_details}")
             return mr_details
         except gitlab.exceptions.GitlabError as e:
             logger.error(
-                f"Failed to create merge request in {project_id_or_path}: {e}"  # pylint: disable=logging-fstring-interpolation # ruff: noqa: G004
+                f"Failed to create merge request in {project_id_or_path}: {e}"
             )
             return None

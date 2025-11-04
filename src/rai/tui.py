@@ -126,7 +126,7 @@ class RaiTUI(App[None]):
             self._write_message(
                 "AI agent reinitialized successfully.", message_type="info"
             )
-        except Exception as e:
+        except Exception as e:  # pylint: disable=broad-exception-caught
             self._write_message(
                 f"Failed to reinitialize agent: {e}", message_type="error"
             )
@@ -225,6 +225,7 @@ class RaiTUI(App[None]):
                 message_type="error",
             )
         except Exception as e:  # pylint: disable=broad-exception-caught
+            # Catch all other exceptions to prevent the TUI from crashing.
             self._write_message(
                 f"An unexpected error occurred: {e}", message_type="error"
             )

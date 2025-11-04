@@ -52,9 +52,9 @@ class ConfigScreen(Screen):
         new_system_prompt = self.query_one("#system_prompt_input", Input).value
 
         # Update the app's state
-        self.app.model_id = new_model_id
-        self.app.backend = new_backend
-        self.app.system_prompt = new_system_prompt
+        self.app.model_id = new_model_id  # pylint: disable=attribute-defined-outside-init
+        self.app.backend = new_backend  # pylint: disable=attribute-defined-outside-init
+        self.app.system_prompt = new_system_prompt  # pylint: disable=attribute-defined-outside-init
 
         # Re-initialize the agent in the main app
         self.app.reinitialize_agent()

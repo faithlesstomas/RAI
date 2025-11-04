@@ -4,100 +4,121 @@ The core engine for the RAI platform.
 This module discovers and manages framework adapters, and provides the
 main entry point for running chat interactions.
 """
-import pkgutil
+
+import functools
 import inspect
+
 import importlib
-from typing import Any, Dict, List, Type, Optional
+import pkgutil
 import uuid
+from typing import Any, Dict, List, Optional, Type
+
+from returns.result import Failure, Result, Success
 
 from . import adapters
-from .adapters.base import BaseAdapter
-from .core import get_session_config # Keep for backward compatibility of run_chat
+from .adapters.base import Processor
+from .exceptions import AdapterNotFoundError, ChainExecutionError
 
-# A dictionary to hold discovered adapter classes
-_ADAPTERS: Dict[str, Type[BaseAdapter]] = {}
 
-def _discover_adapters() -> None:
+@functools.lru_cache(maxsize=None)
+def _discover_adapters() -> Dict[str, Type[Processor]]:
     """Dynamically discovers and loads adapter classes."""
-    if _ADAPTERS:
-        return
-
+    discovered_adapters: Dict[str, Type[Processor]] = {}
     for module_info in pkgutil.iter_modules(adapters.__path__, adapters.__name__ + "."):
-        if module_info.name.endswith('.base') or module_info.name.endswith('.__init__'):
+        if module_info.name.endswith(".base") or module_info.name.endswith(".__init__"):
             continue
 
         module = importlib.import_module(module_info.name)
 
         for _, obj in inspect.getmembers(module, inspect.isclass):
-            if issubclass(obj, BaseAdapter) and obj is not BaseAdapter:
-                adapter_name = module_info.name.split('.')[-1]
-                _ADAPTERS[adapter_name] = obj
+            # Check if the class is a concrete implementation of the Processor protocol
+            if issubclass(obj, Processor) and not inspect.isabstract(obj):
+                adapter_name = module_info.name.split(".")[-1]
+                discovered_adapters[adapter_name] = obj
+    return discovered_adapters
 
-_discover_adapters()
 
-
-async def run_chain(chain_input: str, chain_configs: List[Dict[str, Any]]) -> Dict[str, Any]:
-    """ 
+async def run_chain(
+    chain_input: str,
+    chain_configs: List[Dict[str, Any]],
+    app_config: Optional[Dict[str, Any]] = None, # Added for consistency, not used yet
+) -> Result[Dict[str, Any], Exception]:
+    """
     Runs a chat interaction by dispatching to the appropriate framework adapter.
     """
-    if not chain_input:
-        return {"status": "error", "error_message": "Missing input."}
-    if not chain_configs:
-        return {"status": "error", "error_message": "Missing chain configuration."}
+    _ = app_config # Unused for now, but here for future-proofing the API
+    try:
+        if not chain_input:
+            return Failure(ValueError("Missing input."))
+        if not chain_configs:
+            return Failure(ValueError("Missing chain configuration."))
 
-    current_input = chain_input
-    final_payload = {}
-    session_id = str(uuid.uuid4()) # A unique session for the entire chain execution
+        rai_adapters = _discover_adapters()
+        current_input = chain_input
+        final_payload: Dict[str, Any] = {}
+        session_id = str(uuid.uuid4())  # A unique session for the entire chain execution
 
-    for i, agent_config in enumerate(chain_configs):
-        framework = agent_config.get("agent_class", "AgentAgno").replace("Agent", "").lower()
-        adapter_class = _ADAPTERS.get(framework)
+        for _, agent_config in enumerate(chain_configs):
+            framework = (
+                agent_config.get("agent_class", "AgentAgno").replace("Agent", "").lower()
+            )
+            adapter_class = rai_adapters.get(framework)
 
-        if not adapter_class:
-            return {"status": "error", "error_message": f"Framework '{framework}' not supported."}
+            if not adapter_class:
+                return Failure(
+                    AdapterNotFoundError(f"Framework '{framework}' not supported.")
+                )
 
-        try:
             # Add session_id to the config for the adapter to use
             agent_config["session_id"] = session_id
             adapter_instance = adapter_class(agent_config=agent_config)
-            
+
             # The prompt for the arun method is the output of the previous step
-            payload = await adapter_instance.arun(prompt=current_input, session_id=session_id)
-            
+            result = await adapter_instance.arun(prompt=current_input)
+
+            if isinstance(result, Failure):
+                return result # Propagate the failure
+
+            payload = result.unwrap()
+
             # The input for the next agent is the content from the current one
             current_input = payload.get("content", "")
-            final_payload = payload # Store the last payload
+            final_payload = payload  # Store the last payload
 
-        except Exception as e: # pylint: disable=broad-exception-caught
-            return {
-                "status": "error",
-                "error_message": f"Error in chain step {i+1} with framework '{framework}': {e}",
-            }
+        return Success(final_payload)
 
-    return {"status": "success", "payload": final_payload}
+    except Exception as e: # pylint: disable=broad-exception-caught
+        return Failure(ChainExecutionError(f"An error occurred during chain execution: {e}"))
 
 
-async def run_chat(prompt: str, session_id: str, framework: str = "agno") -> Dict[str, Any]:
+async def run_chat(
+    prompt: str,
+    session_id: str,
+    app_config: Dict[str, Any],
+    framework: str = "agno",
+) -> Result[Dict[str, Any], Exception]:
     """
     Runs a single chat interaction using the old session-based config.
     This is kept for backward compatibility.
     """
-    if not prompt:
-        return {"status": "error", "error_message": "Missing prompt."}
-
-    adapter_class = _ADAPTERS.get(framework)
-    if not adapter_class:
-        return {"status": "error", "error_message": f"Framework '{framework}' not supported."}
-
     try:
-        # Get static config from file, as this is the old flow
-        agent_config = get_session_config(session_id)
+        if not prompt:
+            return Failure(ValueError("Missing prompt."))
+
+        rai_adapters = _discover_adapters()
+        adapter_class = rai_adapters.get(framework)
+        if not adapter_class:
+            return Failure(AdapterNotFoundError(f"Framework '{framework}' not supported."))
+
+        # Get static config from the passed app_config
+        agent_config = app_config.get("sessions", {}).get(session_id)
         if not agent_config:
             # Provide a default config if none is found
             agent_config = {"backend": "ollama", "model": "gemma2:9b"}
 
         adapter_instance = adapter_class(agent_config=agent_config)
         payload = await adapter_instance.arun(prompt=prompt, session_id=session_id)
-        return {"status": "success", "payload": payload}
+        return Success(payload)
+
     except Exception as e: # pylint: disable=broad-exception-caught
-        return {"status": "error", "error_message": f"Error running framework '{framework}': {e}"}
+        return Failure(ChainExecutionError(f"An error occurred during chat execution: {e}"))

@@ -1,53 +1,61 @@
 """Adapter for the Pydantic AI framework."""
+import os
 import json
 from typing import Any, Dict, List, Optional
 
 from pydantic_ai import Agent
+from pydantic_ai.models.openai import OpenAIChatModel
+from pydantic_ai.providers.ollama import OllamaProvider
 
 from agno.tools.calculator import CalculatorTools
 from agno.tools.shell import ShellTools
 from agno.utils.log import logger
 
-from .base import BaseAdapter
+# pylint: disable=logging-fstring-interpolation
 
-
-class PydanticAIAdapter(BaseAdapter):  # pylint: disable=too-few-public-methods
+class PydanticAIAdapter:  # pylint: disable=too-few-public-methods
     """Adapter for running agents using the Pydantic AI framework."""
 
     def __init__(self, agent_config: Dict[str, Any]) -> None:
-        super().__init__(agent_config)
+        self.config = agent_config
+        self.agents: Dict[str, Agent] = {}  # Store agents per session
+
+    def _get_or_create_agent(self, session_id: str) -> Agent:
+        """Creates or retrieves a Pydantic AI agent for a given session."""
+        if session_id in self.agents:
+            return self.agents[session_id]
 
         backend = self.config.get("backend", "ollama")
-        model = self.config.get("model", "gemma2:9b")
+        model_name = self.config.get("model", "gemma2:9b")
         enabled_tools = self.config.get("tools")
-
-        # Pydantic AI uses a single string for the model, e.g., "ollama/gemma2:9b"
-        if backend in ["ollama", "groq", "gemini"]:
-            model_string = f"{backend}/{model}"
-        else:
-            model_string = f"{backend}:{model}"
-
-        # Get compatible tool wrappers
         pydantic_tools = setup_pydantic_tools(enabled_tools)
 
-        logger.debug("Pydantic AI model string: %s", model_string)
+        if backend == "ollama":
+            ollama_base_url = self.config.get(
+                "ollama_base_url"
+            ) or os.getenv("OLLAMA_BASE_URL", "http://localhost:11434")
+            ollama_api_url = f"{ollama_base_url.rstrip('/')}/v1"
+            logger.debug(
+                f"Creating new PydanticAI agent for session '{session_id}' with Ollama model: {model_name}"
+            )
+            ollama_provider = OllamaProvider(base_url=ollama_api_url)
+            llm = OpenAIChatModel(model_name=model_name, provider=ollama_provider)
+        else:
+            msg = "Creating new PydanticAI agent for session "
+            msg += f"'{session_id}' with {backend} model: {model_name}"
+            logger.debug(msg)
+            llm = model_name
 
-        # The agent is now instantiated once per adapter instance.
-        self.agent = Agent(model_string, tools=pydantic_tools)
+        agent = Agent(llm, tools=pydantic_tools)
+        self.agents[session_id] = agent
+        return agent
 
-    async def arun(
-        self,
-        prompt: str,
-        session_id: str,
-    ) -> Dict[str, Any]:
+    async def arun(self, prompt: str, session_id: str) -> Dict[str, Any]:
         """
-        Runs a chat interaction using the pre-configured Pydantic AI agent.
+        Runs a chat interaction using a session-specific Pydantic AI agent.
         """
-        # The session_id could be used in the future for history management
-        # with Pydantic AI, if that feature is added/used.
-        _ = session_id
-
-        ai_response = await self.agent.run(prompt)
+        agent = self._get_or_create_agent(session_id)
+        ai_response = await agent.run(prompt)
 
         # The response object in Pydantic AI has an `output` attribute.
         content = ai_response.output
@@ -75,30 +83,35 @@ def setup_pydantic_tools(
             n: Optional[int] = None,
         ) -> str:
             """
-            Performs a mathematical operation. Supported operations: add, subtract, multiply, divide, exponentiate, factorial, is_prime, square_root.
+            Performs a mathematical operation.
+            Supported operations: add, subtract, multiply, divide, exponentiate,
+            factorial, is_prime, square_root.
             Args:
                 operation (str): The name of the operation to perform.
-                a (Optional[float]): The first number for binary operations (add, subtract, multiply, divide, exponentiate).
+                a (Optional[float]): The first number for binary operations.
                 b (Optional[float]): The second number for binary operations.
-                n (Optional[int]): The number for unary operations (factorial, is_prime, square_root).
+                n (Optional[int]): The number for unary operations.
             """
-            if operation == "add" and a is not None and b is not None:
-                return _calculator.add(a, b)
-            if operation == "subtract" and a is not None and b is not None:
-                return _calculator.subtract(a, b)
-            if operation == "multiply" and a is not None and b is not None:
-                return _calculator.multiply(a, b)
-            if operation == "divide" and a is not None and b is not None:
-                return _calculator.divide(a, b)
-            if operation == "exponentiate" and a is not None and b is not None:
-                return _calculator.exponentiate(a, b)
-            if operation == "factorial" and n is not None:
-                return _calculator.factorial(n)
-            if operation == "is_prime" and n is not None:
-                return _calculator.is_prime(n)
-            if operation == "square_root" and n is not None:
-                return _calculator.square_root(n)
+            binary_ops = {
+                "add": _calculator.add,
+                "subtract": _calculator.subtract,
+                "multiply": _calculator.multiply,
+                "divide": _calculator.divide,
+                "exponentiate": _calculator.exponentiate,
+            }
+            unary_ops = {
+                "factorial": _calculator.factorial,
+                "is_prime": _calculator.is_prime,
+                "square_root": _calculator.square_root,
+            }
+
+            if operation in binary_ops and a is not None and b is not None:
+                return binary_ops[operation](a, b)
+            if operation in unary_ops and n is not None:
+                return unary_ops[operation](n)
+
             return json.dumps({"error": f"Unsupported operation or missing arguments for {operation}"})
+
 
         pydantic_tools.append(run_calculator_operation)
 

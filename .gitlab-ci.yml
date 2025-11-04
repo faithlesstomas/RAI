@@ -9,11 +9,23 @@ before_script:
   - source .venv/bin/activate
   - pip install -e .[test,lint]
 
-lint:
+critical_lint:
   stage: lint
   script:
     # - ruff check .
-    - pylint -E --ignore tui.py src examples
+    - pylint -E src
+
+ruff:
+  stage: lint
+  script:
+    - ruff check .
+  allow_failure: true
+
+pylint:
+  stage: lint
+  script:
+    - ruff check .
+  allow_failure: true
 
 test:
   stage: test

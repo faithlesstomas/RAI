@@ -186,16 +186,15 @@ def test_create_merge_request(gitlab_tools: GitlabTools, mock_gitlab_instance: M
     mock_project.mergerequests.create.return_value = mock_mr
     mock_gitlab_instance.projects.get.return_value = mock_project
 
-    mr = gitlab_tools.create_merge_request(
-        "test-group/test-project", "feature-branch", "main", "New MR", "New MR description"
-    )
-    mock_gitlab_instance.projects.get.assert_called_with("test-group/test-project")
-    mock_project.mergerequests.create.assert_called_with({
+    mr_data = {
         'source_branch': "feature-branch",
         'target_branch': "main",
         'title': "New MR",
         'description': "New MR description",
-    })
+    }
+    mr = gitlab_tools.create_merge_request("test-group/test-project", mr_data)
+    mock_gitlab_instance.projects.get.assert_called_with("test-group/test-project")
+    mock_project.mergerequests.create.assert_called_with(mr_data)
     assert mr["title"] == "New MR"
 
 # Test error handling for all methods
@@ -255,5 +254,10 @@ def test_create_merge_request_error(gitlab_tools: GitlabTools, mock_gitlab_insta
     mock_project = MagicMock()
     mock_project.mergerequests.create.side_effect = gitlab.exceptions.GitlabError("API Error")
     mock_gitlab_instance.projects.get.return_value = mock_project
-    mr = gitlab_tools.create_merge_request("test-group/test-project", "bug-fix", "main", "Failing MR")
+    mr_data = {
+        'source_branch': "bug-fix",
+        'target_branch': "main",
+        'title': "Failing MR",
+    }
+    mr = gitlab_tools.create_merge_request("test-group/test-project", mr_data)
     assert mr is None

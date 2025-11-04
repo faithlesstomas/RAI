@@ -26,6 +26,10 @@ dependencies = [
     "prompt_toolkit",
     "sqlalchemy",
     "python-gitlab",
+    "fastapi",
+    "uvicorn[standard]",
+    "httpx",
+    "returns",
 ]
 
 [project.optional-dependencies]
@@ -64,4 +68,4 @@ select = ["PL", "ANN"]
 [tool.pylint]
 max-line-length=108
 
-# [tool.pylint.typing]
+[tool.pylint.typing]

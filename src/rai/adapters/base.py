@@ -1,30 +1,43 @@
-"""Base class for all framework adapters."""
-from abc import ABC, abstractmethod
-from typing import Any, Dict
+""" Base module for LLM/AI Procesor adapters
+"""
+from typing import Any, Dict, List, Protocol, runtime_checkable
 
-class BaseAdapter(ABC): # pylint: disable=too-few-public-methods
+from returns.result import Result
+
+
+@runtime_checkable
+class Processor(Protocol):
     """
-    Abstract Base Class for AI framework adapters.
+    A protocol defining a standard interface for different AI agent
+    processors or adapters. This allows the CLI to interact with various
+    agent implementations (local, remote via WebSocket, etc.) in a uniform way.
     """
 
-    def __init__(self, agent_config: Dict[str, Any]) -> None:
-        self.config = agent_config
-
-    @abstractmethod
-    async def arun(
-        self,
-        prompt: str,
-        session_id: str,
-        # We can add more common parameters here later, e.g., tool definitions
-    ) -> Dict[str, Any]:
+    async def arun(self, prompt: str) -> Result[Dict[str, Any], Exception]:
         """
-        Asynchronously run a chat interaction.
+        Asynchronously runs the agent with a given prompt and returns the result.
 
         Args:
-            prompt: The user's prompt.
-            session_id: The ID of the current session.
+            prompt: The user's input prompt.
 
         Returns:
-            A dictionary containing the response from the AI, typically
-            with keys like 'content' and 'tool_calls'.
+            A Result monad containing either a dictionary with the agent's
+            response on success, or an Exception on failure.
+        """
+
+    def get_history(self) -> List[Dict[str, str]]:
+        """
+        Retrieves the current chat history.
+
+        Returns:
+            A list of dictionaries, where each dictionary represents a
+            message with "role" and "content" keys.
+        """
+
+    def clear_history(self) -> None:
+        """Clears the current chat history."""
+
+    async def close(self) -> None:
+        """
+        Performs any necessary cleanup, such as closing network connections.
         """
