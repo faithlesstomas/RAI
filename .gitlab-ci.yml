@@ -12,22 +12,21 @@ before_script:
 critical_lint:
   stage: lint
   script:
-    # - ruff check .
-    - pylint -E src
+    - .venv/bin/pylint -E src
 
 ruff:
   stage: lint
   script:
-    - ruff check .
+    - .venv/bin/ruff check .
   allow_failure: true
 
 pylint:
   stage: lint
   script:
-    - ruff check .
+    - .venv/bin/pylint src
   allow_failure: true
 
 test:
   stage: test
   script:
-    - pytest
+    - .venv/bin/pytest
