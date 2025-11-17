@@ -37,3 +37,7 @@
 
     This approach ensures that the local and CI environments are using the exact same dependencies, which should resolve the `pylint` errors.
     It also separates the application's dependencies from the development dependencies, which is a good practice.
+
+## Future Architectural Improvements
+
+- [ ] Consider migrating the client-side networking from `httpx` and `websockets` to `aiohttp`. This would unify the HTTP and WebSocket communication under a single, powerful library, simplifying dependencies and potentially the codebase.

@@ -4,12 +4,14 @@
 
 `rai` is a Python-based interactive command-line assistant. It has been refactored into a flexible, multi-framework platform based on a client-server model:
 
-*   **IPC Server (`rai serve-ipc`):** A core server, built with Python's `asyncio` and `FastAPI`, that handles AI logic.
+*   **IPC Server (`rai serve`):** A core server, built with Python's `asyncio` and `FastAPI`, that handles AI logic.
 *   **Engine (`src/rai/engine.py`):** A central dispatcher within the server that dynamically loads and routes requests to different AI framework "adapters".
 *   **Adapters (`src/rai/adapters/`):** Pluggable modules that wrap specific AI frameworks. Currently, adapters for `Agno` and `Pydantic AI` are implemented.
-*   **CLI Client (`rai`):** The command-line interface acts as a client that communicates with the IPC server.
+*   **CLI Client (`rai`):** The command-line interface operates in two primary modes:
+    *   **Standalone Mode:** The default mode, where `rai` (without subcommands) runs the AI logic directly.
+    *   **Client Mode:** Activated via the `--connect` flag (e.g., `rai --connect`), where the CLI communicates with the IPC server.
 
-This design allows for greater flexibility, interoperability with other languages (e.g., a Guile client is planned), and easier integration of new AI frameworks.
+This design allows for greater flexibility, interoperability with other languages (e.g., a Guile client example exists), and easier integration of new AI frameworks.
 
 ## Key Technologies
 
@@ -26,9 +28,10 @@ This design allows for greater flexibility, interoperability with other language
 
 ## Development Conventions & Status
 
-*   **Branch:** All refactoring work is being done on the `feature/refactor-ipc-architecture` branch.
+
 *   **Code Style & Typing:** The project uses `ruff` and `pylint` for linting. **Strict type hinting is enforced** using `ruff`'s `ANN` rule set.
-*   **Testing:** The project uses `pytest`. A major blocker involving `async` test execution has been **resolved by switching from `pytest-anyio` to `pytest-asyncio`**. All tests, including asynchronous ones, are now passing.
+*   **Testing:** The project uses `pytest`. A major blocker involving `async` test execution
+    has been **resolved by switching from `pytest-anyio` to `pytest-asyncio`**. All tests, including asynchronous ones, are now passing.
 
 ## Building and Running
 
@@ -50,12 +53,25 @@ The project is set up as a Python package.
 
 *   **IPC Server:**
     ```bash
-    rai serve-ipc
+    rai serve
     ```
-*   **CLI Client:**
+*   **CLI:**
+    *   **Standalone Mode (default):**
+        ```bash
+        rai
+        ```
+    *   **Client Mode (connect to server):**
+        ```bash
+        rai --connect [URI]
+        ```
+        If no `[URI]` is provided, it attempts to auto-discover the server.
+
+    Running CLI starts interactive chat session if no sub-command (eg. `rai config` or `rai session`) provided.
+    For one-shot AI inference run:
     ```bash
-    rai [OPTIONS] [PROMPT]
+    rai -p "My one-shot prompt."
     ```
+
     To use the `pydantic_ai` adapter with Ollama, ensure your `~/.config/rai/config.json` includes:
     ```json
     {

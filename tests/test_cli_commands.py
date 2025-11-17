@@ -129,26 +129,42 @@ def test_cli_standalone_interactive(mock_async_run_standalone):
 
 @patch("rai.cli.async_main_client")
 def test_cli_connect_one_shot(mock_async_main_client):
-    """Test 'rai connect --prompt "hello"' executes in client one-shot mode."""
+    """Test 'rai --connect --prompt "hello"' executes in client one-shot mode."""
     runner = click.testing.CliRunner()
-    result = runner.invoke(rai_cli.cli, ["connect", "--prompt", "hello"])
+    result = runner.invoke(rai_cli.cli, ["--connect", "--prompt", "hello"])
 
+    assert result.exit_code == 0
     mock_async_main_client.assert_called_once()
     options = mock_async_main_client.call_args.args[0]
     assert options.prompt == "hello"
-    assert result.exit_code == 0
+    assert options.connect_uri == "_auto_"
 
 
 @patch("rai.cli.async_main_client")
 def test_cli_connect_interactive(mock_async_main_client):
-    """Test 'rai connect' (no prompt) executes in client interactive mode."""
+    """Test 'rai --connect' (no prompt) executes in client interactive mode."""
     runner = click.testing.CliRunner()
-    result = runner.invoke(rai_cli.cli, ["connect"])
+    result = runner.invoke(rai_cli.cli, ["--connect"])
 
+    assert result.exit_code == 0
     mock_async_main_client.assert_called_once()
     options = mock_async_main_client.call_args.args[0]
     assert options.prompt == ""
+    assert options.connect_uri == "_auto_"
+
+
+@patch("rai.cli.async_main_client")
+def test_cli_connect_with_uri(mock_async_main_client):
+    """Test 'rai --connect <uri>' executes in client interactive mode."""
+    runner = click.testing.CliRunner()
+    uri = "ws://test.host:1234"
+    result = runner.invoke(rai_cli.cli, ["--connect", uri])
+
     assert result.exit_code == 0
+    mock_async_main_client.assert_called_once()
+    options = mock_async_main_client.call_args.args[0]
+    assert options.prompt == ""
+    assert options.connect_uri == uri
 
 
 @patch("rai.cli.PromptSession")

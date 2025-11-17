@@ -123,6 +123,7 @@ class CliOptions:  # pylint: disable=too-many-instance-attributes
     """Dataclass to hold CLI options."""
 
     prompt: Optional[str] = None
+    connect_uri: Optional[str] = None
     system: Optional[str] = None
     model: Optional[str] = None
     backend: Optional[str] = None
@@ -473,16 +474,32 @@ async def async_run_standalone(options: CliOptions) -> None:
 async def async_main_client(options: CliOptions) -> None:
     """The main entry point for the CLI in client mode."""
     run_config, _, _, _ = _build_run_config(options)
-    server_url = "http://127.0.0.1:8000"  # Hardcoded for now
+
+    # Determine server URI
+    uri = options.connect_uri
+    if uri == "_auto_":
+        # TODO: Implement full auto-discovery (UDS, etc.)
+        uri = "ws://127.0.0.1:8000/ws/v1/chat"
 
     if options.prompt:
         # Single-shot mode using REST
-        if not options.quiet:
-            console.print(f"[dim]Connecting to server at {server_url}...[/dim]")
         payload = {"chain_input": options.prompt, "chain_configs": [run_config]}
         try:
-            async with httpx.AsyncClient() as client:
-                response = await client.post(f"{server_url}/api/v1/run", json=payload, timeout=60)
+            transport = None
+            base_url = uri.replace("ws://", "http://").replace("wss://", "https://").split("/ws/")[0]
+
+            if uri.startswith("unix://"):
+                uds_path = uri[len("unix://") :]
+                transport = httpx.AsyncHTTPTransport(uds=uds_path)
+                base_url = "http://localhost"  # Dummy base URL for UDS
+                if not options.quiet:
+                    console.print(f"[dim]Connecting to server via UDS at {uds_path}...[/dim]")
+            else:
+                if not options.quiet:
+                    console.print(f"[dim]Connecting to server at {base_url}...[/dim]")
+
+            async with httpx.AsyncClient(transport=transport, base_url=base_url) as client:
+                response = await client.post("/api/v1/run", json=payload, timeout=60)
                 response.raise_for_status()
                 data = response.json()
                 if data.get("status") == "success":
@@ -493,20 +510,30 @@ async def async_main_client(options: CliOptions) -> None:
                         console.print(Markdown(content) if not options.no_markdown else content)
                 else:
                     error_console.print(f"[red]Server Error: {data.get('detail')}[/red]")
-        except httpx.RequestError:
+        except httpx.RequestError as e:
             error_console.print(
                 "[bold red]Connection Error:[/bold red]"
-                f" Could not connect to the rai server at {server_url}."
+                f" Could not connect to the rai server at {uri}."
             )
-            error_console.print("[dim]Is the server running? ('rai serve')[/dim]")
+            error_console.print(f"[dim]Is the server running? ('rai serve'). Error: {e}[/dim]")
         except Exception as e:
             error_console.print(f"[bold red]An unexpected client error occurred:[/bold red]\n{e}")
     else:
         # Interactive mode using WebSocket
-        ws_uri = f"ws://{server_url.split('//')[1]}/ws/v1/chat"
         adapter_config = run_config.copy()
-        adapter_config["server_uri"] = ws_uri
+        adapter_config["server_uri"] = uri
         processor = WebSocketAdapter(agent_config=adapter_config)
+
+        # Eagerly connect to the server before starting the interactive chat.
+        if not isinstance(processor, WebSocketAdapter):
+             # This should not happen, but it's a good practice to check
+            error_console.print("[red]Error: Invalid processor for client mode.[/red]")
+            return
+        connect_result = await processor.connect()
+        if isinstance(connect_result, Failure):
+            # The connect method in the adapter is responsible for printing the error.
+            return  # Exit gracefully
+
         await run_interactive_chat(processor, run_config, options)
 
 
@@ -515,6 +542,10 @@ async def async_main_client(options: CliOptions) -> None:
 # Section: Primary
 @click.option("-p", "--prompt", "prompt", default=None, help="The prompt to send to the AI.",
               cls=SectionedOption, section="Primary")
+# Section: Connection
+@click.option("--connect", "connect_uri", default=None,
+              help="Connect to a 'rai serve' instance. If no URI is given, auto-discovers the server.",
+              is_flag=False, flag_value="_auto_", cls=SectionedOption, section="Primary")
 # Section: AI Configuration
 @click.option("-s", "--system", default=None, help="Defines the system prompt for the AI.",
               cls=SectionedOption, section="AI Configuration")
@@ -556,45 +587,27 @@ def cli(ctx: click.Context, **kwargs: Any) -> None:
     """
     AI assistant in the command line.
 
-    This default command runs in standalone mode.
-    Use 'rai connect' to connect to a server (not yet implemented).
+    This command runs in standalone mode by default.
+    Use '--connect' to connect to a server.
     Use 'rai serve' to run a server.
     """
     ctx.obj = kwargs
+    # This logic replaces the old invoke_without_command behavior
     if ctx.invoked_subcommand is None:
-        # This is now the main standalone entrypoint
         if not kwargs.get("prompt") and not sys.stdin.isatty():
             kwargs["prompt"] = sys.stdin.read().strip()
 
-        # Pass the config path down from the context
-        kwargs['config_path'] = ctx.obj.get('config_path')
         options = CliOptions(**kwargs)
-        asyncio.run(async_run_standalone(options))
+
+        if options.connect_uri:
+            # Client Mode
+            asyncio.run(async_main_client(options))
+        else:
+            # Standalone Mode
+            asyncio.run(async_run_standalone(options))
 
 
-@cli.command(name="connect")
-@click.option("-p", "--prompt", "prompt", default=None,
-              help="The prompt to send to the AI server.")
-@click.option("-s", "--system", default=None, help="Defines the system prompt for the AI.")
-@click.option("-m", "--model", default=None, help="ID of the model to use.")
-@click.option("-b", "--backend", default=None,
-              type=click.Choice(["ollama", "gemini", "anthropic", "openai", "groq"]))
-@click.option("-f", "--framework", default="agno",
-              type=click.Choice(["agno", "pydantic_ai"]), help="Specify the AI framework to use.")
-@click.option("--session", "session_override", default=None,
-              help="Use a specific session's configuration.")
-@click.option("--debug", is_flag=True, help="Enable debug logging.")
-@click.pass_context
-def connect(ctx: click.Context, **kwargs: Any) -> None:
-    """Connects to a running 'rai serve' instance."""
-    # Inherit the global --config option from the parent context
-    kwargs['config_path'] = ctx.obj.get('config_path')
 
-    if not kwargs.get("prompt") and not sys.stdin.isatty():
-        kwargs["prompt"] = sys.stdin.read().strip()
-
-    options = CliOptions(**kwargs)
-    asyncio.run(async_main_client(options))
 
 
 @cli.group()

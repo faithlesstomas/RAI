@@ -1,6 +1,7 @@
 """Adapter for the rai WebSocket client."""
-# import asyncio
+import asyncio
 import json
+import socket
 from typing import Any, Dict, List
 
 import websockets
@@ -22,25 +23,49 @@ class WebSocketAdapter:
         self.server_uri = agent_config.get("server_uri", "ws://127.0.0.1:8000/ws/v1/chat")
         self._websocket: websockets.WebSocketClientProtocol | None = None  # pylint: disable=no-member
 
-    async def _connect(self) -> Result[None, Exception]:
+    async def connect(self) -> Result[None, Exception]:
         """Establishes a WebSocket connection if one is not already open."""
-        if self._websocket is None or self._websocket.closed:
+        is_connected = False
+        if self._websocket:
             try:
-                self._websocket = await websockets.connect(self.server_uri)
+                await self._websocket.ping()
+                is_connected = True
+            except websockets.exceptions.ConnectionClosed:
+                is_connected = False
+
+        if not is_connected:
+            try:
+                if self.server_uri.startswith("unix://"):
+                    uds_path = self.server_uri[len("unix://") :]
+                    error_console.print(f"[dim]Connecting to Unix Domain Socket at {uds_path}...[/dim]")
+
+                    # Manually create and connect the socket to avoid transport conflicts.
+                    sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+                    loop = asyncio.get_running_loop()
+                    await loop.sock_connect(sock, uds_path)
+
+                    uri_to_connect = "ws://localhost/ws/v1/chat"
+                    self._websocket = await websockets.connect(uri_to_connect, sock=sock)
+
+                else:
+                    error_console.print(f"[dim]Connecting to WebSocket server at {self.server_uri}...[/dim]")
+                    self._websocket = await websockets.connect(self.server_uri)
+
+                error_console.print("[green]WebSocket connection established.[/green]")
                 return Success(None)
-            except (WebSocketException, ConnectionRefusedError) as e:
+            except Exception as e:
                 error_console.print(
                     "[bold red]Connection Error:[/bold red]"
                     f" Could not connect to the rai server at {self.server_uri}."
                 )
-                error_console.print("[dim]Is the server running? ('rai serve')[/dim]")
+                error_console.print(f"[dim]Is the server running? ('rai serve'). Error: {e}[/dim]")
                 return Failure(e)
         return Success(None)
 
 
     async def arun(self, prompt: str) -> Result[Dict[str, Any], Exception]:
         """Sends a prompt to the server and returns the response as a Result."""
-        connect_result = await self._connect()
+        connect_result = await self.connect()
         if isinstance(connect_result, Failure):
             return connect_result
 
