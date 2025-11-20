@@ -164,7 +164,9 @@ def setup_tools( # noqa: PLR0912 # pylint: disable=too-many-branches
     return agent_tools, messages
 
 
-def setup_model(backend: str, model_id: str, quiet: bool) -> Tuple[Any, List[str]]:
+def setup_model(
+    backend: str, model_id: str, quiet: bool, ollama_host: Optional[str] = None
+) -> Tuple[Any, List[str]]:
     """Sets up the model based on the backend and model ID."""
     messages = []
     if backend == "gemini" and "GEMINI_API_KEY" in os.environ:
@@ -209,6 +211,13 @@ def setup_model(backend: str, model_id: str, quiet: bool) -> Tuple[Any, List[str
         module_path, class_name = model_map[backend].rsplit(".", 1)
         module = __import__(module_path, fromlist=[class_name])
         model_class = getattr(module, class_name)
+
+        if backend == "ollama":
+            model_kwargs = {"id": model_id}
+            if ollama_host:
+                model_kwargs["host"] = ollama_host
+            return model_class(**model_kwargs), messages
+
         return model_class(id=model_id), messages
     except ImportError:
         error_console.print(

@@ -25,6 +25,7 @@ class AgnoAdapter:  # pylint: disable=too-few-public-methods
         session_id = run_config.get("session_id", "default-session")
         backend = run_config.get("backend", "ollama")
         model_id = run_config.get("model", "gemma3:4b")
+        ollama_host = run_config.get("ollama_host")
         system_prompt = run_config.get("system", "You are a helpful AI assistant.")
         enabled_tool_names = run_config.get("tools")
         use_markdown = not run_config.get("stream", False)
@@ -32,7 +33,9 @@ class AgnoAdapter:  # pylint: disable=too-few-public-methods
         # For now, assume tools are enabled if a list is provided or it's not ollama
         enable_tools = enabled_tool_names is not None or backend != "ollama"
 
-        model_instance, _ = setup_model(backend, model_id, quiet=False)
+        model_instance, _ = setup_model(
+            backend, model_id, quiet=False, ollama_host=ollama_host
+        )
         agent_tools, _ = setup_tools(
             enable_tools=enable_tools,
             quiet=False,
@@ -40,6 +43,7 @@ class AgnoAdapter:  # pylint: disable=too-few-public-methods
         )
 
         try:
+            print(f"DEBUG: Initializing Agno Agent with session_id={session_id}")
             agent = Agent(
                 model=model_instance,
                 tools=agent_tools,

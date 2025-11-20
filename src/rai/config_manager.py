@@ -62,6 +62,7 @@ def initialize_session(
         sessions[session_to_use] = {
             "model": "gemma3:4b",
             "backend": "ollama",
+            "ollama_host": "http://127.0.0.1:11434",
             "system": "You are a versatile and helpful AI assistant.",
             "tools": [
                 "CalculatorTools", "ArxivTools", "WikipediaTools",
@@ -69,6 +70,10 @@ def initialize_session(
                 "PythonTools", "ShellTools",
             ],
         }
+
+    # Ensure ollama_host exists for existing sessions
+    if "ollama_host" not in sessions[session_to_use]:
+        sessions[session_to_use]["ollama_host"] = "http://127.0.0.1:11434"
 
     if "tts" not in sessions[session_to_use]:
         sessions[session_to_use]["tts"] = {
@@ -89,6 +94,7 @@ def switch_session_logic(session_name: str) -> None:
         app_config.setdefault("sessions", {})[session_name] = {
             "model": "gemma3:1b",
             "backend": "ollama",
+            "ollama_host": "http://127.0.0.1:11434",
             "system": "You are a versatile and helpful AI assistant.",
         }
     app_config["active_session"] = session_name

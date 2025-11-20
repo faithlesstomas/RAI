@@ -15,6 +15,8 @@
     - [ ] `rai connect` client mode (one-shot REST and interactive WebSocket).
     - [ ] New slash commands: `/history`, `/save`, `/clear`, `/model`.
     - [ ] `rai config edit` command.
+- [ ] **LangChain/LangGraph Adapter**: Implement an adapter to support LangChain and LangGraph agents as backends.
+- [ ] **Pydantic AI Adapter**: Finish implementation (streaming, tools).
 - [ ] Fix `/clear` slash command:
     - [x] Implement server-side history management for `WebSocketAdapter`.
     - [ ] Implement client-side calls in `WebSocketAdapter` to clear history on the server.

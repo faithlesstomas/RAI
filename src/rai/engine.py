@@ -41,6 +41,7 @@ def _discover_adapters() -> Dict[str, Type[Processor]]:
 async def run_chain(
     chain_input: str,
     chain_configs: List[Dict[str, Any]],
+    session_id: Optional[str] = None,
     app_config: Optional[Dict[str, Any]] = None, # Added for consistency, not used yet
 ) -> Result[Dict[str, Any], Exception]:
     """
@@ -56,7 +57,10 @@ async def run_chain(
         rai_adapters = _discover_adapters()
         current_input = chain_input
         final_payload: Dict[str, Any] = {}
-        session_id = str(uuid.uuid4())  # A unique session for the entire chain execution
+        
+        # Use provided session_id or generate a new one
+        if not session_id:
+            session_id = str(uuid.uuid4())
 
         for _, agent_config in enumerate(chain_configs):
             framework = (

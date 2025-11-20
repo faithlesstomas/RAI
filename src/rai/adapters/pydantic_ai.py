@@ -31,10 +31,11 @@ class PydanticAIAdapter:  # pylint: disable=too-few-public-methods
         pydantic_tools = setup_pydantic_tools(enabled_tools)
 
         if backend == "ollama":
-            ollama_base_url = self.config.get(
-                "ollama_base_url"
-            ) or os.getenv("OLLAMA_BASE_URL", "http://localhost:11434")
-            ollama_api_url = f"{ollama_base_url.rstrip('/')}/v1"
+            # Consistent with the rest of the app, use 'ollama_host'
+            ollama_host = self.config.get(
+                "ollama_host"
+            ) or os.getenv("OLLAMA_HOST", "http://localhost:11434")
+            ollama_api_url = f"{ollama_host.rstrip('/')}/v1"
             logger.debug(
                 f"Creating new PydanticAI agent for session '{session_id}' with Ollama model: {model_name}"
             )

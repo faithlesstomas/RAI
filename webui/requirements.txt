@@ -1,0 +1,6 @@
+nicegui
+httpx
+python-dotenv
+returns
+python-dotenv
+returns
