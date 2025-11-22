@@ -1,0 +1,60 @@
+<!DOCTYPE html>
+<?xml version="1.0" encoding="UTF-8"?>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>RAI Agent Dashboard</title>
+    <style>
+        body {
+            font-family: sans-serif;
+            padding: 20px;
+        }
+
+        h1,
+        h2 {
+            color: #333;
+        }
+
+        ul {
+            list-style-type: none;
+            padding: 0;
+        }
+
+        li {
+            margin-bottom: 10px;
+            padding: 10px;
+            background: #f0f0f0;
+            border-radius: 5px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        input {
+            padding: 5px;
+            margin: 5px 0;
+        }
+
+        button {
+            padding: 5px 10px;
+            cursor: pointer;
+        }
+    </style>
+</head>
+
+<body>
+    <h1>RAI Agent Dashboard (Guile Hoot PoC)</h1>
+    <div id="app">Loading...</div>
+    <script src="reflect.js"></script>
+    <script>
+        Scheme.load_main_wasm({
+            path: './app.wasm'
+        }).then(() => {
+            console.log("RAI Dashboard loaded.");
+        }).catch(console.error);
+    </script>
+</body>
+
+</html>

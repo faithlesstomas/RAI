@@ -3,13 +3,26 @@ Main file for the FastAPI server.
 """
 from fastapi import FastAPI
 from fastapi.responses import JSONResponse
+from dotenv import load_dotenv
 
 from .routers import agents, execution, history
+
+load_dotenv()
 
 app = FastAPI(
     title="RAI - Rich AI Assistant",
     description="Backend server for the RAI CLI and other clients.",
     version="0.1.0",
+)
+
+from fastapi.middleware.cors import CORSMiddleware
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],  # For development, allow all. In production, be specific.
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
 )
 
 # --- Include Routers ---
