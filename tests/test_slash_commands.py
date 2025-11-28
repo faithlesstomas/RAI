@@ -6,7 +6,7 @@ from rich.panel import Panel
 from rai import cli as rai_cli
 
 
-def test_handle_history_command_with_history():
+def test_handle_history_command_with_history() -> None:
     """Test the /history command when history is available."""
     mock_processor = MagicMock()
     mock_processor.get_history.return_value = [
@@ -17,7 +17,7 @@ def test_handle_history_command_with_history():
     with patch("rai.cli.console.print") as mock_print:
         rai_cli._handle_history_command([], {}, mock_processor)
 
-        assert mock_print.call_count == 2
+        assert mock_print.call_count == 2 # noqa: PLR2004
         # Check the first call (user message)
         panel_user = mock_print.call_args_list[0].args[0]
         assert isinstance(panel_user, Panel)
@@ -31,7 +31,7 @@ def test_handle_history_command_with_history():
         assert panel_assistant.renderable == "Hi there!"
 
 
-def test_handle_history_command_with_no_history():
+def test_handle_history_command_with_no_history() -> None:
     """Test the /history command when no history is available."""
     mock_processor = MagicMock()
     mock_processor.get_history.return_value = []
@@ -42,7 +42,7 @@ def test_handle_history_command_with_no_history():
         mock_print.assert_called_once_with("[dim]No history available.[/dim]")
 
 
-def test_handle_save_command_with_history():
+def test_handle_save_command_with_history() -> None:
     """Test the /save command when history is available."""
     mock_processor = MagicMock()
     mock_processor.get_history.return_value = [
@@ -61,7 +61,7 @@ def test_handle_save_command_with_history():
             mock_print.assert_called_once_with("[green]Conversation saved to test.md[/green]")
 
 
-def test_handle_save_command_no_history():
+def test_handle_save_command_no_history() -> None:
     """Test the /save command when no history is available."""
     mock_processor = MagicMock()
     mock_processor.get_history.return_value = []
@@ -72,7 +72,7 @@ def test_handle_save_command_no_history():
         mock_print.assert_called_once_with("[dim]No history available to save.[/dim]")
 
 
-def test_handle_save_command_no_filename():
+def test_handle_save_command_no_filename() -> None:
     """Test the /save command when no filename is provided."""
     mock_processor = MagicMock()
     mock_processor.get_history.return_value = [{"role": "user", "content": "Hello"}]
@@ -83,7 +83,7 @@ def test_handle_save_command_no_filename():
         mock_print.assert_called_once_with("[red]Usage: /save <filename.md>[/red]")
 
 
-def test_handle_clear_command():
+def test_handle_clear_command() -> None:
     """Test the /clear command."""
     mock_processor = MagicMock()
     with patch("rai.cli.console.print") as mock_print:
@@ -93,7 +93,7 @@ def test_handle_clear_command():
         mock_print.assert_called_once_with("[green]Chat history cleared.[/green]")
 
 
-def test_handle_model_command_show_current_model():
+def test_handle_model_command_show_current_model() -> None:
     """Test the /model command to show the current model."""
     run_config = {"model": "current-model"}
     mock_processor = MagicMock()
@@ -103,7 +103,7 @@ def test_handle_model_command_show_current_model():
         mock_print.assert_called_once_with("Current model: current-model")
 
 
-def test_handle_model_command_set_new_model():
+def test_handle_model_command_set_new_model() -> None:
     """Test the /model command to set a new model."""
     run_config = {"model": "old-model"}
     mock_processor = MagicMock()

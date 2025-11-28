@@ -1,3 +1,4 @@
+# ruff: noqa: ANN001
 """Tests for the main CLI commands in rai.cli."""
 import json
 from unittest.mock import MagicMock, patch, AsyncMock
@@ -11,7 +12,7 @@ from rai import cli as rai_cli
 
 
 @patch.dict("rai.cli._SLASH_COMMAND_HANDLERS", {"config": MagicMock()})
-def test_slash_command_dispatches_to_config():
+def test_slash_command_dispatches_to_config() -> None:
     """Test that /config command is dispatched to the config handler."""
     agent = MagicMock()
     run_config = {}
@@ -27,7 +28,7 @@ def test_slash_command_dispatches_to_config():
 
 
 @patch("rai.cli.console.print")
-def test_config_command_show_implementation(mock_print):
+def test_config_command_show_implementation(mock_print) -> None:
     """Test the implementation of the '/config show' command."""
     agent = MagicMock()
     run_config = {"model": "test-model", "backend": "test-backend"}
@@ -45,7 +46,7 @@ def test_config_command_show_implementation(mock_print):
 
 
 @patch("rai.cli.console.print")
-def test_config_command_get_implementation(mock_print):
+def test_config_command_get_implementation(mock_print) -> None:
     """Test the implementation of the '/config get' command."""
     agent = MagicMock()
     run_config = {"model": "test-model"}
@@ -57,7 +58,7 @@ def test_config_command_get_implementation(mock_print):
     mock_print.assert_called_once_with("model: test-model")
 
 
-def test_config_command_set_implementation():
+def test_config_command_set_implementation() -> None:
     """Test the implementation of the '/config set' command."""
     agent = MagicMock()
     run_config = {"model": "old-model"}
@@ -78,7 +79,7 @@ def test_config_command_set_implementation():
 @patch("rai.cli.click.launch")
 @patch("rai.cli.config_manager.get_config_path")
 @patch("rai.cli.console.print")
-def test_edit_config_command(mock_console_print, mock_get_config_path, mock_click_launch):
+def test_edit_config_command(mock_console_print, mock_get_config_path, mock_click_launch) -> None:
     """Test the 'rai config edit' command."""
     mock_get_config_path.return_value = "/fake/path/to/config.json"
     runner = click.testing.CliRunner()
@@ -92,7 +93,7 @@ def test_edit_config_command(mock_console_print, mock_get_config_path, mock_clic
 
 @patch("rai.cli.config_manager.get_config_path")
 @patch("rai.cli.error_console.print")
-def test_edit_config_command_no_config_path(mock_error_console_print, mock_get_config_path):
+def test_edit_config_command_no_config_path(mock_error_console_print, mock_get_config_path) -> None:
     """Test the 'rai config edit' command when config path cannot be determined."""
     mock_get_config_path.return_value = None
     runner = click.testing.CliRunner()
@@ -104,7 +105,7 @@ def test_edit_config_command_no_config_path(mock_error_console_print, mock_get_c
 
 
 @patch("rai.cli.async_run_standalone")
-def test_cli_standalone_one_shot(mock_async_run_standalone):
+def test_cli_standalone_one_shot(mock_async_run_standalone) -> None:
     """Test 'rai --prompt "hello"' executes in standalone one-shot mode."""
     runner = click.testing.CliRunner()
     result = runner.invoke(rai_cli.cli, ["--prompt", "hello"])
@@ -116,7 +117,7 @@ def test_cli_standalone_one_shot(mock_async_run_standalone):
 
 
 @patch("rai.cli.async_run_standalone")
-def test_cli_standalone_interactive(mock_async_run_standalone):
+def test_cli_standalone_interactive(mock_async_run_standalone) -> None:
     """Test 'rai' (no prompt) executes in standalone interactive mode."""
     runner = click.testing.CliRunner()
     result = runner.invoke(rai_cli.cli, [])
@@ -128,7 +129,7 @@ def test_cli_standalone_interactive(mock_async_run_standalone):
 
 
 @patch("rai.cli.async_main_client")
-def test_cli_connect_one_shot(mock_async_main_client):
+def test_cli_connect_one_shot(mock_async_main_client) -> None:
     """Test 'rai --connect --prompt "hello"' executes in client one-shot mode."""
     runner = click.testing.CliRunner()
     result = runner.invoke(rai_cli.cli, ["--connect", "--prompt", "hello"])
@@ -141,7 +142,7 @@ def test_cli_connect_one_shot(mock_async_main_client):
 
 
 @patch("rai.cli.async_main_client")
-def test_cli_connect_interactive(mock_async_main_client):
+def test_cli_connect_interactive(mock_async_main_client) -> None:
     """Test 'rai --connect' (no prompt) executes in client interactive mode."""
     runner = click.testing.CliRunner()
     result = runner.invoke(rai_cli.cli, ["--connect"])
@@ -154,7 +155,7 @@ def test_cli_connect_interactive(mock_async_main_client):
 
 
 @patch("rai.cli.async_main_client")
-def test_cli_connect_with_uri(mock_async_main_client):
+def test_cli_connect_with_uri(mock_async_main_client) -> None:
     """Test 'rai --connect <uri>' executes in client interactive mode."""
     runner = click.testing.CliRunner()
     uri = "ws://test.host:1234"
@@ -169,7 +170,7 @@ def test_cli_connect_with_uri(mock_async_main_client):
 
 @patch("rai.cli.PromptSession")
 @patch("rai.cli.console.print")
-async def test_run_interactive_chat_success(mock_console_print, mock_prompt_session_cls):
+async def test_run_interactive_chat_success(mock_console_print, mock_prompt_session_cls) -> None:
     """Test the interactive chat loop with a successful response."""
     mock_prompt_session = mock_prompt_session_cls.return_value
     mock_prompt_session.prompt_async = AsyncMock(side_effect=["hello", EOFError])
@@ -199,7 +200,7 @@ async def test_run_interactive_chat_success(mock_console_print, mock_prompt_sess
 @patch("rai.cli._build_run_config")
 async def test_async_run_standalone_one_shot_success(
     mock_build_run_config, mock_console_print, MockAgnoAdapter
-):
+) -> None:
     """Test async_run_standalone in one-shot mode with a successful response."""
     mock_build_run_config.return_value = ({}, {}, "default", {})
     mock_adapter_instance = MockAgnoAdapter.return_value

@@ -8,52 +8,387 @@
     <title>RAI Agent Dashboard</title>
     <style>
         body {
-            font-family: sans-serif;
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            margin: 0;
+            padding: 0;
+            background-color: #0f172a;
+            /* Slate 900 */
+            color: #e2e8f0;
+            /* Slate 200 */
+            height: 100vh;
+            display: flex;
+        }
+
+        #app {
+            display: flex;
+            width: 100%;
+            height: 100%;
+        }
+
+        .container {
+            display: flex;
+            width: 100%;
+            height: 100%;
+        }
+
+        .sidebar {
+            width: 240px;
+            background-color: #1e293b;
+            /* Slate 800 */
+            border-right: 1px solid #334155;
+            display: flex;
+            flex-direction: column;
             padding: 20px;
         }
 
-        h1,
-        h2 {
-            color: #333;
+        .sidebar-title {
+            font-size: 1.2rem;
+            font-weight: bold;
+            margin-bottom: 20px;
+            color: #fff;
         }
 
-        ul {
-            list-style-type: none;
+        .nav-item {
+            padding: 10px;
+            cursor: pointer;
+            border-radius: 5px;
+            margin-bottom: 5px;
+            color: #94a3b8;
+        }
+
+        .nav-item:hover,
+        .nav-item.active {
+            background-color: #334155;
+            color: #fff;
+        }
+
+        .main-content {
+            flex-grow: 1;
+            padding: 20px;
+            overflow-y: auto;
+            display: flex;
+            flex-direction: column;
+        }
+
+        .card {
+            background-color: #1e293b;
+            padding: 15px;
+            border-radius: 8px;
+            margin-bottom: 10px;
+            border: 1px solid #334155;
+        }
+
+        .btn {
+            padding: 8px 16px;
+            border-radius: 4px;
+            border: none;
+            cursor: pointer;
+            font-weight: bold;
+        }
+
+        .btn-primary {
+            background-color: #3b82f6;
+            color: white;
+        }
+
+        .btn-danger {
+            background-color: #ef4444;
+            color: white;
+        }
+
+        input,
+        textarea,
+        select {
+            background-color: #334155;
+            border: 1px solid #475569;
+            color: white;
+            padding: 8px;
+            border-radius: 4px;
+            width: 100%;
+            margin-bottom: 10px;
+            box-sizing: border-box;
+        }
+
+        .split-view {
+            display: flex;
+            gap: 20px;
+            height: 100%;
+        }
+
+        .split-left {
+            width: 30%;
+            overflow-y: auto;
+        }
+
+        .split-right {
+            width: 70%;
+            overflow-y: auto;
+            background-color: #1e293b;
+            padding: 20px;
+            border-radius: 8px;
+        }
+
+        /* Mobile Header */
+        .mobile-header {
+            display: none;
+            background-color: #1e293b;
+            padding: 15px;
+            border-bottom: 1px solid #334155;
+            align-items: center;
+            justify-content: space-between;
+            flex-shrink: 0;
+        }
+
+        .menu-btn {
+            background: none;
+            border: none;
+            color: white;
+            font-size: 1.5rem;
+            cursor: pointer;
             padding: 0;
         }
 
-        li {
-            margin-bottom: 10px;
-            padding: 10px;
-            background: #f0f0f0;
-            border-radius: 5px;
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
+        /* Responsive Design */
+        @media (max-width: 768px) {
+            .container {
+                flex-direction: column;
+            }
+
+            .mobile-header {
+                display: flex;
+            }
+
+            .sidebar {
+                position: fixed;
+                top: 0;
+                left: 0;
+                height: 100%;
+                width: 250px;
+                z-index: 1000;
+                transform: translateX(-100%);
+                transition: transform 0.3s ease-in-out;
+                border-right: 1px solid #334155;
+                flex-direction: column;
+                align-items: stretch;
+                overflow-y: auto;
+                padding: 20px;
+                background-color: #1e293b;
+                /* Ensure bg is opaque */
+            }
+
+            .sidebar.open {
+                transform: translateX(0);
+                box-shadow: 2px 0 10px rgba(0, 0, 0, 0.5);
+            }
+
+            /* Overlay to close sidebar */
+            .sidebar-overlay {
+                display: none;
+                position: fixed;
+                top: 0;
+                left: 0;
+                width: 100%;
+                height: 100%;
+                background: rgba(0, 0, 0, 0.5);
+                z-index: 999;
+            }
+
+            .sidebar-overlay.open {
+                display: block;
+            }
+
+            .main-content {
+                padding: 0;
+                /* Remove padding so scrollbar is at edge */
+                padding-top: 0;
+            }
+
+            .split-view {
+                flex-direction: column;
+                height: auto;
+                /* Allow content to dictate height */
+            }
+
+            .mobile-only-nav {
+                display: block;
+                margin-bottom: 10px;
+            }
+
+            .split-view.mobile-editing .split-left {
+                display: none;
+            }
+
+            .split-view.mobile-editing .split-right {
+                display: block;
+            }
+
+            .split-view:not(.mobile-editing) .split-right {
+                display: none;
+            }
+
+            .split-left,
+            .split-right {
+                width: 100% !important;
+                height: auto;
+                max-height: none;
+                overflow: visible;
+                /* Let main-content scroll */
+                padding: 15px;
+                /* Add padding back to content */
+                box-sizing: border-box;
+            }
+
+            .split-left {
+                max-height: none;
+                border-bottom: none;
+                margin-bottom: 0;
+            }
+
+            .split-right {
+                /* Ensure editor content fits well */
+                padding-bottom: 30px;
+            }
+
+            /* Adjust form elements for mobile */
+            .form-control {
+                width: 100%;
+                box-sizing: border-box;
+                /* Ensure padding doesn't overflow width */
+            }
         }
 
-        input {
-            padding: 5px;
-            margin: 5px 0;
-        }
-
-        button {
-            padding: 5px 10px;
-            cursor: pointer;
+        /* Desktop defaults */
+        @media (min-width: 769px) {
+            .mobile-only-nav {
+                display: none;
+            }
         }
     </style>
 </head>
 
 <body>
-    <h1>RAI Agent Dashboard (Guile Hoot PoC)</h1>
     <div id="app">Loading...</div>
     <script src="reflect.js"></script>
     <script>
-        Scheme.load_main_wasm({
-            path: './app.wasm'
-        }).then(() => {
-            console.log("RAI Dashboard loaded.");
-        }).catch(console.error);
+        // Helper for Scheme
+        window.getArrayLength = function (arr) {
+            return arr.length;
+        };
+        window.getElementValue = function (el) {
+            return el.value;
+        };
+        window.setElementValue = function (el, val) {
+            el.value = val;
+        };
+        window.setInnerHTML = function (el, html) {
+            el.innerHTML = html;
+        };
+        window.newObject = function () {
+            return {};
+        };
+        window.newArray = function () {
+            return [];
+        };
+        window.getElementByIdHelper = function (id) {
+            return document.getElementById(id);
+        };
+        window.createElementHelper = function (tag) {
+            return document.createElement(tag);
+        };
+        window.createTextNodeHelper = function (text) {
+            return document.createTextNode(text);
+        };
+        window.setAttributeHelper = function (el, name, val) {
+            el.setAttribute(name, val);
+        };
+        window.appendChildHelper = function (parent, child) {
+            return parent.appendChild(child);
+        };
+        window.addEventListenerHelper = function (el, event, handler) {
+            el.addEventListener(event, handler);
+        };
+        window.setPropertyHelper = function (obj, key, val) {
+            obj[key] = val;
+        };
+        window.thenHelper = function (promise, callback) {
+            return promise.then(callback);
+        };
+        window.jsonHelper = function (response) {
+            return response.json();
+        };
+        window.getPropertyHelper = function (obj, key) {
+            return obj[key];
+        };
+        window.getKeysHelper = function (obj) {
+            return Object.keys(obj);
+        };
+        window.getArrayElementHelper = function (arr, index) {
+            return arr[index];
+        };
+        window.stopPropagationHelper = function (e) {
+            e.stopPropagation();
+        };
+        window.alertHelper = function (msg) {
+            alert(msg);
+        };
+        window.responseOkHelper = function (response) {
+            return response.ok ? 1 : 0;
+        };
+
+        // Debug Logger
+        (function () {
+            const originalLog = console.log;
+            const originalError = console.error;
+
+            function sendLog(type, args) {
+                const msg = args.map(a => {
+                    if (a instanceof Error) {
+                        return `[${a.name}: ${a.message}]\n${a.stack}`;
+                    }
+                    if (typeof a === 'object') {
+                        try { return JSON.stringify(a); } catch (e) { return String(a); }
+                    }
+                    return String(a);
+                }).join(' ');
+
+                fetch('/log', {
+                    method: 'POST',
+                    body: `[${type}] ${msg}`
+                }).catch(() => { }); // Ignore errors sending logs
+            }
+
+            console.log = function (...args) {
+                originalLog.apply(console, args);
+                sendLog('INFO', args);
+            };
+
+            console.error = function (...args) {
+                originalError.apply(console, args);
+                sendLog('ERROR', args);
+            };
+        })();
+    </script>
+    <script>
+        Scheme.load_main('./app.wasm', {
+            user_imports: {
+                "Object": Object,
+                "Array.prototype": Array.prototype,
+                "Reflect": Reflect,
+                "window": window,
+                "document": document,
+                "Element.prototype": Element.prototype,
+                "HTMLInputElement.prototype": HTMLInputElement.prototype,
+                "Event.prototype": Event.prototype,
+                "EventTarget.prototype": EventTarget.prototype,
+                "Node.prototype": Node.prototype,
+                "Response.prototype": Response.prototype,
+                "Promise.prototype": Promise.prototype,
+                "JSON": JSON
+            }
+        })
+            .then(() => {
+                console.log("RAI Dashboard loaded.");
+            }).catch(console.error);
     </script>
 </body>
 

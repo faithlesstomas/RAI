@@ -22,6 +22,8 @@ from agno.tools.shell import ShellTools
 from agno.tools.tavily import TavilyTools
 from agno.tools.webbrowser import WebBrowserTools
 from agno.tools.wikipedia import WikipediaTools
+from agno.tools.yfinance import YFinanceTools
+
 from agno.utils.log import logger
 
 # from pydantic_ai.exceptions import UserError
@@ -78,7 +80,8 @@ def setup_tools( # noqa: PLR0912 # pylint: disable=too-many-branches
         "PythonTools": PythonTools,
         "ShellTools": ShellTools,
         "GitlabTools": GitlabTools,
-        "TavilyTools": TavilyTools,
+        # "TavilyTools": TavilyTools(),
+        "YFinanceTools": YFinanceTools,
     }
 
     if _HAS_GNOME_TOOLS:

@@ -8,6 +8,8 @@ from returns.result import Failure, Success
 
 from .. import config_manager
 from ..engine import run_chain
+from ..dependencies import get_config, get_model_registry
+from ..services.model_registry import ModelRegistry
 
 router = APIRouter(
     tags=["AI Engine"],
@@ -24,9 +26,7 @@ class ChainRequest(BaseModel):
 
 # --- Dependencies ---
 
-def get_config() -> Dict[str, Any]:
-    """Dependency to load and provide the application configuration."""
-    return config_manager.load_config()
+
 
 # --- Endpoints ---
 
@@ -52,40 +52,33 @@ async def execute_chain(
             raise HTTPException(status_code=500, detail=str(error))
 
 
+@router.get("/api/v1/models")
+async def get_all_models(
+    registry: ModelRegistry = Depends(get_model_registry)
+) -> JSONResponse:
+    """
+    Returns a list of available models for all backends.
+    """
+    models = await registry.get_all_models()
+    return JSONResponse(content={"models": models})
+
+
 @router.get("/api/v1/models/{backend}")
 async def get_models_for_backend(
     backend: str,
-    app_config: Dict[str, Any] = Depends(get_config)
+    registry: ModelRegistry = Depends(get_model_registry)
 ) -> JSONResponse:
     """
     Returns a list of available models for a given backend.
     """
-    print(f"--- Entering get_models_for_backend for backend: {backend} ---")
-    if backend == "ollama":
-        try:
-            # pylint: disable=import-outside-toplevel
-            import ollama  # noqa: PLC0415
-
-            # Get host from the active session config, with a fallback
-            active_session_name = app_config.get("active_session", "default")
-            session_config = app_config.get("sessions", {}).get(active_session_name, {})
-            host = session_config.get("ollama_host", "http://127.0.0.1:11434")
-            logging.warning("Attempting to connect to Ollama at host: %s", host)
-
-            # Use the async client inside an async function
-            client = ollama.AsyncClient(host=host)
-            models = await client.list()
-            print(f"--- Ollama models response: {models} ---")
-            model_names = [m.get("model") for m in models.get("models", [])]
-            return JSONResponse(content={"models": model_names})
-        except ImportError:
-            raise HTTPException(status_code=501, detail="Ollama support is not installed.")
-        except Exception as e:
-            error_msg = f"Failed to get models from Ollama: {type(e).__name__} - {e}"
-            logging.error(error_msg, exc_info=True)
-            raise HTTPException(status_code=500, detail=error_msg)
-    # Placeholder for other backends
-    return JSONResponse(content={"models": ["default-model"]})
+    logging.info("Fetching models for backend: %s", backend)
+    models = await registry.get_models(backend)
+    
+    # Fallback for other backends as per original behavior
+    if not models and backend != "ollama":
+        return JSONResponse(content={"models": ["default-model"]})
+        
+    return JSONResponse(content={"models": models})
 
 
 @router.websocket("/ws/v1/chat")
@@ -118,7 +111,7 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
 
     except WebSocketDisconnect:
         logging.info("Client disconnected from WebSocket.")
-    except Exception as e:
+    except Exception as e: # pylint: disable=broad-exception-caught
         logging.error("Unexpected error in WebSocket: %s", e, exc_info=True)
         # Try to send a final error message if possible
         if not websocket.client_state == "DISCONNECTED":

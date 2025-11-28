@@ -3033,6 +3033,8 @@ pydantic-ai = [
     { name = "pydantic-ai" },
 ]
 test = [
+    { name = "agno" },
+    { name = "pydantic-ai" },
     { name = "pytest" },
     { name = "pytest-asyncio" },
 ]
@@ -3045,6 +3047,7 @@ tts = [
 [package.metadata]
 requires-dist = [
     { name = "agno" },
+    { name = "agno", marker = "extra == 'test'" },
     { name = "anthropic", marker = "extra == 'anthropic'" },
     { name = "arxiv" },
     { name = "click" },
@@ -3060,6 +3063,7 @@ requires-dist = [
     { name = "piper-tts", marker = "extra == 'tts'" },
     { name = "prompt-toolkit" },
     { name = "pydantic-ai", marker = "extra == 'pydantic-ai'" },
+    { name = "pydantic-ai", marker = "extra == 'test'" },
     { name = "pydbus", marker = "extra == 'gnome-tools'" },
     { name = "pygobject", marker = "extra == 'gnome-tools'" },
     { name = "pylint", marker = "extra == 'lint'" },

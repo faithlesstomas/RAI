@@ -46,7 +46,7 @@ from .core import console, error_console
 class SectionedOption(click.Option):
     """A click.Option that allows grouping options into sections."""
 
-    def __init__(self, *args: Any, **kwargs: Any) -> None:
+    def __init__(self, *args: Any, **kwargs: Any) -> None: # noqa: ANN401
         self.section = kwargs.pop("section", "Options")
         super().__init__(*args, **kwargs)
 
@@ -471,7 +471,7 @@ async def async_run_standalone(options: CliOptions) -> None:
         await run_interactive_chat(processor, run_config, options)
 
 
-async def async_main_client(options: CliOptions) -> None:
+async def async_main_client(options: CliOptions) -> None: # noqa: PLR0912
     """The main entry point for the CLI in client mode."""
     run_config, _, _, _ = _build_run_config(options)
 
@@ -494,9 +494,8 @@ async def async_main_client(options: CliOptions) -> None:
                 base_url = "http://localhost"  # Dummy base URL for UDS
                 if not options.quiet:
                     console.print(f"[dim]Connecting to server via UDS at {uds_path}...[/dim]")
-            else:
-                if not options.quiet:
-                    console.print(f"[dim]Connecting to server at {base_url}...[/dim]")
+            elif not options.quiet:
+                console.print(f"[dim]Connecting to server at {base_url}...[/dim]")
 
             async with httpx.AsyncClient(transport=transport, base_url=base_url) as client:
                 response = await client.post("/api/v1/run", json=payload, timeout=60)
@@ -583,7 +582,7 @@ async def async_main_client(options: CliOptions) -> None:
               type=click.Path(exists=True, dir_okay=False, resolve_path=True),
               cls=SectionedOption, section="Session & Debugging")
 @click.pass_context
-def cli(ctx: click.Context, **kwargs: Any) -> None:
+def cli(ctx: click.Context, **kwargs: Any) -> None: # noqa: ANN401
     """
     AI assistant in the command line.
 
@@ -611,38 +610,38 @@ def cli(ctx: click.Context, **kwargs: Any) -> None:
 
 
 @cli.group()
-def session() -> None:
+def sessions() -> None:
     """Manage chat sessions."""
 
 
-@session.command(name="switch")
+@sessions.command(name="switch")
 @click.argument("session_name")
 def switch_session(session_name: str) -> None:
     """Creates a new session or switches to an existing one."""
     config_manager.switch_session_logic(session_name)
 
 
-@session.command(name="list")
+@sessions.command(name="list")
 def list_sessions() -> None:
     """Lists all available sessions."""
     config_manager.list_sessions_logic()
 
 
-@session.command(name="show")
+@sessions.command(name="show")
 @click.argument("session_name", required=False)
 def show_session(session_name: Optional[str]) -> None:
     """Shows configuration for a specific or active session."""
     config_manager.show_session_logic(session_name)
 
 
-@session.command(name="delete")
+@sessions.command(name="delete")
 @click.argument("session_name")
 def delete_session(session_name: str) -> None:
     """Deletes a specified session."""
     config_manager.delete_session_logic(session_name)
 
 
-@session.command(name="rename")
+@sessions.command(name="rename")
 @click.argument("old_name")
 @click.argument("new_name")
 def rename_session(old_name: str, new_name: str) -> None:
@@ -726,5 +725,74 @@ def serve(
     )
 
 
+@cli.group()
+def agents() -> None:
+    """Manage AI agents."""
+
+
+@agents.command(name="list")
+@click.option("--json", "json_output", is_flag=True, help="Output in JSON format.")
+@click.option("--table", "table_output", is_flag=True, help="Output as a formatted table.")
+@click.pass_context
+def list_agents(ctx: click.Context, json_output: bool, table_output: bool) -> None:
+    """Lists all available agents."""
+    options = ctx.obj
+    uri = options.get("connect_uri")
+    
+    agents_data = {}
+
+    # Try to fetch from server if URI is provided explicitly
+    if uri and uri != "_auto_":
+        base_url = uri.replace("ws://", "http://").replace("wss://", "https://").split("/ws/")[0]
+        try:
+            response = httpx.get(f"{base_url}/api/v1/agents/")
+            response.raise_for_status()
+            agents_data = response.json()
+        except httpx.RequestError as e:
+            error_console.print(f"[red]Error connecting to server at {base_url}: {e}[/red]")
+            return
+        except Exception as e:
+            error_console.print(f"[red]Error fetching agents: {e}[/red]")
+            return
+    else:
+        # Standalone mode: Load directly from config
+        try:
+            app_config = config_manager.load_config()
+            agents_data = app_config.get("sessions", {})
+        except Exception as e:
+            error_console.print(f"[red]Error loading configuration: {e}[/red]")
+            return
+
+    if not agents_data:
+        console.print("[dim]No agents found.[/dim]")
+        return
+
+    if json_output:
+        console.print(json.dumps(agents_data, indent=2))
+    elif table_output:
+        from rich.table import Table
+        table = Table(title="Available Agents", border_style="blue")
+        table.add_column("ID", style="cyan", no_wrap=True)
+        table.add_column("Model", style="magenta")
+        table.add_column("Backend", style="green")
+        table.add_column("Description", style="white")
+
+        for agent_id, config in agents_data.items():
+            model = config.get("model", "N/A")
+            backend = config.get("backend", "N/A")
+            system = config.get("system", "")
+            # Truncate system prompt for display
+            description = (system[:50] + "...") if len(system) > 50 else system
+            table.add_row(agent_id, model, backend, description)
+        
+        console.print(table)
+    else:
+        # Default: Simple list
+        console.print("[bold]Available Agents:[/bold]")
+        for agent_id in agents_data:
+            console.print(f"- {agent_id}")
+
+
 if __name__ == "__main__":
     cli(obj={})  # pylint: disable=no-value-for-parameter
+

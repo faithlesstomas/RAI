@@ -74,8 +74,8 @@ class RaiTUI(App[None]):
         backend: str,
         system_prompt: str,
         no_markdown: bool,
-        *args: Any,
-        **kwargs: Any,
+        *args: Any, # noqa: ANN401
+        **kwargs: Any, # noqa: ANN401
     ) -> None:
         super().__init__(*args, **kwargs)
         self.model_id = model_id

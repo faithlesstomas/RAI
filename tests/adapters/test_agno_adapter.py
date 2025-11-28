@@ -4,7 +4,7 @@ from unittest.mock import MagicMock, patch
 from rai.adapters.agno import AgnoAdapter
 
 
-def test_get_history_with_complex_mock_storage():
+def test_get_history_with_complex_mock_storage() -> None:
     """
     Test the get_history method with a mocked storage that returns a
     realistic session object.

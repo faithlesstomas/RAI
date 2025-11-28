@@ -28,7 +28,7 @@ class AgnoAdapter:  # pylint: disable=too-few-public-methods
         ollama_host = run_config.get("ollama_host")
         system_prompt = run_config.get("system", "You are a helpful AI assistant.")
         enabled_tool_names = run_config.get("tools")
-        use_markdown = not run_config.get("stream", False)
+        use_markdown = run_config.get("markdown", not run_config.get("stream", False))
 
         # For now, assume tools are enabled if a list is provided or it's not ollama
         enable_tools = enabled_tool_names is not None or backend != "ollama"

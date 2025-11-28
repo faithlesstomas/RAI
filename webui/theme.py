@@ -1,6 +1,9 @@
+"""
+Theme configuration for RAI WebUI.
+"""
 from nicegui import ui
 
-def apply_theme():
+def apply_theme() -> None:
     """Applies global theme settings for the 'Modern Slate' design."""
     # Set primary colors to match the "Slate" aesthetic
     ui.colors(
@@ -13,7 +16,7 @@ def apply_theme():
         info='#3b82f6',      # Blue-500
         warning='#f59e0b'    # Amber-500
     )
-    
+
     # Custom CSS for the modern slate look
     ui.add_head_html('''
         <style>
@@ -25,7 +28,7 @@ def apply_theme():
                 --rai-text-main: #f8fafc; /* Slate 50 */
                 --rai-text-muted: #94a3b8;/* Slate 400 */
             }
-            
+
             body {
                 background-color: var(--rai-bg);
                 color: var(--rai-text-main);
@@ -66,7 +69,7 @@ def apply_theme():
                 background-color: var(--rai-bg);
                 border-right: 1px solid var(--rai-border);
             }
-            
+
             .rai-menu-item {
                 color: var(--rai-text-muted);
                 border-radius: 8px;
@@ -90,7 +93,7 @@ def apply_theme():
                 height: 8px;
             }
             ::-webkit-scrollbar-track {
-                background: transparent; 
+                background: transparent;
             }
             ::-webkit-scrollbar-thumb {
                 background: #334155; /* Slate 700 */

@@ -3,17 +3,24 @@
   #:export (rai-api-get rai-api-post rai-api-delete))
 
 (define-foreign fetch "window" "fetch" (ref string) (ref null extern) -> (ref null extern))
-(define-foreign response-json "Response.prototype" "json" (ref null extern) -> (ref null extern))
-(define-foreign then "Promise.prototype" "then" (ref null extern) (ref null extern) -> (ref null extern))
+(define-foreign response-json "window" "jsonHelper" (ref null extern) -> (ref null extern))
+(define-foreign then "window" "thenHelper" (ref null extern) (ref null extern) -> (ref null extern))
 (define-foreign json-stringify "JSON" "stringify" (ref null extern) -> (ref string))
 
-(define-foreign new-object "Object" "new" -> (ref null extern))
-(define-foreign set-property! "Reflect" "set" (ref null extern) (ref string) (ref null extern) -> i32)
+(define-foreign new-object "window" "newObject" -> (ref null extern))
+(define-foreign new-array "window" "newArray" -> (ref null extern))
+(define-foreign set-property-string! "window" "setPropertyHelper" (ref null extern) (ref string) (ref string) -> none)
+(define-foreign set-property-object! "window" "setPropertyHelper" (ref null extern) (ref string) (ref null extern) -> none)
 
 (define (make-js-object alist)
   (let ((obj (new-object)))
     (for-each (lambda (pair)
-                (set-property! obj (car pair) (cdr pair)))
+                (let ((key (car pair))
+                      (val (cdr pair)))
+                  (cond
+                   ((string? val) (set-property-string! obj key val))
+                   ((null? val) (set-property-object! obj key (new-array)))
+                   (else (set-property-object! obj key val)))))
               alist)
     obj))
 
@@ -28,9 +35,10 @@
                                    (cons `("body" . ,body) opts-alist)
                                    opts-alist))))
     (then (fetch url opts)
-          (lambda (response)
-            (then (response-json response)
-                  callback)))))
+          (procedure->external
+           (lambda (response)
+             (then (response-json response)
+                   (procedure->external callback)))))))
 
 (define (rai-api-get path callback)
   (make-request "GET" path #f callback))
