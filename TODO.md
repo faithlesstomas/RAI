@@ -43,3 +43,8 @@
 ## Future Architectural Improvements
 
 - [ ] Consider migrating the client-side networking from `httpx` and `websockets` to `aiohttp`. This would unify the HTTP and WebSocket communication under a single, powerful library, simplifying dependencies and potentially the codebase.
+
+## Guile Dashboard Improvements
+
+- [ ] Investigate why IP addresses are not showing up in logs on local network (currently showing as `-`).
+- [ ] Implement numeric `LOG_LEVEL` support (similar to Python's logging module) instead of just string matching.

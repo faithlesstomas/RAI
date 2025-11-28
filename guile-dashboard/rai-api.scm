@@ -1,6 +1,6 @@
 (define-module (rai-api)
   #:use-module (hoot ffi)
-  #:export (rai-api-get rai-api-post rai-api-delete))
+  #:export (rai-api-get rai-api-post rai-api-put rai-api-delete json-stringify make-js-object))
 
 (define-foreign fetch "window" "fetch" (ref string) (ref null extern) -> (ref null extern))
 (define-foreign response-json "window" "jsonHelper" (ref null extern) -> (ref null extern))
@@ -24,10 +24,13 @@
               alist)
     obj))
 
-(define *base-url* "http://127.0.0.1:8000/api/v1")
+(define-foreign get-hostname "window" "getHostnameHelper" -> (ref string))
+
+(define (get-base-url)
+  (string-append "http://" (get-hostname) ":8000/api/v1"))
 
 (define (make-request method path body callback)
-  (let* ((url (string-append *base-url* path))
+  (let* ((url (string-append (get-base-url) path))
          (headers (make-js-object '(("Content-Type" . "application/json"))))
          (opts-alist `(("method" . ,method)
                        ("headers" . ,headers)))
@@ -47,6 +50,10 @@
   ;; Convert scheme alist to JS object then stringify
   (let ((js-obj (make-js-object json-alist)))
     (make-request "POST" path (json-stringify js-obj) callback)))
+
+(define (rai-api-put path json-alist callback)
+  (let ((js-obj (make-js-object json-alist)))
+    (make-request "PUT" path (json-stringify js-obj) callback)))
 
 (define (rai-api-delete path callback)
   (make-request "DELETE" path #f callback))

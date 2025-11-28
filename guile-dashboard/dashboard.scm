@@ -54,8 +54,25 @@
 (define *selected-agent* #f)
 (define *sidebar-open* #f)
 (define *is-editing* #f)
+(define *is-saving* #f)
+
+(define-foreign fetch "window" "fetch" (ref string) (ref null extern) -> (ref null extern))
+
+(define (log-message level msg)
+  (let* ((payload (make-js-object `(("level" . ,level)
+                                    ("message" . ,msg))))
+         (body (json-stringify payload))
+         (opts (make-js-object `(("method" . "POST")
+                                 ("body" . ,body)))))
+    (fetch "/log" opts)))
+
+(define (log-info msg) (log-message "info" msg))
+(define (log-warning msg) (log-message "warning" msg))
+(define (log-error msg) (log-message "error" msg))
+(define (log-debug msg) (log-message "debug" msg))
 
 (define (refresh-ui)
+  (log-debug (string-append "UI Refresh. View: " (symbol->string *current-view*)))
   (render-app "app" (app-root)))
 
 (define (toggle-sidebar!)
@@ -82,6 +99,7 @@
 ;; --- API Calls ---
 
 (define (fetch-agents!)
+  (log-info "Fetching agents list...")
   (rai-api-get "/agents/"
                (lambda (data)
                  (let* ((keys (js-array->list (js-keys data)))
@@ -95,6 +113,7 @@
 (define-foreign stop-propagation "window" "stopPropagationHelper" (ref null extern) -> none)
 
 (define (delete-agent-action agent-id e)
+  (log-info (string-append "Action: Delete agent " agent-id))
   (stop-propagation e)
   (when (and *selected-agent* (string=? (car *selected-agent*) agent-id))
     (set! *selected-agent* #f)
@@ -189,6 +208,7 @@
               (h2 "Agents")
               (button `(@ (class "btn btn-primary") (style "width: 100%; margin-bottom: 10px;") 
                           (click ,(lambda (e) 
+                                    (log-debug "Action: Clicked New Agent")
                                     (set! *selected-agent* #f) 
                                     (set! *is-editing* #t) ;; Switch to editor on mobile
                                     (refresh-ui)))) "+ New Agent")
@@ -228,37 +248,52 @@
 
               (button `(@ (class "btn btn-primary")
                           (click ,(lambda (e)
-                                    (let* ((id-input (get-element-by-id "agent-id"))
-                                           (backend-input (get-element-by-id "agent-backend"))
-                                           (model-input (get-element-by-id "agent-model"))
-                                           (sys-input (get-element-by-id "agent-system"))
-                                           (new-id (element-value id-input))
-                                           (new-backend (element-value backend-input))
-                                           (new-model (element-value model-input))
-                                           (new-system (element-value sys-input)))
-                                      (if (and (not (string=? new-id "")) (not (string=? new-model "")))
-                                          (cond
-                                           ;; Check if agent exists when creating new
-                                           ((and (not *selected-agent*) 
-                                                 (let loop ((lst *agents*))
-                                                   (if (null? lst) #f
-                                                       (if (string=? (caar lst) new-id) #t (loop (cdr lst))))))
-                                            (js-alert (string-append "Agent ID '" new-id "' already exists. Please choose a different ID.")))
-                                           (else
-                                            (rai-api-post (string-append "/agents/" new-id)
-                                                          `(("backend" . ,new-backend)
-                                                            ("model" . ,new-model)
-                                                            ("system" . ,new-system)
-                                                            ("tools" . ()))
-                                                          (lambda (resp)
-                                                            (if (= (js-response-ok? resp) 1)
-                                                                (begin
-                                                                  (fetch-agents!)
-                                                                  (set! *is-editing* #f) ;; Go back to list after save on mobile
-                                                                  (refresh-ui))
-                                                                (js-alert "Failed to create agent. Invalid ID or server error."))))))
-                                          (js-alert "Agent ID and Model are required."))))))
-                      "Save Agent")))))
+                                    (log-debug "Action: Clicked Save Agent")
+                                    (if *is-saving*
+                                        (js-alert "Saving in progress...")
+                                        (let* ((id-input (get-element-by-id "agent-id"))
+                                               (backend-input (get-element-by-id "agent-backend"))
+                                               (model-input (get-element-by-id "agent-model"))
+                                               (sys-input (get-element-by-id "agent-system"))
+                                               (new-id (element-value id-input))
+                                               (new-backend (element-value backend-input))
+                                               (new-model (element-value model-input))
+                                               (new-system (element-value sys-input)))
+                                          (if (and (not (string=? new-id "")) (not (string=? new-model "")))
+                                              (cond
+                                               ((and (not *selected-agent*) 
+                                                     (let loop ((lst *agents*))
+                                                       (if (null? lst) #f
+                                                           (if (string=? (caar lst) new-id) #t (loop (cdr lst))))))
+                                                (begin
+                                                  (log-info (string-append "Validation Error: Agent ID '" new-id "' already exists."))
+                                                  (js-alert (string-append "Agent ID '" new-id "' already exists. Please choose a different ID."))))
+                                               (else
+                                                (let ((payload `(("backend" . ,new-backend)
+                                                                 ("model" . ,new-model)
+                                                                 ("system" . ,new-system)
+                                                                 ("tools" . ())))
+                                                      (callback (lambda (resp)
+                                                                  (set! *is-saving* #f)
+                                                                  (let* ((status-ref (js-object-ref resp "status"))
+                                                                         (status (if (string? status-ref) 
+                                                                                     status-ref 
+                                                                                     (js-string->string status-ref))))
+                                                                    (if (string=? status "success")
+                                                                        (begin
+                                                                          (log-info (string-append "Agent saved: " new-id))
+                                                                          (fetch-agents!)
+                                                                          (set! *is-editing* #f)
+                                                                          (refresh-ui))
+                                                                        (let ((err-msg (js-string->string (json-stringify resp))))
+                                                                          (log-error (string-append "Error saving agent: " err-msg))
+                                                                          (js-alert (string-append "Failed to save agent. Server response: " err-msg))))))))
+                                                  (if *selected-agent*
+                                                      (rai-api-put (string-append "/agents/" new-id) payload callback)
+                                                      (rai-api-post (string-append "/agents/" new-id) payload callback)))))
+                                              (js-alert "Agent ID and Model are required.")))))))
+
+                      (span "Save Agent"))))))
 
 ;; Chat View (Placeholder)
 (define (chat-view)
