@@ -3,7 +3,7 @@ import sys
 from typing import Any, Dict, List
 
 from agno.agent import Agent
-from agno.storage.sqlite import SqliteStorage
+from agno.db.sqlite import SqliteDb
 from dotenv import load_dotenv
 from returns.result import Failure, Result, Success
 
@@ -50,10 +50,9 @@ class AgnoAdapter:  # pylint: disable=too-few-public-methods
                 show_tool_calls=False,
                 markdown=use_markdown,
                 add_history_to_messages=True,
-                storage=SqliteStorage(
+                db=SqliteDb(
                     table_name="agent_sessions",
                     db_file="tmp/data.db",
-                    auto_upgrade_schema=True,
                 ),
                 session_id=session_id,
                 instructions=system_prompt,

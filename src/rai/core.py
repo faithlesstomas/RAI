@@ -10,19 +10,21 @@ from typing import Any, Dict, List, Optional, Tuple, Protocol, runtime_checkable
 
 from rich.console import Console
 
+
 # from agno.agent import Agent
 # from agno.storage.sqlite import SqliteStorage
 
-from agno.tools.arxiv import ArxivTools
-from agno.tools.calculator import CalculatorTools
-from agno.tools.duckduckgo import DuckDuckGoTools
-from agno.tools.file import FileTools
-from agno.tools.python import PythonTools
-from agno.tools.shell import ShellTools
-from agno.tools.tavily import TavilyTools
-from agno.tools.webbrowser import WebBrowserTools
-from agno.tools.wikipedia import WikipediaTools
-from agno.tools.yfinance import YFinanceTools
+# Tools are now lazy-loaded in setup_tools
+# from agno.tools.arxiv import ArxivTools
+# from agno.tools.calculator import CalculatorTools
+# from agno.tools.duckduckgo import DuckDuckGoTools
+# from agno.tools.file import FileTools
+# from agno.tools.python import PythonTools
+# from agno.tools.shell import ShellTools
+# from agno.tools.tavily import TavilyTools
+# from agno.tools.webbrowser import WebBrowserTools
+# from agno.tools.wikipedia import WikipediaTools
+# from agno.tools.yfinance import YFinanceTools
 
 from agno.utils.log import logger
 
@@ -32,7 +34,7 @@ from agno.utils.log import logger
 
 # from rai.adapters.pydantic_ai import PydanticAIAdapter
 
-from rai.tools.gitlab import GitlabTools
+# from rai.tools.gitlab import GitlabTools
 
 
 @runtime_checkable
@@ -70,35 +72,46 @@ def setup_tools( # noqa: PLR0912 # pylint: disable=too-many-branches
 ) -> Tuple[List[Any], List[str]]:
     """Sets up the tools for the agent."""
     messages = []
-    all_available_tools: Dict[str, Any] = {
-        "CalculatorTools": CalculatorTools,
-        "ArxivTools": ArxivTools,
-        "WikipediaTools": WikipediaTools,
-        "DuckDuckGoTools": DuckDuckGoTools,
-        "WebBrowserTools": WebBrowserTools,
-        "FileTools": FileTools,
-        "PythonTools": PythonTools,
-        "ShellTools": ShellTools,
-        "GitlabTools": GitlabTools,
-        # "TavilyTools": TavilyTools(),
-        "YFinanceTools": YFinanceTools,
+    
+    # Mapping of tool name to (module_path, class_name)
+    tool_registry = {
+        "CalculatorTools": ("agno.tools.calculator", "CalculatorTools"),
+        "ArxivTools": ("agno.tools.arxiv", "ArxivTools"),
+        "WikipediaTools": ("agno.tools.wikipedia", "WikipediaTools"),
+        "DuckDuckGoTools": ("agno.tools.duckduckgo", "DuckDuckGoTools"),
+        "WebBrowserTools": ("agno.tools.webbrowser", "WebBrowserTools"),
+        "FileTools": ("agno.tools.file", "FileTools"),
+        "PythonTools": ("agno.tools.python", "PythonTools"),
+        "ShellTools": ("agno.tools.shell", "ShellTools"),
+        "GitlabTools": ("rai.tools.gitlab", "GitlabTools"),
+        "YFinanceTools": ("agno.tools.yfinance", "YFinanceTools"),
+        # "TavilyTools": ("agno.tools.tavily", "TavilyTools"), # Requires API key, handled separately but class load is same
     }
 
     if _HAS_GNOME_TOOLS:
-        all_available_tools["GnomeNotificationTool"] = send_notification
-        all_available_tools["GnomeScreenshotTool"] = take_screenshot
-        all_available_tools["GnomeWeatherTool"] = weather
+        # these are functions, not classes in modules, so we handle them differently or add to a separate registry
+        pass
 
     agent_tools: List[Any] = []
     if enable_tools:
         tools_to_enable = (
             enabled_tool_names
             if enabled_tool_names is not None
-            else all_available_tools.keys()
+            else list(tool_registry.keys())
         )
 
         for tool_name in tools_to_enable:
-            if tool_name not in all_available_tools:
+            # Handle GNOME tools
+            if _HAS_GNOME_TOOLS and tool_name in ["GnomeNotificationTool", "GnomeScreenshotTool", "GnomeWeatherTool"]:
+                 if tool_name == "GnomeNotificationTool":
+                     agent_tools.append(send_notification)
+                 elif tool_name == "GnomeScreenshotTool":
+                     agent_tools.append(take_screenshot)
+                 elif tool_name == "GnomeWeatherTool":
+                     agent_tools.append(weather)
+                 continue
+            
+            if tool_name not in tool_registry:
                 if not quiet:
                     messages.append(
                         f"[bold yellow]WARNING: Unknown tool '{tool_name}' "
@@ -106,7 +119,7 @@ def setup_tools( # noqa: PLR0912 # pylint: disable=too-many-branches
                     )
                 continue
 
-            tool_class = all_available_tools[tool_name]
+            module_path, class_name = tool_registry[tool_name]
             logger.debug("Processing tool: %s", tool_name)
 
             # Special handling for tools requiring API keys
@@ -117,47 +130,43 @@ def setup_tools( # noqa: PLR0912 # pylint: disable=too-many-branches
 
             if tool_name in tools_with_api_keys:
                 required_vars = tools_with_api_keys[tool_name]
-                if all(os.getenv(var) for var in required_vars):
-                    logger.debug(
-                        "%s found. Attempting to enable %s.",
-                        " or ".join(required_vars),
-                        tool_name,
-                    )
-                    try:
-                        agent_tools.append(tool_class())
-                        logger.debug("%s successfully enabled.", tool_name)
-                    except ValueError as e:
-                        if not quiet:
-                            messages.append(
-                                f"[bold yellow]WARNING: {tool_name} disabled due to "
-                                f"configuration error: {e}[/bold yellow]"
-                            )
-                        logger.debug(
-                            "%s disabled due to configuration error: %s", tool_name, e
-                        )
-                else:
-                    if not quiet and not has_prompt:
+                if not all(os.getenv(var) for var in required_vars):
+                     if not quiet and not has_prompt:
                         messages.append(
                             f"[bold yellow]WARNING: Missing {' or '.join(required_vars)} "
                             "env variable(s). "
                             f"{tool_name} will be disabled![/bold yellow]"
                         )
-                    logger.debug(
+                     logger.debug(
                         "%s not found. Disabling %s.",
                         " or ".join(required_vars),
                         tool_name,
                     )
-            # Handle GNOME tools which are functions, not classes
-            elif tool_name in [
-                "GnomeNotificationTool",
-                "GnomeScreenshotTool",
-                "GnomeWeatherTool",
-            ]:
-                # These are already functions, just append them
-                agent_tools.append(tool_class)
-            else:
-                # For other tools, just instantiate them
+                     continue
+
+            # Try to import and instantiate the tool
+            try:
+                module = __import__(module_path, fromlist=[class_name])
+                tool_class = getattr(module, class_name)
                 agent_tools.append(tool_class())
+                logger.debug("%s successfully enabled.", tool_name)
+            except ImportError as e:
+                if not quiet:
+                    messages.append(
+                        f"[bold yellow]WARNING: Could not import {tool_name} ({e}). "
+                        f"Install optional dependencies to use it.[/bold yellow]"
+                    )
+                logger.debug("Could not import %s: %s", tool_name, e)
+            except ValueError as e:
+                if not quiet:
+                    messages.append(
+                        f"[bold yellow]WARNING: {tool_name} disabled due to "
+                        f"configuration error: {e}[/bold yellow]"
+                    )
+                logger.debug(
+                    "%s disabled due to configuration error: %s", tool_name, e
+                )
+
     elif _HAS_GNOME_TOOLS and not quiet:
         messages.append(
             "[bold yellow]WARNING: GNOME tools are not installed. "

@@ -11,17 +11,12 @@ requires-python = ">=3.10"
 license = {text = "MIT"}
 
 dependencies = [
-    "dotenv",
-    "agno",
+    "python-dotenv",
+    "agno>=2.0",
     "rich",
     "click",
     "ollama",
     "packaging",
-    "duckduckgo-search",
-    "wikipedia",
-    "arxiv",
-    "pypdf",
-    "tavily-python",
     "textual",
     "prompt_toolkit",
     "sqlalchemy",
@@ -42,14 +37,23 @@ lint = ["ruff", "pylint"]
 gnome-tools = ["pydbus", "pygobject"]
 tts = ["piper-tts", "sounddevice", "requests"]
 pydantic-ai = ["pydantic-ai"]
+tools = [
+    "duckduckgo-search",
+    "wikipedia",
+    "arxiv",
+    "pypdf",
+    "tavily-python",
+    "yfinance",
+]
 all = [
-    "rai-cli[anthanthropic]",
+    "rai-cli[anthropic]",
     "rai-cli[gemini]",
     "rai-cli[openai]",
     "rai-cli[groq]",
     "rai-cli[gnome-tools]",
     "rai-cli[tts]",
     "rai-cli[pydantic-ai]",
+    "rai-cli[tools]",
 ]
 
 [project.scripts]
