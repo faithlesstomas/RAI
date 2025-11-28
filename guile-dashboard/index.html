@@ -334,6 +334,9 @@
         window.responseOkHelper = function (response) {
             return response.ok ? 1 : 0;
         };
+        window.getHostnameHelper = function () {
+            return window.location.hostname;
+        };
 
         // Debug Logger
         (function () {
