@@ -47,16 +47,14 @@ class AgnoAdapter:  # pylint: disable=too-few-public-methods
             agent = Agent(
                 model=model_instance,
                 tools=agent_tools,
-                show_tool_calls=False,
                 markdown=use_markdown,
-                add_history_to_messages=True,
+                add_history_to_context=True,
                 db=SqliteDb(
-                    table_name="agent_sessions",
+                    session_table="agent_sessions",
                     db_file="tmp/data.db",
                 ),
                 session_id=session_id,
                 instructions=system_prompt,
-                telemetry=False,
             )
             return agent
         except ImportError as e:
