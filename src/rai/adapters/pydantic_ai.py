@@ -6,6 +6,7 @@ from typing import Any, Dict, List, Optional
 from pydantic_ai import Agent
 from pydantic_ai.models.openai import OpenAIChatModel
 from pydantic_ai.providers.ollama import OllamaProvider
+from returns.result import Failure, Result, Success
 
 from agno.tools.calculator import CalculatorTools
 from agno.tools.shell import ShellTools
@@ -51,17 +52,27 @@ class PydanticAIAdapter:  # pylint: disable=too-few-public-methods
         self.agents[session_id] = agent
         return agent
 
-    async def arun(self, prompt: str, session_id: str) -> Dict[str, Any]:
+    async def arun(self, prompt: str, session_id: str) -> Result[Dict[str, Any], Exception]:
         """
         Runs a chat interaction using a session-specific Pydantic AI agent.
         """
-        agent = self._get_or_create_agent(session_id)
-        ai_response = await agent.run(prompt)
+        try:
+            agent = self._get_or_create_agent(session_id)
+            ai_response = await agent.run(prompt)
 
-        # The response object in Pydantic AI has an `output` attribute.
-        content = ai_response.output
+            # The response object in Pydantic AI has an `output` attribute.
+            content = ai_response.output
 
-        return {"content": content, "tool_calls": None}
+            return Success({"content": content, "tool_calls": None})
+        except Exception as e:
+            return Failure(e)
+
+    def reload(self) -> None:
+        """Reloads the agent configuration."""
+        # For Pydantic AI, agents are cached by session_id in self.agents
+        # Clearing this cache forces re-creation on next access.
+        logger.debug("Reloading PydanticAIAdapter configuration (clearing agent cache)...")
+        self.agents.clear()
 
 
 def setup_pydantic_tools(

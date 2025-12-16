@@ -1,3 +1,6 @@
+"""
+API endpoints for managing agents.
+"""
 from typing import Any, Dict, List
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -24,6 +27,7 @@ class AgentConfig(BaseModel):
 # --- Dependencies ---
 
 def get_config() -> Dict[str, Any]:
+    """Dependency to load the application configuration."""
     return config_manager.load_config()
 
 # --- Endpoints ---
@@ -31,7 +35,7 @@ def get_config() -> Dict[str, Any]:
 @router.get("/", response_model=Dict[str, Any])
 async def list_agents(config: Dict[str, Any] = Depends(get_config)) -> Dict[str, Any]:
     """
-    List all configured agents (sessions).
+    Lists all available agents.
     """
     return config.get("sessions", {})
 

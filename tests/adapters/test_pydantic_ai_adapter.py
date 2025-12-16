@@ -45,7 +45,10 @@ async def test_pydantic_ai_adapter_arun() -> None:
             tools=[]
         )
 
+        from returns.result import Success
+        
         # Assert the final result
-        assert result["content"] == "Test AI response"
+        assert isinstance(result, Success)
+        assert result.unwrap()["content"] == "Test AI response"
         mock_agent_instance.run.assert_called_once_with("Hello")
 

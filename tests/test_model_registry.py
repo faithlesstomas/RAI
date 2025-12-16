@@ -61,26 +61,23 @@ async def test_get_ollama_models_success(mock_config):
 async def test_get_gemini_models_success(mock_config):
     """Test successful retrieval of Gemini models."""
     with patch.dict(os.environ, {"GOOGLE_API_KEY": "fake-key"}):
-        # Create a mock module for google.generativeai
-        mock_genai = MagicMock()
-        
-        # Mock the list_models function
-        model1 = MagicMock()
-        model1.name = "models/gemini-pro"
-        model1.supported_generation_methods = ["generateContent"]
-        
-        model2 = MagicMock()
-        model2.name = "models/embedding-001"
-        model2.supported_generation_methods = ["embedContent"]
+        # Patch rai.services.model_registry.genai instead of sys.modules
+        with patch("rai.services.model_registry.genai") as mock_genai:
+            # Mock the list_models function
+            model1 = MagicMock()
+            model1.name = "models/gemini-pro"
+            model1.supported_generation_methods = ["generateContent"]
+    
+            model2 = MagicMock()
+            model2.name = "models/embedding-001"
+            model2.supported_generation_methods = ["embedContent"]
+    
+            mock_genai.list_models.return_value = [model1, model2]
 
-        mock_genai.list_models.return_value = [model1, model2]
-
-        # Patch sys.modules to return our mock when google.generativeai is imported
-        with patch.dict("sys.modules", {"google.generativeai": mock_genai}):
-             registry = ModelRegistry(mock_config)
-             models = await registry.get_models("gemini")
+            registry = ModelRegistry(mock_config)
+            models = await registry.get_models("gemini")
              
-             assert models == ["gemini-pro"]
+            assert models == ["gemini-pro"]
 
 @pytest.mark.asyncio
 async def test_get_all_models(mock_config):

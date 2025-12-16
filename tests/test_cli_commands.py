@@ -69,7 +69,7 @@ def test_config_command_set_implementation() -> None:
         rai_cli._handle_slash_command(user_input_set, run_config, agent)
         # Check that a confirmation message was printed
         mock_print.assert_any_call(
-            "Temporarily set 'model' to 'new-model' for this session."
+            "Set 'model' to 'new-model' (persisted)."
         )
 
     # Check that the run_config was modified

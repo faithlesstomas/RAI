@@ -48,3 +48,8 @@
 
 - [ ] Investigate why IP addresses are not showing up in logs on local network (currently showing as `-`).
 - [ ] Implement numeric `LOG_LEVEL` support (similar to Python's logging module) instead of just string matching.
+## Bug Fixes
+
+- [ ] **Critical:** Fix `execute_chain` in `src/rai/routers/execution.py` to pass `session_id` to `run_chain`.
+      Currently, it ignores the session ID from the request, causing a new session to be created for every request.
+

@@ -1,6 +1,6 @@
 """ Base module for LLM/AI Procesor adapters
 """
-from typing import Any, Dict, List, Protocol, runtime_checkable
+from typing import Any, AsyncIterator, Dict, List, Protocol, runtime_checkable
 
 from returns.result import Result
 
@@ -25,6 +25,17 @@ class Processor(Protocol):
             response on success, or an Exception on failure.
         """
 
+    async def astream(self, prompt: str) -> AsyncIterator[Any]:
+        """
+        Asynchronously streams the agent's response.
+
+        Args:
+            prompt: The user's input prompt.
+
+        Returns:
+            An async iterator yielding chunks of the response.
+        """
+
     def get_history(self) -> List[Dict[str, str]]:
         """
         Retrieves the current chat history.
@@ -32,6 +43,11 @@ class Processor(Protocol):
         Returns:
             A list of dictionaries, where each dictionary represents a
             message with "role" and "content" keys.
+        """
+
+    def reload(self) -> None:
+        """
+        Reloads the processor's configuration and re-initializes internal agents/clients.
         """
 
     def clear_history(self) -> None:

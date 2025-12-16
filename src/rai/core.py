@@ -72,7 +72,7 @@ def setup_tools( # noqa: PLR0912 # pylint: disable=too-many-branches
 ) -> Tuple[List[Any], List[str]]:
     """Sets up the tools for the agent."""
     messages = []
-    
+
     # Mapping of tool name to (module_path, class_name)
     tool_registry = {
         "CalculatorTools": ("agno.tools.calculator", "CalculatorTools"),
@@ -85,7 +85,9 @@ def setup_tools( # noqa: PLR0912 # pylint: disable=too-many-branches
         "ShellTools": ("agno.tools.shell", "ShellTools"),
         "GitlabTools": ("rai.tools.gitlab", "GitlabTools"),
         "YFinanceTools": ("agno.tools.yfinance", "YFinanceTools"),
-        # "TavilyTools": ("agno.tools.tavily", "TavilyTools"), # Requires API key, handled separately but class load is same
+        "ClientTools": ("rai.tools.client", "ClientTools"),
+        # "TavilyTools": ("agno.tools.tavily", "TavilyTools"), 
+        # Requires API key, handled separately but class load is same
     }
 
     if _HAS_GNOME_TOOLS:
@@ -102,15 +104,17 @@ def setup_tools( # noqa: PLR0912 # pylint: disable=too-many-branches
 
         for tool_name in tools_to_enable:
             # Handle GNOME tools
-            if _HAS_GNOME_TOOLS and tool_name in ["GnomeNotificationTool", "GnomeScreenshotTool", "GnomeWeatherTool"]:
-                 if tool_name == "GnomeNotificationTool":
-                     agent_tools.append(send_notification)
-                 elif tool_name == "GnomeScreenshotTool":
-                     agent_tools.append(take_screenshot)
-                 elif tool_name == "GnomeWeatherTool":
-                     agent_tools.append(weather)
-                 continue
-            
+            if _HAS_GNOME_TOOLS and tool_name in [
+                "GnomeNotificationTool", "GnomeScreenshotTool", "GnomeWeatherTool"
+            ]:
+                if tool_name == "GnomeNotificationTool":
+                    agent_tools.append(send_notification)
+                elif tool_name == "GnomeScreenshotTool":
+                    agent_tools.append(take_screenshot)
+                elif tool_name == "GnomeWeatherTool":
+                    agent_tools.append(weather)
+                continue
+
             if tool_name not in tool_registry:
                 if not quiet:
                     messages.append(
@@ -131,18 +135,18 @@ def setup_tools( # noqa: PLR0912 # pylint: disable=too-many-branches
             if tool_name in tools_with_api_keys:
                 required_vars = tools_with_api_keys[tool_name]
                 if not all(os.getenv(var) for var in required_vars):
-                     if not quiet and not has_prompt:
+                    if not quiet and not has_prompt:
                         messages.append(
                             f"[bold yellow]WARNING: Missing {' or '.join(required_vars)} "
                             "env variable(s). "
                             f"{tool_name} will be disabled![/bold yellow]"
                         )
-                     logger.debug(
+                    logger.debug(
                         "%s not found. Disabling %s.",
                         " or ".join(required_vars),
                         tool_name,
                     )
-                     continue
+                    continue
 
             # Try to import and instantiate the tool
             try:
@@ -156,7 +160,7 @@ def setup_tools( # noqa: PLR0912 # pylint: disable=too-many-branches
                         f"[bold yellow]WARNING: Could not import {tool_name} ({e}). "
                         f"Install optional dependencies to use it.[/bold yellow]"
                     )
-                logger.debug("Could not import %s: %s", tool_name, e)
+                logger.debug(f"Could not import {tool_name}: {e}")
             except ValueError as e:
                 if not quiet:
                     messages.append(
@@ -164,7 +168,7 @@ def setup_tools( # noqa: PLR0912 # pylint: disable=too-many-branches
                         f"configuration error: {e}[/bold yellow]"
                     )
                 logger.debug(
-                    "%s disabled due to configuration error: %s", tool_name, e
+                    f"{tool_name} disabled due to configuration error: {e}"
                 )
 
     elif _HAS_GNOME_TOOLS and not quiet:

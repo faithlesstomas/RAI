@@ -1,15 +1,31 @@
+"""
+API endpoints for executing agent chains.
+"""
+import json
 import logging
-from typing import Any, Dict, List, Optional
+from typing import Any, AsyncGenerator, Dict, List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, WebSocket, WebSocketDisconnect
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import BaseModel, ValidationError
 from returns.result import Failure, Success
 
 from .. import config_manager
-from ..engine import run_chain
+from ..engine import run_chain, stream_chain
 from ..dependencies import get_config, get_model_registry
 from ..services.model_registry import ModelRegistry
+
+try:
+    from agno.exceptions import ModelProviderError
+except ImportError:
+    # Agno might not be installed or version mismatch, define dummy
+    class ModelProviderError(Exception): pass
+
+try:
+    from ollama import ResponseError
+except ImportError:
+    # Ollama might not be installed
+    class ResponseError(Exception): pass
 
 router = APIRouter(
     tags=["AI Engine"],
@@ -23,6 +39,7 @@ class ChainRequest(BaseModel):
     chain_input: str
     chain_configs: List[Dict[str, Any]]
     session_id: Optional[str] = None
+    context: Optional[Dict[str, Any]] = None
 
 # --- Dependencies ---
 
@@ -48,8 +65,78 @@ async def execute_chain(
         case Success(payload):
             return JSONResponse(content={"status": "success", "payload": payload})
         case Failure(error):
+            # Inspect the error to see if it wraps a known backend error
+            # The ChainExecutionError strings the original exception, but we might want to check the original exception if possible.
+            # However, run_chain returns Failure(ChainExecutionError(f"... {e}")), converting it to string.
+            # To properly map exceptions, we might need to modify engine.py or try to parse the string, 
+            # OR we can assume that if it WAS a ChainExecutionError, we might have lost the original type.
+            # BUT, wait! engine.py wraps it: Failure(ChainExecutionError(f"... {e}"))
+            
+            # Let's inspect the error string for common patterns if we can't access the original exception easily.
+            # Validating the stack trace from earlier: agno.exceptions.ModelProviderError was the cause.
+            
+            error_str = str(error)
+            
+            if "429" in error_str and ("Too Many Requests" in error_str or "RESOURCE_EXHAUSTED" in error_str):
+                logging.warning("Backend rate limit exceeded: %s", error_str)
+                raise HTTPException(status_code=429, detail=error_str)
+            
+            if "404" in error_str and "not found" in error_str.lower():
+                logging.error("Backend resource not found: %s", error_str)
+                raise HTTPException(status_code=404, detail=error_str)
+
+            # Check for ResponseError patterns (Ollama)
+            if "ResponseError" in error_str:
+                 if "404" in error_str:
+                     logging.error("Ollama model not found: %s", error_str)
+                     raise HTTPException(status_code=404, detail=error_str)
+                 if "400" in error_str:
+                      logging.error("Ollama bad request: %s", error_str)
+                      raise HTTPException(status_code=400, detail=error_str)
+
             logging.error("Error during chain execution: %s", error, exc_info=error)
             raise HTTPException(status_code=500, detail=str(error))
+
+
+@router.post("/api/v1/stream")
+async def stream_chain_endpoint(
+        request: ChainRequest,
+        app_config: Dict[str, Any] = Depends(get_config)
+) -> StreamingResponse:
+    """
+    Streams the result of a chain execution using Server-Sent Events (SSE).
+    """
+    async def event_generator() -> AsyncGenerator[str, None]:
+        async for chunk in stream_chain(
+            chain_input=request.chain_input,
+            chain_configs=request.chain_configs,
+            session_id=request.session_id,
+            app_config=app_config
+        ):
+            if isinstance(chunk, Failure):
+                # Send error as a specific event or data
+                error_msg = str(chunk.failure())
+                yield f"event: error\ndata: {json.dumps({'detail': error_msg})}\n\n"
+                return
+
+            # Assuming chunk is an object with delta or content
+            # We need to serialize it to JSON
+            # Agno chunks might be objects, let's try to get content
+            content = ""
+            if hasattr(chunk, "content"):
+                content = chunk.content
+            elif isinstance(chunk, str):
+                content = chunk
+            else:
+                content = str(chunk)
+
+            # Send data
+            yield f"data: {json.dumps({'content': content})}\n\n"
+
+        # End of stream
+        yield "event: done\ndata: {}\n\n"
+
+    return StreamingResponse(event_generator(), media_type="text/event-stream")
 
 
 @router.get("/api/v1/models")
@@ -73,11 +160,11 @@ async def get_models_for_backend(
     """
     logging.info("Fetching models for backend: %s", backend)
     models = await registry.get_models(backend)
-    
+
     # Fallback for other backends as per original behavior
     if not models and backend != "ollama":
         return JSONResponse(content={"models": ["default-model"]})
-        
+
     return JSONResponse(content={"models": models})
 
 
@@ -119,7 +206,7 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
     finally:
         # Ensure the websocket is closed
         try:
-             if websocket.client_state != "DISCONNECTED":
+            if websocket.client_state != "DISCONNECTED":
                 await websocket.close(code=1000)
         except Exception as e:
-             logging.warning(f"Error closing websocket: {e}")
+            logging.warning(f"Error closing websocket: {e}")

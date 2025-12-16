@@ -111,5 +111,5 @@ def test_handle_model_command_set_new_model() -> None:
         rai_cli._handle_model_command(["new-model"], run_config, mock_processor)
 
         assert run_config["model"] == "new-model"
-        mock_print.assert_any_call("Temporarily set model to 'new-model' for this session.")
+        mock_print.assert_any_call("Set model to 'new-model' (persisted).")
         mock_print.assert_any_call("[dim]Note: New settings will be used on the next interaction.[/dim]")

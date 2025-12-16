@@ -11,7 +11,7 @@ import inspect
 import importlib
 import pkgutil
 import uuid
-from typing import Any, Dict, List, Optional, Type
+from typing import Any, AsyncIterator, Dict, List, Optional, Type
 
 from returns.result import Failure, Result, Success
 
@@ -43,6 +43,7 @@ async def run_chain(
     chain_configs: List[Dict[str, Any]],
     session_id: Optional[str] = None,
     app_config: Optional[Dict[str, Any]] = None, # Added for consistency, not used yet
+    context: Optional[Dict[str, Any]] = None,
 ) -> Result[Dict[str, Any], Exception]:
     """
     Runs a chat interaction by dispatching to the appropriate framework adapter.
@@ -57,7 +58,7 @@ async def run_chain(
         rai_adapters = _discover_adapters()
         current_input = chain_input
         final_payload: Dict[str, Any] = {}
-        
+
         # Use provided session_id or generate a new one
         if not session_id:
             session_id = str(uuid.uuid4())
@@ -68,6 +69,21 @@ async def run_chain(
             )
             adapter_class = rai_adapters.get(framework)
 
+            # Infer backend if not provided
+            if "backend" not in agent_config:
+                if "model" in agent_config:
+                    model = agent_config["model"]
+                    if model.startswith("gemini"):
+                        agent_config["backend"] = "gemini"
+                    if model.startswith("claude"):
+                        agent_config["backend"] = "anthropic"
+                    if model.startswith("gpt"):
+                        agent_config["backend"] = "openai"
+                    
+                    # Ensure default backend is set if still missing
+                    if "backend" not in agent_config:
+                         agent_config["backend"] = "ollama"
+
             if not adapter_class:
                 return Failure(
                     AdapterNotFoundError(f"Framework '{framework}' not supported.")
@@ -75,6 +91,8 @@ async def run_chain(
 
             # Add session_id to the config for the adapter to use
             agent_config["session_id"] = session_id
+            if context:
+                agent_config["context"] = context
             adapter_instance = adapter_class(agent_config=agent_config)
 
             # The prompt for the arun method is the output of the previous step
@@ -93,6 +111,116 @@ async def run_chain(
 
     except Exception as e: # pylint: disable=broad-exception-caught
         return Failure(ChainExecutionError(f"An error occurred during chain execution: {e}"))
+
+
+async def stream_chain(
+    chain_input: str,
+    chain_configs: List[Dict[str, Any]],
+    session_id: Optional[str] = None,
+    app_config: Optional[Dict[str, Any]] = None,
+    context: Optional[Dict[str, Any]] = None,
+) -> AsyncIterator[Any]:
+    """
+    Streams the execution of a chain of agents.
+    Only the last agent's response is streamed.
+    """
+    _ = app_config
+    try:
+        if not chain_input:
+            yield Failure(ValueError("Missing input."))
+            return
+        if not chain_configs:
+            yield Failure(ValueError("Missing chain configuration."))
+            return
+
+        rai_adapters = _discover_adapters()
+        current_input = chain_input
+
+        if not session_id:
+            session_id = str(uuid.uuid4())
+
+        # Execute all agents except the last one normally
+        for i, agent_config in enumerate(chain_configs[:-1]):
+            framework = (
+                agent_config.get("agent_class", "AgentAgno").replace("Agent", "").lower()
+            )
+            adapter_class = rai_adapters.get(framework)
+
+            # Infer backend if not provided
+            if "backend" not in agent_config:
+                if "model" in agent_config:
+                    model = agent_config["model"]
+                    if model.startswith("gemini"):
+                        agent_config["backend"] = "gemini"
+                    if model.startswith("claude"):
+                        agent_config["backend"] = "anthropic"
+                    if model.startswith("gpt"):
+                        agent_config["backend"] = "openai"
+                    
+                    # Ensure default backend is set if still missing
+                    if "backend" not in agent_config:
+                         agent_config["backend"] = "ollama"
+
+            if not adapter_class:
+                yield Failure(
+                    AdapterNotFoundError(f"Framework '{framework}' not supported.")
+                )
+                return
+
+            agent_config["session_id"] = session_id
+            if context:
+                agent_config["context"] = context
+            adapter_instance = adapter_class(agent_config=agent_config)
+
+            result = await adapter_instance.arun(prompt=current_input)
+
+            if isinstance(result, Failure):
+                yield result
+                return
+
+            payload = result.unwrap()
+            current_input = payload.get("content", "")
+
+        # Stream the last agent
+        last_config = chain_configs[-1]
+        framework = (
+            last_config.get("agent_class", "AgentAgno").replace("Agent", "").lower()
+        )
+        adapter_class = rai_adapters.get(framework)
+
+        # Infer backend if not provided
+        if "backend" not in chain_configs[-1]:
+            if "model" in chain_configs[-1]:
+                model = chain_configs[-1]["model"]
+                if model.startswith("gemini"):
+                    chain_configs[-1]["backend"] = "gemini"
+                if model.startswith("claude"):
+                    chain_configs[-1]["backend"] = "anthropic"
+                if model.startswith("gpt"):
+                    chain_configs[-1]["backend"] = "openai"
+                
+                # Ensure default backend is set if still missing
+                if "backend" not in chain_configs[-1]:
+                        chain_configs[-1]["backend"] = "ollama"
+
+        if not adapter_class:
+            yield Failure(
+                AdapterNotFoundError(f"Framework '{framework}' not supported.")
+            )
+            return
+
+        last_config["session_id"] = session_id
+        if context:
+            last_config["context"] = context
+        # Ensure stream is enabled in config for the adapter
+        last_config["stream"] = True
+        adapter_instance = adapter_class(agent_config=last_config)
+
+        async for chunk in adapter_instance.astream(prompt=current_input):
+            yield chunk
+
+    except Exception as e: # pylint: disable=broad-exception-caught
+        yield Failure(ChainExecutionError(f"An error occurred during chain streaming: {e}"))
 
 
 async def run_chat(

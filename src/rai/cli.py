@@ -7,11 +7,12 @@ import collections
 # import functools
 # import io
 import json
-# import logging
+import logging
 import os
 import sys
 from dataclasses import dataclass, field
-from typing import Any, Callable, Dict, List, Optional, Tuple
+from typing import Any, Callable, Dict, List, Optional, Tuple, Type
+import warnings
 
 import click
 import httpx
@@ -26,8 +27,11 @@ from prompt_toolkit.history import FileHistory
 from prompt_toolkit.key_binding import KeyBindings
 from prompt_toolkit.keys import Keys
 # from pydantic_ai.exceptions import UserError
+from rich.console import Console, Group
+from rich.logging import RichHandler
 from rich.markdown import Markdown
 from rich.panel import Panel
+from rich.table import Table
 from rich.rule import Rule
 # from websockets.exceptions import ConnectionClosed, WebSocketException
 from returns.result import Success, Failure
@@ -188,7 +192,7 @@ def check_model_tool_support(model_id: str) -> bool:
 
 
 # --- Slash Command Handlers ---
-def _handle_help_command(_: List[str], __: Dict[str, Any], ___: Processor) -> None:
+def _handle_help_command(_: List[str], __: Dict[str, Any], processor: Processor) -> None:
     """Handles the /help command."""
     console.print("Available commands:")
     for cmd in _SLASH_COMMAND_HANDLERS:
@@ -196,7 +200,7 @@ def _handle_help_command(_: List[str], __: Dict[str, Any], ___: Processor) -> No
     console.print("  /exit, /quit, /q")
 
 
-def _handle_config_command(args: List[str], run_config: Dict[str, Any], _: Processor) -> None:
+def _handle_config_command(args: List[str], run_config: Dict[str, Any], processor: Processor) -> None:
     """Handles /config slash commands for the current session."""
     if not args:
         subcommand = "show"
@@ -234,7 +238,16 @@ def _handle_config_command(args: List[str], run_config: Dict[str, Any], _: Proce
         key = command_args[0]
         value = " ".join(command_args[1:])
         run_config[key] = value
-        console.print(f"Temporarily set '{key}' to '{value}' for this session.")
+        
+        # Also persist the change to the configuration file using config_manager
+        # We need to handle potential errors implicitly handled by config_manager or just call it.
+        config_manager.set_config_logic(key, value) # This persists to disk
+        
+        # Reload the processor to apply changes immediately
+        console.print("[dim]Reloading agent...[/dim]")
+        processor.reload()
+
+        console.print(f"Set '{key}' to '{value}' (persisted).")
         console.print("[dim]Note: New settings will be used on the next interaction.[/dim]")
     else:
         error_console.print(f"[red]Unknown config command: {subcommand}. Available: show, get, set[/red]")
@@ -277,14 +290,22 @@ def _handle_save_command(args: List[str], __: Dict[str, Any], processor: Process
     except IOError as e:
         error_console.print(f"[red]Error saving file: {e}[/red]")
 
-def _handle_model_command(args: List[str], run_config: Dict[str, Any], _: Processor) -> None:
+def _handle_model_command(args: List[str], run_config: Dict[str, Any], processor: Processor) -> None:
     """Handles the /model command."""
     if not args:
         console.print(f"Current model: {run_config.get('model')}")
         return
     model_name = args[0]
     run_config["model"] = model_name
-    console.print(f"Temporarily set model to '{model_name}' for this session.")
+    
+    # Persist changes
+    config_manager.set_config_logic("model", model_name)
+    
+    # Reload processor
+    console.print("[dim]Reloading agent...[/dim]")
+    processor.reload()
+
+    console.print(f"Set model to '{model_name}' (persisted).")
     console.print("[dim]Note: New settings will be used on the next interaction.[/dim]")
 
 
@@ -435,6 +456,13 @@ def _build_run_config(options: CliOptions) -> Tuple[Dict[str, Any], Dict[str, An
 async def async_run_standalone(options: CliOptions) -> None:
     """The main entry point for the CLI in standalone mode."""
     run_config, _, session_to_use, app_config = _build_run_config(options)
+
+    # Perform backend-specific checks
+    if run_config.get("backend") == "ollama":
+        has_tools = _initialize_ollama_check(run_config["model"], options.quiet)
+        if not has_tools:
+            # warn but do not disable tools, as some custom models might support them without explicit modelfile tags
+             pass
 
     if not options.quiet and not options.prompt:
         active_session_name = app_config.get("active_session", "default")
@@ -591,7 +619,33 @@ def cli(ctx: click.Context, **kwargs: Any) -> None: # noqa: ANN401
     Use 'rai serve' to run a server.
     """
     ctx.obj = kwargs
-    # This logic replaces the old invoke_without_command behavior
+
+    # Configure logging globally for all commands (standalone, client, serve)
+    log_level = logging.DEBUG if kwargs.get("debug") else getattr(logging, os.getenv("LOG_LEVEL", "INFO").upper(), logging.INFO)
+    
+    # Silence noisy libraries
+    logging.getLogger("httpx").setLevel(logging.WARNING)
+    logging.getLogger("httpcore").setLevel(logging.WARNING)
+    
+    logging.basicConfig(
+        level=log_level,
+        format="%(message)s",
+        datefmt="[%X]",
+        handlers=[RichHandler(console=console, rich_tracebacks=True)]
+    )
+    
+    # Force 'agno' logger to use our Rich configuration
+    logging.getLogger("agno").handlers = []
+    logging.getLogger("agno").propagate = True
+    
+    # Try to clean up agno.utils.log if imported
+    try:
+        # pylint: disable=import-outside-toplevel
+        from agno.utils.log import logger as agno_log
+        agno_log.handlers = []
+        agno_log.propagate = True
+    except ImportError:
+        pass    # This logic replaces the old invoke_without_command behavior
     if ctx.invoked_subcommand is None:
         if not kwargs.get("prompt") and not sys.stdin.isatty():
             kwargs["prompt"] = sys.stdin.read().strip()
@@ -722,6 +776,7 @@ def serve(
         uds=uds,
         workers=workers,
         reload=reload,
+        log_config=None,
     )
 
 
@@ -738,7 +793,7 @@ def list_agents(ctx: click.Context, json_output: bool, table_output: bool) -> No
     """Lists all available agents."""
     options = ctx.obj
     uri = options.get("connect_uri")
-    
+
     agents_data = {}
 
     # Try to fetch from server if URI is provided explicitly
@@ -770,7 +825,6 @@ def list_agents(ctx: click.Context, json_output: bool, table_output: bool) -> No
     if json_output:
         console.print(json.dumps(agents_data, indent=2))
     elif table_output:
-        from rich.table import Table
         table = Table(title="Available Agents", border_style="blue")
         table.add_column("ID", style="cyan", no_wrap=True)
         table.add_column("Model", style="magenta")
@@ -782,9 +836,10 @@ def list_agents(ctx: click.Context, json_output: bool, table_output: bool) -> No
             backend = config.get("backend", "N/A")
             system = config.get("system", "")
             # Truncate system prompt for display
-            description = (system[:50] + "...") if len(system) > 50 else system
+            max_len = 50
+            description = (system[:max_len] + "...") if len(system) > max_len else system
             table.add_row(agent_id, model, backend, description)
-        
+
         console.print(table)
     else:
         # Default: Simple list

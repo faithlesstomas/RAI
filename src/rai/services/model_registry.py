@@ -10,6 +10,11 @@ try:
 except ImportError:
     ollama = None  # type: ignore
 
+try:
+    import google.generativeai as genai
+except ImportError:
+    genai = None # type: ignore
+
 class ModelRegistry:
     """
     Registry for managing connections to LLM backends and retrieving available models.
@@ -19,7 +24,7 @@ class ModelRegistry:
         self.config = config
         self._ollama_client: Optional[Any] = None
 
-    def _get_ollama_client(self) -> Any:
+    def _get_ollama_client(self) -> Any: # noqa: ANN401
         """Lazy initialization of the Ollama client."""
         if self._ollama_client:
             return self._ollama_client
@@ -75,7 +80,8 @@ class ModelRegistry:
             return []
 
         try:
-            import google.generativeai as genai # pylint: disable=import-outside-toplevel
+            if not genai:
+                raise ImportError("google-generativeai package not installed.")
             genai.configure(api_key=api_key)
 
             # List models and filter for those that support content generation
