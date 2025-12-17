@@ -7,27 +7,27 @@ stages:
 before_script:
   - apt-get update -y
   - apt-get install -y libgirepository1.0-dev libcairo2-dev pkg-config python3-dev gir1.2-gtk-3.0
-  - pip install ".[dev]"venv/bin/activate
+  - pip install .[dev,test,lint]
 
 critical_lint:
   stage: lint
   script:
-    - .venv/bin/pylint --ignore tui.py,gnome.py -E src
+    - pylint --ignore tui.py,gnome.py -E src
   allow_failure: true
 
 ruff:
   stage: lint
   script:
-    - .venv/bin/ruff check .
+    - ruff check .
   allow_failure: true
 
 pylint:
   stage: lint
   script:
-    - .venv/bin/pylint src
+    - pylint src
   allow_failure: true
 
 test:
   stage: test
   script:
-    - .venv/bin/pytest
+    - pytest
