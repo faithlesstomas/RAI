@@ -48,12 +48,14 @@ class WebSocketAdapter:
                     self._websocket = await websockets.connect(uri_to_connect, sock=sock)
 
                 else:
-                    error_console.print(f"[dim]Connecting to WebSocket server at {self.server_uri}...[/dim]")
+                    error_console.print(
+                        f"[dim]Connecting to WebSocket server at {self.server_uri}...[/dim]"
+                    )
                     self._websocket = await websockets.connect(self.server_uri)
 
                 error_console.print("[green]WebSocket connection established.[/green]")
                 return Success(None)
-            except Exception as e:
+            except Exception as e: # pylint: disable=broad-exception-caught
                 error_console.print(
                     "[bold red]Connection Error:[/bold red]"
                     f" Could not connect to the rai server at {self.server_uri}."

@@ -7,10 +7,7 @@ stages:
 before_script:
   - apt-get update -y
   - apt-get install -y libgirepository1.0-dev libcairo2-dev pkg-config python3-dev gir1.2-gtk-3.0
-  - pip install pydbus
-  - python -m venv .venv
-  - source .venv/bin/activate
-  - pip install -e .[test,lint]
+  - pip install ".[dev]"venv/bin/activate
 
 critical_lint:
   stage: lint

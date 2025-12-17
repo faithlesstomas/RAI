@@ -1,6 +1,7 @@
 import pytest
 from unittest.mock import AsyncMock, patch
 
+from returns.result import Success
 from rai.adapters.pydantic_ai import PydanticAIAdapter
 
 
@@ -45,7 +46,7 @@ async def test_pydantic_ai_adapter_arun() -> None:
             tools=[]
         )
 
-        from returns.result import Success
+
         
         # Assert the final result
         assert isinstance(result, Success)

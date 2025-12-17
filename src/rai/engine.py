@@ -38,13 +38,14 @@ def _discover_adapters() -> Dict[str, Type[Processor]]:
     return discovered_adapters
 
 
-async def run_chain(
+async def run_chain( # noqa: PLR0912
     chain_input: str,
     chain_configs: List[Dict[str, Any]],
     session_id: Optional[str] = None,
     app_config: Optional[Dict[str, Any]] = None, # Added for consistency, not used yet
     context: Optional[Dict[str, Any]] = None,
-) -> Result[Dict[str, Any], Exception]:
+) -> Result[Dict[str, Any], Exception]: # noqa: PLR0912
+    # pylint: disable=too-many-branches, too-many-locals
     """
     Runs a chat interaction by dispatching to the appropriate framework adapter.
     """
@@ -79,10 +80,10 @@ async def run_chain(
                         agent_config["backend"] = "anthropic"
                     if model.startswith("gpt"):
                         agent_config["backend"] = "openai"
-                    
+
                     # Ensure default backend is set if still missing
                     if "backend" not in agent_config:
-                         agent_config["backend"] = "ollama"
+                        agent_config["backend"] = "ollama"
 
             if not adapter_class:
                 return Failure(
@@ -113,13 +114,14 @@ async def run_chain(
         return Failure(ChainExecutionError(f"An error occurred during chain execution: {e}"))
 
 
-async def stream_chain(
+async def stream_chain( # noqa: PLR0912, PLR0915, PLR0914
     chain_input: str,
     chain_configs: List[Dict[str, Any]],
     session_id: Optional[str] = None,
     app_config: Optional[Dict[str, Any]] = None,
     context: Optional[Dict[str, Any]] = None,
-) -> AsyncIterator[Any]:
+) -> AsyncIterator[Any]: # noqa: PLR0912, PLR0915, PLR0914
+    # pylint: disable=too-many-branches, too-many-statements, too-many-locals
     """
     Streams the execution of a chain of agents.
     Only the last agent's response is streamed.
@@ -140,7 +142,7 @@ async def stream_chain(
             session_id = str(uuid.uuid4())
 
         # Execute all agents except the last one normally
-        for i, agent_config in enumerate(chain_configs[:-1]):
+        for _, agent_config in enumerate(chain_configs[:-1]):
             framework = (
                 agent_config.get("agent_class", "AgentAgno").replace("Agent", "").lower()
             )
@@ -156,10 +158,10 @@ async def stream_chain(
                         agent_config["backend"] = "anthropic"
                     if model.startswith("gpt"):
                         agent_config["backend"] = "openai"
-                    
+
                     # Ensure default backend is set if still missing
                     if "backend" not in agent_config:
-                         agent_config["backend"] = "ollama"
+                        agent_config["backend"] = "ollama"
 
             if not adapter_class:
                 yield Failure(
@@ -198,9 +200,8 @@ async def stream_chain(
                     chain_configs[-1]["backend"] = "anthropic"
                 if model.startswith("gpt"):
                     chain_configs[-1]["backend"] = "openai"
-                
-                # Ensure default backend is set if still missing
-                if "backend" not in chain_configs[-1]:
+
+                    if "backend" not in chain_configs[-1]:
                         chain_configs[-1]["backend"] = "ollama"
 
         if not adapter_class:

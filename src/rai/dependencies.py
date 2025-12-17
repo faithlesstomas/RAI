@@ -1,7 +1,7 @@
 """
 FastAPI dependencies for the RAI application.
 """
-from typing import Dict, Any, Generator
+from typing import Dict, Any
 from fastapi import Depends
 
 from . import config_manager

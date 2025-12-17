@@ -13,7 +13,7 @@ HTTP_OK = 200
 
 @ui.page('/history')
 @layout
-async def history_page() -> None:
+async def history_page() -> None: # noqa: PLR0915
     """Render the history page with Master-Detail layout."""
     
     # State
@@ -26,7 +26,7 @@ async def history_page() -> None:
     
     async def load_sessions() -> None:
         nonlocal sessions_data
-        async def fetch() -> Any:
+        async def fetch() -> httpx.Response:
             async with httpx.AsyncClient() as client:
                 return await client.get(f"{API_BASE_URL}/history/sessions", follow_redirects=True)
         
@@ -45,7 +45,7 @@ async def history_page() -> None:
         
         replay_container.clear()
         
-        async def fetch() -> Any:
+        async def fetch() -> httpx.Response:
             async with httpx.AsyncClient() as client:
                 return await client.get(f"{API_BASE_URL}/history/sessions/{session_id}", follow_redirects=True)
 

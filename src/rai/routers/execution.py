@@ -16,16 +16,18 @@ from ..dependencies import get_config, get_model_registry
 from ..services.model_registry import ModelRegistry
 
 try:
-    from agno.exceptions import ModelProviderError
+    from agno.exceptions import ModelProviderError # pylint: disable=unused-import
 except ImportError:
     # Agno might not be installed or version mismatch, define dummy
-    class ModelProviderError(Exception): pass
+    class ModelProviderError(Exception):
+        """Dummy exception when agno is not installed."""
 
 try:
-    from ollama import ResponseError
+    from ollama import ResponseError # pylint: disable=unused-import
 except ImportError:
     # Ollama might not be installed
-    class ResponseError(Exception): pass
+    class ResponseError(Exception):
+        """Dummy exception when ollama is not installed."""
 
 router = APIRouter(
     tags=["AI Engine"],
@@ -65,34 +67,29 @@ async def execute_chain(
         case Success(payload):
             return JSONResponse(content={"status": "success", "payload": payload})
         case Failure(error):
-            # Inspect the error to see if it wraps a known backend error
-            # The ChainExecutionError strings the original exception, but we might want to check the original exception if possible.
-            # However, run_chain returns Failure(ChainExecutionError(f"... {e}")), converting it to string.
-            # To properly map exceptions, we might need to modify engine.py or try to parse the string, 
-            # OR we can assume that if it WAS a ChainExecutionError, we might have lost the original type.
-            # BUT, wait! engine.py wraps it: Failure(ChainExecutionError(f"... {e}"))
-            
-            # Let's inspect the error string for common patterns if we can't access the original exception easily.
-            # Validating the stack trace from earlier: agno.exceptions.ModelProviderError was the cause.
-            
+            # The ChainExecutionError strings the original exception,
+            # but we might want to check the original exception if possible.
+
             error_str = str(error)
-            
-            if "429" in error_str and ("Too Many Requests" in error_str or "RESOURCE_EXHAUSTED" in error_str):
+
+            if "429" in error_str and (
+                "Too Many Requests" in error_str or "RESOURCE_EXHAUSTED" in error_str
+            ):
                 logging.warning("Backend rate limit exceeded: %s", error_str)
                 raise HTTPException(status_code=429, detail=error_str)
-            
+
             if "404" in error_str and "not found" in error_str.lower():
                 logging.error("Backend resource not found: %s", error_str)
                 raise HTTPException(status_code=404, detail=error_str)
 
             # Check for ResponseError patterns (Ollama)
             if "ResponseError" in error_str:
-                 if "404" in error_str:
-                     logging.error("Ollama model not found: %s", error_str)
-                     raise HTTPException(status_code=404, detail=error_str)
-                 if "400" in error_str:
-                      logging.error("Ollama bad request: %s", error_str)
-                      raise HTTPException(status_code=400, detail=error_str)
+                if "404" in error_str:
+                    logging.error("Ollama model not found: %s", error_str)
+                    raise HTTPException(status_code=404, detail=error_str)
+                if "400" in error_str:
+                    logging.error("Ollama bad request: %s", error_str)
+                    raise HTTPException(status_code=400, detail=error_str)
 
             logging.error("Error during chain execution: %s", error, exc_info=error)
             raise HTTPException(status_code=500, detail=str(error))
@@ -208,5 +205,5 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
         try:
             if websocket.client_state != "DISCONNECTED":
                 await websocket.close(code=1000)
-        except Exception as e:
-            logging.warning(f"Error closing websocket: {e}")
+        except Exception as e: # pylint: disable=broad-exception-caught
+            logging.warning("Error closing websocket: %s", e)

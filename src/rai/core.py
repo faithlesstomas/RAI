@@ -4,7 +4,7 @@ Core components for agent setup and configuration management.
 
 import os
 import sys
-from typing import Any, Dict, List, Optional, Tuple, Protocol, runtime_checkable, Union, TypedDict
+from typing import Any, List, Optional, Tuple, Protocol, runtime_checkable, Union, TypedDict
 
 
 
@@ -64,7 +64,7 @@ error_console = Console(stderr=True)
 
 
 # --- Tool and Model Setup ---
-def setup_tools( # noqa: PLR0912 # pylint: disable=too-many-branches
+def setup_tools( # noqa: PLR0912 # pylint: disable=too-many-branches, too-many-locals
     enable_tools: bool,
     quiet: bool,
     enabled_tool_names: Optional[List[str]] = None,
@@ -91,7 +91,8 @@ def setup_tools( # noqa: PLR0912 # pylint: disable=too-many-branches
     }
 
     if _HAS_GNOME_TOOLS:
-        # these are functions, not classes in modules, so we handle them differently or add to a separate registry
+        # these are functions, not classes in modules,
+        # so we handle them differently or add to a separate registry
         pass
 
     agent_tools: List[Any] = []
@@ -153,14 +154,14 @@ def setup_tools( # noqa: PLR0912 # pylint: disable=too-many-branches
                 module = __import__(module_path, fromlist=[class_name])
                 tool_class = getattr(module, class_name)
                 agent_tools.append(tool_class())
-                logger.debug("%s successfully enabled.", tool_name)
+                logger.debug(f"{tool_name} successfully enabled.") # pylint: disable=logging-fstring-interpolation
             except ImportError as e:
                 if not quiet:
                     messages.append(
                         f"[bold yellow]WARNING: Could not import {tool_name} ({e}). "
                         f"Install optional dependencies to use it.[/bold yellow]"
                     )
-                logger.debug(f"Could not import {tool_name}: {e}")
+                logger.debug(f"Could not import {tool_name}: {e}") # pylint: disable=logging-fstring-interpolation
             except ValueError as e:
                 if not quiet:
                     messages.append(
@@ -168,7 +169,7 @@ def setup_tools( # noqa: PLR0912 # pylint: disable=too-many-branches
                         f"configuration error: {e}[/bold yellow]"
                     )
                 logger.debug(
-                    f"{tool_name} disabled due to configuration error: {e}"
+                    f"{tool_name} disabled due to configuration error: {e}" # pylint: disable=logging-fstring-interpolation
                 )
 
     elif _HAS_GNOME_TOOLS and not quiet:

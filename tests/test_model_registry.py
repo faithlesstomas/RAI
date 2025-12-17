@@ -7,7 +7,7 @@ import pytest
 from rai.services.model_registry import ModelRegistry
 
 @pytest.fixture
-def mock_config():
+def mock_config() -> dict:
     return {
         "active_session": "default",
         "sessions": {
@@ -18,7 +18,7 @@ def mock_config():
     }
 
 @pytest.mark.asyncio
-async def test_get_ollama_client_env_var(mock_config):
+async def test_get_ollama_client_env_var(mock_config: dict) -> None:
     """Test that OLLAMA_HOST env var takes precedence."""
     with patch.dict(os.environ, {"OLLAMA_HOST": "http://env-host:11434"}):
         with patch("rai.services.model_registry.ollama") as mock_ollama:
@@ -29,7 +29,7 @@ async def test_get_ollama_client_env_var(mock_config):
             mock_ollama.AsyncClient.assert_called_with(host="http://env-host:11434")
 
 @pytest.mark.asyncio
-async def test_get_ollama_client_config_fallback(mock_config):
+async def test_get_ollama_client_config_fallback(mock_config: dict) -> None:
     """Test fallback to config when OLLAMA_HOST is not set."""
     # Ensure env var is not set
     with patch.dict(os.environ, {}, clear=True):
@@ -40,7 +40,7 @@ async def test_get_ollama_client_config_fallback(mock_config):
             mock_ollama.AsyncClient.assert_called_with(host="http://test-host:11434")
 
 @pytest.mark.asyncio
-async def test_get_ollama_models_success(mock_config):
+async def test_get_ollama_models_success(mock_config: dict) -> None:
     """Test successful retrieval of Ollama models."""
     with patch("rai.services.model_registry.ollama") as mock_ollama:
         mock_client = AsyncMock()
@@ -58,7 +58,7 @@ async def test_get_ollama_models_success(mock_config):
         assert models == ["llama2", "mistral"]
 
 @pytest.mark.asyncio
-async def test_get_gemini_models_success(mock_config):
+async def test_get_gemini_models_success(mock_config: dict) -> None:
     """Test successful retrieval of Gemini models."""
     with patch.dict(os.environ, {"GOOGLE_API_KEY": "fake-key"}):
         # Patch rai.services.model_registry.genai instead of sys.modules
@@ -80,7 +80,7 @@ async def test_get_gemini_models_success(mock_config):
             assert models == ["gemini-pro"]
 
 @pytest.mark.asyncio
-async def test_get_all_models(mock_config):
+async def test_get_all_models(mock_config: dict) -> None:
     """Test aggregation of models from all backends."""
     with patch.object(ModelRegistry, "get_models") as mock_get_models:
         mock_get_models.side_effect = lambda backend: {

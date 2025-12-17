@@ -3,6 +3,7 @@ Main file for the FastAPI server.
 """
 from fastapi import FastAPI
 from fastapi.responses import JSONResponse
+from fastapi.middleware.cors import CORSMiddleware
 from dotenv import load_dotenv
 
 from .routers import agents, execution, history
@@ -15,7 +16,7 @@ app = FastAPI(
     version="0.1.0",
 )
 
-from fastapi.middleware.cors import CORSMiddleware
+
 
 app.add_middleware(
     CORSMiddleware,

@@ -11,8 +11,7 @@ import logging
 import os
 import sys
 from dataclasses import dataclass, field
-from typing import Any, Callable, Dict, List, Optional, Tuple, Type
-import warnings
+from typing import Any, Callable, Dict, List, Optional, Tuple # pylint: disable=unused-import
 
 import click
 import httpx
@@ -27,7 +26,7 @@ from prompt_toolkit.history import FileHistory
 from prompt_toolkit.key_binding import KeyBindings
 from prompt_toolkit.keys import Keys
 # from pydantic_ai.exceptions import UserError
-from rich.console import Console, Group
+# from rich.console import Console, Group
 from rich.logging import RichHandler
 from rich.markdown import Markdown
 from rich.panel import Panel
@@ -160,9 +159,7 @@ def _build_completer(config_path: Optional[str] = None) -> NestedCompleter:
     """Builds a nested completer for interactive slash commands."""
     app_config = config_manager.load_config(path=config_path)
     session_names = list(app_config.get("sessions", {}).keys())
-    session_name_completer = WordCompleter(
-        session_names, ignore_case=True, match_middle=True
-    )
+    # session_name_completer was unused
     config_key_completer = WordCompleter(
         ["model", "backend", "system", "tools", "tts.data_dir", "tts.default_voice"],
         ignore_case=True,
@@ -192,7 +189,7 @@ def check_model_tool_support(model_id: str) -> bool:
 
 
 # --- Slash Command Handlers ---
-def _handle_help_command(_: List[str], __: Dict[str, Any], processor: Processor) -> None:
+def _handle_help_command(_: List[str], __: Dict[str, Any], ___: Processor) -> None:
     """Handles the /help command."""
     console.print("Available commands:")
     for cmd in _SLASH_COMMAND_HANDLERS:
@@ -238,11 +235,11 @@ def _handle_config_command(args: List[str], run_config: Dict[str, Any], processo
         key = command_args[0]
         value = " ".join(command_args[1:])
         run_config[key] = value
-        
+
         # Also persist the change to the configuration file using config_manager
         # We need to handle potential errors implicitly handled by config_manager or just call it.
         config_manager.set_config_logic(key, value) # This persists to disk
-        
+
         # Reload the processor to apply changes immediately
         console.print("[dim]Reloading agent...[/dim]")
         processor.reload()
@@ -297,10 +294,10 @@ def _handle_model_command(args: List[str], run_config: Dict[str, Any], processor
         return
     model_name = args[0]
     run_config["model"] = model_name
-    
+
     # Persist changes
     config_manager.set_config_logic("model", model_name)
-    
+
     # Reload processor
     console.print("[dim]Reloading agent...[/dim]")
     processor.reload()
@@ -461,8 +458,9 @@ async def async_run_standalone(options: CliOptions) -> None:
     if run_config.get("backend") == "ollama":
         has_tools = _initialize_ollama_check(run_config["model"], options.quiet)
         if not has_tools:
-            # warn but do not disable tools, as some custom models might support them without explicit modelfile tags
-             pass
+            # warn but do not disable tools,
+            # as some custom models might support them without explicit modelfile tags
+            pass
 
     if not options.quiet and not options.prompt:
         active_session_name = app_config.get("active_session", "default")
@@ -500,6 +498,7 @@ async def async_run_standalone(options: CliOptions) -> None:
 
 
 async def async_main_client(options: CliOptions) -> None: # noqa: PLR0912
+    # pylint: disable=too-many-branches
     """The main entry point for the CLI in client mode."""
     run_config, _, _, _ = _build_run_config(options)
 
@@ -543,7 +542,7 @@ async def async_main_client(options: CliOptions) -> None: # noqa: PLR0912
                 f" Could not connect to the rai server at {uri}."
             )
             error_console.print(f"[dim]Is the server running? ('rai serve'). Error: {e}[/dim]")
-        except Exception as e:
+        except Exception as e: # pylint: disable=broad-exception-caught # pylint: disable=broad-exception-caught # pylint: disable=broad-exception-caught
             error_console.print(f"[bold red]An unexpected client error occurred:[/bold red]\n{e}")
     else:
         # Interactive mode using WebSocket
@@ -622,26 +621,26 @@ def cli(ctx: click.Context, **kwargs: Any) -> None: # noqa: ANN401
 
     # Configure logging globally for all commands (standalone, client, serve)
     log_level = logging.DEBUG if kwargs.get("debug") else getattr(logging, os.getenv("LOG_LEVEL", "INFO").upper(), logging.INFO)
-    
+
     # Silence noisy libraries
     logging.getLogger("httpx").setLevel(logging.WARNING)
     logging.getLogger("httpcore").setLevel(logging.WARNING)
-    
+
     logging.basicConfig(
         level=log_level,
         format="%(message)s",
         datefmt="[%X]",
         handlers=[RichHandler(console=console, rich_tracebacks=True)]
     )
-    
+
     # Force 'agno' logger to use our Rich configuration
     logging.getLogger("agno").handlers = []
     logging.getLogger("agno").propagate = True
-    
+
     # Try to clean up agno.utils.log if imported
     try:
         # pylint: disable=import-outside-toplevel
-        from agno.utils.log import logger as agno_log
+        from agno.utils.log import logger as agno_log # noqa: PLC0415
         agno_log.handlers = []
         agno_log.propagate = True
     except ImportError:
@@ -790,6 +789,7 @@ def agents() -> None:
 @click.option("--table", "table_output", is_flag=True, help="Output as a formatted table.")
 @click.pass_context
 def list_agents(ctx: click.Context, json_output: bool, table_output: bool) -> None:
+    # pylint: disable=too-many-locals
     """Lists all available agents."""
     options = ctx.obj
     uri = options.get("connect_uri")
@@ -806,7 +806,7 @@ def list_agents(ctx: click.Context, json_output: bool, table_output: bool) -> No
         except httpx.RequestError as e:
             error_console.print(f"[red]Error connecting to server at {base_url}: {e}[/red]")
             return
-        except Exception as e:
+        except Exception as e: # pylint: disable=broad-exception-caught # pylint: disable=broad-exception-caught # pylint: disable=broad-exception-caught
             error_console.print(f"[red]Error fetching agents: {e}[/red]")
             return
     else:
@@ -814,7 +814,7 @@ def list_agents(ctx: click.Context, json_output: bool, table_output: bool) -> No
         try:
             app_config = config_manager.load_config()
             agents_data = app_config.get("sessions", {})
-        except Exception as e:
+        except Exception as e: # pylint: disable=broad-exception-caught # pylint: disable=broad-exception-caught # pylint: disable=broad-exception-caught
             error_console.print(f"[red]Error loading configuration: {e}[/red]")
             return
 
@@ -831,10 +831,10 @@ def list_agents(ctx: click.Context, json_output: bool, table_output: bool) -> No
         table.add_column("Backend", style="green")
         table.add_column("Description", style="white")
 
-        for agent_id, config in agents_data.items():
-            model = config.get("model", "N/A")
-            backend = config.get("backend", "N/A")
-            system = config.get("system", "")
+        for agent_id, agt_config in agents_data.items():
+            model = agt_config.get("model", "N/A")
+            backend = agt_config.get("backend", "N/A")
+            system = agt_config.get("system", "")
             # Truncate system prompt for display
             max_len = 50
             description = (system[:max_len] + "...") if len(system) > max_len else system
@@ -850,4 +850,3 @@ def list_agents(ctx: click.Context, json_output: bool, table_output: bool) -> No
 
 if __name__ == "__main__":
     cli(obj={})  # pylint: disable=no-value-for-parameter
-

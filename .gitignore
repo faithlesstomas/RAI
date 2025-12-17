@@ -22,3 +22,11 @@ reflect.js
 
 guile-dashboard/server.log
 guile-dashboard/server.pid
+
+# RAI Artifacts
+*.log
+.nicegui/
+webui/.nicegui/
+.coverage
+htmlcov/
+site/

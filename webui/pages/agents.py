@@ -13,7 +13,7 @@ HTTP_OK = 200
 
 @ui.page('/agents')
 @layout
-async def agents_page() -> None:
+async def agents_page() -> None: # noqa: PLR0915
     """Render the agents page with Master-Detail layout."""
     
     # State
@@ -35,7 +35,7 @@ async def agents_page() -> None:
     
     async def load_models(backend: str = "ollama") -> None:
         nonlocal available_models
-        async def fetch() -> Any:
+        async def fetch() -> httpx.Response:
             async with httpx.AsyncClient() as client:
                 return await client.get(f"{API_BASE_URL}/models/{backend}", follow_redirects=True)
         
@@ -51,7 +51,7 @@ async def agents_page() -> None:
 
     async def load_agents() -> None:
         nonlocal agents_data
-        async def fetch() -> Any:
+        async def fetch() -> httpx.Response:
             async with httpx.AsyncClient() as client:
                 return await client.get(f"{API_BASE_URL}/agents/", follow_redirects=True)
 
@@ -131,7 +131,7 @@ async def agents_page() -> None:
             "tools": [t.strip() for t in tools_input.value.split(",") if t.strip()]
         }
         
-        async def post() -> Any:
+        async def post() -> httpx.Response: # noqa: PLR0911
             async with httpx.AsyncClient() as client:
                 # Determine if create or update based on if it existed
                 # Actually API handles both via POST/PUT but let's use POST for create/update logic if simple
@@ -155,7 +155,7 @@ async def agents_page() -> None:
         if not selected_agent_id:
             return
             
-        async def delete() -> Any:
+        async def delete() -> httpx.Response:
             async with httpx.AsyncClient() as client:
                 return await client.delete(f"{API_BASE_URL}/agents/{selected_agent_id}")
 

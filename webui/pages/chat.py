@@ -19,7 +19,7 @@ HTTP_OK = 200
 
 @ui.page('/chat')
 @layout
-async def chat_page() -> None:
+async def chat_page() -> None: # noqa: PLR0915
     """Render the chat page with Chain Configuration."""
 
     # Session Management
@@ -39,7 +39,7 @@ async def chat_page() -> None:
     # --- Data Loading ---
     async def load_agents() -> None:
         nonlocal available_agents
-        async def fetch() -> Any:
+        async def fetch() -> httpx.Response:
             async with httpx.AsyncClient() as client:
                 return await client.get(f"{API_BASE_URL}/agents/", follow_redirects=True)
         

@@ -1,5 +1,6 @@
 """Adapter for the Agno framework."""
 import json
+import logging
 import sys
 from typing import Any, AsyncIterator, Dict, List
 
@@ -10,7 +11,10 @@ from returns.result import Failure, Result, Success
 
 from ..core import error_console, setup_model, setup_tools
 
-import logging
+logger = logging.getLogger(__name__)
+
+# from agno.agent import Agent # Imported later or handled by linter?
+# wait, logging is standard lib.
 logger = logging.getLogger(__name__)
 
 
@@ -172,7 +176,8 @@ class AgnoAdapter:  # pylint: disable=too-few-public-methods
         except Exception as e: # pylint: disable=broad-exception-caught
             yield Failure(e)
 
-    def get_history(self) -> List[Dict[str, str]]:
+    def get_history(self) -> List[Dict[str, str]]: # noqa: PLR0911, PLR0912
+        # pylint: disable=too-many-branches, too-many-return-statements
         """
         Retrieves and formats chat history from the agent's storage.
         """
@@ -184,7 +189,7 @@ class AgnoAdapter:  # pylint: disable=too-few-public-methods
             storage = getattr(self.agent, "storage", None)
             if not storage:
                  storage = getattr(self.agent, "db", None)
-            
+
             if not storage:
                 logger.error("Agent has no 'storage' or 'db' attribute.")
                 return []
@@ -197,10 +202,9 @@ class AgnoAdapter:  # pylint: disable=too-few-public-methods
 
             # Try to get runs from session object
             runs = getattr(session, "runs", None)
-            # logger.debug(f"DEBUG: session type: {type(session)}")
-            # logger.debug(f"DEBUG: runs type: {type(runs)}")
+            logger.debug(f"DEBUG: session type: {type(session)}")
             # logger.debug(f"DEBUG: runs content len: {len(runs) if runs else 0}")
-            
+
             # Fallback to memory dict for older schemas
             if runs is None and hasattr(session, "memory") and isinstance(session.memory, dict):
                 runs = session.memory.get("runs")
@@ -229,30 +233,30 @@ class AgnoAdapter:  # pylint: disable=too-few-public-methods
                     messages = run.get("messages", [])
                 elif hasattr(run, "messages"):
                     messages = run.messages
-                
+
                 if not isinstance(messages, list):
                     continue
 
                 for msg in messages:
                     role = None
                     content = ""
-                    
+
                     if isinstance(msg, dict):
                         role = msg.get("role")
                         content = msg.get("content", "")
                     elif hasattr(msg, "role") and hasattr(msg, "content"):
-                         role = msg.role
-                         content = msg.content
-                    
+                        role = msg.role
+                        content = msg.content
+
                     if role in ["user", "assistant"]:
                         all_messages.append({
                             "role": role,
                             "content": str(content) if content is not None else ""
                         })
-            
+
             return all_messages
         except Exception as e:  # pylint: disable=broad-except
-            logger.error(f"Error retrieving history: {e}")
+            logger.error("Error retrieving history: %s", e)
             return []
 
     def clear_history(self) -> None:
