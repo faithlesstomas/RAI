@@ -14,7 +14,7 @@ dependencies = [
     "python-dotenv",
     "agno>=2.0",
     "rich",
-    "click",
+    "click>=8.1,<8.3",
     "ollama",
     "packaging",
     "textual",
