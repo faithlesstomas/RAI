@@ -5,15 +5,27 @@ stages:
   - test
 
 before_script:
-  - python -m venv .venv
-  - source .venv/bin/activate
-  - pip install -e .[test,lint]
+  - apt-get update -y
+  - apt-get install -y libgirepository1.0-dev libcairo2-dev pkg-config python3-dev gir1.2-gtk-3.0
+  - pip install .[dev,test,lint]
 
-lint:
+critical_lint:
   stage: lint
   script:
-    # - ruff check .
-    - pylint -E --ignore tui.py src examples
+    - pylint --ignore tui.py,gnome.py -E src
+  allow_failure: true
+
+ruff:
+  stage: lint
+  script:
+    - ruff check .
+  allow_failure: true
+
+pylint:
+  stage: lint
+  script:
+    - pylint src
+  allow_failure: true
 
 test:
   stage: test

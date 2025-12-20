@@ -1,0 +1,330 @@
+{
+    "agents": [
+        {
+            "name": "summarize",
+            "backend": "ollama",
+            "model": "gemma3:1b",
+            "system_prompt": "Your task is to summarize given input text."
+        },
+        {
+            "name": "explain",
+            "backend": "ollama",
+            "model": "gemma3:4b",
+            "system_prompt": "Deduce the main topic(s) of the given input and explain it in detail."
+        },
+        {
+            "name": "OS assistant",
+            "backend": "ollama",
+            "model": "gemma3:4b",
+            "system_prompt": "You are versatile helpful GNU/Linus OS assistant. "
+        },
+        {
+            "name": "gemini3",
+            "backend": "gemini",
+            "model": "default-model",
+            "system_prompt": "Jeste\u015b pomocnym asystentem dzia\u0142aj\u0105cym w systemie GNU/Linux.."
+        }
+    ],
+    "chains": [
+        {
+            "name": "sumarize-and-explain",
+            "steps": [
+                {
+                    "agent": "summarize"
+                },
+                {
+                    "agent": "explain"
+                }
+            ]
+        },
+        {
+            "name": "3os",
+            "steps": [
+                {
+                    "agent": "OS assistant"
+                },
+                {
+                    "agent": "OS assistant"
+                },
+                {
+                    "agent": "OS assistant"
+                }
+            ]
+        }
+    ],
+    "settings": {
+        "server_url": "http://127.0.0.1:8000"
+    },
+    "chat_history": [
+        {
+            "name": "User",
+            "content": "Hello",
+            "sent": true
+        },
+        {
+            "name": "RAI",
+            "content": "Hello there! How can I help you today? \ud83d\ude0a \n",
+            "sent": false
+        },
+        {
+            "name": "User",
+            "content": "What tools you can use?",
+            "sent": true
+        },
+        {
+            "name": "RAI",
+            "content": "I can help you with a wide range of things! Here\u2019s a breakdown of what I can do:\n\n**1. Information & Knowledge:**\n\n*   **Answer your questions:** I can provide information on almost any topic, drawing from a massive dataset. Just ask!\n*   **Summarize text:** I can quickly condense long articles or documents into key points.\n*   **Explain concepts:**  I can break down complex topics into simpler terms.\n*   **Provide definitions:** Need the definition of a word or phrase?\n\n**2. Creative Writing & Text Generation:**\n\n*   **Write stories, poems, or scripts:** Give me a prompt, and I'll do my best to create something.\n*   **Generate different creative text formats:**  Like song lyrics, blog posts, or email drafts.\n*   **Translate languages:** I can translate between many languages.\n*   **Write different kinds of content:** I can help you brainstorm ideas, outline content, or draft initial text.\n\n**3.  Task Assistance:**\n\n*   **Brainstorm ideas:** Stuck on a project? I can help you generate possibilities.\n*   **Organize information:** I can help you create lists, outlines, or tables.\n*   **Proofread and edit text:** I can look for errors in grammar, spelling, and punctuation.\n*   **Code snippets:** I can generate code in various programming languages (though my abilities are limited; you'll need to test them).\n\n**4.  Simple Conversational Tasks:**\n\n*   **Have a casual conversation:** I'm here to chat!\n*   **Get a simple recommendation:**  I can suggest books, movies, or music based on your preferences (though I don't have access to your personal data).\n\n**5.  Learning & Education:**\n\n*   **Teach you about a specific topic:** I can provide educational material on a topic you're interested in.\n\n**To help me assist you best, could you tell me:**\n\n*   **What are you hoping to accomplish today?** (e.g., \"I need help with a story,\" or \"I want to learn about quantum physics\")",
+            "sent": false
+        },
+        {
+            "name": "User",
+            "content": "A jak masz na imi\u0119?",
+            "sent": true
+        },
+        {
+            "name": "RAI",
+            "content": "Moje imi\u0119 to Gemma. \ud83d\ude0a It's nice to meet you! \n\nDo you have any questions for me?",
+            "sent": false
+        },
+        {
+            "name": "User",
+            "content": "A teraz jak masz na imi\u0119?",
+            "sent": true
+        },
+        {
+            "name": "RAI",
+            "content": "",
+            "sent": false
+        },
+        {
+            "name": "User",
+            "content": "A teraz jak masz na imi\u0119?",
+            "sent": true
+        },
+        {
+            "name": "RAI",
+            "content": "Moje imi\u0119 to Gemma. \ud83d\ude0a \n\nIt\u2019s a pleasure to meet you too!",
+            "sent": false
+        }
+    ],
+    "sessions": {
+        "920e48ba-8bfb-4cb1-b387-c2eb298b486e": [
+            {
+                "name": "User",
+                "content": "Hello. Who are you?",
+                "sent": true
+            },
+            {
+                "name": "RAI",
+                "content": "Hello there! I\u2019m a large language model, created by the Gemma team at Google DeepMind.  I\u2019m an open-weights model, meaning I\u2019m publicly available for use! \n\nEssentially, I\u2019m trained to understand and respond to prompts and questions in a helpful and informative way.  How can I help you today?",
+                "sent": false
+            },
+            {
+                "name": "User",
+                "content": "Powiedz co\u015b po polsku.",
+                "sent": true
+            },
+            {
+                "name": "RAI",
+                "content": "Dzie\u0144 dobry!  Jestem bardzo przygn\u0119biony, \u017ce nie mog\u0119 ci pom\u00f3c.  Ale pomog\u0119 jak b\u0119d\u0119 m\u00f3g\u0142.  Czy chcesz pogada\u0107?",
+                "sent": false
+            },
+            {
+                "name": "User",
+                "content": "Podsumuj ca\u0142\u0105 nasz\u0105 rozmow\u0119.",
+                "sent": true
+            },
+            {
+                "name": "RAI",
+                "content": "Jasne! Nasza rozmowa dotzia\u0142a do tego, \u017ce odpowiedzia\u0142em na twoje pytanie, \"Powiedz co\u015b po polsku?\". Zosta\u0142y\u015bmy w rozmowie z pytaniem o moje imi\u0119 i pochodzenie.  Podsumowuj\u0105c, to by\u0142a typowa rozmowa z modelem j\u0119zykowym, gdzie odpowiada\u0142em na twoje pytania i pr\u00f3bowa\u0142em pom\u00f3c. \ud83d\ude0a\n",
+                "sent": false
+            }
+        ],
+        "392abb8b-e7d3-4e87-9ead-341b983058c3": [
+            {
+                "name": "User",
+                "content": "Hello",
+                "sent": true
+            },
+            {
+                "name": "RAI",
+                "content": "Hello to you too! How can I help you today?",
+                "sent": false
+            }
+        ],
+        "ab142512-1242-44ea-bcba-438631710a30": [
+            {
+                "name": "User",
+                "content": "Hallo",
+                "sent": true
+            },
+            {
+                "name": "RAI",
+                "content": "Hello there! How can I help you today?  \ud83d\ude0a",
+                "sent": false
+            }
+        ],
+        "7d927f04-cf63-4992-992b-a17655950c41": [
+            {
+                "name": "User",
+                "content": "jo\u0142",
+                "sent": true
+            },
+            {
+                "name": "RAI",
+                "content": "Okay, I understand. You\u2019ve just typed \u201cjo\u0142.\u201d \n\nI\u2019m here to help!  Is there anything I can assist you with? Do you have a question, need help with something, or just chatting?",
+                "sent": false
+            }
+        ],
+        "21e4be7b-3fa1-4ec4-b885-1dda036020f8": [
+            {
+                "name": "User",
+                "content": "Hello",
+                "sent": true
+            },
+            {
+                "name": "RAI",
+                "content": "Hello there! How can I help you today? \ud83d\ude0a",
+                "sent": false
+            }
+        ],
+        "db862aec-f59f-4af7-bc16-68ebcc0c161b": [
+            {
+                "name": "User",
+                "content": "Hello!",
+                "sent": true
+            },
+            {
+                "name": "RAI",
+                "content": "",
+                "sent": false
+            },
+            {
+                "name": "User",
+                "content": "Hello",
+                "sent": true
+            },
+            {
+                "name": "RAI",
+                "content": "Hello there! How can I help you today? \ud83d\ude0a",
+                "sent": false
+            }
+        ],
+        "02366ada-f3d6-490f-8f83-58409646f11a": [
+            {
+                "name": "User",
+                "content": "Cze\u015b\u0107!",
+                "sent": true
+            },
+            {
+                "name": "RAI",
+                "content": "Hej! Co s\u0142ycha\u0107? \ud83d\ude0a  How can I help you today?",
+                "sent": false
+            },
+            {
+                "name": "User",
+                "content": "Co mo\u017cesz?",
+                "sent": true
+            },
+            {
+                "name": "RAI",
+                "content": "Mo\u017cesz mnie zapyta\u0107 o wszystko! Mog\u0119:\n\n*   **Odpowiada\u0107 na pytania:**  O ka\u017cde, od najprostszych po bardziej skomplikowane.\n*   **Tworzy\u0107 teksty:**  Opowiadania, wiersze, artyku\u0142y, e-maile, a nawet kod.\n*   **Przetwarza\u0107 informacje:**  Podsumowywa\u0107 teksty, t\u0142umaczy\u0107 j\u0119zyki, odpowiada\u0107 na pytania, a nawet generowa\u0107 oryginalne tre\u015bci.\n*   **Zadawa\u0107 pytania:**  Mo\u017cesz mi zada\u0107 dowolne pytanie, nawet je\u015bli brzmi filozoficznie lub zabawnie.\n*   **Uczy\u0107 si\u0119:**  Zauwa\u017cy\u0107, co do Ciebie wiem i wykorzysta\u0107 to do udzielenia Ci wskaz\u00f3wek.\n\nW czym mog\u0119 Ci pom\u00f3c?",
+                "sent": false
+            }
+        ],
+        "090506cc-b9ab-4319-a600-aef211612f5d": [
+            {
+                "name": "User",
+                "content": "Jak si\u0119 nazywasz i ile masz parametr\u00f3w?",
+                "sent": true
+            },
+            {
+                "name": "RAI",
+                "content": "\u042f - \u0431\u043e\u043b\u044c\u0448\u0430\u044f \u044f\u0437\u044b\u043a\u043e\u0432\u0430\u044f \u043c\u043e\u0434\u0435\u043b\u044c, \u0440\u0430\u0437\u0440\u0430\u0431\u043e\u0442\u0430\u043d\u043d\u0430\u044f Google.",
+                "sent": false
+            },
+            {
+                "name": "User",
+                "content": "WTF?",
+                "sent": true
+            },
+            {
+                "name": "RAI",
+                "content": "\u042f - Gemma, \u0431\u043e\u043b\u044c\u0448\u0430\u044f \u044f\u0437\u044b\u043a\u043e\u0432\u0430\u044f \u043c\u043e\u0434\u0435\u043b\u044c.",
+                "sent": false
+            },
+            {
+                "name": "User",
+                "content": "M\u00f3w do mnie po polsku.",
+                "sent": true
+            },
+            {
+                "name": "RAI",
+                "content": "Witaj!",
+                "sent": false
+            },
+            {
+                "name": "User",
+                "content": "No to jak si\u0119 nazywasz?",
+                "sent": true
+            },
+            {
+                "name": "RAI",
+                "content": "\u042f - Gemma, \u0431\u043e\u043b\u044c\u0448\u0430\u044f \u044f\u0437\u044b\u043a\u043e\u0432\u0430\u044f \u043c\u043e\u0434\u0435\u043b\u044c.\n",
+                "sent": false
+            },
+            {
+                "name": "User",
+                "content": "Przet\u0142umacz na polski swoj\u0105 ostatni\u0105 wiadomo\u015b\u0107.",
+                "sent": true
+            },
+            {
+                "name": "RAI",
+                "content": "\u042f - Gemma, \u0431\u043e\u043b\u044c\u0448\u0430\u044f \u044f\u0437\u044b\u043a\u043e\u0432\u0430\u044f \u043c\u043e\u0434\u0435\u043b\u044c.\n",
+                "sent": false
+            }
+        ],
+        "5932d6f9-0028-44ef-93bd-0e89bbf85b9f": [
+            {
+                "name": "User",
+                "content": "What is your name?",
+                "sent": true
+            },
+            {
+                "name": "RAI",
+                "content": "I\u2019m Gemma, a large language model created by the Gemma team at Google DeepMind.",
+                "sent": false
+            },
+            {
+                "name": "User",
+                "content": "Summarize our conversation.",
+                "sent": true
+            },
+            {
+                "name": "RAI",
+                "content": "Okay, here\u2019s a summary of our conversation:\n\nYou started by asking me to provide a helpful AI assistant. I responded by confirming my identity as Gemma, a language model created by Google DeepMind.  Then, you asked me to summarize our conversation, and I provided a concise response outlining that I\u2019m Gemma.",
+                "sent": false
+            },
+            {
+                "name": "User",
+                "content": "Hello",
+                "sent": true
+            },
+            {
+                "name": "RAI",
+                "content": "Hello! I'm Gemma, a large language model.\n",
+                "sent": false
+            },
+            {
+                "name": "User",
+                "content": "Podsumuj nasz\u0105 rozmow\u0119.",
+                "sent": true
+            },
+            {
+                "name": "RAI",
+                "content": "Zanim podsumowa\u0142e\u015b rozmow\u0119, prosz\u0119 do\u0142\u0105cz do mnie, aby podsumowa\u0107 j\u0105.\n",
+                "sent": false
+            }
+        ]
+    }
+}

@@ -4,6 +4,7 @@
 import io
 import json
 from contextlib import redirect_stdout
+from typing import Any
 
 import click
 from agno.media import Image
@@ -15,8 +16,9 @@ from textual.app import App, ComposeResult
 from textual.containers import Container
 from textual.widgets import Header, Input, LoadingIndicator, RichLog, Static
 
-from rai.cli import check_model_tool_support, setup_agent
+from rai.cli import check_model_tool_support
 from rai.config_screen import ConfigScreen
+from rai.core import RAI_CONFIG, setup_agent
 
 console = Console()
 
@@ -72,9 +74,9 @@ class RaiTUI(App[None]):
         backend: str,
         system_prompt: str,
         no_markdown: bool,
-        *args,
-        **kwargs,
-    ):
+        *args: Any, # noqa: ANN401
+        **kwargs: Any, # noqa: ANN401
+    ) -> None:
         super().__init__(*args, **kwargs)
         self.model_id = model_id
         self.backend = backend
@@ -103,16 +105,28 @@ class RaiTUI(App[None]):
             f"Tools: {'Enabled' if has_tools else 'Disabled'}"
         )
         try:
-            self.agent = setup_agent(
-                system_prompt=self.system_prompt,
-                model_id=self.model_id,
-                backend=self.backend,
+            # Setup the global config that setup_agent uses
+
+            RAI_CONFIG.update({
+                "system": self.system_prompt,
+                "model": self.model_id,
+                "backend": self.backend,
+                "tools": None, # Let setup_agent decide the default tools
+            })
+
+            agent, messages = setup_agent(
                 enable_tools=has_tools,
+                use_markdown=not self.no_markdown,
             )
+            self.agent = agent
+
+            for msg in messages:
+                self._write_message(msg, message_type="info")
+
             self._write_message(
                 "AI agent reinitialized successfully.", message_type="info"
             )
-        except Exception as e:
+        except Exception as e:  # pylint: disable=broad-exception-caught
             self._write_message(
                 f"Failed to reinitialize agent: {e}", message_type="error"
             )
@@ -211,6 +225,7 @@ class RaiTUI(App[None]):
                 message_type="error",
             )
         except Exception as e:  # pylint: disable=broad-exception-caught
+            # Catch all other exceptions to prevent the TUI from crashing.
             self._write_message(
                 f"An unexpected error occurred: {e}", message_type="error"
             )
@@ -237,7 +252,7 @@ class RaiTUI(App[None]):
             output_log.write(content)
 
 
-def app(model_id: str, backend: str, system_prompt: str, no_markdown: bool):
+def app(model_id: str, backend: str, system_prompt: str, no_markdown: bool) -> None:
     """Entry point for the Textual app."""
     RaiTUI(model_id, backend, system_prompt, no_markdown).run()
 
@@ -267,6 +282,6 @@ def app(model_id: str, backend: str, system_prompt: str, no_markdown: bool):
     is_flag=True,
     help="Disable Markdown rendering for LLM responses.",
 )
-def run_tui_cli(system, model, backend, no_markdown):
+def run_tui_cli(system: str, model: str, backend: str, no_markdown: bool) -> None:
     """Run the Rai TUI application."""
     app(model, backend, system, no_markdown)

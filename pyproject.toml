@@ -11,21 +11,20 @@ requires-python = ">=3.10"
 license = {text = "MIT"}
 
 dependencies = [
-    "dotenv",
-    "agno",
+    "python-dotenv",
+    "agno>=2.0",
     "rich",
-    "click",
+    "click>=8.1,<8.3",
     "ollama",
     "packaging",
-    "duckduckgo-search",
-    "wikipedia",
-    "arxiv",
-    "pypdf",
-    "tavily-python",
     "textual",
     "prompt_toolkit",
     "sqlalchemy",
     "python-gitlab",
+    "fastapi",
+    "uvicorn[standard]",
+    "httpx",
+    "returns",
 ]
 
 [project.optional-dependencies]
@@ -33,15 +32,29 @@ anthropic = ["anthropic"]
 gemini = ["google-generativeai"]
 openai = ["openai"]
 groq = ["groq"]
-test = ["pytest"]
+test = ["pytest", "pytest-asyncio", "pytest-cov", "agno", "pydantic-ai"]
 lint = ["ruff", "pylint"]
+dev = ["rai-cli[test]", "rai-cli[lint]"]
 gnome-tools = ["pydbus", "pygobject"]
+tts = ["piper-tts", "sounddevice", "requests"]
+pydantic-ai = ["pydantic-ai"]
+tools = [
+    "duckduckgo-search",
+    "wikipedia",
+    "arxiv",
+    "pypdf",
+    "tavily-python",
+    "yfinance",
+]
 all = [
-    "rai-cli[anthanthropic]",
+    "rai-cli[anthropic]",
     "rai-cli[gemini]",
     "rai-cli[openai]",
     "rai-cli[groq]",
     "rai-cli[gnome-tools]",
+    "rai-cli[tts]",
+    "rai-cli[pydantic-ai]",
+    "rai-cli[tools]",
 ]
 
 [project.scripts]
@@ -50,7 +63,14 @@ rai-tui = "rai.tui:run_tui_cli"
 
 [tool.pytest.ini_options]
 pythonpath = ["src"]
+asyncio_mode = "auto"
 
 
 [tool.ruff.lint]
-select = ["PL"]
+select = ["PL", "ANN"]
+
+
+[tool.pylint]
+max-line-length=108
+
+[tool.pylint.typing]

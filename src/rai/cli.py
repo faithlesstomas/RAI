@@ -1,19 +1,23 @@
 """
-rai - Rich AI CLI assistant
+Rich AI CLI module
 """
 
 import asyncio
-import io
+import collections
+# import functools
+# import io
 import json
 import logging
 import os
 import sys
-from dataclasses import dataclass
-from typing import Any, Callable, Dict, List, Optional, Tuple
+from dataclasses import dataclass, field
+from typing import Any, Callable, Dict, List, Optional, Tuple # pylint: disable=unused-import
 
 import click
+import httpx
 import ollama
-from agno.agent import Agent
+# import websockets
+# from agno.utils.log import logger  # Import logger
 from ollama import ResponseError
 from prompt_toolkit import PromptSession
 from prompt_toolkit.auto_suggest import AutoSuggestFromHistory
@@ -21,16 +25,95 @@ from prompt_toolkit.completion import NestedCompleter, WordCompleter
 from prompt_toolkit.history import FileHistory
 from prompt_toolkit.key_binding import KeyBindings
 from prompt_toolkit.keys import Keys
+# from pydantic_ai.exceptions import UserError
+# from rich.console import Console, Group
+from rich.logging import RichHandler
 from rich.markdown import Markdown
 from rich.panel import Panel
+from rich.table import Table
 from rich.rule import Rule
-from agno.utils.log import logger # Import logger
+# from websockets.exceptions import ConnectionClosed, WebSocketException
+from returns.result import Success, Failure
 
-from .core import (
-    RAI_CONFIG, console, error_console, load_config, save_config, setup_agent
-)
+from . import config_manager
+from .adapters.agno import AgnoAdapter
+from .adapters.base import Processor
+from .adapters.ws_client import WebSocketAdapter
+from .core import console, error_console
 
-from .ipc_server import run_ipc_server
+# from .exceptions import ChainExecutionError
+# from .tts import TTS, resolve_voice_path
+
+# --- Custom Click Classes for Help Formatting ---
+
+class SectionedOption(click.Option):
+    """A click.Option that allows grouping options into sections."""
+
+    def __init__(self, *args: Any, **kwargs: Any) -> None: # noqa: ANN401
+        self.section = kwargs.pop("section", "Options")
+        super().__init__(*args, **kwargs)
+
+
+class SectionedGroup(click.Group):
+    """A click.Group that formats options into sections."""
+
+    def format_options(self, ctx: click.Context, formatter: click.HelpFormatter) -> None:
+        """Writes all the options into the formatter grouped by section."""
+        options_by_section = collections.defaultdict(list)
+        other_opts = []
+
+        for param in self.get_params(ctx):
+            rv = param.get_help_record(ctx)
+            if rv is None:
+                continue
+            if isinstance(param, SectionedOption):
+                options_by_section[param.section].append(rv)
+            else:
+                other_opts.append(rv)
+
+        section_order = [
+            "Primary",
+            "AI Configuration",
+            "Output Formatting",
+            "Speech",
+            "Session & Debugging",
+        ]
+
+        for section_name in section_order:
+            if section_name in options_by_section:
+                with formatter.section(section_name):
+                    formatter.write_dl(options_by_section[section_name])
+
+        if other_opts:
+            with formatter.section("Other Options"):
+                formatter.write_dl(other_opts)
+
+    def format_commands(self, ctx: click.Context, formatter: click.HelpFormatter) -> None:
+        """Ensures that the subcommands are always displayed."""
+        commands = []
+        for subcommand in self.list_commands(ctx):
+            cmd = self.get_command(ctx, subcommand)
+            if cmd is None or cmd.hidden:
+                continue
+            commands.append((subcommand, cmd))
+
+        if not commands:
+            return
+
+        # allow for 3 times the default spacing
+        limit = formatter.width - 6 - max(len(cmd[0]) for cmd in commands)
+        rows = [(subcommand, cmd.get_short_help_str(limit)) for subcommand, cmd in commands]
+        if rows:
+            with formatter.section("Commands"):
+                formatter.write_dl(rows)
+
+    def format_help(self, ctx: click.Context, formatter: click.HelpFormatter) -> None:
+        """Formats the help string."""
+        self.format_usage(ctx, formatter)
+        self.format_help_text(ctx, formatter)
+        self.format_options(ctx, formatter)
+        self.format_commands(ctx, formatter)
+        self.format_epilog(ctx, formatter)
 
 
 # --- Constants ---
@@ -41,10 +124,13 @@ MIN_SET_CONFIG_ARGS = 2
 @dataclass
 class CliOptions:  # pylint: disable=too-many-instance-attributes
     """Dataclass to hold CLI options."""
+
     prompt: Optional[str] = None
+    connect_uri: Optional[str] = None
     system: Optional[str] = None
     model: Optional[str] = None
     backend: Optional[str] = None
+    framework: str = "agno"
     no_markdown: bool = False
     json_output: bool = False
     quiet: bool = False
@@ -52,40 +138,58 @@ class CliOptions:  # pylint: disable=too-many-instance-attributes
     session_override: Optional[str] = None
     config_path: Optional[str] = None
     debug: bool = False
+    tts_voice_id: Optional[str] = None
+    # This field will hold the active tts task, not a CLI option
+    active_tts_task: Optional[asyncio.Task] = field(default=None, repr=False)
+
+
+async def _cancel_active_tts_task(run_config: Dict[str, Any]) -> None:
+    """Safely cancels the currently active TTS task."""
+    active_task = run_config.get("active_tts_task")
+    if active_task and not active_task.done():
+        console.print("[dim]Cancelling previous speech...[/dim]")
+        active_task.cancel()
+        try:
+            await active_task
+        except asyncio.CancelledError:
+            pass  # Cancellation is expected
 
 
 def _build_completer(config_path: Optional[str] = None) -> NestedCompleter:
     """Builds a nested completer for interactive slash commands."""
-    app_config = load_config(path=config_path)
+    app_config = config_manager.load_config(path=config_path)
     session_names = list(app_config.get("sessions", {}).keys())
-    session_name_completer = WordCompleter(session_names, ignore_case=True, match_middle=True)
+    # session_name_completer was unused
     config_key_completer = WordCompleter(
-        ["model", "backend", "system", "tools"], ignore_case=True, match_middle=True
+        ["model", "backend", "system", "tools", "tts.data_dir", "tts.default_voice"],
+        ignore_case=True,
+        match_middle=True,
     )
-    return NestedCompleter.from_nested_dict({
-        "/help": None, "/exit": None, "/quit": None, "/q": None,
-        "/session": {
-            "list": None, "switch": session_name_completer, "show": session_name_completer,
-            "delete": session_name_completer, "rename": session_name_completer,
-        },
-        "/config": {"show": None, "get": config_key_completer, "set": config_key_completer},
-    })
-
+    return NestedCompleter.from_nested_dict(
+        {
+            "/help": None,
+            "/exit": None,
+            "/quit": None,
+            "/q": None,
+            "/config": {
+                "show": None,
+                "get": config_key_completer,
+                "set": config_key_completer,
+            },
+        }
+    )
 
 def check_model_tool_support(model_id: str) -> bool:
     """Checks if the specified Ollama model supports tool use."""
     try:
         details = ollama.show(model_id)
-        # pylint: disable=unsupported-membership-test
-        # pylint: disable=unsupported-membership-test
-        # pylint: disable=unsupported-membership-test
-        return "tool_use" in details.get("modelfile", "")
+        return "tool_use" in details.get("modelfile", "")  # pylint: disable=unsupported-membership-test
     except ResponseError:
         return False
 
 
 # --- Slash Command Handlers ---
-def _handle_help_command(_: List[str]):
+def _handle_help_command(_: List[str], __: Dict[str, Any], ___: Processor) -> None:
     """Handles the /help command."""
     console.print("Available commands:")
     for cmd in _SLASH_COMMAND_HANDLERS:
@@ -93,82 +197,125 @@ def _handle_help_command(_: List[str]):
     console.print("  /exit, /quit, /q")
 
 
-def _handle_session_command(args: List[str]):
-    """Handles /session slash commands."""
+def _handle_config_command(args: List[str], run_config: Dict[str, Any], processor: Processor) -> None:
+    """Handles /config slash commands for the current session."""
     if not args:
-        console.print("Usage: /session [list|switch|show|delete|rename] [args...]")
+        subcommand = "show"
+        command_args = []
+    else:
+        subcommand = args[0].lower()
+        command_args = args[1:]
+
+    if subcommand == "show":
+        config_copy = run_config.copy()
+        config_copy.pop("active_tts_task", None)
+        console.print(
+            Panel(
+                json.dumps(config_copy, indent=2),
+                title="Current Session Config",
+                border_style="yellow",
+            )
+        )
+    elif subcommand == "get":
+        if not command_args:
+            error_console.print("[red]Usage: /config get <key>[/red]")
+            return
+        key = command_args[0]
+        value = run_config.get(key)
+        if isinstance(value, (dict, list)):
+            console.print(f"{key}:")
+            console.print(value)
+        else:
+            console.print(f"{key}: {value if value is not None else '[not set]'}")
+
+    elif subcommand == "set":
+        if len(command_args) < MIN_SET_CONFIG_ARGS:
+            error_console.print("[red]Usage: /config set <key> <value>[/red]")
+            return
+        key = command_args[0]
+        value = " ".join(command_args[1:])
+        run_config[key] = value
+
+        # Also persist the change to the configuration file using config_manager
+        # We need to handle potential errors implicitly handled by config_manager or just call it.
+        config_manager.set_config_logic(key, value) # This persists to disk
+
+        # Reload the processor to apply changes immediately
+        console.print("[dim]Reloading agent...[/dim]")
+        processor.reload()
+
+        console.print(f"Set '{key}' to '{value}' (persisted).")
+        console.print("[dim]Note: New settings will be used on the next interaction.[/dim]")
+    else:
+        error_console.print(f"[red]Unknown config command: {subcommand}. Available: show, get, set[/red]")
+
+def _handle_history_command(_: List[str], __: Dict[str, Any], processor: Processor) -> None:
+    """Handles the /history command."""
+    history = processor.get_history()
+    if not history:
+        console.print("[dim]No history available.[/dim]")
         return
 
-    subcommand, *command_args = args
+    for message in history:
+        role = message.get("role", "user")
+        content = message.get("content", "")
+        console.print(Panel(content, title=role.capitalize(),
+                            border_style="cyan" if role == "user" else "magenta"))
 
-    def _handle_rename():
-        if len(command_args) >= MIN_RENAME_ARGS:
-            _rename_session_logic(command_args[0], command_args[1])
-        else:
-            error_console.print("[red]Usage: /session rename <old_name> <new_name>[/red]")
+def _handle_clear_command(_: List[str], __: Dict[str, Any], processor: Processor) -> None:
+    """Handles the /clear command."""
+    processor.clear_history()
+    console.print("[green]Chat history cleared.[/green]")
 
-    def _handle_delete():
-        if command_args:
-            _delete_session_logic(command_args[0])
-        else:
-            error_console.print("[red]Usage: /session delete <session_name>[/red]")
+def _handle_save_command(args: List[str], __: Dict[str, Any], processor: Processor) -> None:
+    """Handles the /save command."""
+    history = processor.get_history()
+    if not history:
+        console.print("[dim]No history available to save.[/dim]")
+        return
+    if not args:
+        error_console.print("[red]Usage: /save <filename.md>[/red]")
+        return
+    filename = args[0]
+    try:
+        with open(filename, "w", encoding="utf-8") as f:
+            for message in history:
+                role = message.get("role", "unknown")
+                content = message.get("content", "")
+                f.write(f"**{role.capitalize()}**\n\n{content}\n\n---\n\n")
+        console.print(f"[green]Conversation saved to {filename}[/green]")
+    except IOError as e:
+        error_console.print(f"[red]Error saving file: {e}[/red]")
 
-    def _handle_show():
-        _show_session_logic(command_args[0] if command_args else None)
+def _handle_model_command(args: List[str], run_config: Dict[str, Any], processor: Processor) -> None:
+    """Handles the /model command."""
+    if not args:
+        console.print(f"Current model: {run_config.get('model')}")
+        return
+    model_name = args[0]
+    run_config["model"] = model_name
 
-    def _handle_switch():
-        if command_args:
-            _switch_session_logic(command_args[0])
-        else:
-            error_console.print("[red]Usage: /session switch <session_name>[/red]")
+    # Persist changes
+    config_manager.set_config_logic("model", model_name)
 
-    session_commands: Dict[str, Callable] = {
-        "list": _list_sessions_logic, "switch": _handle_switch, "show": _handle_show,
-        "delete": _handle_delete, "rename": _handle_rename,
-    }
+    # Reload processor
+    console.print("[dim]Reloading agent...[/dim]")
+    processor.reload()
 
-    handler = session_commands.get(subcommand.lower())
-    if handler:
-        handler()
-    else:
-        error_console.print(f"[red]Unknown session command: {subcommand}[/red]")
-
-
-def _handle_config_command(args: List[str]):
-    """Handles /config slash commands."""
-    subcommand, *command_args = (args[0].lower(), args[1:]) if args else ("show", [])
-
-    def _handle_set():
-        if len(command_args) >= MIN_SET_CONFIG_ARGS:
-            _set_config_logic(command_args[0], " ".join(command_args[1:]))
-        else:
-            error_console.print("[red]Usage: /config set <key> <value>[/red]")
-
-    def _handle_get():
-        if command_args:
-            _get_config_logic(command_args[0])
-        else:
-            error_console.print("[red]Usage: /config get <key>[/red]")
-
-    config_commands: Dict[str, Callable] = {
-        "show": _show_config_logic, "set": _handle_set, "get": _handle_get,
-    }
-
-    handler = config_commands.get(subcommand)
-    if handler:
-        handler()
-    else:
-        error_console.print(f"[red]Unknown config command: {subcommand}[/red]")
+    console.print(f"Set model to '{model_name}' (persisted).")
+    console.print("[dim]Note: New settings will be used on the next interaction.[/dim]")
 
 
-_SLASH_COMMAND_HANDLERS: Dict[str, Callable[[List[str]], None]] = {
+_SLASH_COMMAND_HANDLERS: Dict[str, Callable[[List[str], Dict[str, Any], Processor], None]] = {
     "help": _handle_help_command,
-    "session": _handle_session_command,
     "config": _handle_config_command,
+    "history": _handle_history_command,
+    "clear": _handle_clear_command,
+    "save": _handle_save_command,
+    "model": _handle_model_command,
 }
 
-
-def _handle_slash_command(user_input: str) -> bool:
+def _handle_slash_command(user_input: str, run_config: Dict[str, Any], processor: Processor) -> bool:
     """Handles slash commands and returns True if the app should exit."""
     command, *args = user_input.strip()[1:].split()
     if not command:
@@ -179,80 +326,21 @@ def _handle_slash_command(user_input: str) -> bool:
 
     handler = _SLASH_COMMAND_HANDLERS.get(command.lower())
     if handler:
-        handler(args)
+        handler(args, run_config, processor)
     else:
         error_console.print(f"[red]Unknown command: /{command}[/red]")
 
     return False
 
 
-# --- Response Handling ---
-async def _handle_stream_response(agent: Agent, user_input: str):
-    """Handles the streaming response from the agent."""
-    try:
-        response_content_streamed = False
-        response_iterator = await agent.arun(user_input, stream=True)
-        first_event = None
-        with console.status("[bold green]Assistant is thinking..."):
-            try:
-                first_event = await anext(response_iterator)
-            except StopAsyncIteration:
-                pass  # No response
+# --- Unified Interactive Loop ---
 
-        if first_event:
-            if hasattr(first_event, "tool_calls") and first_event.tool_calls:
-                console.print()
-                console.print(Panel(json.dumps(first_event.tool_calls, indent=2), title="Tool Calls", border_style="yellow"))
-            if first_event.content:
-                response_content_streamed = True
-                console.print(first_event.content, end="")
-
-        async for event in response_iterator:
-            if hasattr(event, "tool_calls") and event.tool_calls:
-                console.print()
-                console.print(Panel(json.dumps(event.tool_calls, indent=2), title="Tool Calls", border_style="yellow"))
-            if event.content:
-                response_content_streamed = True
-                console.print(event.content, end="")
-
-        if response_content_streamed:
-            console.print()
-    except Exception as e:
-        error_console.print(f"[bold red]An error occurred during agent execution:[/bold red]\n{e}")
-
-
-async def _handle_non_stream_response(agent: Agent, user_input: str, no_markdown: bool):
-    """Handles the non-streaming response from the agent."""
-    log_capture_string = io.StringIO()
-    log_handler = logging.StreamHandler(log_capture_string)
-    agno_logger = logging.getLogger("agno")
-    original_handlers, agno_logger.handlers = agno_logger.handlers, [log_handler]
-    original_propagate, agno_logger.propagate = agno_logger.propagate, False
-    original_level, agno_logger.level = agno_logger.level, logging.INFO
-
-    try:
-        with console.status("[bold green]Assistant is thinking..."):
-            response = await agent.arun(user_input, stream=False)
-    except Exception as e:
-        error_console.print(f"[bold red]An error occurred during agent execution:[/bold red]\n{e}")
-        return
-    finally:
-        agno_logger.handlers, agno_logger.propagate, agno_logger.level = original_handlers, original_propagate, original_level
-
-    if captured_logs := log_capture_string.getvalue().strip():
-        console.print(Panel(captured_logs, title="[dim]Agno Logs[/dim]", border_style="dim"))
-
-    if response and response.content:
-        console.print(Markdown(response.content) if not no_markdown else response.content)
-
-
-# --- Interactive Mode ---
 def create_key_bindings() -> KeyBindings:
     """Creates custom key bindings for the prompt."""
     kb = KeyBindings()
 
     @kb.add(Keys.Tab)
-    def _(event):
+    def _(event) -> None:  # noqa: ANN001
         b = event.app.current_buffer
         if b.suggestion:
             b.insert_text(b.suggestion.text)
@@ -264,36 +352,65 @@ def create_key_bindings() -> KeyBindings:
     return kb
 
 
-async def run_interactive_chat(agent: Agent, quiet: bool, stream: bool, no_markdown_flag: bool):
-    """Runs the main interactive chat loop."""
-    if not quiet:
+async def run_interactive_chat(
+    processor: Processor,
+    run_config: Dict[str, Any],
+    options: CliOptions,
+) -> None:
+    """Runs the main interactive chat loop for any processor."""
+    if not options.quiet:
         console.print("**Welcome to Rich AI CLI Assistant!** Type your prompt and press Enter.")
         console.print("[dim]Type /help for a list of commands, Ctrl+C or /q to exit.[/dim]")
 
     history_file = os.path.join(os.path.expanduser("~/.config/rai"), "history.txt")
     prompt_session = PromptSession(
-        history=FileHistory(history_file), completer=_build_completer(),
-        complete_while_typing=True, auto_suggest=AutoSuggestFromHistory(),
+        history=FileHistory(history_file),
+        completer=_build_completer(options.config_path),
+        complete_while_typing=True,
+        auto_suggest=AutoSuggestFromHistory(),
         key_bindings=create_key_bindings(),
     )
 
-    while True:
-        try:
-            user_input = await prompt_session.prompt_async("> ")
-            if not user_input.strip():
-                continue
-            if user_input.startswith("/"):
-                if _handle_slash_command(user_input):
-                    break
-                continue
+    try:
+        while True:
+            try:
+                user_input = await prompt_session.prompt_async("> ")
+                if not user_input.strip():
+                    continue
+                if user_input.startswith("/"):
+                    if _handle_slash_command(user_input, run_config, processor):
+                        break
+                    continue
 
-            if stream:
-                await _handle_stream_response(agent, user_input)
-            else:
-                await _handle_non_stream_response(agent, user_input, no_markdown=no_markdown_flag)
-            console.print(Rule(style="dim"))
-        except (KeyboardInterrupt, EOFError):
-            break
+                with console.status("[bold green]Assistant is thinking..."):
+                    response_result = await processor.arun(user_input)
+
+                match response_result:
+                    case Success(response):
+                        if response:
+                            # TODO: Add back streaming support
+                            # TODO: Add back TTS support
+                            console.print(Markdown(response.get("content", "")))
+                            if response.get("tool_calls"):
+                                console.print(
+                                    Panel(
+                                        json.dumps(response["tool_calls"], indent=2),
+                                        title="Tool Calls",
+                                        border_style="yellow",
+                                    )
+                                )
+                    case Failure(error):
+                        # The adapter should have already printed a detailed error.
+                        error_console.print(f"[red]Exiting due to a critical error: {error}[/red]")
+                        break  # Exit the loop gracefully
+
+                console.print(Rule(style="dim"))
+            except (KeyboardInterrupt, EOFError):
+                break
+    finally:
+        await _cancel_active_tts_task(run_config)
+        await processor.close()
+
     console.print("\n[yellow]Goodbye![/yellow]")
 
 
@@ -315,38 +432,35 @@ def _initialize_ollama_check(model_id: str, quiet: bool) -> bool:
     return has_tools
 
 
-def _setup_session(app_config: Dict[str, Any], options: CliOptions) -> Tuple[str, Dict[str, Any]]:
-    """Determines the session to use and its configuration."""
-    session_to_use = options.session_override or app_config.get("active_session", "default")
-    if session_to_use not in app_config.get("sessions", {}):
-        app_config.setdefault("sessions", {})[session_to_use] = {
-            "model": "gemma3:1b", "backend": "ollama",
-            "system": "You are a versatile and helpful AI assistant.",
-            "tools": ["CalculatorTools", "ArxivTools", "WikipediaTools", "DuckDuckGoTools", "WebBrowserTools", "FileTools", "PythonTools", "ShellTools"],
-        }
-        save_config(app_config, path=options.config_path)
-    return session_to_use, app_config["sessions"][session_to_use]
+def _build_run_config(options: CliOptions) -> Tuple[Dict[str, Any], Dict[str, Any], str]:
+    """Builds the run configuration from CLI options and the config file."""
+    app_config = config_manager.load_config(path=options.config_path)
+    session_to_use, session_config = config_manager.initialize_session(
+        app_config, options.session_override, options.config_path
+    )
 
-
-async def async_main(options: CliOptions):
-    """The actual async logic of the application."""
-    if options.debug:
-        logger.setLevel(logging.DEBUG)
-        logging.getLogger("gitlab").setLevel(logging.DEBUG)
-    app_config = load_config(path=options.config_path)
-    session_to_use, session_config = _setup_session(app_config, options)
-
-    RAI_CONFIG.update({
+    run_config = {
         "model": options.model or session_config.get("model"),
         "backend": options.backend or session_config.get("backend"),
         "system": options.system or session_config.get("system"),
-        "prompt": options.prompt,
-    })
+        "tools": session_config.get("tools"),
+        "framework": options.framework,
+        "active_tts_task": None,  # This is a client-side concern
+    }
+    return run_config, session_config, session_to_use, app_config
 
-    is_streaming = options.stream
-    no_markdown_flag = options.no_markdown
-    use_agent_markdown = not (no_markdown_flag or is_streaming)
-    session_id = session_to_use if not options.prompt else None
+
+async def async_run_standalone(options: CliOptions) -> None:
+    """The main entry point for the CLI in standalone mode."""
+    run_config, _, session_to_use, app_config = _build_run_config(options)
+
+    # Perform backend-specific checks
+    if run_config.get("backend") == "ollama":
+        has_tools = _initialize_ollama_check(run_config["model"], options.quiet)
+        if not has_tools:
+            # warn but do not disable tools,
+            # as some custom models might support them without explicit modelfile tags
+            pass
 
     if not options.quiet and not options.prompt:
         active_session_name = app_config.get("active_session", "default")
@@ -356,276 +470,382 @@ async def async_main(options: CliOptions):
         else:
             session_display += " (override)"
         error_console.print(
-            f"[dim]Session: {session_display} | Model: [bold]{RAI_CONFIG['model']}[/bold] on "
-            f"backend: [bold]{RAI_CONFIG['backend']}[/bold][/dim]"
+            f"[dim]Session: {session_display} | Model: [bold]{run_config['model']}[/bold] on "
+            f"backend: [bold]{run_config['backend']}[/bold][/dim]"
         )
 
-    has_tools = RAI_CONFIG["backend"] != "ollama" or _initialize_ollama_check(RAI_CONFIG["model"], options.quiet)
-    agent, startup_messages = setup_agent(
-        enable_tools=has_tools, quiet=options.quiet,
-        use_markdown=use_agent_markdown, session_id=session_id,
-    )
-
-    logger.debug(f"Agent tools after setup: {agent.tools}")
+    # This config is passed to the adapter constructor
+    adapter_config = run_config.copy()
+    adapter_config["session_id"] = session_to_use
+    # TODO: Add logic to select adapter based on framework
+    processor = AgnoAdapter(agent_config=adapter_config)
 
     if options.prompt:
-        if is_streaming:
-            await _handle_stream_response(agent, options.prompt)
-        else:
-            await _handle_non_stream_response(agent, options.prompt, no_markdown=no_markdown_flag)
+        # Single-shot mode
+        with console.status("[bold green]Assistant is thinking..."):
+            result = await processor.arun(options.prompt)
+
+        if isinstance(result, Success):
+            response_payload = result.unwrap()
+            if response_payload:
+                console.print(Markdown(response_payload.get("content", "")))
+        elif isinstance(result, Failure):
+            error_console.print(f"[red]Error: {result.failure()}[/red]")
+        await processor.close()
     else:
-        for msg in startup_messages:
-            console.print(Panel(msg, border_style="yellow"))
-        await run_interactive_chat(
-            agent, quiet=options.quiet, stream=is_streaming, no_markdown_flag=no_markdown_flag
-        )
+        # Interactive mode
+        await run_interactive_chat(processor, run_config, options)
 
 
-# --- CLI Command Groups ---
-@click.group(invoke_without_command=True)
+async def async_main_client(options: CliOptions) -> None: # noqa: PLR0912
+    # pylint: disable=too-many-branches
+    """The main entry point for the CLI in client mode."""
+    run_config, _, _, _ = _build_run_config(options)
+
+    # Determine server URI
+    uri = options.connect_uri
+    if uri == "_auto_":
+        # TODO: Implement full auto-discovery (UDS, etc.)
+        uri = "ws://127.0.0.1:8000/ws/v1/chat"
+
+    if options.prompt:
+        # Single-shot mode using REST
+        payload = {"chain_input": options.prompt, "chain_configs": [run_config]}
+        try:
+            transport = None
+            base_url = uri.replace("ws://", "http://").replace("wss://", "https://").split("/ws/")[0]
+
+            if uri.startswith("unix://"):
+                uds_path = uri[len("unix://") :]
+                transport = httpx.AsyncHTTPTransport(uds=uds_path)
+                base_url = "http://localhost"  # Dummy base URL for UDS
+                if not options.quiet:
+                    console.print(f"[dim]Connecting to server via UDS at {uds_path}...[/dim]")
+            elif not options.quiet:
+                console.print(f"[dim]Connecting to server at {base_url}...[/dim]")
+
+            async with httpx.AsyncClient(transport=transport, base_url=base_url) as client:
+                response = await client.post("/api/v1/run", json=payload, timeout=60)
+                response.raise_for_status()
+                data = response.json()
+                if data.get("status") == "success":
+                    content = data.get("payload", {}).get("content", "")
+                    if options.json_output:
+                        console.print(json.dumps(data.get("payload"), indent=2))
+                    else:
+                        console.print(Markdown(content) if not options.no_markdown else content)
+                else:
+                    error_console.print(f"[red]Server Error: {data.get('detail')}[/red]")
+        except httpx.RequestError as e:
+            error_console.print(
+                "[bold red]Connection Error:[/bold red]"
+                f" Could not connect to the rai server at {uri}."
+            )
+            error_console.print(f"[dim]Is the server running? ('rai serve'). Error: {e}[/dim]")
+        except Exception as e: # pylint: disable=broad-exception-caught # pylint: disable=broad-exception-caught # pylint: disable=broad-exception-caught
+            error_console.print(f"[bold red]An unexpected client error occurred:[/bold red]\n{e}")
+    else:
+        # Interactive mode using WebSocket
+        adapter_config = run_config.copy()
+        adapter_config["server_uri"] = uri
+        processor = WebSocketAdapter(agent_config=adapter_config)
+
+        # Eagerly connect to the server before starting the interactive chat.
+        if not isinstance(processor, WebSocketAdapter):
+             # This should not happen, but it's a good practice to check
+            error_console.print("[red]Error: Invalid processor for client mode.[/red]")
+            return
+        connect_result = await processor.connect()
+        if isinstance(connect_result, Failure):
+            # The connect method in the adapter is responsible for printing the error.
+            return  # Exit gracefully
+
+        await run_interactive_chat(processor, run_config, options)
+
+
+@click.group(cls=SectionedGroup, invoke_without_command=True)
 @click.version_option(version="0.1.0")
-@click.option("-p", "--prompt", "prompt", default=None, help="The prompt to send to the AI.")
-@click.option("-s", "--system", default=None, help="Defines the system prompt for the AI.")
-@click.option("-m", "--model", default=None, help="ID of the model to use.")
-@click.option(
-    "-b", "--backend", default=None,
-    type=click.Choice(["ollama", "gemini", "anthropic", "openai", "groq"]),
-)
-@click.option(
-    "--config", "config_path", default=None, help="Path to a custom configuration file.",
-    type=click.Path(exists=True, dir_okay=False, resolve_path=True),
-)
-@click.option("--no-markdown", is_flag=True, help="Disable Markdown rendering for LLM responses.")
-@click.option("--json", "json_output", is_flag=True, help="Output in JSON format.")
-@click.option("--quiet", is_flag=True, help="Suppress informational messages.")
-@click.option("--stream", is_flag=True, help="Enable streaming of LLM responses (disables Markdown).")
-@click.option(
-    "--session", "session_override", default=None,
-    help="Run in a specific session for this command only.",
-)
-@click.option("--debug", is_flag=True, help="Enable debug logging.")
+# Section: Primary
+@click.option("-p", "--prompt", "prompt", default=None, help="The prompt to send to the AI.",
+              cls=SectionedOption, section="Primary")
+# Section: Connection
+@click.option("--connect", "connect_uri", default=None,
+              help="Connect to a 'rai serve' instance. If no URI is given, auto-discovers the server.",
+              is_flag=False, flag_value="_auto_", cls=SectionedOption, section="Primary")
+# Section: AI Configuration
+@click.option("-s", "--system", default=None, help="Defines the system prompt for the AI.",
+              cls=SectionedOption, section="AI Configuration")
+@click.option("-m", "--model", default=None, help="ID of the model to use.",
+              cls=SectionedOption, section="AI Configuration")
+@click.option("-b", "--backend", default=None,
+              type=click.Choice(["ollama", "gemini", "anthropic", "openai", "groq"]),
+              help="The backend to use.",
+              cls=SectionedOption, section="AI Configuration")
+@click.option("-f", "--framework", default="agno",
+              type=click.Choice(["agno", "pydantic_ai"]), help="Specify the AI framework to use.",
+              cls=SectionedOption, section="AI Configuration")
+# Section: Output Formatting
+@click.option("--no-markdown", is_flag=True, help="Disable Markdown rendering for LLM responses.",
+              cls=SectionedOption, section="Output Formatting")
+@click.option("--json", "json_output", is_flag=True, help="Output in JSON format.",
+              cls=SectionedOption, section="Output Formatting")
+@click.option("--quiet", is_flag=True, help="Suppress informational messages.",
+              cls=SectionedOption, section="Output Formatting")
+@click.option("--stream", is_flag=True,
+              help="Enable streaming of LLM responses (disables Markdown).",
+              cls=SectionedOption, section="Output Formatting")
+# Section: Speech
+@click.option("--tts", "tts_voice_id", default=None, is_flag=False, flag_value="_default_",
+              help="Enable Text-to-Speech output. Optionally provide a voice ID.",
+              cls=SectionedOption, section="Speech")
+# Section: Session & Debugging
+@click.option("--session", "session_override", default=None,
+              help="Run in a specific session for this command only.",
+              cls=SectionedOption, section="Session & Debugging")
+@click.option("--debug", is_flag=True, help="Enable debug logging.",
+              cls=SectionedOption, section="Session & Debugging")
+@click.option("--config", "config_path", default=None,
+              help="Path to a custom configuration file.",
+              type=click.Path(exists=True, dir_okay=False, resolve_path=True),
+              cls=SectionedOption, section="Session & Debugging")
 @click.pass_context
-def cli(ctx: click.Context, **kwargs: Any):
-    """AI assistant in the command line with tool support."""
+def cli(ctx: click.Context, **kwargs: Any) -> None: # noqa: ANN401
+    """
+    AI assistant in the command line.
+
+    This command runs in standalone mode by default.
+    Use '--connect' to connect to a server.
+    Use 'rai serve' to run a server.
+    """
     ctx.obj = kwargs
-    if ctx.invoked_subcommand is not None:
-        return
 
-    if not kwargs.get("prompt") and not sys.stdin.isatty():
-        kwargs["prompt"] = sys.stdin.read().strip()
+    # Configure logging globally for all commands (standalone, client, serve)
+    log_level = logging.DEBUG if kwargs.get("debug") else getattr(logging, os.getenv("LOG_LEVEL", "INFO").upper(), logging.INFO)
 
-    options = CliOptions(**kwargs)
-    asyncio.run(async_main(options))
+    # Silence noisy libraries
+    logging.getLogger("httpx").setLevel(logging.WARNING)
+    logging.getLogger("httpcore").setLevel(logging.WARNING)
+
+    logging.basicConfig(
+        level=log_level,
+        format="%(message)s",
+        datefmt="[%X]",
+        handlers=[RichHandler(console=console, rich_tracebacks=True)]
+    )
+
+    # Force 'agno' logger to use our Rich configuration
+    logging.getLogger("agno").handlers = []
+    logging.getLogger("agno").propagate = True
+
+    # Try to clean up agno.utils.log if imported
+    try:
+        # pylint: disable=import-outside-toplevel
+        from agno.utils.log import logger as agno_log # noqa: PLC0415
+        agno_log.handlers = []
+        agno_log.propagate = True
+    except ImportError:
+        pass    # This logic replaces the old invoke_without_command behavior
+    if ctx.invoked_subcommand is None:
+        if not kwargs.get("prompt") and not sys.stdin.isatty():
+            kwargs["prompt"] = sys.stdin.read().strip()
+
+        options = CliOptions(**kwargs)
+
+        if options.connect_uri:
+            # Client Mode
+            asyncio.run(async_main_client(options))
+        else:
+            # Standalone Mode
+            asyncio.run(async_run_standalone(options))
+
+
+
 
 
 @cli.group()
-def session():
+def sessions() -> None:
     """Manage chat sessions."""
 
 
-def _switch_session_logic(session_name: str):
-    """The actual logic for creating/switching sessions."""
-    app_config = load_config()
-    if session_name not in app_config.get("sessions", {}):
-        console.print(f"Creating new session: [bold]{session_name}[/bold]")
-        app_config.setdefault("sessions", {})[session_name] = {
-            "model": "gemma3:1b", "backend": "ollama",
-            "system": "You are a versatile and helpful AI assistant.",
-        }
-    app_config["active_session"] = session_name
-    save_config(app_config)
-    console.print(f"Switched to session: [bold green]{session_name}[/bold green]")
-    console.print("[yellow]Note: The new session will be used the next time you start rai.[/yellow]")
-
-
-@session.command(name="switch")
+@sessions.command(name="switch")
 @click.argument("session_name")
-def switch_session(session_name: str):
+def switch_session(session_name: str) -> None:
     """Creates a new session or switches to an existing one."""
-    _switch_session_logic(session_name)
+    config_manager.switch_session_logic(session_name)
 
 
-
-def _list_sessions_logic():
-    """The actual logic for listing sessions."""
-    app_config = load_config()
-    sessions = app_config.get("sessions", {})
-    active_session = app_config.get("active_session", "default")
-    if not sessions:
-        console.print("[yellow]No sessions found.[/yellow]")
-        return
-    console.print("[bold]Available Sessions:[/bold]")
-    for name in sessions:
-        if name == active_session:
-            console.print(f"- [bold green]{name} (active)[/bold green]")
-        else:
-            console.print(f"- {name}")
-
-
-@session.command(name="list")
-def list_sessions():
+@sessions.command(name="list")
+def list_sessions() -> None:
     """Lists all available sessions."""
-    _list_sessions_logic()
+    config_manager.list_sessions_logic()
 
 
-def _show_session_logic(session_name: Optional[str] = None):
-    """The actual logic for showing a session's configuration."""
-    app_config = load_config()
-    target_session = session_name or app_config.get("active_session", "default")
-    session_config = app_config.get("sessions", {}).get(target_session)
-    if not session_config:
-        error_console.print(f"[bold red]Error: Session '{target_session}' not found.[/bold red]")
-        return
-    console.print(f"[bold]Configuration for session: [cyan]{target_session}[/cyan][/bold]")
-    console.print(json.dumps(session_config, indent=2))
-
-
-@session.command(name="show")
+@sessions.command(name="show")
 @click.argument("session_name", required=False)
-def show_session(session_name: Optional[str]):
+def show_session(session_name: Optional[str]) -> None:
     """Shows configuration for a specific or active session."""
-    _show_session_logic(session_name)
+    config_manager.show_session_logic(session_name)
 
 
-def _delete_session_logic(session_name: str):
-    """The actual logic for deleting a session."""
-    app_config = load_config()
-    active_session = app_config.get("active_session", "default")
-    if session_name == active_session:
-        error_console.print("[bold red]Error: Cannot delete the active session.[/bold red]")
-        error_console.print(f"Switch to a different session before deleting '{session_name}'.")
-        return
-    if session_name not in app_config.get("sessions", {}):
-        error_console.print(f"[bold red]Error: Session '{session_name}' not found.[/bold red]")
-        return
-    del app_config["sessions"][session_name]
-    save_config(app_config)
-    console.print(f"Session '[bold red]{session_name}[/bold red]' has been deleted.")
-
-
-@session.command(name="delete")
+@sessions.command(name="delete")
 @click.argument("session_name")
-def delete_session(session_name: str):
+def delete_session(session_name: str) -> None:
     """Deletes a specified session."""
-    _delete_session_logic(session_name)
+    config_manager.delete_session_logic(session_name)
 
 
-def _rename_session_logic(old_name: str, new_name: str):
-    """The actual logic for renaming a session."""
-    app_config = load_config()
-    sessions = app_config.get("sessions", {})
-    if old_name not in sessions:
-        error_console.print(f"[bold red]Error: Session '{old_name}' not found.[/bold red]")
-        return
-    if new_name in sessions:
-        error_console.print(f"[bold red]Error: Session name '{new_name}' already exists.[/bold red]")
-        return
-    sessions[new_name] = sessions.pop(old_name)
-    console.print(f"Session '{old_name}' has been renamed to '[bold green]{new_name}[/bold green]'.")
-    if app_config.get("active_session") == old_name:
-        app_config["active_session"] = new_name
-        console.print(f"Active session has been updated to '[bold green]{new_name}[/bold green]'.")
-    save_config(app_config)
-
-
-@session.command(name="rename")
+@sessions.command(name="rename")
 @click.argument("old_name")
 @click.argument("new_name")
-def rename_session(old_name: str, new_name: str):
+def rename_session(old_name: str, new_name: str) -> None:
     """Renames a session."""
-    _rename_session_logic(old_name, new_name)
+    config_manager.rename_session_logic(old_name, new_name)
 
 
 @cli.group(invoke_without_command=True)
 @click.pass_context
-def config(ctx: click.Context):
+def config(ctx: click.Context) -> None:
     """View or manage the configuration of the active session."""
     if ctx.invoked_subcommand is None:
-        _show_config_logic()
-
-
-def _show_config_logic():
-    """The actual logic for showing the active session's configuration."""
-    app_config = load_config()
-    active_session = app_config.get("active_session", "default")
-    session_config = app_config.get("sessions", {}).get(active_session)
-    if not session_config:
-        error_console.print(f"[bold red]Error: Active session '{active_session}' not found in configuration.[/bold red]")
-        return
-    console.print(f"[bold]Configuration for active session: [cyan]{active_session}[/cyan][/bold]")
-    console.print(json.dumps(session_config, indent=2))
+        config_manager.show_config_logic()
 
 
 @config.command(name="show")
-def show_config():
+def show_config() -> None:
     """Shows configuration for the active session."""
-    _show_config_logic()
-
-
-def _set_config_logic(key: str, value: str):
-    """The actual logic for setting a config value in the active session."""
-    app_config = load_config()
-    active_session = app_config.get("active_session", "default")
-    if active_session not in app_config.get("sessions", {}):
-        error_console.print(f"[bold red]Error: Active session '{active_session}' not found.[/bold red]")
-        return
-    allowed_keys = ["model", "backend", "system", "tools"]
-    if key not in allowed_keys:
-        error_console.print(f"[bold red]Error: Invalid configuration key '{key}'.[/bold red]")
-        error_console.print(f"Allowed keys are: {', '.join(allowed_keys)}")
-        return
-    if key == "tools":
-        app_config["sessions"][active_session][key] = [t.strip() for t in value.split(",")]
-    else:
-        app_config["sessions"][active_session][key] = value
-    save_config(app_config)
-    console.print(
-        f"In session '[cyan]{active_session}[/cyan]', set '[bold]{key}[/bold]' to "
-        f"'[green]{value}[/green]'.")
+    config_manager.show_config_logic()
 
 
 @config.command(name="set")
 @click.argument("key")
 @click.argument("value")
-def set_config(key: str, value: str):
+def set_config(key: str, value: str) -> None:
     """Sets a configuration value for the active session."""
-    _set_config_logic(key, value)
-
-
-def _get_config_logic(key: str):
-    """The actual logic for getting a config value from the active session."""
-    app_config = load_config()
-    active_session = app_config.get("active_session", "default")
-    session_config = app_config.get("sessions", {}).get(active_session)
-    if not session_config:
-        error_console.print(f"[bold red]Error: Active session '{active_session}' not found.[/bold red]")
-        return
-    value = session_config.get(key)
-    if value is None:
-        error_console.print(f"[bold red]Error: Key '{key}' not found in session '{active_session}'.[/bold red]")
-    else:
-        console.print(value)
+    config_manager.set_config_logic(key, value)
 
 
 @config.command(name="get")
 @click.argument("key")
-def get_config(key: str):
+def get_config(key: str) -> None:
     """Gets a configuration value from the active session."""
-    _get_config_logic(key)
+    config_manager.get_config_logic(key)
 
 
-@cli.command(name="serve-ipc")
-@click.pass_context
-def serve_ipc(ctx: click.Context):
+@config.command(name="edit")
+def edit_config() -> None:
+    """Opens the configuration file in the default editor."""
+    config_path = config_manager.get_config_path()
+    if config_path:
+        console.print(f"[dim]Opening configuration file: {config_path}[/dim]")
+        click.launch(str(config_path))
+    else:
+        error_console.print("[red]Could not determine configuration file path.[/red]")
+
+
+@cli.command(name="serve")
+@click.option("--host", default="127.0.0.1", help="Host to bind the server to.")
+@click.option("--port", default=8000, type=int, help="Port to bind the server to.")
+@click.option("--uds", default=None, help="Path to a Unix Domain Socket to bind to.")
+@click.option("--workers", default=1, type=int, help="Number of worker processes.")
+@click.option("--reload", is_flag=True, help="Enable auto-reload for development.")
+def serve(
+    host: str, port: int, uds: Optional[str], workers: int, reload: bool
+) -> None:
     """
-    Runs the IPC server to allow other processes to interact with the AI agent.
+    Runs the FastAPI server for REST, WebSocket, and IPC communication.
     """
     # pylint: disable=import-outside-toplevel
-    # noqa: PLC0415, C0415
-    # noqa: PLC0415, C0415
-    # noqa: PLC0415, C0415
-    config_path = ctx.obj.get('config_path')
-    run_ipc_server(config_path=config_path)
+    try:
+        import uvicorn  # noqa: PLC0415
+    except ImportError:
+        error_console.print("[bold red]Error: 'uvicorn' is not installed.[/bold red]")
+        error_console.print("Please install it with: uv pip install uvicorn[standard]")
+        sys.exit(1)
+
+    if uds:
+        console.print(f"🚀 Starting FastAPI server on Unix socket: [bold green]{uds}[/bold green]")
+    else:
+        console.print(f"🚀 Starting FastAPI server on [bold green]http://{host}:{port}[/bold green]")
+    console.print("See API docs at [bold blue]/docs[/bold blue] or [bold blue]/redoc[/bold blue]")
+
+    uvicorn.run(
+        "rai.server:app",
+        host=host if uds is None else None,
+        port=port if uds is None else None,
+        uds=uds,
+        workers=workers,
+        reload=reload,
+        log_config=None,
+    )
+
+
+@cli.group()
+def agents() -> None:
+    """Manage AI agents."""
+
+
+@agents.command(name="list")
+@click.option("--json", "json_output", is_flag=True, help="Output in JSON format.")
+@click.option("--table", "table_output", is_flag=True, help="Output as a formatted table.")
+@click.pass_context
+def list_agents(ctx: click.Context, json_output: bool, table_output: bool) -> None:
+    # pylint: disable=too-many-locals
+    """Lists all available agents."""
+    options = ctx.obj
+    uri = options.get("connect_uri")
+
+    agents_data = {}
+
+    # Try to fetch from server if URI is provided explicitly
+    if uri and uri != "_auto_":
+        base_url = uri.replace("ws://", "http://").replace("wss://", "https://").split("/ws/")[0]
+        try:
+            response = httpx.get(f"{base_url}/api/v1/agents/")
+            response.raise_for_status()
+            agents_data = response.json()
+        except httpx.RequestError as e:
+            error_console.print(f"[red]Error connecting to server at {base_url}: {e}[/red]")
+            return
+        except Exception as e: # pylint: disable=broad-exception-caught # pylint: disable=broad-exception-caught # pylint: disable=broad-exception-caught
+            error_console.print(f"[red]Error fetching agents: {e}[/red]")
+            return
+    else:
+        # Standalone mode: Load directly from config
+        try:
+            app_config = config_manager.load_config()
+            agents_data = app_config.get("sessions", {})
+        except Exception as e: # pylint: disable=broad-exception-caught # pylint: disable=broad-exception-caught # pylint: disable=broad-exception-caught
+            error_console.print(f"[red]Error loading configuration: {e}[/red]")
+            return
+
+    if not agents_data:
+        console.print("[dim]No agents found.[/dim]")
+        return
+
+    if json_output:
+        console.print(json.dumps(agents_data, indent=2))
+    elif table_output:
+        table = Table(title="Available Agents", border_style="blue")
+        table.add_column("ID", style="cyan", no_wrap=True)
+        table.add_column("Model", style="magenta")
+        table.add_column("Backend", style="green")
+        table.add_column("Description", style="white")
+
+        for agent_id, agt_config in agents_data.items():
+            model = agt_config.get("model", "N/A")
+            backend = agt_config.get("backend", "N/A")
+            system = agt_config.get("system", "")
+            # Truncate system prompt for display
+            max_len = 50
+            description = (system[:max_len] + "...") if len(system) > max_len else system
+            table.add_row(agent_id, model, backend, description)
+
+        console.print(table)
+    else:
+        # Default: Simple list
+        console.print("[bold]Available Agents:[/bold]")
+        for agent_id in agents_data:
+            console.print(f"- {agent_id}")
 
 
 if __name__ == "__main__":
