@@ -4,7 +4,7 @@
 
 `rai` is a Python-based interactive command-line assistant. It has been refactored into a flexible, multi-framework platform based on a client-server model:
 
-*   **IPC Server (`rai serve`):** A core server, built with Python's `asyncio` and `FastAPI`, that handles AI logic.
+*   **Server (`rai serve`):** A core server, built with Python's `asyncio` and `FastAPI`, that handles AI logic.
 *   **Engine (`src/rai/engine.py`):** A central dispatcher within the server that dynamically loads and routes requests to different AI framework "adapters".
 *   **Adapters (`src/rai/adapters/`):** Pluggable modules that wrap specific AI frameworks. Currently, adapters for `Agno` and `Pydantic AI` are implemented.
 *   **CLI Client (`rai`):** The command-line interface operates in two primary modes:
@@ -19,25 +19,28 @@ This design allows for greater flexibility, interoperability with other language
 *   **AI Frameworks (via Adapters):** Agno, Pydantic AI
 *   **IPC Server:** `asyncio`, `FastAPI`
 *   **CLI Framework:** `click`
-*   **TUI Framework:** `textual` (development currently on hold)
+*   **TUI Framework:** `textual` - tbd (development currently on hold)
 *   **Rich Output:** `rich`
-*   **Supported AI Backends:** Ollama, Gemini, Anthropic, OpenAI, Groq
-*   **Package Management:** `uv`
+*   **Supported AI Backends:** Ollama, Gemini, (*TODO:* Anthropic, OpenAI, Groq)`
 *   **Testing:** `pytest`, `pytest-asyncio`
 *   **Configuration:** Application configuration is handled via a JSON file located at `~/.config/rai/config.json`, managed by `src/rai/config_manager.py`.
 
 ## Development Conventions & Status
 
-
-*   **Code Style & Typing:** The project uses `ruff` and `pylint` for linting. **Strict type hinting is enforced** using `ruff`'s `ANN` rule set.
-*   **Testing:** The project uses `pytest`. A major blocker involving `async` test execution
-    has been **resolved by switching from `pytest-anyio` to `pytest-asyncio`**. All tests, including asynchronous ones, are now passing.
+*   **Code Style & Typing:** The project uses `ruff` and `pylint` for linting.
+*   **Testing:** The project uses `pytest`, `pytest-asyncio` and `pytest-cov`.
 
 ## Building and Running
 
 The project is set up as a Python package.
 
 ### Installation
+
+```bash
+    pip install .
+```
+
+### Detailed dev installation
 
 1.  **Create and activate a virtual environment:**
     ```bash
@@ -46,7 +49,7 @@ The project is set up as a Python package.
     ```
 2.  **Install dependencies (including test dependencies):**
     ```bash
-    uv pip install -e .[test]
+    pip install -e .[test,dev,lint]
     ```
 
 ### Running the Application
@@ -71,14 +74,6 @@ The project is set up as a Python package.
     ```bash
     rai -p "My one-shot prompt."
     ```
-
-    To use the `pydantic_ai` adapter with Ollama, ensure your `~/.config/rai/config.json` includes:
-    ```json
-    {
-      "ollama_base_url": "http://localhost:11434"
-    }
-    ```
-    or set the environment variable `OLLAMA_BASE_URL=http://localhost:11434`.
 
 ### Running Tests
 
@@ -124,7 +119,3 @@ The project is set up as a Python package.
     *   [ ] **Critic/Commentator Mode:** Assistant that comments and advises in real-time chat but cannot modify code.
 *   [ ] **IPython/Jupyter Integration:** Create an IPython extension that provides AI assistance via "magic" commands (e.g., `%rai` and `%%rai`).
 *   [ ] **Conversation Context Management:** More advanced mechanisms for managing chat history.
-
-### Sources for inspiration in project dev:
-* rich-cli: https://github.com/Textualize/rich-cli
-* gemini-cli: https://github.com/google-gemini/gemini-cli
