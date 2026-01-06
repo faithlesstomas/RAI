@@ -63,6 +63,24 @@ console = Console(record=True)
 error_console = Console(stderr=True)
 
 
+# --- Tool Registry ---
+TOOL_REGISTRY = {
+    "CalculatorTools": ("agno.tools.calculator", "CalculatorTools"),
+    "ArxivTools": ("agno.tools.arxiv", "ArxivTools"),
+    "WikipediaTools": ("agno.tools.wikipedia", "WikipediaTools"),
+    "DuckDuckGoTools": ("agno.tools.duckduckgo", "DuckDuckGoTools"),
+    "WebBrowserTools": ("agno.tools.webbrowser", "WebBrowserTools"),
+    "FileTools": ("agno.tools.file", "FileTools"),
+    "PythonTools": ("agno.tools.python", "PythonTools"),
+    "ShellTools": ("agno.tools.shell", "ShellTools"),
+    "GitlabTools": ("rai.tools.gitlab", "GitlabTools"),
+    "YFinanceTools": ("agno.tools.yfinance", "YFinanceTools"),
+    "ClientTools": ("rai.tools.client", "ClientTools"),
+    # "TavilyTools": ("agno.tools.tavily", "TavilyTools"), 
+    # Requires API key, handled separately but class load is same
+}
+
+
 # --- Tool and Model Setup ---
 def setup_tools( # noqa: PLR0912 # pylint: disable=too-many-branches, too-many-locals
     enable_tools: bool,
@@ -72,23 +90,6 @@ def setup_tools( # noqa: PLR0912 # pylint: disable=too-many-branches, too-many-l
 ) -> Tuple[List[Any], List[str]]:
     """Sets up the tools for the agent."""
     messages = []
-
-    # Mapping of tool name to (module_path, class_name)
-    tool_registry = {
-        "CalculatorTools": ("agno.tools.calculator", "CalculatorTools"),
-        "ArxivTools": ("agno.tools.arxiv", "ArxivTools"),
-        "WikipediaTools": ("agno.tools.wikipedia", "WikipediaTools"),
-        "DuckDuckGoTools": ("agno.tools.duckduckgo", "DuckDuckGoTools"),
-        "WebBrowserTools": ("agno.tools.webbrowser", "WebBrowserTools"),
-        "FileTools": ("agno.tools.file", "FileTools"),
-        "PythonTools": ("agno.tools.python", "PythonTools"),
-        "ShellTools": ("agno.tools.shell", "ShellTools"),
-        "GitlabTools": ("rai.tools.gitlab", "GitlabTools"),
-        "YFinanceTools": ("agno.tools.yfinance", "YFinanceTools"),
-        "ClientTools": ("rai.tools.client", "ClientTools"),
-        # "TavilyTools": ("agno.tools.tavily", "TavilyTools"), 
-        # Requires API key, handled separately but class load is same
-    }
 
     if _HAS_GNOME_TOOLS:
         # these are functions, not classes in modules,
@@ -100,7 +101,7 @@ def setup_tools( # noqa: PLR0912 # pylint: disable=too-many-branches, too-many-l
         tools_to_enable = (
             enabled_tool_names
             if enabled_tool_names is not None
-            else list(tool_registry.keys())
+            else list(TOOL_REGISTRY.keys())
         )
 
         for tool_name in tools_to_enable:
@@ -116,7 +117,7 @@ def setup_tools( # noqa: PLR0912 # pylint: disable=too-many-branches, too-many-l
                     agent_tools.append(weather)
                 continue
 
-            if tool_name not in tool_registry:
+            if tool_name not in TOOL_REGISTRY:
                 if not quiet:
                     messages.append(
                         f"[bold yellow]WARNING: Unknown tool '{tool_name}' "
@@ -124,7 +125,7 @@ def setup_tools( # noqa: PLR0912 # pylint: disable=too-many-branches, too-many-l
                     )
                 continue
 
-            module_path, class_name = tool_registry[tool_name]
+            module_path, class_name = TOOL_REGISTRY[tool_name]
             logger.debug("Processing tool: %s", tool_name)
 
             # Special handling for tools requiring API keys
