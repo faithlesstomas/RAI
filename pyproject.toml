@@ -38,6 +38,7 @@ dev = ["rai-cli[test]", "rai-cli[lint]"]
 gnome-tools = ["pydbus", "pygobject"]
 tts = ["piper-tts", "sounddevice", "requests"]
 pydantic-ai = ["pydantic-ai"]
+docs = ["sphinx", "myst-parser", "furo", "sphinx-autobuild"]
 tools = [
     "duckduckgo-search",
     "wikipedia",

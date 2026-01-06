@@ -2,19 +2,19 @@
 GitLab Authentication Setup Guide
 
 1. Getting Personal Access Token (PAT):
-   a. Navigate to GitLab Settings:
-      - Log into GitLab
-      - Click your avatar (top-right)
-      - Select "Preferences"
-      - Go to "Access Tokens" under "User Settings"
+    a. Navigate to GitLab Settings:
+       - Log into GitLab
+       - Click your avatar (top-right)
+       - Select "Preferences"
+       - Go to "Access Tokens" under "User Settings"
 
-   b. Generate New Token:
-      - Enter a descriptive name for the token
-      - Set an expiration date (optional, but recommended)
-      - Select scopes (minimum 'api' access for most operations, 'read_repository'
-        for read-only, 'write_repository' for write operations)
-      - Click "Create personal access token"
-      - IMPORTANT: Save token immediately - only shown once!
+    b. Generate New Token:
+       - Enter a descriptive name for the token
+       - Set an expiration date (optional, but recommended)
+       - Select scopes (minimum 'api' access for most operations, 'read_repository'
+         for read-only, 'write_repository' for write operations)
+       - Click "Create personal access token"
+       - IMPORTANT: Save token immediately - only shown once!
 
 2. Setting Environment Variables:
 
