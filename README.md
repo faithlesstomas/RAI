@@ -1,4 +1,4 @@
-# RAI - Rich AI Assistant
+# RAI - Rich AI 
 
 **The Expert-Grade AI Agent Orchestrator for the Linux Ecosystem.**
 

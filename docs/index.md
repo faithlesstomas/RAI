@@ -1,4 +1,6 @@
-# Welcome to Rich AI – The Intelligent Agent Ecosystem for Linux
+# Welcome to Rich AI 
+
+## The Intelligent Agent Ecosystem for Linux
 
 **Rich AI (RAI)** is an open-source project designed to bridge the gap between powerful LLMs and the everyday POSIX workflow. Far more than a simple API wrapper, RAI is a modular client-server platform built for users who demand more than just text generation from their AI.
 
@@ -18,7 +20,6 @@ We are currently in a high-velocity development phase, moving toward a complete 
 
 ---
 
-## TL;DR;
 
 ### **Quick Start Guide**
 
