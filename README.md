@@ -72,6 +72,34 @@ We welcome contributions! Please see [CONTRIBUTING.md](CONTRIBUTING.md) for deta
 
 ---
 
+### **❤️ Support this project**
+
+RAI is an independent open-source project developed with passion for the Linux and AI communities. If you find RAI useful and would like to support its further development, scientific research, and my work as a creator, there are several ways you can help:
+
+#### **Direct Support**
+
+* **GitHub Sponsors:** https://github.com/sponsors/faithlesstomas (For developers)
+* **Ko-fi:** https://ko-fi.com/faithlesstomas (Buy me a coffee for a quick "thank you")
+* **Patreon:** [TBD] (For long-term monthly support and community perks)
+
+#### **Cryptocurrency**
+
+For those who prefer decentralized support or wish to contribute directly without intermediaries, you can use the following addresses:
+
+* **Bitcoin (BTC):** `bc1quwm8746cunecarqdhsqm2fx8cu2mw3sggfdugu`
+* **Ethereum (ETH):** `0xAD78139a15D98c55D8f1a2d48091C727B32CF147`
+* **Solana (SOL):** `FDZ6J3NGB4FQGrpBYWNihfAc9m2QZ7AznupDfYqeSJ5N`
+
+#### **Other Ways to Help**
+
+Not in a position to donate? You can still help RAI grow:
+
+* **Star the repository** on GitLab/GitHub.
+* **Contribute code** or fix bugs (see [CONTRIBUTING.md](https://www.google.com/search?q=CONTRIBUTING.md)).
+* **Share the project** with your fellow Linux power users.
+
+---
+
 ## License
 
 This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
