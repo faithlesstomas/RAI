@@ -52,6 +52,10 @@ Create your configuration file in `~/.config/rai/config.json` or use environment
 
 ---
 
+## Documentation / API Reference
+
+[Documentation](https://tk-lab1.gitlab.io/ai/rai/) is build with sphinx.
+
 ## Roadmap & Evolution
 
 We are currently transitioning from a session-based configuration to a distinct **Agent vs. Session** model:
