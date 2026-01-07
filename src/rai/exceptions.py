@@ -13,3 +13,7 @@ class AdapterNotFoundError(RAIError):
 
 class ChainExecutionError(RAIError):
     """Raised when an error occurs during the execution of an agent chain."""
+
+
+class AgentConfigError(RAIError):
+    """Raised when there is an error with the agent configuration."""

@@ -39,6 +39,27 @@ def save_config(config_data: Dict[str, Any], path: Optional[str] = None) -> None
     with open(config_file, "w", encoding="utf-8") as f:
         json.dump(config_data, f, indent=2)
 
+
+def save_agent_template(agent_data: Dict[str, Any]) -> bool:
+    """Zapisuje nowy szablon agenta do konfiguracji."""
+    try:
+        config = load_config()
+        sessions = config.get("sessions", {})
+
+        # Use the name as the key
+        agent_name = agent_data.get("name")
+        if not agent_name:
+            raise ValueError("Agent definition must have a 'name'.")
+
+        sessions[agent_name] = agent_data
+        config["sessions"] = sessions
+
+        save_config(config)
+        return True
+    except Exception as e:
+        error_console.print(f"[bold red]Error saving agent template: {e}[/bold red]")
+        return False
+
 def get_session_config(
     session_id: str, config_path: Optional[str] = None
 ) -> Dict[str, Any]:

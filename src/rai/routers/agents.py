@@ -1,12 +1,13 @@
 """
 API endpoints for managing agents.
 """
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException
-from pydantic import BaseModel
+from pydantic import BaseModel, Field, validator
 
 from .. import config_manager
+from ..core import TOOL_REGISTRY
 
 router = APIRouter(
     prefix="/api/v1/agents",
@@ -16,8 +17,25 @@ router = APIRouter(
 
 # --- Pydantic Models ---
 
+class AgentDefinition(BaseModel):
+    """Definition of an agent template."""
+    name: str = Field(..., description="Unique name/ID of the agent")
+    model: str = Field(..., description="Model name, e.g. gemma2:9b")
+    backend: str = Field("ollama", description="Backend: ollama, gemini, openai, etc.")
+    system_prompt: Optional[str] = Field(None, description="System instructions for the agent")
+    tools: List[str] = Field(default_factory=list, description="List of tool names")
+    description: Optional[str] = Field(None, description="Short description of the agent's specialization")
+
+    @validator("tools")
+    def validate_tools(cls, v: List[str]) -> List[str]: # pylint: disable=no-self-argument
+        """Validates that requested tools exist in the registry."""
+        invalid_tools = [tool for tool in v if tool not in TOOL_REGISTRY]
+        if invalid_tools:
+            raise ValueError(f"Unknown tools: {', '.join(invalid_tools)}")
+        return v
+
 class AgentConfig(BaseModel):
-    """Model for creating or updating an agent (session)."""
+    """Model for creating or updating an agent (session) - Legacy/Compat."""
     model: str
     backend: str = "ollama"
     ollama_host: str = "http://127.0.0.1:11434"
@@ -31,6 +49,32 @@ def get_config() -> Dict[str, Any]:
     return config_manager.load_config()
 
 # --- Endpoints ---
+
+@router.post("/", status_code=201)
+async def define_agent(agent: AgentDefinition) -> Dict[str, Any]:
+    """
+    Dynamically creates or updates an agent template in the RAI configuration.
+    """
+    try:
+        # Convert to dict and handle mapping to internal config structure
+        agent_data = agent.model_dump()
+        # map system_prompt to system if needed, or keep as system_prompt
+        # The current config uses 'system'
+        if agent_data.get("system_prompt"):
+            # Fixed indentation here
+            agent_data["system"] = agent_data.pop("system_prompt")
+
+        success = config_manager.save_agent_template(agent_data)
+        if not success:
+            raise HTTPException(status_code=500, detail="Error saving configuration")
+
+        return {"message": f"Agent '{agent.name}' successfully defined.", "agent": agent_data}
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e)) from e
 
 @router.get("/", response_model=Dict[str, Any])
 async def list_agents(config: Dict[str, Any] = Depends(get_config)) -> Dict[str, Any]:
@@ -52,7 +96,7 @@ async def get_agent(agent_id: str, config: Dict[str, Any] = Depends(get_config))
 @router.post("/{agent_id}")
 async def create_agent(agent_id: str, agent_config: AgentConfig) -> Dict[str, Any]:
     """
-    Create a new agent (session).
+    Create a new agent (session) - Legacy/Active Session creation.
     """
     config = config_manager.load_config()
     sessions = config.get("sessions", {})

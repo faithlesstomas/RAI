@@ -4,8 +4,8 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "rai-cli"
-version = "0.1.0"
-description = "Rich AI CLI assistant using Agno framework"
+version = "0.1.1"
+description = "Rich AI - The Intelligent Agent Ecosystem for Linux"
 readme = "README.md"
 requires-python = ">=3.10"
 license = {text = "MIT"}
@@ -75,3 +75,19 @@ select = ["PL", "ANN"]
 max-line-length=108
 
 [tool.pylint.typing]
+
+[tool.semantic_release]
+version_variable = "src/rai/__init__.py:__version__"
+version_toml = ["pyproject.toml:project.version"]
+major_on_zero = false
+branch = "main"
+upload_to_repository = false
+upload_to_release = true
+build_command = "pip install build && python -m build"
+
+[tool.semantic_release.changelog]
+template_dir = "templates"
+exclude_commit_patterns = []
+
+[tool.semantic_release.branches.main]
+match = "main"

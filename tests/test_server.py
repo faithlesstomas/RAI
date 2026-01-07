@@ -106,7 +106,7 @@ async def test_execute_chain_arun_exception(mock_discover_adapters) -> None: # n
     response = client.post("/api/v1/run", json=request_payload)
 
     assert response.status_code == 500 # noqa: PLR2004
-    assert "An error occurred during chain execution: Adapter crashed" in response.json()["detail"]
+    assert "Error executing step with framework agno: Adapter crashed" in response.json()["detail"]
     mock_adapter_instance.arun.assert_awaited_once_with(prompt="test input")
 
 
