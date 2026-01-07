@@ -3,6 +3,7 @@ image: python:3.11
 stages:
   - lint
   - test
+  - release
   - deploy
 
 pages:
@@ -16,11 +17,25 @@ pages:
   rules:
     - if: $CI_COMMIT_BRANCH == "main"
 
-
 before_script:
   - apt-get update -y
   - apt-get install -y libgirepository1.0-dev libcairo2-dev pkg-config python3-dev gir1.2-gtk-3.0
   - pip install .[dev,test,lint]
+
+publish_release:
+  stage: release
+  image: python:3.11
+  variables:
+    GITLAB_TOKEN: $GITLAB_TOKEN
+  script:
+    - pip install python-semantic-release
+    - git config --global user.name "semantic-release-bot"
+    - git config --global user.email "semantic-release@rai-project.com"
+    - semantic-release version
+    - semantic-release publish
+  rules:
+    - if: $CI_COMMIT_BRANCH == "main"
+      when: manual
 
 critical_lint:
   stage: lint
