@@ -806,7 +806,7 @@ def list_agents(ctx: click.Context, json_output: bool, table_output: bool) -> No
         except httpx.RequestError as e:
             error_console.print(f"[red]Error connecting to server at {base_url}: {e}[/red]")
             return
-        except Exception as e: # pylint: disable=broad-exception-caught # pylint: disable=broad-exception-caught # pylint: disable=broad-exception-caught
+        except Exception as e: # pylint: disable=broad-exception-caught
             error_console.print(f"[red]Error fetching agents: {e}[/red]")
             return
     else:
@@ -814,7 +814,7 @@ def list_agents(ctx: click.Context, json_output: bool, table_output: bool) -> No
         try:
             app_config = config_manager.load_config()
             agents_data = app_config.get("sessions", {})
-        except Exception as e: # pylint: disable=broad-exception-caught # pylint: disable=broad-exception-caught # pylint: disable=broad-exception-caught
+        except Exception as e: # pylint: disable=broad-exception-caught
             error_console.print(f"[red]Error loading configuration: {e}[/red]")
             return
 

@@ -155,14 +155,14 @@ def setup_tools( # noqa: PLR0912 # pylint: disable=too-many-branches, too-many-l
                 module = __import__(module_path, fromlist=[class_name])
                 tool_class = getattr(module, class_name)
                 agent_tools.append(tool_class())
-                logger.debug(f"{tool_name} successfully enabled.") # pylint: disable=logging-fstring-interpolation
+                logger.debug("%s successfully enabled.", tool_name)
             except ImportError as e:
                 if not quiet:
                     messages.append(
                         f"[bold yellow]WARNING: Could not import {tool_name} ({e}). "
                         f"Install optional dependencies to use it.[/bold yellow]"
                     )
-                logger.debug(f"Could not import {tool_name}: {e}") # pylint: disable=logging-fstring-interpolation
+                logger.debug("Could not import %s: %s", tool_name, e)
             except ValueError as e:
                 if not quiet:
                     messages.append(
@@ -170,7 +170,9 @@ def setup_tools( # noqa: PLR0912 # pylint: disable=too-many-branches, too-many-l
                         f"configuration error: {e}[/bold yellow]"
                     )
                 logger.debug(
-                    f"{tool_name} disabled due to configuration error: {e}" # pylint: disable=logging-fstring-interpolation
+                    "%s disabled due to configuration error: %s",
+                    tool_name,
+                    e
                 )
 
     elif _HAS_GNOME_TOOLS and not quiet:

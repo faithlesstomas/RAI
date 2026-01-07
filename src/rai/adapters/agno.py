@@ -58,7 +58,7 @@ class AgnoAdapter:  # pylint: disable=too-few-public-methods
         )
 
         try:
-            logger.debug(f"Initializing Agno Agent with session_id={session_id}")
+            logger.debug("Initializing Agno Agent with session_id=%s", session_id)
             agent = Agent(
                 model=model_instance,
                 tools=agent_tools,
@@ -145,7 +145,7 @@ class AgnoAdapter:  # pylint: disable=too-few-public-methods
 
                         # Clean up content to remove the internal marker if desired
                         # content = content.replace(f"{marker}{json_str}", "[Client Tool Request]")
-                except Exception as e:
+                except Exception:
                     pass # Failed to parse, ignore
 
             return Success({"content": content, "tool_calls": tool_calls})
@@ -188,7 +188,7 @@ class AgnoAdapter:  # pylint: disable=too-few-public-methods
             # Try to find storage or db
             storage = getattr(self.agent, "storage", None)
             if not storage:
-                 storage = getattr(self.agent, "db", None)
+                storage = getattr(self.agent, "db", None)
 
             if not storage:
                 logger.error("Agent has no 'storage' or 'db' attribute.")
@@ -197,12 +197,12 @@ class AgnoAdapter:  # pylint: disable=too-few-public-methods
             # Assuming "agent" is a valid SessionType or string equivalent.
             session = storage.get_session(session_id=self.agent.session_id, session_type="agent")
             if not session:
-                logger.warning(f"No session found for {self.agent.session_id}")
+                logger.warning("No session found for %s", self.agent.session_id)
                 return []
 
             # Try to get runs from session object
             runs = getattr(session, "runs", None)
-            logger.debug(f"DEBUG: session type: {type(session)}")
+            logger.debug("DEBUG: session type: %s", type(session))
             # logger.debug(f"DEBUG: runs content len: {len(runs) if runs else 0}")
 
             # Fallback to memory dict for older schemas
