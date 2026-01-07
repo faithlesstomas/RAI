@@ -3,9 +3,9 @@ requires = ["setuptools>=61.0"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "rai-cli"
+name = "rai"
 version = "0.1.1"
-description = "Rich AI - The Intelligent Agent Ecosystem for Linux"
+description = "Rich AI - The Intelligent AI assistant and agent ecosystem for Linux"
 readme = "README.md"
 requires-python = ">=3.10"
 license = {text = "MIT"}
@@ -60,7 +60,7 @@ all = [
 
 [project.scripts]
 rai = "rai.cli:cli"
-rai-tui = "rai.tui:run_tui_cli"
+# rai-tui = "rai.tui:run_tui_cli"
 
 [tool.pytest.ini_options]
 pythonpath = ["src"]
