@@ -34,7 +34,7 @@ openai = ["openai"]
 groq = ["groq"]
 test = ["pytest", "pytest-asyncio", "pytest-cov", "agno", "pydantic-ai"]
 lint = ["ruff", "pylint"]
-dev = ["rai-cli[test]", "rai-cli[lint]"]
+dev = ["rai[test]", "rai[lint]"]
 gnome-tools = ["pydbus", "pygobject"]
 tts = ["piper-tts", "sounddevice", "requests"]
 pydantic-ai = ["pydantic-ai"]
@@ -48,14 +48,14 @@ tools = [
     "yfinance",
 ]
 all = [
-    "rai-cli[anthropic]",
-    "rai-cli[gemini]",
-    "rai-cli[openai]",
-    "rai-cli[groq]",
-    "rai-cli[gnome-tools]",
-    "rai-cli[tts]",
-    "rai-cli[pydantic-ai]",
-    "rai-cli[tools]",
+    "rai[anthropic]",
+    "rai[gemini]",
+    "rai[openai]",
+    "rai[groq]",
+    "rai[gnome-tools]",
+    "rai[tts]",
+    "rai[pydantic-ai]",
+    "rai[tools]",
 ]
 
 [project.scripts]
