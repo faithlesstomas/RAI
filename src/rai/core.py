@@ -162,18 +162,14 @@ def setup_tools( # noqa: PLR0912 # pylint: disable=too-many-branches, too-many-l
                         f"[bold yellow]WARNING: Could not import {tool_name} ({e}). "
                         f"Install optional dependencies to use it.[/bold yellow]"
                     )
-                logger.debug("Could not import %s: %s", tool_name, str(e))
+                logger.debug(f"Could not import {tool_name}: {str(e)}")
             except ValueError as e:
                 if not quiet:
                     messages.append(
                         f"[bold yellow]WARNING: {tool_name} disabled due to "
                         f"configuration error: {e}[/bold yellow]"
                     )
-                logger.debug(
-                    "%s disabled due to configuration error: %s",
-                    tool_name,
-                    e
-                )
+                logger.debug(f"{tool_name} disabled due to configuration error: {e}")
 
     elif _HAS_GNOME_TOOLS and not quiet:
         messages.append(
