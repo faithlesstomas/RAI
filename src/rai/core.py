@@ -49,11 +49,11 @@ class ResponseDict(TypedDict, total=False):
     tool_calls: List[object]
 
 
-_HAS_GNOME_TOOLS = False
+_HAS_GNOME_TOOLS = False # pylint: disable=invalid-name
 try:
     from rai.tools.gnome import send_notification, take_screenshot, weather
 
-    _HAS_GNOME_TOOLS = True
+    _HAS_GNOME_TOOLS = True # pylint: disable=invalid-name
 except ImportError:
     pass
 
@@ -76,7 +76,7 @@ TOOL_REGISTRY = {
     "GitlabTools": ("rai.tools.gitlab", "GitlabTools"),
     "YFinanceTools": ("agno.tools.yfinance", "YFinanceTools"),
     "ClientTools": ("rai.tools.client", "ClientTools"),
-    # "TavilyTools": ("agno.tools.tavily", "TavilyTools"), 
+    # "TavilyTools": ("agno.tools.tavily", "TavilyTools"),
     # Requires API key, handled separately but class load is same
 }
 
