@@ -39,6 +39,12 @@ from . import config_manager
 from .adapters.agno import AgnoAdapter
 from .adapters.base import Processor
 from .adapters.ws_client import WebSocketAdapter
+try:
+    from .adapters.pydantic_ai import PydanticAIAdapter
+    HAS_PYDANTIC_AI = True
+except ImportError:
+    HAS_PYDANTIC_AI = False
+
 from .core import console, error_console
 
 # from .exceptions import ChainExecutionError
@@ -477,8 +483,19 @@ async def async_run_standalone(options: CliOptions) -> None:
     # This config is passed to the adapter constructor
     adapter_config = run_config.copy()
     adapter_config["session_id"] = session_to_use
-    # TODO: Add logic to select adapter based on framework
-    processor = AgnoAdapter(agent_config=adapter_config)
+
+    processor: Processor
+    framework = run_config.get("framework", "agno")
+    if framework == "pydantic_ai":
+        if HAS_PYDANTIC_AI:
+            # PydanticAI adapter is still experimental
+            console.print("[dim]Using Pydantic AI framework[/dim]")
+            processor = PydanticAIAdapter(agent_config=adapter_config)
+        else:
+            error_console.print("[yellow]Warning: 'pydantic-ai' not installed or import failed. Falling back to Agno.[/yellow]")
+            processor = AgnoAdapter(agent_config=adapter_config)
+    else:
+        processor = AgnoAdapter(agent_config=adapter_config)
 
     if options.prompt:
         # Single-shot mode

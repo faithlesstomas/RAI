@@ -49,6 +49,7 @@ Currently, `rai` uses "sessions" to store both the configuration of an AI assist
 - [x] **CLI Error Handling**: Add try-except blocks in interactive loop (partially addressed by protocol fix, further testing needed).
 - [x] **WebSocket Reload**: Implement `reload()` in `WebSocketAdapter`.
 - [x] **Dependencies**: Organize `pyproject.toml` (move `tools` to `dev`, cleanup `test`).
+- [x] **Framework Selection**: Fix bug where `framework` config was ignored (hardcoded to Agno).
 
 ### CLI Refactoring & Features
 - [ ] **`rai connect` UDS connection:** Implement fallback to Unix Domain Socket if HTTP fails (or prioritized).
@@ -68,6 +69,7 @@ Currently, `rai` uses "sessions" to store both the configuration of an AI assist
 
 ### Bugs
 - [ ] **Critical:** Fix `execute_chain` in `routers/execution.py` to pass `session_id`. Currently ignores it, creating new sessions per request.
+- [ ] **Config Discrepancy**: `rai config` vs `config.json` mismatch. CLI shows merged/active config, file shows stored. Need to clarify UX or unify.
 - [ ] Investigate `ResourceWarning: unclosed database/transport` on exit.
 - [ ] Verify `--debug` flag effectiveness with new logger integration.
 
