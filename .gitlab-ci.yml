@@ -33,6 +33,7 @@ publish_release:
     - pip install python-semantic-release
     - git config --global user.name "semantic-release-bot"
     - git config --global user.email "semantic-release@rai-project.com"
+    - git checkout -B "$CI_COMMIT_REF_NAME" "$CI_COMMIT_SHA"
     - semantic-release version
     - semantic-release publish
   rules:
