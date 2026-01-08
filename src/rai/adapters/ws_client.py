@@ -119,3 +119,20 @@ class WebSocketAdapter:
             except websockets.exceptions.ConnectionClosed:
                 # Connection is already closed, which is fine.
                 pass
+
+    def reload(self) -> None:
+        """
+        Reloads the processor's configuration.
+        For WebSocketAdapter, this might involve reconnecting or sending a config update to the server.
+        Currently, it's a no-op.
+        """
+        # TODO: Implement server-side config reload if needed.
+        console.print("[dim](Configuration reload is managed by the server or requires reconnection)[/dim]")
+
+    async def astream(self, prompt: str) -> Any:
+        # TODO: Implement true streaming over WebSocket
+        result = await self.arun(prompt)
+        if isinstance(result, Success):
+             yield result.unwrap().get("content", "")
+        else:
+             yield f"Error: {result.failure()}"
