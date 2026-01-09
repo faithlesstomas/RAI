@@ -1,10 +1,12 @@
-# RAI - Rich AI 
+# Rich AI (RAI)
+> **Pronunciation:** /raɪ/ (rhymes with **"sky"** or **"rye"**, or "paradise" in polish)
 
-**The Expert-Grade AI Agent Orchestrator for the Linux Ecosystem.**
+### The Expert-Grade AI Agent Orchestrator for the Linux Ecosystem
 
-RAI (Rich AI) is a powerful, modular AI assistant designed specifically for Linux power users, researchers, and developers. It bridges the gap between sophisticated LLMs and your local system environment through a robust client-server architecture and a pluggable adapter system.
+**RAI** is a powerful, modular AI assistant and agent manager designed specifically for Linux power users, researchers, and developers. 
+It bridges the gap between sophisticated LLMs and your local system environment through a robust client-server architecture and a pluggable adapter system.
 
----
+
 
 ## Key Features
 
