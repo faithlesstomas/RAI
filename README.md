@@ -1,16 +1,15 @@
 # Rich AI (RAI)
 > **Pronunciation:** /raɪ/ - rhymes with **"sky"** or **"rye"** (or "paradise" in polish :) )
 
-### The Expert-Grade AI Agent Orchestrator for the Linux Ecosystem - your local agentic paradise!
+### The expert-grade AI agent orchestrator and private assistant - your local agentic paradise!
 
-**RAI** is a powerful, modular AI assistant and agent manager designed specifically for Linux power users, researchers, and developers. 
-It bridges the gap between sophisticated LLMs and your local system environment through a robust client-server architecture and a pluggable adapter system.
+**RAI** is a powerful, modular AI assistant and agent manager designed specifically for power users, researchers, and developers who needs privacy (or just want to have local AI assistant on their server/desktop OS). It bridges the gap between sophisticated LLMs and your local system environment through a robust client-server architecture and a pluggable adapter system.
 
 
 ## Key Features
 
 * **Expert Orchestration:** Unlike simple chat interfaces, RAI uses an "Engine" to route tasks to specialized framework adapters (currently supporting **Agno** and **Pydantic AI**).
-* **Linux-First Integration:** Deep native support for the Linux desktop, including GNOME notifications, system screenshots, and shell execution.
+* **Linux-First Integration:** Deep native support for the Linux desktop, including GNOME notifications, system screenshots, and shell execution (but there's plan for more).
 * **Client-Server Flexibility:** Run RAI as a standalone CLI or as a background server accessible via REST and/or WebSockets from any client (examples in Python, GNU Guile and Emacs ELisp).
 * **Agnostic Backends:** Seamlessly switch between local models via **Ollama** and cloud-based providers like **Gemini**, **OpenAI**, or **Anthropic**.
 
