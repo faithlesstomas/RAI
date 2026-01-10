@@ -52,12 +52,13 @@ class PydanticAIAdapter:  # pylint: disable=too-few-public-methods
         self.agents[session_id] = agent
         return agent
 
-    async def arun(self, prompt: str, session_id: str) -> Result[Dict[str, Any], Exception]:
+    async def arun(self, prompt: str, session_id: Optional[str] = None) -> Result[Dict[str, Any], Exception]:
         """
         Runs a chat interaction using a session-specific Pydantic AI agent.
         """
         try:
-            agent = self._get_or_create_agent(session_id)
+            target_session_id = session_id or self.config.get("session_id", "default")
+            agent = self._get_or_create_agent(target_session_id)
             ai_response = await agent.run(prompt)
 
             # The response object in Pydantic AI has an `output` attribute.

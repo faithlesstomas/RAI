@@ -2,19 +2,15 @@
 import json
 import logging
 import sys
-from typing import Any, AsyncIterator, Dict, List
+from typing import Any, AsyncIterator, Dict, List, Optional
 
 from agno.agent import Agent
 from agno.db.sqlite import SqliteDb
 from dotenv import load_dotenv
 from returns.result import Failure, Result, Success
 
-from ..core import error_console, setup_model, setup_tools
+from ..core import error_console, validate_model_env, setup_tools
 
-logger = logging.getLogger(__name__)
-
-# from agno.agent import Agent # Imported later or handled by linter?
-# wait, logging is standard lib.
 logger = logging.getLogger(__name__)
 
 
@@ -23,34 +19,43 @@ class AgnoAdapter:  # pylint: disable=too-few-public-methods
 
     def __init__(self, agent_config: Dict[str, Any]) -> None:
         self.config = agent_config
-        self.agent = self._create_agent_from_config()
+        self.agents: Dict[str, Agent] = {}  # Store agents per session
+        # self.agent = self._create_agent_from_config() # Lazy creation
 
-    def _create_agent_from_config(self) -> Agent:
-        """Initializes an Agno agent from the adapter's configuration."""
+    def _get_or_create_agent(self, session_id: str) -> Agent:
+        """Creates or retrieves an Agno agent for a given session."""
+        if session_id in self.agents:
+            return self.agents[session_id]
+
+        logger.debug("Creating new Agno Agent for session_id=%s", session_id)
+
         load_dotenv()
-
         run_config = self.config
-        session_id = run_config.get("session_id", "default-session")
+        # session_id passed as arg takes precedence, but config might have default?
+        # Actually session_id should be passed from arun.
+        # If not, use config default.
+
         backend = run_config.get("backend", "ollama")
-        model_id = run_config.get("model", "gemma3:4b")
+        model_id = run_config.get("model", "gemma2:9b")
         ollama_host = run_config.get("ollama_host")
         system_prompt = run_config.get("system", "You are a helpful AI assistant.")
         enabled_tool_names = run_config.get("tools")
         context = run_config.get("context")
 
         if context:
-            # Append context to system prompt or handle it otherwise
-            # For now, let's append it to system prompt for simplicity
             system_prompt += f"\n\nContext:\n{json.dumps(context, indent=2)}"
 
         use_markdown = run_config.get("markdown", not run_config.get("stream", False))
-
-        # For now, assume tools are enabled if a list is provided or it's not ollama
         enable_tools = enabled_tool_names is not None or backend != "ollama"
 
-        model_instance, _ = setup_model(
+        # Validate environment using Core
+        model_config, _ = validate_model_env(
             backend, model_id, quiet=False, ollama_host=ollama_host
         )
+
+        # Instantiate Model (Logic moved from core.py)
+        model_instance = self._instantiate_model(backend, model_config)
+
         agent_tools, _ = setup_tools(
             enable_tools=enable_tools,
             quiet=False,
@@ -58,7 +63,6 @@ class AgnoAdapter:  # pylint: disable=too-few-public-methods
         )
 
         try:
-            logger.debug("Initializing Agno Agent with session_id=%s", session_id)
             agent = Agent(
                 model=model_instance,
                 tools=agent_tools,
@@ -71,12 +75,8 @@ class AgnoAdapter:  # pylint: disable=too-few-public-methods
                 session_id=session_id,
                 instructions=system_prompt,
             )
+            self.agents[session_id] = agent
             return agent
-        except ImportError as e:
-            error_console.print(
-                f"[bold red]ERROR: Failed to import agent dependencies: {e}[/bold red]"
-            )
-            sys.exit(1)
         except Exception as e:  # pylint: disable=broad-except
             error_console.print(f"[bold red]ERROR: Failed to initialize agent: {e}[/bold red]")
             if backend == "ollama":
@@ -85,16 +85,62 @@ class AgnoAdapter:  # pylint: disable=too-few-public-methods
                 )
             sys.exit(1)
 
-    async def arun(self, prompt: str) -> Result[Dict[str, Any], Exception]:
+    def _instantiate_model(self, backend: str, config: Dict[str, Any]) -> Any:  # noqa: ANN401
+        """Instantiates the Agno model object based on validated config."""
+        model_map = {
+            "ollama": "agno.models.ollama.Ollama",
+            "gemini": "agno.models.google.Gemini",
+            "anthropic": "agno.models.anthropic.Claude",
+            "openai": "agno.models.openai.chat.OpenAIChat",
+            "groq": "agno.models.groq.Groq",
+        }
+
+        dependency_map = {
+            "gemini": "gemini",
+            "anthropic": "anthropic",
+            "openai": "openai",
+            "groq": "groq",
+        }
+
+        try:
+            module_path, class_name = model_map[backend].rsplit(".", 1)
+            module = __import__(module_path, fromlist=[class_name])
+            model_class = getattr(module, class_name)
+
+            if backend == "ollama":
+                model_kwargs = {"id": config["model_id"]}
+                if config.get("ollama_host"):
+                    model_kwargs["host"] = config["ollama_host"]
+                return model_class(**model_kwargs)
+
+            return model_class(id=config["model_id"])
+        except ImportError:
+             # Should be caught by imports, but double check
+            error_console.print(
+                f"[bold red]ERROR: Backend '{backend}' requires dependency.[/bold red]"
+            )
+            if backend in dependency_map:
+                error_console.print(
+                    "[yellow]Please install it using: "
+                    f"[bold]pip install .[{dependency_map[backend]}[/bold][/yellow]"
+                )
+            sys.exit(1)
+
+    async def arun(self, prompt: str, session_id: Optional[str] = None) -> Result[Dict[str, Any], Exception]:
         """
-        Runs a chat interaction using the pre-configured Agno agent.
+        Runs a chat interaction using a session-specific Agno agent.
         """
         try:
             if not prompt:
                 return Failure(ValueError("Missing prompt."))
 
-            # Ensure we are using the latest model/tools if reload happened
-            ai_response = await self.agent.arun(prompt)
+            # Determine session_id
+            target_session_id = session_id or self.config.get("session_id", "default-session")
+
+            agent = self._get_or_create_agent(target_session_id)
+
+            # Ensure we are using the latest model/tools if reload happened (re-creation handles this)
+            ai_response = await agent.arun(prompt)
 
             # Handle potential list content from multimodal responses
             content = ai_response.content if ai_response else ""
@@ -105,31 +151,16 @@ class AgnoAdapter:  # pylint: disable=too-few-public-methods
 
             tool_calls = getattr(ai_response, "tool_calls", None)
 
-            # Check for client tool calls in content (if executed and returned special string)
-            # Or if tool_calls are present and we want to pass them
-
-            # If the tool was executed and returned our special string, we can parse it back?
-            # Actually, if we want the client to execute it, we should probably return the tool call
-            # BEFORE it is executed, or if it is executed, we catch the "request" to execute.
-
-            # For now, let's assume Agno executes it and returns the string "__CLIENT_TOOL_CALL__:..."
-            # We can parse this and format the response accordingly.
-
+            # Check for client tool calls (legacy logic preserved)
             if "__CLIENT_TOOL_CALL__" in content:
-                # Parse the content to extract tool calls
+                # Same logic as before...
+                # For brevity I'm keeping the core logic but this block is unchanged from read
                 try:
-                    # Find the start of the marker
                     marker = "__CLIENT_TOOL_CALL__:"
                     start_idx = content.find(marker)
                     if start_idx != -1:
                         json_str = content[start_idx + len(marker):]
-                        # It might be followed by other text, so we might need to be careful
-                        # For now, assume it's the main part or at least parseable
-                        # If there are multiple, we might need a regex
-                        # Let's try to parse the first one
                         client_tool_data = json.loads(json_str.strip().split("\n")[0])
-
-                        # Construct a tool call object
                         tool_call = {
                             "type": "function",
                             "function": {
@@ -137,16 +168,11 @@ class AgnoAdapter:  # pylint: disable=too-few-public-methods
                                 "arguments": json.dumps({"code": client_tool_data.get("code")})
                             }
                         }
-
-                        # If tool_calls is None, initialize it
                         if tool_calls is None:
                             tool_calls = []
                         tool_calls.append(tool_call)
-
-                        # Clean up content to remove the internal marker if desired
-                        # content = content.replace(f"{marker}{json_str}", "[Client Tool Request]")
                 except Exception:
-                    pass # Failed to parse, ignore
+                    pass
 
             return Success({"content": content, "tool_calls": tool_calls})
         except Exception as e: # pylint: disable=broad-exception-caught
@@ -154,8 +180,8 @@ class AgnoAdapter:  # pylint: disable=too-few-public-methods
 
     def reload(self) -> None:
         """Reloads the agent configuration."""
-        logger.debug("Reloading AgnoAdapter configuration...")
-        self.agent = self._create_agent_from_config()
+        logger.debug("Reloading AgnoAdapter configuration (clearing agent cache)...")
+        self.agents.clear()
 
     async def astream(self, prompt: str) -> AsyncIterator[Any]:
         """
@@ -166,44 +192,51 @@ class AgnoAdapter:  # pylint: disable=too-few-public-methods
                 yield Failure(ValueError("Missing prompt."))
                 return
 
-            # Agno agents usually have an astream method that yields chunks
-            # We need to verify the exact return type of agent.astream
-            async for chunk in self.agent.arun(prompt, stream=True):
-                # Check if the chunk is a tool call or just text
-                # For now, we assume it yields objects that have content or delta
+            # Use default session for streaming if not specified (TODO: support session in astream)
+            session_id = self.config.get("session_id", "default-session")
+            agent = self._get_or_create_agent(session_id)
+
+            async for chunk in agent.arun(prompt, stream=True):
                 yield chunk
 
-        except Exception as e: # pylint: disable=broad-exception-caught
+        except Exception as e:  # pylint: disable=broad-exception-caught
             yield Failure(e)
 
-    def get_history(self) -> List[Dict[str, str]]: # noqa: PLR0911, PLR0912
+    def get_history(self) -> List[Dict[str, str]]:  # noqa: PLR0911, PLR0912
         # pylint: disable=too-many-branches, too-many-return-statements
         """
         Retrieves and formats chat history from the agent's storage.
         """
         try:
-            if not (self.agent and self.agent.session_id):
+            # We need to pick an agent to access storage.
+            # If no agents created yet, we can't get history unless we access DB directly.
+            # For now, let's try to get the 'default' or current session agent.
+            session_id = self.config.get("session_id", "default-session")
+
+            # Use get_or_create to ensure we have an agent with DB access
+            # But wait, creating an agent might be heavy? No, it's just init.
+            agent = self._get_or_create_agent(session_id)
+
+            if not (agent and agent.session_id):
                 return []
 
             # Try to find storage or db
-            storage = getattr(self.agent, "storage", None)
+            storage = getattr(agent, "storage", None)
             if not storage:
-                storage = getattr(self.agent, "db", None)
+                storage = getattr(agent, "db", None)
 
             if not storage:
                 logger.error("Agent has no 'storage' or 'db' attribute.")
                 return []
 
             # Assuming "agent" is a valid SessionType or string equivalent.
-            session = storage.get_session(session_id=self.agent.session_id, session_type="agent")
+            session = storage.get_session(session_id=agent.session_id, session_type="agent")
             if not session:
-                logger.warning("No session found for %s", self.agent.session_id)
+                logger.warning("No session found for %s", agent.session_id)
                 return []
 
             # Try to get runs from session object
             runs = getattr(session, "runs", None)
-            logger.debug("DEBUG: session type: %s", type(session))
-            # logger.debug(f"DEBUG: runs content len: {len(runs) if runs else 0}")
 
             # Fallback to memory dict for older schemas
             if runs is None and hasattr(session, "memory") and isinstance(session.memory, dict):
@@ -213,17 +246,14 @@ class AgnoAdapter:  # pylint: disable=too-few-public-methods
                 logger.warning("No runs found in session.")
                 return []
 
-            # Decode JSON if runs is a string (common in sqlite storage)
-            # Handle potential double/triple encoding which seems to happen in current environment
+            # Decode JSON if runs is a string
             while isinstance(runs, str):
                 try:
                     runs = json.loads(runs)
                 except json.JSONDecodeError:
-                    logger.warning("Failed to decode runs JSON from session storage.")
                     return []
 
             if not isinstance(runs, list):
-                # logger.warning(f"Runs is not a list: {type(runs)}")
                 return []
 
             all_messages = []
@@ -261,16 +291,22 @@ class AgnoAdapter:  # pylint: disable=too-few-public-methods
 
     def clear_history(self) -> None:
         """Clear the chat history in the agent's storage."""
-        storage = getattr(self.agent, "storage", None)
-        if not storage:
-            storage = getattr(self.agent, "db", None)
+        # Clear specific session
+        session_id = self.config.get("session_id", "default-session")
+        if session_id in self.agents:
+            agent = self.agents[session_id]
+            storage = getattr(agent, "storage", getattr(agent, "db", None))
+            if storage and hasattr(storage, "delete"):
+                storage.delete(agent.session_id)
 
-        if storage and hasattr(storage, "delete"):
-            storage.delete(self.agent.session_id)
+        self.reload()  # Reset cache
+
 
     async def close(self) -> None:
         """Clean up resources, like closing the model client."""
-        if hasattr(self.agent, "model"):
-            client = self.agent.model.get_client()
-            if client and hasattr(client, "aio") and hasattr(client.aio, "aclose"):
-                await client.aio.aclose()
+        # Close all agents
+        for agent in self.agents.values():
+            if hasattr(agent, "model"):
+                client = agent.model.get_client()
+                if client and hasattr(client, "aio") and hasattr(client.aio, "aclose"):
+                    await client.aio.aclose()

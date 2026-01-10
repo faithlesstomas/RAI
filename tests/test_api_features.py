@@ -51,8 +51,10 @@ async def test_client_tool_parsing() -> None:
     mock_response.tool_calls = None
     mock_agent.arun.return_value = mock_response
 
-    adapter = AgnoAdapter({"agent_class": "AgentAgno"})
-    adapter.agent = mock_agent
+    # Initialize adapter with session_id to properly populate cache
+    adapter = AgnoAdapter({"agent_class": "AgentAgno", "session_id": "test-session"})
+    # Inject mock agent into the cache directly
+    adapter.agents["test-session"] = mock_agent
 
     result = await adapter.arun("Run code")
 
@@ -69,18 +71,24 @@ async def test_dynamic_context() -> None:
 
     config = {
         "agent_class": "AgentAgno",
-        "context": {"file_content": "some content"}
+        "context": {"file_content": "some content"},
+        "session_id": "test-session"
     }
 
-    # We need to mock setup_model and setup_tools to avoid actual initialization
-    with patch("rai.adapters.agno.setup_model") as mock_setup_model, \
+    # We need to mock validate_model_env and setup_tools to avoid actual initialization
+    # Also need to mock _instantiate_model since we moved it to adapter
+    with patch("rai.adapters.agno.validate_model_env") as mock_validate, \
          patch("rai.adapters.agno.setup_tools") as mock_setup_tools, \
-         patch("rai.adapters.agno.Agent") as mock_agent_cls:
+         patch("rai.adapters.agno.Agent") as mock_agent_cls, \
+         patch.object(AgnoAdapter, "_instantiate_model") as mock_instantiate:
 
-        mock_setup_model.return_value = (MagicMock(), [])
+        mock_validate.return_value = ({}, [])
         mock_setup_tools.return_value = ([], [])
+        mock_instantiate.return_value = MagicMock()
 
-        _ = AgnoAdapter(config)
+        adapter = AgnoAdapter(config)
+        # trigger agent creation
+        adapter._get_or_create_agent("test-session")
 
         # Check if context was added to system prompt
         # We need to inspect the call to Agent constructor

@@ -3428,7 +3428,7 @@ wheels = [
 ]
 
 [[package]]
-name = "rai-cli"
+name = "rai"
 version = "0.1.1"
 source = { editable = "." }
 dependencies = [
@@ -3471,13 +3471,18 @@ anthropic = [
     { name = "anthropic" },
 ]
 dev = [
-    { name = "agno" },
+    { name = "arxiv" },
+    { name = "duckduckgo-search" },
     { name = "pydantic-ai" },
     { name = "pylint" },
+    { name = "pypdf" },
     { name = "pytest" },
     { name = "pytest-asyncio" },
     { name = "pytest-cov" },
     { name = "ruff" },
+    { name = "tavily-python" },
+    { name = "wikipedia" },
+    { name = "yfinance" },
 ]
 docs = [
     { name = "furo" },
@@ -3508,7 +3513,6 @@ pydantic-ai = [
     { name = "pydantic-ai" },
 ]
 test = [
-    { name = "agno" },
     { name = "pydantic-ai" },
     { name = "pytest" },
     { name = "pytest-asyncio" },
@@ -3531,7 +3535,6 @@ tts = [
 [package.metadata]
 requires-dist = [
     { name = "agno", specifier = ">=2.0" },
-    { name = "agno", marker = "extra == 'test'" },
     { name = "anthropic", marker = "extra == 'anthropic'" },
     { name = "arxiv", marker = "extra == 'tools'" },
     { name = "click", specifier = ">=8.1,<8.3" },
@@ -3558,16 +3561,17 @@ requires-dist = [
     { name = "pytest-cov", marker = "extra == 'test'" },
     { name = "python-dotenv" },
     { name = "python-gitlab" },
-    { name = "rai-cli", extras = ["anthropic"], marker = "extra == 'all'" },
-    { name = "rai-cli", extras = ["gemini"], marker = "extra == 'all'" },
-    { name = "rai-cli", extras = ["gnome-tools"], marker = "extra == 'all'" },
-    { name = "rai-cli", extras = ["groq"], marker = "extra == 'all'" },
-    { name = "rai-cli", extras = ["lint"], marker = "extra == 'dev'" },
-    { name = "rai-cli", extras = ["openai"], marker = "extra == 'all'" },
-    { name = "rai-cli", extras = ["pydantic-ai"], marker = "extra == 'all'" },
-    { name = "rai-cli", extras = ["test"], marker = "extra == 'dev'" },
-    { name = "rai-cli", extras = ["tools"], marker = "extra == 'all'" },
-    { name = "rai-cli", extras = ["tts"], marker = "extra == 'all'" },
+    { name = "rai", extras = ["anthropic"], marker = "extra == 'all'" },
+    { name = "rai", extras = ["gemini"], marker = "extra == 'all'" },
+    { name = "rai", extras = ["gnome-tools"], marker = "extra == 'all'" },
+    { name = "rai", extras = ["groq"], marker = "extra == 'all'" },
+    { name = "rai", extras = ["lint"], marker = "extra == 'dev'" },
+    { name = "rai", extras = ["openai"], marker = "extra == 'all'" },
+    { name = "rai", extras = ["pydantic-ai"], marker = "extra == 'all'" },
+    { name = "rai", extras = ["test"], marker = "extra == 'dev'" },
+    { name = "rai", extras = ["tools"], marker = "extra == 'all'" },
+    { name = "rai", extras = ["tools"], marker = "extra == 'dev'" },
+    { name = "rai", extras = ["tts"], marker = "extra == 'all'" },
     { name = "requests", marker = "extra == 'tts'" },
     { name = "returns" },
     { name = "rich" },

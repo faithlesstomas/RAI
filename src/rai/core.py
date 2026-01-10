@@ -4,7 +4,7 @@ Core components for agent setup and configuration management.
 
 import os
 import sys
-from typing import Any, List, Optional, Tuple, Protocol, runtime_checkable, Union, TypedDict
+from typing import Any, Dict, List, Optional, Tuple, Protocol, runtime_checkable, Union, TypedDict
 
 
 
@@ -180,10 +180,15 @@ def setup_tools( # noqa: PLR0912 # pylint: disable=too-many-branches, too-many-l
     return agent_tools, messages
 
 
-def setup_model(
+
+def validate_model_env(
     backend: str, model_id: str, quiet: bool, ollama_host: Optional[str] = None
-) -> Tuple[Any, List[str]]:
-    """Sets up the model based on the backend and model ID."""
+) -> Tuple[Dict[str, Any], List[str]]:
+    """
+    Validates the environment for the specified backend and model.
+    Returns a configuration dictionary for the adapter to use for instantiation,
+    and a list of messages to display.
+    """
     messages = []
     if backend == "gemini" and "GEMINI_API_KEY" in os.environ:
         if "GOOGLE_API_KEY" in os.environ and not quiet:
@@ -193,19 +198,6 @@ def setup_model(
             )
         os.environ["GOOGLE_API_KEY"] = os.environ["GEMINI_API_KEY"]
 
-    model_map = {
-        "ollama": "agno.models.ollama.Ollama",
-        "gemini": "agno.models.google.Gemini",
-        "anthropic": "agno.models.anthropic.Claude",
-        "openai": "agno.models.openai.chat.OpenAIChat",
-        "groq": "agno.models.groq.Groq",
-    }
-    dependency_map = {
-        "gemini": "gemini",
-        "anthropic": "anthropic",
-        "openai": "openai",
-        "groq": "groq",
-    }
     api_keys = {
         "gemini": "GOOGLE_API_KEY",
         "anthropic": "ANTHROPIC_API_KEY",
@@ -213,7 +205,10 @@ def setup_model(
         "groq": "GROQ_API_KEY",
     }
 
-    if backend not in model_map:
+    # Supported backends list
+    supported_backends = ["ollama", "gemini", "anthropic", "openai", "groq"]
+
+    if backend not in supported_backends:
         error_console.print(f"[bold red]ERROR: Unsupported backend '{backend}'.[/bold red]")
         sys.exit(1)
 
@@ -223,25 +218,16 @@ def setup_model(
         )
         sys.exit(1)
 
-    try:
-        module_path, class_name = model_map[backend].rsplit(".", 1)
-        module = __import__(module_path, fromlist=[class_name])
-        model_class = getattr(module, class_name)
+    # Check for optional dependencies (rudimentary check).
+    # We allow adapters to handle specific imports and fail gracefully if needed.
 
-        if backend == "ollama":
-            model_kwargs = {"id": model_id}
-            if ollama_host:
-                model_kwargs["host"] = ollama_host
-            return model_class(**model_kwargs), messages
+    config = {
+        "backend": backend,
+        "model_id": model_id,
+        "api_key_env_var": api_keys.get(backend),
+    }
 
-        return model_class(id=model_id), messages
-    except ImportError:
-        error_console.print(
-            f"[bold red]ERROR: Backend '{backend}' requires an optional dependency.[/bold red]"
-        )
-        if backend in dependency_map:
-            error_console.print(
-                "[yellow]Please install it using: "
-                f"[bold]pip install .[{dependency_map[backend]}[/bold][/yellow]"
-            )
-        sys.exit(1)
+    if backend == "ollama":
+        config["ollama_host"] = ollama_host
+
+    return config, messages

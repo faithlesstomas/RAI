@@ -456,29 +456,19 @@ def _build_run_config(options: CliOptions) -> Tuple[Dict[str, Any], Dict[str, An
     return run_config, session_config, session_to_use, app_config
 
 
-async def async_run_standalone(options: CliOptions) -> None:
-    """The main entry point for the CLI in standalone mode."""
-    run_config, _, session_to_use, app_config = _build_run_config(options)
-
+def _setup_standalone_processor(
+    run_config: Dict[str, Any],
+    session_to_use: str,
+    quiet: bool
+) -> Processor:
+    """Sets up the processor for standalone execution."""
     # Perform backend-specific checks
     if run_config.get("backend") == "ollama":
-        has_tools = _initialize_ollama_check(run_config["model"], options.quiet)
+        has_tools = _initialize_ollama_check(run_config["model"], quiet)
         if not has_tools:
             # warn but do not disable tools,
             # as some custom models might support them without explicit modelfile tags
             pass
-
-    if not options.quiet and not options.prompt:
-        active_session_name = app_config.get("active_session", "default")
-        session_display = f"[bold]{session_to_use}[/bold]"
-        if session_to_use == active_session_name:
-            session_display += " (active)"
-        else:
-            session_display += " (override)"
-        error_console.print(
-            f"[dim]Session: {session_display} | Model: [bold]{run_config['model']}[/bold] on "
-            f"backend: [bold]{run_config['backend']}[/bold][/dim]"
-        )
 
     # This config is passed to the adapter constructor
     adapter_config = run_config.copy()
@@ -492,10 +482,33 @@ async def async_run_standalone(options: CliOptions) -> None:
             console.print("[dim]Using Pydantic AI framework[/dim]")
             processor = PydanticAIAdapter(agent_config=adapter_config)
         else:
-            error_console.print("[yellow]Warning: 'pydantic-ai' not installed or import failed. Falling back to Agno.[/yellow]")
+            error_console.print(
+                "[yellow]Warning: 'pydantic-ai' not installed or import failed. Falling back to Agno.[/yellow]"
+            )
             processor = AgnoAdapter(agent_config=adapter_config)
     else:
         processor = AgnoAdapter(agent_config=adapter_config)
+    
+    return processor
+
+
+async def async_run_standalone(options: CliOptions) -> None:
+    """The main entry point for the CLI in standalone mode."""
+    run_config, _, session_to_use, app_config = _build_run_config(options)
+
+    if not options.quiet and not options.prompt:
+        active_session_name = app_config.get("active_session", "default")
+        session_display = f"[bold]{session_to_use}[/bold]"
+        if session_to_use == active_session_name:
+            session_display += " (active)"
+        else:
+            session_display += " (override)"
+        error_console.print(
+            f"[dim]Session: {session_display} | Model: [bold]{run_config['model']}[/bold] on "
+            f"backend: [bold]{run_config['backend']}[/bold][/dim]"
+        )
+
+    processor = _setup_standalone_processor(run_config, session_to_use, options.quiet)
 
     if options.prompt:
         # Single-shot mode
