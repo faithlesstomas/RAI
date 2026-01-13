@@ -84,11 +84,8 @@ RAI is an independent open-source project developed with passion for the Linux a
 
 #### **Cryptocurrency**
 
-For those who prefer decentralized support or wish to contribute directly without intermediaries, you can use the following addresses:
-
-* **Bitcoin (BTC):** `bc1quwm8746cunecarqdhsqm2fx8cu2mw3sggfdugu`
-* **Ethereum (ETH):** `0xAD78139a15D98c55D8f1a2d48091C727B32CF147`
-* **Solana (SOL):** `FDZ6J3NGB4FQGrpBYWNihfAc9m2QZ7AznupDfYqeSJ5N`
+For those who prefer decentralized support or wish to contribute directly without intermediaries, 
+you can use the following address: [@faith4.base.eth](https://base.app/profile/faith4)
 
 #### **Other Ways to Help**
 
