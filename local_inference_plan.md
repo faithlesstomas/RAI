@@ -34,9 +34,21 @@ To maintain consistency with the RAI functional core:
 
 ---
 
+### Functional Bridge Architecture
+
+To ensure local engines (IREE, llama.cpp, ONNX) integrate seamlessly with Agno and Pydantic AI without compromising our functional principles:
+
+- **Structural Subtyping:** Use `InferenceEngine` protocol for all local backends.
+- **Monadic Responses:** All `generate` and `generate_stream` calls must return `returns.result.Result`.
+- **Stateless Bridges:** The `RAIPydanticAIBridge` should act as a pure data transformer, delegating state and execution to the underlying engine.
+- **Error Propagation:** Failures in local engines must be folded into UI-friendly messages via `.alt()` or `.fold()` instead of raising raw exceptions.
+- **Rich Integration:** Streaming outputs should be compatible with `Rich.Live` for real-time terminal rendering of local inference metrics (T/s, VRAM usage).
+
+---
+
 ### Phase 1: Engine Abstraction Layer
 
-**TODO: Revise this idea vs current code - take into account functional approach.**
+**TODO: Revise this idea vs current code - take into account functional approach (above).**
 
 *Goal: Decouple the inference logic from the agent logic.*
 
