@@ -24,6 +24,16 @@ while maintaining seamless compatibility with **Agno** and **Pydantic AI**.
 
 ---
 
+### Architectural Constraints for Local Engines
+
+To maintain consistency with the RAI functional core:
+1. **Engine Discovery:** Must use the `load_local_model` factory returning a `returns.result.Result`.
+2. **Error Handling:** Avoid `try/except` blocks in high-level logic. Use `@safe` decorators and monadic binding (`.map`, `.bind`).
+3. **Protocols over Inheritance:** All engines must satisfy the `InferenceEngine` protocol. Structural subtyping is preferred over rigid class hierarchies.
+4. **Immutability:** Engine configurations should be stored in frozen dataclasses where possible.
+
+---
+
 ### Phase 1: Engine Abstraction Layer
 
 **TODO: Revise this idea vs current code - take into account functional approach.**
