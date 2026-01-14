@@ -89,3 +89,4 @@ Currently, `rai` uses "sessions" to store both the configuration of an AI assist
 - [ ] **LangChain/LangGraph Adapter**: Support for LC agents.
 - [ ] **Pydantic AI Adapter**: Finish implementation (streaming, tools).
 - [ ] **Network Stack**: Migrate client networking to `aiohttp` to unify HTTP/WS handling.
+- [ ] [**Local Inference Integration**](local_inference_plan.md): MLIR/IREE, llama.cpp, onnx engines.
