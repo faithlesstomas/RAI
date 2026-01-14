@@ -5,7 +5,28 @@ This roadmap outlines the plan of implementing a **Local Inference** module(s) i
 enabling high-performance execution of models via IREE, llama.cpp, and ONNX, 
 while maintaining seamless compatibility with **Agno** and **Pydantic AI**.
 
+
+---
+
+### Development Roadmap: Functional Local Inference
+
+#### Phase 1: Protocol Definition & Functional Core
+* [ ] **Engine Protocol:** Define `InferenceEngine` protocol in `rai.protocols` for structural subtyping.
+* [ ] **Monadic Error Handling:** Integrate `returns.result.Result` for all engine operations to ensure robust error propagation.
+* [ ] **IREE Implementation:** Create a state-pure (where possible) IREE adapter using the defined protocol.
+
+#### Phase 2: Pipeline Composition
+* [ ] **Stream Composition:** Implement async generators for token streaming using functional wrappers.
+* [ ] **Model Factory (Functional):** A function returning `Result[InferenceEngine, Error]` based on file signature analysis.
+
+#### Phase 3: Framework Integration
+* [ ] **Bridge Protocol:** Map RAI protocols to `pydantic_ai.models.Model` and `agno.models.Model` without breaking functional purity.
+
+---
+
 ### Phase 1: Engine Abstraction Layer
+
+**TODO: Revise this idea vs current code - take into account functional approach.**
 
 *Goal: Decouple the inference logic from the agent logic.*
 
