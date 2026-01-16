@@ -2,7 +2,7 @@
 import asyncio
 import json
 import socket
-from typing import Any, Dict, List
+from typing import Any, AsyncIterator, Dict, List
 
 import websockets
 from returns.result import Failure, Result, Success
@@ -17,6 +17,7 @@ class WebSocketAdapter:
     An adapter that implements the Processor protocol by communicating
     with a remote rai server over WebSockets.
     """
+
 
     def __init__(self, agent_config: Dict[str, Any]) -> None:
         self.run_config = agent_config
@@ -119,3 +120,23 @@ class WebSocketAdapter:
             except websockets.exceptions.ConnectionClosed:
                 # Connection is already closed, which is fine.
                 pass
+
+    def reload(self) -> None:
+        """
+        Reloads the processor's configuration.
+        For WebSocketAdapter, this might involve reconnecting or sending a config update to the server.
+        Currently, it's a no-op.
+        """
+        # TODO: Implement server-side config reload if needed.
+        console.print("[dim](Configuration reload is managed by the server or requires reconnection)[/dim]")
+
+    async def astream(self, prompt: str) -> AsyncIterator[Any]:
+        """
+        Asynchronously streams the agent's response.
+        """
+        # TODO: Implement true streaming over WebSocket
+        result = await self.arun(prompt)
+        if isinstance(result, Success):
+            yield result.unwrap().get("content", "")
+        else:
+            yield f"Error: {result.failure()}"

@@ -20,7 +20,7 @@ dist/
 # Guile Hoot Artifacts
 *.wasm
 reflect.js
-
+guile-dashboard/public/
 guile-dashboard/server.log
 guile-dashboard/server.pid
 

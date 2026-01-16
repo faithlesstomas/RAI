@@ -39,19 +39,18 @@ def test_get_history_with_complex_mock_storage() -> None:
     mock_agent.db.get_session.return_value = mock_session
     mock_agent.storage = None # Force use of db path or ensure logic handles it
 
-    # We need to patch the adapter's _create_agent_from_config method
-    # to inject our mock agent.
-    with patch.object(AgnoAdapter, "_create_agent_from_config", return_value=mock_agent):
-        adapter = AgnoAdapter(agent_config={})
+    # We don't need to patch creation anymore, just inject into the cache
+    adapter = AgnoAdapter(agent_config={"session_id": "test-session"})
+    adapter.agents["test-session"] = mock_agent
 
-        # 2. Execute
-        history = adapter.get_history()
+    # 2. Execute
+    history = adapter.get_history()
 
-        # 3. Assert
-        assert history == [
-            {"role": "user", "content": "Hello"},
-            {"role": "assistant", "content": "Hi there!"},
-            {"role": "user", "content": "How are you?"},
-            {"role": "assistant", "content": "I am fine, thank you."},
-        ]
-        mock_agent.db.get_session.assert_called_once_with(session_id="test-session", session_type="agent")
+    # 3. Assert
+    assert history == [
+        {"role": "user", "content": "Hello"},
+        {"role": "assistant", "content": "Hi there!"},
+        {"role": "user", "content": "How are you?"},
+        {"role": "assistant", "content": "I am fine, thank you."},
+    ]
+    mock_agent.db.get_session.assert_called_once_with(session_id="test-session", session_type="agent")

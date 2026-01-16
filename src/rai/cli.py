@@ -39,6 +39,12 @@ from . import config_manager
 from .adapters.agno import AgnoAdapter
 from .adapters.base import Processor
 from .adapters.ws_client import WebSocketAdapter
+try:
+    from .adapters.pydantic_ai import PydanticAIAdapter
+    HAS_PYDANTIC_AI = True
+except ImportError:
+    HAS_PYDANTIC_AI = False
+
 from .core import console, error_console
 
 # from .exceptions import ChainExecutionError
@@ -450,17 +456,45 @@ def _build_run_config(options: CliOptions) -> Tuple[Dict[str, Any], Dict[str, An
     return run_config, session_config, session_to_use, app_config
 
 
-async def async_run_standalone(options: CliOptions) -> None:
-    """The main entry point for the CLI in standalone mode."""
-    run_config, _, session_to_use, app_config = _build_run_config(options)
-
+def _setup_standalone_processor(
+    run_config: Dict[str, Any],
+    session_to_use: str,
+    quiet: bool
+) -> Processor:
+    """Sets up the processor for standalone execution."""
     # Perform backend-specific checks
     if run_config.get("backend") == "ollama":
-        has_tools = _initialize_ollama_check(run_config["model"], options.quiet)
+        has_tools = _initialize_ollama_check(run_config["model"], quiet)
         if not has_tools:
             # warn but do not disable tools,
             # as some custom models might support them without explicit modelfile tags
             pass
+
+    # This config is passed to the adapter constructor
+    adapter_config = run_config.copy()
+    adapter_config["session_id"] = session_to_use
+
+    processor: Processor
+    framework = run_config.get("framework", "agno")
+    if framework == "pydantic_ai":
+        if HAS_PYDANTIC_AI:
+            # PydanticAI adapter is still experimental
+            console.print("[dim]Using Pydantic AI framework[/dim]")
+            processor = PydanticAIAdapter(agent_config=adapter_config)
+        else:
+            error_console.print(
+                "[yellow]Warning: 'pydantic-ai' not installed or import failed. Falling back to Agno.[/yellow]"
+            )
+            processor = AgnoAdapter(agent_config=adapter_config)
+    else:
+        processor = AgnoAdapter(agent_config=adapter_config)
+    
+    return processor
+
+
+async def async_run_standalone(options: CliOptions) -> None:
+    """The main entry point for the CLI in standalone mode."""
+    run_config, _, session_to_use, app_config = _build_run_config(options)
 
     if not options.quiet and not options.prompt:
         active_session_name = app_config.get("active_session", "default")
@@ -474,11 +508,7 @@ async def async_run_standalone(options: CliOptions) -> None:
             f"backend: [bold]{run_config['backend']}[/bold][/dim]"
         )
 
-    # This config is passed to the adapter constructor
-    adapter_config = run_config.copy()
-    adapter_config["session_id"] = session_to_use
-    # TODO: Add logic to select adapter based on framework
-    processor = AgnoAdapter(agent_config=adapter_config)
+    processor = _setup_standalone_processor(run_config, session_to_use, options.quiet)
 
     if options.prompt:
         # Single-shot mode

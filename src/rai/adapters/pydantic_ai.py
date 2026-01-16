@@ -1,7 +1,7 @@
 """Adapter for the Pydantic AI framework."""
 import os
 import json
-from typing import Any, Dict, List, Optional
+from typing import Any, AsyncIterator, Dict, List, Optional
 
 from pydantic_ai import Agent
 from pydantic_ai.models.openai import OpenAIChatModel
@@ -52,12 +52,13 @@ class PydanticAIAdapter:  # pylint: disable=too-few-public-methods
         self.agents[session_id] = agent
         return agent
 
-    async def arun(self, prompt: str, session_id: str) -> Result[Dict[str, Any], Exception]:
+    async def arun(self, prompt: str, session_id: Optional[str] = None) -> Result[Dict[str, Any], Exception]:
         """
         Runs a chat interaction using a session-specific Pydantic AI agent.
         """
         try:
-            agent = self._get_or_create_agent(session_id)
+            target_session_id = session_id or self.config.get("session_id", "default")
+            agent = self._get_or_create_agent(target_session_id)
             ai_response = await agent.run(prompt)
 
             # The response object in Pydantic AI has an `output` attribute.
@@ -73,6 +74,29 @@ class PydanticAIAdapter:  # pylint: disable=too-few-public-methods
         # Clearing this cache forces re-creation on next access.
         logger.debug("Reloading PydanticAIAdapter configuration (clearing agent cache)...")
         self.agents.clear()
+
+    async def astream(self, prompt: str) -> AsyncIterator[Any]:
+        """Asynchronously streams the agent's response (simulated)."""
+        # TODO: Implement true streaming for PydanticAI
+        result = await self.arun(prompt, self.config.get("session_id", "default"))
+        if isinstance(result, Success):
+            yield result.unwrap().get("content", "")
+        else:
+            yield f"Error: {result.failure()}"
+
+    def get_history(self) -> List[Dict[str, str]]:
+        """Retrieves the current chat history."""
+        # TODO: Implement history retrieval for PydanticAI
+        return []
+
+    def clear_history(self) -> None:
+        """Clears the current chat history."""
+        # Clearing the cache effectively resets the agent for now
+        self.reload()
+
+    async def close(self) -> None:
+        """Performs any necessary cleanup."""
+        pass
 
 
 def setup_pydantic_tools(
