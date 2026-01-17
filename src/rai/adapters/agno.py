@@ -87,6 +87,32 @@ class AgnoAdapter:  # pylint: disable=too-few-public-methods
 
     def _instantiate_model(self, backend: str, config: Dict[str, Any]) -> Any:  # noqa: ANN401
         """Instantiates the Agno model object based on validated config."""
+        
+        # 1. Handle Local Inference (IREE / Llama.cpp)
+        if backend == "local" or config.get("model_id", "").endswith((".vmfb", ".gguf", ".onnx")):
+             # Lazy import to avoid circular dependencies if any
+            try:
+                from ..inference import load_local_model  # noqa: PLC0415
+                from ..inference.bridges import LocalAgnoModel  # noqa: PLC0415
+                from returns.result import Failure  # noqa: PLC0415
+
+                model_path = config["model_id"]
+                # We can pass explicit backend if needed, e.g. config.get("engine")
+                engine_result = load_local_model(model_path)
+                
+                if isinstance(engine_result, Failure):
+                    raise engine_result.failure()
+                
+                engine = engine_result.unwrap()
+                return LocalAgnoModel(
+                    id=model_path,
+                    engine=engine, 
+                    name=config.get("model", "local-model")
+                )
+            except Exception as e: # pylint: disable=broad-except
+                error_console.print(f"[bold red]ERROR: Failed to load local model: {e}[/bold red]")
+                sys.exit(1)
+
         model_map = {
             "ollama": "agno.models.ollama.Ollama",
             "gemini": "agno.models.google.Gemini",

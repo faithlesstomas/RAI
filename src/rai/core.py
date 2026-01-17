@@ -206,7 +206,7 @@ def validate_model_env(
     }
 
     # Supported backends list
-    supported_backends = ["ollama", "gemini", "anthropic", "openai", "groq"]
+    supported_backends = ["ollama", "gemini", "anthropic", "openai", "groq", "local"]
 
     if backend not in supported_backends:
         error_console.print(f"[bold red]ERROR: Unsupported backend '{backend}'.[/bold red]")

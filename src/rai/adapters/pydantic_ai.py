@@ -31,7 +31,29 @@ class PydanticAIAdapter:  # pylint: disable=too-few-public-methods
         enabled_tools = self.config.get("tools")
         pydantic_tools = setup_pydantic_tools(enabled_tools)
 
-        if backend == "ollama":
+        if backend == "local" or model_name.endswith((".vmfb", ".gguf", ".onnx")):
+             # Local Inference
+            try:
+                from ..inference import load_local_model  # noqa: PLC0415
+                from ..inference.bridges import LocalPydanticModel  # noqa: PLC0415
+                from returns.result import Failure  # noqa: PLC0415
+
+                logger.debug(f"Creating PydanticAI agent with local model: {model_name}")
+                engine_result = load_local_model(model_name)
+
+                if isinstance(engine_result, Failure):
+                     # Log error and raise
+                     logger.error(f"Failed to load local model: {engine_result.failure()}")
+                     raise engine_result.failure()
+
+                engine = engine_result.unwrap()
+                llm = LocalPydanticModel(engine=engine, _model_name=model_name)
+
+            except Exception as e:
+                logger.error(f"Error initializing local agent: {e}")
+                raise e
+
+        elif backend == "ollama":
             # Consistent with the rest of the app, use 'ollama_host'
             ollama_host = self.config.get(
                 "ollama_host"
