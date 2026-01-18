@@ -216,8 +216,8 @@ def parse_function_gemma_tool_calls(text: str) -> List[Dict[str, Any]]:
                 # Fallback: empty args or partial parsing
                 pass
 
-        # 3. Python style fallback: name(k=v)
-        match = re.match(r"^([a-zA-Z0-9_]+)\((.*)\)$", content, re.DOTALL)
+        # 3. Python style fallback: name(k=v) or name(arg), optionally prefixed with call:
+        match = re.match(r"^(?:call:\s*)?([a-zA-Z0-9_.]+)\((.*)\)$", content, re.DOTALL)
         if match:
             name = match.group(1)
             args_str = match.group(2)
@@ -225,7 +225,22 @@ def parse_function_gemma_tool_calls(text: str) -> List[Dict[str, Any]]:
             import ast
             try:
                 # Construct call: dict(args) -> gives dict.
-                val = ast.literal_eval(f"dict({args_str})")
+                # If args is positional, this fails.
+                try:
+                    val = ast.literal_eval(f"dict({args_str})")
+                except ValueError:
+                    # Try to evaluate as tuple/list for positional
+                    val_pos = ast.literal_eval(f"({args_str},)")
+                    if isinstance(val_pos, tuple) and len(val_pos) == 1:
+                         # Single positional argument
+                         # We need to map this to a named argument expected by the tool?
+                         # Or just pass it as "expression" if it looks like math?
+                         # Or better yet, pass it as a special key and let Adapter logic handle it?
+                         # For now, let's wrap it in 'default_arg' or try to guess.
+                         val = {"expression": val_pos[0]} 
+                    else:
+                         val = {}
+
                 parsed_calls.append({
                     "id": f"call_{i}",
                     "type": "function",

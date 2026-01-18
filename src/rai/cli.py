@@ -488,7 +488,7 @@ def _setup_standalone_processor(
             processor = AgnoAdapter(agent_config=adapter_config)
     else:
         processor = AgnoAdapter(agent_config=adapter_config)
-    
+
     return processor
 
 
@@ -608,7 +608,7 @@ async def async_main_client(options: CliOptions) -> None: # noqa: PLR0912
 @click.option("-m", "--model", default=None, help="ID of the model to use.",
               cls=SectionedOption, section="AI Configuration")
 @click.option("-b", "--backend", default=None,
-              type=click.Choice(["ollama", "gemini", "anthropic", "openai", "groq"]),
+              type=click.Choice(["ollama", "gemini", "anthropic", "openai", "groq", "local"]),
               help="The backend to use.",
               cls=SectionedOption, section="AI Configuration")
 @click.option("-f", "--framework", default="agno",

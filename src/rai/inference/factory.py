@@ -3,6 +3,7 @@ Factory for creating InferenceEngine instances based on model files.
 """
 
 from pathlib import Path
+from functools import lru_cache
 from typing import Optional
 
 from returns.result import Result, Failure, Success, safe
@@ -61,24 +62,35 @@ def load_local_model(
             return Failure(ValueError(f"Could not infer backend for extension: {extension}"))
 
     # 3. Dispatch (Lazy Loading)
+    return _load_local_model_cached(str(path), target_backend)
+
+
+@lru_cache(maxsize=4)
+def _load_local_model_cached(
+    model_path_str: str, 
+    backend: str
+) -> Result[InferenceEngine, Exception]:
+    """
+    Cached worker for loading local models.
+    Arguments must be hashable (strings).
+    """
     try:
-        if target_backend == "llama":
+        if backend == "llama":
             from .engines.llama import LlamaCppEngine  # noqa: PLC0415
-            return Success(LlamaCppEngine(str(path)))
+            return Success(LlamaCppEngine(model_path_str))
         
-        elif target_backend == "iree":
+        elif backend == "iree":
             from .engines.iree import IreeEngine  # noqa: PLC0415
-            return Success(IreeEngine(str(path)))
+            return Success(IreeEngine(model_path_str))
             
-        elif target_backend == "onnx":
-            # from .engines.onnx import OnnxEngine
-            # return Success(OnnxEngine(str(path)))
-            return Failure(NotImplementedError("ONNX backend not yet implemented"))
+        elif backend == "onnx":
+            from .engines.onnx import OnnxEngine # noqa: PLC0415
+            return Success(OnnxEngine(model_path_str))
             
         else:
-            return Failure(ValueError(f"Unsupported backend: {target_backend}"))
+            return Failure(ValueError(f"Unsupported backend: {backend}"))
             
     except ImportError as e:
-        return Failure(ImportError(f"Missing dependency for {target_backend}: {e}"))
+        return Failure(ImportError(f"Missing dependency for {backend}: {e}"))
     except Exception as e:
         return Failure(e)

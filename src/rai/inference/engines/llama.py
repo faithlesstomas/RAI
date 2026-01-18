@@ -21,7 +21,7 @@ class LlamaCppEngine(InferenceEngine):
         try:
             self.llm = Llama(
                 model_path=model_path,
-                n_ctx=2048, # Safe default
+                n_ctx=0, # Use model's default context (e.g. 32k for Gemma 2)
                 verbose=False
             )
         except Exception as e:

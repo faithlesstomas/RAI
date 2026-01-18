@@ -87,7 +87,7 @@ class AgnoAdapter:  # pylint: disable=too-few-public-methods
 
     def _instantiate_model(self, backend: str, config: Dict[str, Any]) -> Any:  # noqa: ANN401
         """Instantiates the Agno model object based on validated config."""
-        
+
         # 1. Handle Local Inference (IREE / Llama.cpp)
         if backend == "local" or config.get("model_id", "").endswith((".vmfb", ".gguf", ".onnx")):
              # Lazy import to avoid circular dependencies if any
@@ -99,14 +99,14 @@ class AgnoAdapter:  # pylint: disable=too-few-public-methods
                 model_path = config["model_id"]
                 # We can pass explicit backend if needed, e.g. config.get("engine")
                 engine_result = load_local_model(model_path)
-                
+
                 if isinstance(engine_result, Failure):
                     raise engine_result.failure()
-                
+
                 engine = engine_result.unwrap()
                 return LocalAgnoModel(
                     id=model_path,
-                    engine=engine, 
+                    engine=engine,
                     name=config.get("model", "local-model")
                 )
             except Exception as e: # pylint: disable=broad-except
@@ -332,7 +332,7 @@ class AgnoAdapter:  # pylint: disable=too-few-public-methods
         """Clean up resources, like closing the model client."""
         # Close all agents
         for agent in self.agents.values():
-            if hasattr(agent, "model"):
+            if hasattr(agent, "model") and hasattr(agent.model, "get_client"):
                 client = agent.model.get_client()
                 if client and hasattr(client, "aio") and hasattr(client.aio, "aclose"):
                     await client.aio.aclose()
