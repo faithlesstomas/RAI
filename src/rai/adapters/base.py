@@ -1,6 +1,6 @@
 """ Base module for LLM/AI Procesor adapters
 """
-from typing import Any, AsyncIterator, Dict, List, Protocol, runtime_checkable
+from typing import Any, AsyncIterator, Dict, List, Optional, Protocol, runtime_checkable
 
 from returns.result import Result
 
@@ -13,19 +13,20 @@ class Processor(Protocol):
     agent implementations (local, remote via WebSocket, etc.) in a uniform way.
     """
 
-    async def arun(self, prompt: str) -> Result[Dict[str, Any], Exception]:
+    async def arun(self, prompt: str, history: Optional[List[Dict[str, Any]]] = None) -> Result[Dict[str, Any], Exception]:
         """
         Asynchronously runs the agent with a given prompt and returns the result.
 
         Args:
             prompt: The user's input prompt.
+            history: Optional list of previous messages.
 
         Returns:
             A Result monad containing either a dictionary with the agent's
             response on success, or an Exception on failure.
         """
 
-    async def astream(self, prompt: str) -> AsyncIterator[Any]:
+    async def astream(self, prompt: str, history: Optional[List[Dict[str, Any]]] = None) -> AsyncIterator[Any]:
         """
         Asynchronously streams the agent's response.
 

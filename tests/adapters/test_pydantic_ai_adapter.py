@@ -1,5 +1,5 @@
 import pytest
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 from returns.result import Success
 from rai.adapters.pydantic_ai import PydanticAIAdapter
@@ -14,13 +14,16 @@ async def test_pydantic_ai_adapter_arun() -> None:
     # 1. Define the config that will be passed to the adapter
     agent_config = {
         "backend": "ollama",
-        "model": "test-model"
+        "model": "test-model",
+        "enable_tools": False
     }
 
     # 2. Mock the dependencies
     mock_agent_instance = AsyncMock()
-    mock_response = AsyncMock()
+    mock_response = MagicMock()
     mock_response.output = "Test AI response"
+    # new_messages is a sync method, so we set return_value, not side_effect or async definition
+    mock_response.new_messages.return_value = [] 
     mock_agent_instance.run.return_value = mock_response
 
     # We patch the classes that are now used in the adapter
@@ -43,7 +46,8 @@ async def test_pydantic_ai_adapter_arun() -> None:
         # Assert that the Agent was called with the model instance
         mock_agent_class.assert_called_once_with(
             mock_openai_chat_model_class.return_value,
-            tools=[]
+            tools=[],
+            system_prompt="You are a helpful AI assistant."
         )
 
 

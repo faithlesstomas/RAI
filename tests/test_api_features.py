@@ -16,7 +16,8 @@ client = TestClient(app)
 async def test_stream_endpoint() -> None:
     """Test the streaming endpoint."""
     # Mock stream_chain to yield chunks
-    with patch("rai.routers.execution.stream_chain") as mock_stream:
+    # Mock ChatService.stream_chain to yield chunks
+    with patch("rai.services.chat.ChatService.stream_chain") as mock_stream:
         async def mock_generator(*args: Any, **kwargs: Any) -> Any: # noqa: ANN401
             yield "Hello"
             yield " World"

@@ -2,7 +2,7 @@
 import asyncio
 import json
 import socket
-from typing import Any, AsyncIterator, Dict, List
+from typing import Any, AsyncIterator, Dict, List, Optional
 
 import websockets
 from returns.result import Failure, Result, Success
@@ -66,8 +66,17 @@ class WebSocketAdapter:
         return Success(None)
 
 
-    async def arun(self, prompt: str) -> Result[Dict[str, Any], Exception]:
-        """Sends a prompt to the server and returns the response as a Result."""
+    async def arun(
+        self, 
+        prompt: str, 
+        history: Optional[List[Dict[str, Any]]] = None
+    ) -> Result[Dict[str, Any], Exception]:
+        """
+        Sends a prompt to the server and returns the response as a Result.
+        Note: The history argument is currently not sent to the server as the server manages its own history,
+        but we accept it to satisfy the Processor protocol. 
+        TODO: Pass history if we want client-side history to override server-side.
+        """
         connect_result = await self.connect()
         if isinstance(connect_result, Failure):
             return connect_result
@@ -79,6 +88,7 @@ class WebSocketAdapter:
             payload = {
                 "chain_input": prompt,
                 "chain_configs": [self.run_config],
+                # "history": history # TODO: Add support in server schema
             }
             await self._websocket.send(json.dumps(payload))
 
@@ -130,7 +140,11 @@ class WebSocketAdapter:
         # TODO: Implement server-side config reload if needed.
         console.print("[dim](Configuration reload is managed by the server or requires reconnection)[/dim]")
 
-    async def astream(self, prompt: str) -> AsyncIterator[Any]:
+    async def astream(
+        self, 
+        prompt: str, 
+        history: Optional[List[Dict[str, Any]]] = None
+    ) -> AsyncIterator[Any]:
         """
         Asynchronously streams the agent's response.
         """
