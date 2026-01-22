@@ -441,7 +441,7 @@ async def run_interactive_chat(
                     history = history_result.unwrap() if isinstance(history_result, Success) else []
                     
                     # Save user input
-                    await chat_service._history_service.add_message(session_id, "user", user_input)
+                    await chat_service.add_message_to_history(session_id, "user", user_input)
 
                 with console.status("[bold green]Assistant is thinking..."):
                     response_result = await processor.arun(user_input, history=history)
@@ -456,7 +456,7 @@ async def run_interactive_chat(
                             
                             # Save assistant response
                             if chat_service:
-                                await chat_service._history_service.add_message(
+                                await chat_service.add_message_to_history(
                                     session_id, 
                                     "assistant", 
                                     content,
@@ -579,7 +579,7 @@ async def async_run_standalone(options: CliOptions) -> None:
         history = history_result.unwrap() if isinstance(history_result, Success) else []
         
         # Save user message
-        await chat_service._history_service.add_message(session_to_use, "user", options.prompt)
+        await chat_service.add_message_to_history(session_to_use, "user", options.prompt)
 
         with console.status("[bold green]Assistant is thinking..."):
             result = await processor.arun(options.prompt, history=history)
@@ -591,7 +591,7 @@ async def async_run_standalone(options: CliOptions) -> None:
                 console.print(Markdown(content))
                 
                 # Save assistant response
-                await chat_service._history_service.add_message(
+                await chat_service.add_message_to_history(
                     session_to_use, 
                     "assistant", 
                     content,

@@ -296,3 +296,13 @@ class ChatService:
     async def clear_session_history(self, session_id: str) -> Result[None, Exception]:
         """Clears history for a specific session."""
         return await self._history_service.clear_history(session_id)
+
+    async def add_message_to_history(
+        self,
+        session_id: str,
+        role: str,
+        content: str,
+        tool_calls: Optional[List[Dict[str, Any]]] = None
+    ) -> Result[None, Exception]:
+        """Adds a message to the session history."""
+        return await self._history_service.add_message(session_id, role, content, tool_calls)
