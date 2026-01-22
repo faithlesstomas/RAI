@@ -2,7 +2,10 @@
 History router for RAI.
 """
 from typing import Any, Dict
-from fastapi import APIRouter
+from fastapi import APIRouter, HTTPException
+from returns.result import Success, Failure
+
+from ..services.history import HistoryService
 
 router = APIRouter(
     prefix="/api/v1/history",
@@ -10,41 +13,34 @@ router = APIRouter(
     responses={404: {"description": "Not found"}},
 )
 
+# Instantiate service (singleton-like for now, or per request if needed)
+# Ideally this should come from dependencies.
+history_service = HistoryService()
+
 # --- Endpoints ---
 
 @router.get("/sessions")
 async def list_history_sessions() -> Dict[str, Any]:
     """
     List past conversation sessions.
-    (Placeholder: Currently returns mock data until persistence is implemented)
     """
-    # TODO: Implement actual history reading from a database or log files.
-    return {
-        "sessions": [
-            {
-                "id": "mock-session-1",
-                "timestamp": "2023-10-27T10:00:00",
-                "summary": "Discussion about API design",
-            },
-            {
-                "id": "mock-session-2",
-                "timestamp": "2023-10-27T11:30:00",
-                "summary": "Debugging WebSocket issues",
-            },
-        ]
-    }
+    result = await history_service.list_sessions()
+    if isinstance(result, Failure):
+        raise HTTPException(status_code=500, detail=str(result.failure()))
+    
+    return {"sessions": result.unwrap()}
 
 @router.get("/sessions/{session_id}")
 async def get_session_history(session_id: str) -> Dict[str, Any]:
     """
     Get full chat history for a specific session.
     """
-    if session_id == "mock-session-1":
-        return {
-            "id": "mock-session-1",
-            "messages": [
-                {"role": "user", "content": "Hello, how are you?"},
-                {"role": "assistant", "content": "I am fine, thank you. How can I help you?"}
-            ]
-        }
-    return {"id": session_id, "messages": []}
+    result = await history_service.get_session_history(session_id)
+    if isinstance(result, Failure):
+        raise HTTPException(status_code=500, detail=str(result.failure()))
+        
+    messages = result.unwrap()
+    # If no messages, maybe return 404 or just empty list? 
+    # Current implementation returns empty list which is fine.
+    
+    return {"id": session_id, "messages": messages}

@@ -120,7 +120,7 @@ class HistoryService:
         """Alias for clear_history."""
         return await self.clear_history(session_id)
 
-    async def list_sesssions(self) -> Result[List[Dict[str, Any]], Exception]:
+    async def list_sessions(self) -> Result[List[Dict[str, Any]], Exception]:
          """Lists all sessions with their last update time."""
          try:
             await self._ensure_schema()
