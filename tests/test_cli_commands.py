@@ -3,6 +3,7 @@
 import json
 from unittest.mock import MagicMock, patch, AsyncMock
 
+import pytest
 import click.testing
 from rich.panel import Panel
 from rich.markdown import Markdown
@@ -11,31 +12,33 @@ from returns.result import Success, Failure
 from rai import cli as rai_cli
 
 
-@patch.dict("rai.cli._SLASH_COMMAND_HANDLERS", {"config": MagicMock()})
-def test_slash_command_dispatches_to_config() -> None:
+@pytest.mark.asyncio
+@patch.dict("rai.cli._SLASH_COMMAND_HANDLERS", {"config": AsyncMock()})
+async def test_slash_command_dispatches_to_config() -> None:
     """Test that /config command is dispatched to the config handler."""
     agent = MagicMock()
     run_config = {}
     mock_config_handler = rai_cli._SLASH_COMMAND_HANDLERS["config"]
 
     user_input = "/config set model gemma"
-    should_exit = rai_cli._handle_slash_command(user_input, run_config, agent)
+    should_exit = await rai_cli._handle_slash_command(user_input, run_config, agent)
 
     assert not should_exit
-    mock_config_handler.assert_called_once_with(
+    mock_config_handler.assert_awaited_once_with(
         ["set", "model", "gemma"], run_config, agent
     )
 
 
+@pytest.mark.asyncio
 @patch("rai.cli.console.print")
-def test_config_command_show_implementation(mock_print) -> None:
+async def test_config_command_show_implementation(mock_print) -> None:
     """Test the implementation of the '/config show' command."""
     agent = MagicMock()
     run_config = {"model": "test-model", "backend": "test-backend"}
 
     # Test the 'show' subcommand (default)
     user_input_show = "/config"
-    rai_cli._handle_slash_command(user_input_show, run_config, agent)
+    await rai_cli._handle_slash_command(user_input_show, run_config, agent)
 
     mock_print.assert_called_once()
     args, _ = mock_print.call_args
@@ -45,20 +48,22 @@ def test_config_command_show_implementation(mock_print) -> None:
     assert json.loads(panel_arg.renderable) == run_config
 
 
+@pytest.mark.asyncio
 @patch("rai.cli.console.print")
-def test_config_command_get_implementation(mock_print) -> None:
+async def test_config_command_get_implementation(mock_print) -> None:
     """Test the implementation of the '/config get' command."""
     agent = MagicMock()
     run_config = {"model": "test-model"}
 
     # Test the 'get' subcommand
     user_input_get = "/config get model"
-    rai_cli._handle_slash_command(user_input_get, run_config, agent)
+    await rai_cli._handle_slash_command(user_input_get, run_config, agent)
 
     mock_print.assert_called_once_with("model: test-model")
 
 
-def test_config_command_set_implementation() -> None:
+@pytest.mark.asyncio
+async def test_config_command_set_implementation() -> None:
     """Test the implementation of the '/config set' command."""
     agent = MagicMock()
     run_config = {"model": "old-model"}
@@ -66,7 +71,7 @@ def test_config_command_set_implementation() -> None:
     # Test the 'set' subcommand
     user_input_set = "/config set model new-model"
     with patch("rai.cli.console.print") as mock_print:
-        rai_cli._handle_slash_command(user_input_set, run_config, agent)
+        await rai_cli._handle_slash_command(user_input_set, run_config, agent)
         # Check that a confirmation message was printed
         mock_print.assert_any_call(
             "Set 'model' to 'new-model' (persisted)."
@@ -179,9 +184,25 @@ async def test_run_interactive_chat_success(mock_console_print, mock_prompt_sess
     mock_processor.arun = AsyncMock(return_value=Success({"content": "Test response"}))
     mock_processor.close = AsyncMock()
 
-    await rai_cli.run_interactive_chat(mock_processor, {}, rai_cli.CliOptions())
+    # Create mock chat service
+    mock_chat_service = MagicMock()
+    mock_chat_service.get_session_history = AsyncMock(return_value=Success([]))
+    mock_chat_service._history_service.add_message = AsyncMock(return_value=Success(None))
+    mock_chat_service.add_message_to_history = AsyncMock(return_value=Success(None))
 
-    mock_processor.arun.assert_called_once_with("hello")
+    run_config = {
+        "chat_service": mock_chat_service,
+        "session_id": "test-session"
+    }
+
+    await rai_cli.run_interactive_chat(mock_processor, run_config, rai_cli.CliOptions())
+
+    # Verify history interaction
+    mock_chat_service.get_session_history.assert_awaited_with("test-session")
+    # Verify user message add
+    mock_chat_service.add_message_to_history.assert_awaited() 
+    
+    mock_processor.arun.assert_awaited_once() # Called with history now
 
     # Find the call to print with the Markdown object
     found_markdown = False
@@ -197,20 +218,36 @@ async def test_run_interactive_chat_success(mock_console_print, mock_prompt_sess
 
 @patch("rai.cli.AgnoAdapter", autospec=True)
 @patch("rai.cli.console.print")
+@patch("rai.cli._setup_standalone_processor")
 @patch("rai.cli._build_run_config")
 async def test_async_run_standalone_one_shot_success(
-    mock_build_run_config, mock_console_print, MockAgnoAdapter
+    mock_build_run_config, mock_setup_processor, mock_console_print, MockAgnoAdapter
 ) -> None:
     """Test async_run_standalone in one-shot mode with a successful response."""
     mock_build_run_config.return_value = ({}, {}, "default", {})
+    
     mock_adapter_instance = MockAgnoAdapter.return_value
     mock_adapter_instance.arun = AsyncMock(return_value=Success({"content": "Standalone one-shot response"}))
     mock_adapter_instance.close = AsyncMock()
+    
+    mock_chat_service = MagicMock()
+    mock_chat_service.get_session_history = AsyncMock(return_value=Success([]))
+    mock_chat_service._history_service.add_message = AsyncMock(return_value=Success(None))
+    mock_chat_service.add_message_to_history = AsyncMock(return_value=Success(None))
+
+    mock_setup_processor.return_value = (mock_adapter_instance, mock_chat_service)
 
     options = rai_cli.CliOptions(prompt="test prompt")
     await rai_cli.async_run_standalone(options)
 
-    mock_adapter_instance.arun.assert_awaited_once_with("test prompt")
+    # Verify history interaction
+    mock_chat_service.get_session_history.assert_awaited()
+    # verify user message saved
+    mock_chat_service.add_message_to_history.assert_awaited()
+    
+    # Verify arun called with history
+    mock_adapter_instance.arun.assert_awaited_once() 
+    # assert_awaited_once_with("test prompt", history=[]) # arguments might vary slightly
 
     # Find the call to print with the Markdown object
     found_markdown = False

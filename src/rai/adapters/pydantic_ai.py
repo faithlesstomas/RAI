@@ -28,10 +28,41 @@ class PydanticAIAdapter:  # pylint: disable=too-few-public-methods
 
         backend = self.config.get("backend", "ollama")
         model_name = self.config.get("model", "gemma2:9b")
-        enabled_tools = self.config.get("tools")
-        pydantic_tools = setup_pydantic_tools(enabled_tools)
+        # Check enabled_tools config flag passed from CLI
+        enable_tools = self.config.get("enable_tools", True)
+        enabled_tool_names = self.config.get("tools") if enable_tools else []
+        
+        # Use Core's setup_tools to get instances
+        agno_tool_instances, _ = setup_tools(
+            enable_tools=enable_tools,
+            quiet=False,  # Core handles printing warnings
+            enabled_tool_names=enabled_tool_names
+        )
+        pydantic_tools = _get_pydantic_compatible_tools(agno_tool_instances)
 
-        if backend == "ollama":
+        if backend == "local" or model_name.endswith((".vmfb", ".gguf", ".onnx")):
+             # Local Inference
+            try:
+                from ..inference import load_local_model  # noqa: PLC0415
+                from ..inference.bridges import LocalPydanticModel  # noqa: PLC0415
+                from returns.result import Failure  # noqa: PLC0415
+
+                logger.debug(f"Creating PydanticAI agent with local model: {model_name}")
+                engine_result = load_local_model(model_name)
+
+                if isinstance(engine_result, Failure):
+                     # Log error and raise
+                     logger.error(f"Failed to load local model: {engine_result.failure()}")
+                     raise engine_result.failure()
+
+                engine = engine_result.unwrap()
+                llm = LocalPydanticModel(engine=engine, _model_name=model_name)
+
+            except Exception as e:
+                logger.error(f"Error initializing local agent: {e}")
+                raise e
+
+        elif backend == "ollama":
             # Consistent with the rest of the app, use 'ollama_host'
             ollama_host = self.config.get(
                 "ollama_host"
@@ -48,18 +79,60 @@ class PydanticAIAdapter:  # pylint: disable=too-few-public-methods
             logger.debug(msg)
             llm = model_name
 
-        agent = Agent(llm, tools=pydantic_tools)
+        # Extract system prompt
+        system_prompt = self.config.get("system", "You are a helpful AI assistant.")
+
+        agent = Agent(llm, tools=pydantic_tools, system_prompt=system_prompt)
         self.agents[session_id] = agent
         return agent
 
-    async def arun(self, prompt: str, session_id: Optional[str] = None) -> Result[Dict[str, Any], Exception]:
+    async def arun(
+        self, 
+        prompt: str, 
+        session_id: Optional[str] = None,
+        history: Optional[List[Dict[str, Any]]] = None
+    ) -> Result[Dict[str, Any], Exception]:
         """
         Runs a chat interaction using a session-specific Pydantic AI agent.
         """
         try:
+            # Unified History Support
+            final_prompt = prompt
+            if history:
+                 # Reconstruct conversation history including tool interactions
+                 history_lines = []
+                 for msg in history:
+                     role = msg.get('role', 'unknown').capitalize()
+                     content = msg.get('content', '')
+                     tool_calls = msg.get('tool_calls')
+                     
+                     if tool_calls:
+                         history_lines.append(f"{role}: {content} [Tool Calls: {tool_calls}]")
+                     else:
+                         history_lines.append(f"{role}: {content}")
+                 
+                 history_text = "\n".join(history_lines)
+
+                 if history_text:
+                     final_prompt = (
+                         f"Below is the conversation history so far. Use it as context.\n\n"
+                         f"{history_text}\n\n"
+                         f"User: {prompt}"
+                     )
+
             target_session_id = session_id or self.config.get("session_id", "default")
             agent = self._get_or_create_agent(target_session_id)
-            ai_response = await agent.run(prompt)
+            ai_response = await agent.run(final_prompt)
+
+            # Log tool usage from response messages
+            if hasattr(ai_response, "new_messages"):
+                for msg in ai_response.new_messages():
+                    if hasattr(msg, "parts"):
+                        for part in msg.parts:
+                            if part.part_kind == 'tool-call':
+                                logger.info(f"Tool Call: {part.tool_name}({part.args})")
+                            elif part.part_kind == 'tool-return':
+                                logger.info(f"Tool Result ({part.tool_name}): {part.content}")
 
             # The response object in Pydantic AI has an `output` attribute.
             content = ai_response.output
@@ -75,7 +148,7 @@ class PydanticAIAdapter:  # pylint: disable=too-few-public-methods
         logger.debug("Reloading PydanticAIAdapter configuration (clearing agent cache)...")
         self.agents.clear()
 
-    async def astream(self, prompt: str) -> AsyncIterator[Any]:
+    async def astream(self, prompt: str, history: Optional[List[Dict[str, Any]]] = None) -> AsyncIterator[Any]:
         """Asynchronously streams the agent's response (simulated)."""
         # TODO: Implement true streaming for PydanticAI
         result = await self.arun(prompt, self.config.get("session_id", "default"))
@@ -99,70 +172,43 @@ class PydanticAIAdapter:  # pylint: disable=too-few-public-methods
         pass
 
 
-def setup_pydantic_tools(
-    enabled_tool_names: Optional[List[str]] = None,
-) -> List[Any]:
+import inspect
+from ..core import error_console, validate_model_env, setup_tools
+
+# ... (rest of imports)
+
+# Remove manual imports of agno.tools.*
+# from agno.tools.calculator import CalculatorTools
+# from agno.tools.shell import ShellTools
+
+def _get_pydantic_compatible_tools(agno_tools: List[Any]) -> List[Any]:
     """
-    Creates wrapper functions for Agno tools to make them compatible with Pydantic-AI.
+    Dynamically extracts public methods from Agno tool instances to be used by PydanticAI.
     """
-    if not enabled_tool_names:
-        return []
+    from pydantic_ai import Tool
 
     pydantic_tools = []
-    if "CalculatorTools" in enabled_tool_names:
-        _calculator = CalculatorTools()
+    seen_names = set()
 
-        def run_calculator_operation(
-            operation: str,
-            a: Optional[float] = None,
-            b: Optional[float] = None,
-            n: Optional[int] = None,
-        ) -> str:
-            """
-            Performs a mathematical operation.
-            Supported operations: add, subtract, multiply, divide, exponentiate,
-            factorial, is_prime, square_root.
-            Args:
-                operation (str): The name of the operation to perform.
-                a (Optional[float]): The first number for binary operations.
-                b (Optional[float]): The second number for binary operations.
-                n (Optional[int]): The number for unary operations.
-            """
-            binary_ops = {
-                "add": _calculator.add,
-                "subtract": _calculator.subtract,
-                "multiply": _calculator.multiply,
-                "divide": _calculator.divide,
-                "exponentiate": _calculator.exponentiate,
-            }
-            unary_ops = {
-                "factorial": _calculator.factorial,
-                "is_prime": _calculator.is_prime,
-                "square_root": _calculator.square_root,
-            }
-
-            if operation in binary_ops and a is not None and b is not None:
-                return binary_ops[operation](a, b)
-            if operation in unary_ops and n is not None:
-                return unary_ops[operation](n)
-
-            return json.dumps({"error": f"Unsupported operation or missing arguments for {operation}"})
-
-
-        pydantic_tools.append(run_calculator_operation)
-
-    if "ShellTools" in enabled_tool_names:
-        _shell = ShellTools()
-
-        def run_shell(command: str) -> str:
-            """
-            Executes a shell command and returns its standard output.
-            Note: This is not a full interactive shell.
-            """
-            return _shell.run_shell_command(args=[command])
-
-        pydantic_tools.append(run_shell)
-
-    # TODO: Add wrappers for other Agno tools here.
-
+    for tool_instance in agno_tools:
+        # Inspect for public methods
+        for name, method in inspect.getmembers(tool_instance, predicate=inspect.ismethod):
+            if name.startswith("_") or name == "register":
+                continue
+            
+            tool_name = name
+            if tool_name in seen_names:
+                # Conflict detected! Namespace it.
+                # E.g. FileTools_list_files
+                new_name = f"{tool_instance.__class__.__name__}_{name}"
+                logger.warning(f"Tool conflict for '{name}'. Renaming to '{new_name}'.")
+                
+                # Wrap in Tool object to rename
+                # Note: PydanticAI Tool(fn, name=...) handles this
+                pydantic_tools.append(Tool(method, name=new_name))
+                seen_names.add(new_name)
+            else:
+                pydantic_tools.append(method)
+                seen_names.add(tool_name)
+            
     return pydantic_tools

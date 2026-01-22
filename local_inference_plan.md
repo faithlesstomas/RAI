@@ -1,107 +1,95 @@
-
 ## Local Inference Integration Plan
 
-This roadmap outlines the plan of implementing a **Local Inference** module(s) into RAI,
-enabling high-performance execution of models via IREE, llama.cpp, and ONNX, 
-while maintaining seamless compatibility with **Agno** and **Pydantic AI**.
+This roadmap outlines the architecture for implementing a **Local Inference** module in RAI. It aligns with the project's functional paradigm (`returns`, `Protocols`) and aims to expose high-performance local runtimes (IREE, Llama.cpp) through a unified, type-safe interface compatible with **Agno** and **Pydantic AI**.
 
-
----
-
-### Development Roadmap: Functional Local Inference
-
-#### Phase 1: Protocol Definition & Functional Core
-* [ ] **Engine Protocol:** Define `InferenceEngine` protocol in `rai.protocols` for structural subtyping.
-* [ ] **Monadic Error Handling:** Integrate `returns.result.Result` for all engine operations to ensure robust error propagation.
-* [ ] **IREE Implementation:** Create a state-pure (where possible) IREE adapter using the defined protocol.
-
-#### Phase 2: Pipeline Composition
-* [ ] **Stream Composition:** Implement async generators for token streaming using functional wrappers.
-* [ ] **Model Factory (Functional):** A function returning `Result[InferenceEngine, Error]` based on file signature analysis.
-
-#### Phase 3: Framework Integration
-* [ ] **Bridge Protocol:** Map RAI protocols to `pydantic_ai.models.Model` and `agno.models.Model` without breaking functional purity.
+Based on architectural discussions (Gemini conversation), this implementation prioritizes **dependency injection**, **structural subtyping**, and **monadic error handling**.
 
 ---
 
-### Architectural Constraints for Local Engines
+### Core Architecture: "Pure Bridges"
 
-To maintain consistency with the RAI functional core:
-1. **Engine Discovery:** Must use the `load_local_model` factory returning a `returns.result.Result`.
-2. **Error Handling:** Avoid `try/except` blocks in high-level logic. Use `@safe` decorators and monadic binding (`.map`, `.bind`).
-3. **Protocols over Inheritance:** All engines must satisfy the `InferenceEngine` protocol. Structural subtyping is preferred over rigid class hierarchies.
-4. **Immutability:** Engine configurations should be stored in frozen dataclasses where possible.
+The design separates the *execution* of a model from the *interface* required by high-level agents.
 
----
+1.  **Inference Engine (`rai.inference.core`)**
+    *   Defined by the `InferenceEngine` **Protocol**.
+    *   Responsible solely for raw text generation and token streaming.
+    *   **MUST** return `returns.result.Result` for all operations.
+    *   **MUST** be stateless where possible (configuration frozen in dataclasses).
 
-### Functional Bridge Architecture
+2.  **Functional Bridges (`rai.inference.bridges`)**
+    *   "Parsers/Transformers" that adapt the `InferenceEngine` to external frameworks.
+    *   **Agno Bridge:** A lightweight `Model` subclass that translates Agno's `Message` objects into a prompt string for the engine, and parses the engine's text output back into Agno's format.
+    *   **Pydantic AI Bridge:** A similar adapter satisfying `pydantic_ai.models.Model`.
 
-To ensure local engines (IREE, llama.cpp, ONNX) integrate seamlessly with Agno and Pydantic AI without compromising our functional principles:
-
-- **Structural Subtyping:** Use `InferenceEngine` protocol for all local backends.
-- **Monadic Responses:** All `generate` and `generate_stream` calls must return `returns.result.Result`.
-- **Stateless Bridges:** The `RAIPydanticAIBridge` should act as a pure data transformer, delegating state and execution to the underlying engine.
-- **Error Propagation:** Failures in local engines must be folded into UI-friendly messages via `.alt()` or `.fold()` instead of raising raw exceptions.
-- **Rich Integration:** Streaming outputs should be compatible with `Rich.Live` for real-time terminal rendering of local inference metrics (T/s, VRAM usage).
+3.  **Functional Composition for Tools**
+    *   Instead of heavy inheritance, we use functional composition (e.g., a `with_tools` higher-order function or decorator) to inject tool schemas (JSON Schema) into the system prompt and attach an output parser.
 
 ---
 
-### Phase 1: Engine Abstraction Layer
+### Detailed Development Roadmap
 
-**TODO: Revise this idea vs current code - take into account functional approach (above).**
+#### Phase 1: Engine Abstraction & Protocols
+*Goal: Define the "shape" of a local model and implement the low-level execution logic.*
 
-*Goal: Decouple the inference logic from the agent logic.*
+* [ ] **Define Protocol:** Create `InferenceEngine` in `rai.inference.protocols`.
+    ```python
+    class InferenceEngine(Protocol):
+        def generate(self, prompt: str, stop: List[str] = ...) -> Result[str, Exception]: ...
+        def stream(self, prompt: str, stop: List[str] = ...) -> AsyncIterator[Result[str, Exception]]: ...
+    ```
+* [ ] **Model Factory:** Implement `load_local_model(path: str) -> Result[InferenceEngine, Exception]` in `rai.inference.factory`.
+    *   Dispatch based on file signature/extension:
+        *   `.vmfb` -> IREE Engine
+        *   `.gguf` -> Llama.cpp Engine
+        *   `.onnx` -> ONNX Engine
+* [ ] **IREE Engine:** Implement `IreeEngine` adapter using `iree-runtime`.
+* [ ] **Llama.cpp Engine:** Implement `LlamaCppEngine` wrapper for `llama-cpp-python`.
 
-- [ ] **Unified `BaseEngine` Interface:** Define a core abstraction in `rai.engines` (or `rai.adapters.local`) with standard methods: `load()`, `generate()`, and `stream()`.
-- [ ] **Llama.cpp Engine:** Implement a wrapper for `llama-cpp-python` to support **GGUF** models.
-- [ ] **IREE (MLIR) Engine:** Integrate `iree-runtime` to execute compiled `.vmfb` modules. Must include support for HAL drivers (Vulkan, CUDA, CPU).
-- [ ] **ONNX Runtime Engine:** Integrate `onnxruntime` for classic NLP tasks and embedding models.
+#### Phase 2: Framework Bridges
+*Goal: Make the engines usable by the existing Agents in `rai.adapters`.*
 
-### Phase 2: Framework Bridging
+* [ ] **Agno Bridge:** Implement `LocalAgnoModel` in `rai.inference.bridges.agno`.
+    *   It should accept an `InferenceEngine` instance in its constructor.
+    *   Implementation of `arun` and `astream` delegates to the engine's `generate/stream`.
+* [ ] **Pydantic AI Bridge:** Implement `LocalPydanticModel` in `rai.inference.bridges.pydantic_ai`.
 
-*Goal: Make local engines "look and feel" like OpenAI/Anthropic providers for high-level libraries.*
+#### Phase 3: Tools & Structured Output
+*Goal: Enable "Agentic" capabilities on local models that don't support function calling natively.*
 
-- [ ] **Agno (Phidata) Bridge:** Implement a custom `Model` class that maps Agno's internal request format to RAI’s local engines.
-- [ ] **Pydantic AI Bridge:** Implement the `Model` protocol for Pydantic AI, ensuring full support for type-safe validation and response handling.
-- [ ] **Local Model Factory:** A dispatcher that automatically initializes the correct engine based on file extensions (`.gguf` -> Llama.cpp, `.vmfb` -> IREE, `.onnx` -> ONNX).
+* [ ] **Prompt Injector:** Create a functional utility that converts a list of `Tool` definitions into a system prompt snippet (e.g., "You have access to these tools...").
+* [ ] **Output Parser:** Implement a robust regex/grammar-based parser to detect when the model attempts to call a tool (e.g., `[TOOL_CALL: ...]`).
+* [ ] **Grammar Enforcement (GGUF):** For Llama.cpp, expose `gbnf` grammar support to strictly force valid JSON output for tool calls.
 
-### Phase 3: Structured Output & Tool Calling
+#### Phase 4: User Interface & Telemetry
+*Goal: Visualize the performance of local inference.*
 
-*Goal: Enable local models to use RAI tools (Function Calling) reliably.*
+* [ ] **Live Metrics:** Integrate `Rich.Live` to show:
+    *   Tokens/sec (Generation speed).
+    *   Time to First Token (TTFT).
+    *   Memory/VRAM usage (if accessible).
+* [ ] **Model Manager CLI:** `rai models list`, `rai models pull` (wrapping `huggingface-cli` or similar).
 
-- [ ] **GBNF Grammar Support:** Leverage llama.cpp's grammar feature to force local models to output valid JSON matching Pydantic schemas.
-- [ ] **Tool Prompt Injection:** Create a standardized system prompt generator that injects tool definitions (JSON Schema) into the context for engines without native tool-calling support.
-- [ ] **Output Parser:** A robust regex-based or JSON-repairing parser to extract tool calls from raw model streams.
-
-### Phase 4: Rich UI & Telemetry (?)
-
-*Goal: Enhance the "Rich" experience with local performance metrics.*
-
-* [ ] **Performance Monitor:** Use `Rich.Live` to display real-time inference stats:
-* Tokens per second (T/s).
-* Active HAL Driver (e.g., "Vulkan GPU").
-* Memory footprint.
-
-
-* [ ] **Resource Manager:** A CLI utility to manage local model files and cache.
-
-### Phase 5: Distribution & Packaging
-
-*Goal: Keep RAI lightweight while offering heavy-duty local support.*
-
-* [ ] **Optional Dependencies:** Update `pyproject.toml` to use extras (e.g., `pip install rai[iree]` or `pip install rai[llama]`) to avoid forcing heavy binaries on all users.
-* [ ] **Hardware Auto-detection:** Logic to suggest the best local backend based on the user's hardware (e.g., suggesting IREE/Vulkan for Linux/AMD users).
+#### Phase 5: Distribution
+* [ ] **Optional Dependencies:** Configure `pyproject.toml` with `extras` arrays (e.g., `rai[iree]`, `rai[llama]`).
 
 ---
 
-### Implementation Strategy
+### Implementation Strategy & File Structure
 
-To maintain the modularity of your recent refactor, the integration should follow this flow:
+The new modules will be placed in `src/rai/inference/`:
 
-| Component | Responsibility |
-| --- | --- |
-| **`rai.engines`** | Low-level interaction with libraries (IREE, ONNX). |
-| **`rai.models`** | High-level wrappers that implement Agno/Pydantic AI interfaces. |
-| **`rai.cli`** | User-facing commands to download and run local models. |
+```
+src/rai/inference/
+├── __init__.py
+├── protocols.py       # InferenceEngine Protocol
+├── factory.py         # load_local_model logic
+├── engines/
+│   ├── iree.py        # IREE implementation
+│   ├── llama.py       # Llama.cpp implementation
+│   └── onnx.py        # ONNX implementation
+└── bridges/
+    ├── agno.py        # Agno Model adapter
+    └── pydantic.py    # PydanticAI Model adapter
+```
 
-> **Note:** Priority should be given to **Llama.cpp** (GGUF) as it is the most common format for local LLMs, followed by **IREE** for users seeking maximum performance on non-NVIDIA hardware.
+> **Note:** The `rai.adapters.agno.AgnoAdapter` will utilize `rai.inference.bridges.agno.LocalAgnoModel` when a local model is configured, preserving the high-level Agent API.

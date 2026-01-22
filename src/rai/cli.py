@@ -46,6 +46,7 @@ except ImportError:
     HAS_PYDANTIC_AI = False
 
 from .core import console, error_console
+from .services.chat import ChatService
 
 # from .exceptions import ChainExecutionError
 # from .tts import TTS, resolve_voice_path
@@ -136,14 +137,14 @@ class CliOptions:  # pylint: disable=too-many-instance-attributes
     system: Optional[str] = None
     model: Optional[str] = None
     backend: Optional[str] = None
-    framework: str = "agno"
+    framework: Optional[str] = None
     no_markdown: bool = False
     json_output: bool = False
     quiet: bool = False
     stream: bool = False
     session_override: Optional[str] = None
     config_path: Optional[str] = None
-    debug: bool = False
+    log_level_opt: Optional[str] = None
     tts_voice_id: Optional[str] = None
     # This field will hold the active tts task, not a CLI option
     active_tts_task: Optional[asyncio.Task] = field(default=None, repr=False)
@@ -189,13 +190,22 @@ def check_model_tool_support(model_id: str) -> bool:
     """Checks if the specified Ollama model supports tool use."""
     try:
         details = ollama.show(model_id)
-        return "tool_use" in details.get("modelfile", "")  # pylint: disable=unsupported-membership-test
+        modelfile = details.get("modelfile", "")
+        # Robust check for tool support indicators
+        indicators = [
+            "tool_use",             # Explicit parameter
+            "{{ .Tools",            # Template variable (standard)
+            "{{.Tools",             # Template variable (standard)
+            "PARSER functiongemma", # specialized parser
+            "RENDERER functiongemma" # specialized renderer
+        ]
+        return any(ind in modelfile for ind in indicators)
     except ResponseError:
         return False
 
 
 # --- Slash Command Handlers ---
-def _handle_help_command(_: List[str], __: Dict[str, Any], ___: Processor) -> None:
+async def _handle_help_command(_: List[str], __: Dict[str, Any], ___: Processor) -> None:
     """Handles the /help command."""
     console.print("Available commands:")
     for cmd in _SLASH_COMMAND_HANDLERS:
@@ -203,7 +213,7 @@ def _handle_help_command(_: List[str], __: Dict[str, Any], ___: Processor) -> No
     console.print("  /exit, /quit, /q")
 
 
-def _handle_config_command(args: List[str], run_config: Dict[str, Any], processor: Processor) -> None:
+async def _handle_config_command(args: List[str], run_config: Dict[str, Any], processor: Processor) -> None:
     """Handles /config slash commands for the current session."""
     if not args:
         subcommand = "show"
@@ -213,8 +223,10 @@ def _handle_config_command(args: List[str], run_config: Dict[str, Any], processo
         command_args = args[1:]
 
     if subcommand == "show":
-        config_copy = run_config.copy()
-        config_copy.pop("active_tts_task", None)
+        config_copy = {
+            k: v for k, v in run_config.items() 
+            if k not in ["chat_service", "active_tts_task"]
+        }
         console.print(
             Panel(
                 json.dumps(config_copy, indent=2),
@@ -255,9 +267,21 @@ def _handle_config_command(args: List[str], run_config: Dict[str, Any], processo
     else:
         error_console.print(f"[red]Unknown config command: {subcommand}. Available: show, get, set[/red]")
 
-def _handle_history_command(_: List[str], __: Dict[str, Any], processor: Processor) -> None:
+async def _handle_history_command(_: List[str], run_config: Dict[str, Any], processor: Processor) -> None:
     """Handles the /history command."""
-    history = processor.get_history()
+    history = []
+    
+    chat_service = run_config.get("chat_service")
+    if chat_service:
+        # Standalone mode with unified history
+        session_id = run_config.get("session_id", "default")
+        result = await chat_service.get_session_history(session_id)
+        if isinstance(result, Success):
+            history = result.unwrap()
+    else:
+        # Fallback or client mode
+        history = processor.get_history()
+
     if not history:
         console.print("[dim]No history available.[/dim]")
         return
@@ -268,14 +292,32 @@ def _handle_history_command(_: List[str], __: Dict[str, Any], processor: Process
         console.print(Panel(content, title=role.capitalize(),
                             border_style="cyan" if role == "user" else "magenta"))
 
-def _handle_clear_command(_: List[str], __: Dict[str, Any], processor: Processor) -> None:
+async def _handle_clear_command(_: List[str], run_config: Dict[str, Any], processor: Processor) -> None:
     """Handles the /clear command."""
-    processor.clear_history()
+    chat_service = run_config.get("chat_service")
+    if chat_service:
+        session_id = run_config.get("session_id", "default")
+        await chat_service.clear_session_history(session_id)
+        # Also clear in-memory adapter state if needed
+        processor.clear_history() 
+    else:
+        processor.clear_history()
+
     console.print("[green]Chat history cleared.[/green]")
 
-def _handle_save_command(args: List[str], __: Dict[str, Any], processor: Processor) -> None:
+async def _handle_save_command(args: List[str], run_config: Dict[str, Any], processor: Processor) -> None:
     """Handles the /save command."""
-    history = processor.get_history()
+    history = []
+    
+    chat_service = run_config.get("chat_service")
+    if chat_service:
+        session_id = run_config.get("session_id", "default")
+        result = await chat_service.get_session_history(session_id)
+        if isinstance(result, Success):
+            history = result.unwrap()
+    else:
+        history = processor.get_history()
+
     if not history:
         console.print("[dim]No history available to save.[/dim]")
         return
@@ -293,7 +335,7 @@ def _handle_save_command(args: List[str], __: Dict[str, Any], processor: Process
     except IOError as e:
         error_console.print(f"[red]Error saving file: {e}[/red]")
 
-def _handle_model_command(args: List[str], run_config: Dict[str, Any], processor: Processor) -> None:
+async def _handle_model_command(args: List[str], run_config: Dict[str, Any], processor: Processor) -> None:
     """Handles the /model command."""
     if not args:
         console.print(f"Current model: {run_config.get('model')}")
@@ -312,7 +354,7 @@ def _handle_model_command(args: List[str], run_config: Dict[str, Any], processor
     console.print("[dim]Note: New settings will be used on the next interaction.[/dim]")
 
 
-_SLASH_COMMAND_HANDLERS: Dict[str, Callable[[List[str], Dict[str, Any], Processor], None]] = {
+_SLASH_COMMAND_HANDLERS: Dict[str, Callable[[List[str], Dict[str, Any], Processor], Any]] = {
     "help": _handle_help_command,
     "config": _handle_config_command,
     "history": _handle_history_command,
@@ -321,7 +363,7 @@ _SLASH_COMMAND_HANDLERS: Dict[str, Callable[[List[str], Dict[str, Any], Processo
     "model": _handle_model_command,
 }
 
-def _handle_slash_command(user_input: str, run_config: Dict[str, Any], processor: Processor) -> bool:
+async def _handle_slash_command(user_input: str, run_config: Dict[str, Any], processor: Processor) -> bool:
     """Handles slash commands and returns True if the app should exit."""
     command, *args = user_input.strip()[1:].split()
     if not command:
@@ -332,7 +374,7 @@ def _handle_slash_command(user_input: str, run_config: Dict[str, Any], processor
 
     handler = _SLASH_COMMAND_HANDLERS.get(command.lower())
     if handler:
-        handler(args, run_config, processor)
+        await handler(args, run_config, processor)
     else:
         error_console.print(f"[red]Unknown command: /{command}[/red]")
 
@@ -384,19 +426,43 @@ async def run_interactive_chat(
                 if not user_input.strip():
                     continue
                 if user_input.startswith("/"):
-                    if _handle_slash_command(user_input, run_config, processor):
+                    if await _handle_slash_command(user_input, run_config, processor):
                         break
                     continue
 
+                # Unified History: Get ChatService and Session
+                chat_service = run_config.get("chat_service")
+                session_id = run_config.get("session_id", "default")
+                history = []
+
+                if chat_service:
+                    # Fetch history
+                    history_result = await chat_service.get_session_history(session_id)
+                    history = history_result.unwrap() if isinstance(history_result, Success) else []
+                    
+                    # Save user input
+                    await chat_service.add_message_to_history(session_id, "user", user_input)
+
                 with console.status("[bold green]Assistant is thinking..."):
-                    response_result = await processor.arun(user_input)
+                    response_result = await processor.arun(user_input, history=history)
 
                 match response_result:
                     case Success(response):
                         if response:
+                            content = response.get("content", "")
                             # TODO: Add back streaming support
                             # TODO: Add back TTS support
-                            console.print(Markdown(response.get("content", "")))
+                            console.print(Markdown(content))
+                            
+                            # Save assistant response
+                            if chat_service:
+                                await chat_service.add_message_to_history(
+                                    session_id, 
+                                    "assistant", 
+                                    content,
+                                    tool_calls=response.get("tool_calls")
+                                )
+
                             if response.get("tool_calls"):
                                 console.print(
                                     Panel(
@@ -450,7 +516,7 @@ def _build_run_config(options: CliOptions) -> Tuple[Dict[str, Any], Dict[str, An
         "backend": options.backend or session_config.get("backend"),
         "system": options.system or session_config.get("system"),
         "tools": session_config.get("tools"),
-        "framework": options.framework,
+        "framework": options.framework or session_config.get("framework", "agno"),
         "active_tts_task": None,  # This is a client-side concern
     }
     return run_config, session_config, session_to_use, app_config
@@ -460,36 +526,31 @@ def _setup_standalone_processor(
     run_config: Dict[str, Any],
     session_to_use: str,
     quiet: bool
-) -> Processor:
+) -> Tuple[Processor, ChatService]:
     """Sets up the processor for standalone execution."""
     # Perform backend-specific checks
+    enable_tools = True
     if run_config.get("backend") == "ollama":
         has_tools = _initialize_ollama_check(run_config["model"], quiet)
         if not has_tools:
-            # warn but do not disable tools,
-            # as some custom models might support them without explicit modelfile tags
-            pass
+            # Explicitly disable tools for this session to avoid API errors (400)
+            enable_tools = False
+            if not quiet:
+                 console.print(f"[yellow]Warning: Tools disabled for model '{run_config['model']}'.[/yellow]")
 
     # This config is passed to the adapter constructor
     adapter_config = run_config.copy()
     adapter_config["session_id"] = session_to_use
+    adapter_config["enable_tools"] = enable_tools # Pass the flag explicitly
 
-    processor: Processor
-    framework = run_config.get("framework", "agno")
-    if framework == "pydantic_ai":
-        if HAS_PYDANTIC_AI:
-            # PydanticAI adapter is still experimental
-            console.print("[dim]Using Pydantic AI framework[/dim]")
-            processor = PydanticAIAdapter(agent_config=adapter_config)
-        else:
-            error_console.print(
-                "[yellow]Warning: 'pydantic-ai' not installed or import failed. Falling back to Agno.[/yellow]"
-            )
-            processor = AgnoAdapter(agent_config=adapter_config)
-    else:
-        processor = AgnoAdapter(agent_config=adapter_config)
-    
-    return processor
+    chat_service = ChatService()
+    processor_result = chat_service.create_processor(adapter_config, session_to_use)
+
+    if isinstance(processor_result, Failure):
+        error_console.print(f"[bold red]Error initializing agent: {processor_result.failure()}[/bold red]")
+        sys.exit(1)
+
+    return processor_result.unwrap(), chat_service
 
 
 async def async_run_standalone(options: CliOptions) -> None:
@@ -508,17 +569,35 @@ async def async_run_standalone(options: CliOptions) -> None:
             f"backend: [bold]{run_config['backend']}[/bold][/dim]"
         )
 
-    processor = _setup_standalone_processor(run_config, session_to_use, options.quiet)
+    processor, chat_service = _setup_standalone_processor(run_config, session_to_use, options.quiet)
+    run_config["chat_service"] = chat_service
 
     if options.prompt:
         # Single-shot mode
+        # Fetch history first? arun now accepts history
+        history_result = await chat_service.get_session_history(session_to_use)
+        history = history_result.unwrap() if isinstance(history_result, Success) else []
+        
+        # Save user message
+        await chat_service.add_message_to_history(session_to_use, "user", options.prompt)
+
         with console.status("[bold green]Assistant is thinking..."):
-            result = await processor.arun(options.prompt)
+            result = await processor.arun(options.prompt, history=history)
 
         if isinstance(result, Success):
             response_payload = result.unwrap()
             if response_payload:
-                console.print(Markdown(response_payload.get("content", "")))
+                content = response_payload.get("content", "")
+                console.print(Markdown(content))
+                
+                # Save assistant response
+                await chat_service.add_message_to_history(
+                    session_to_use, 
+                    "assistant", 
+                    content,
+                    tool_calls=response_payload.get("tool_calls")
+                )
+    
         elif isinstance(result, Failure):
             error_console.print(f"[red]Error: {result.failure()}[/red]")
         await processor.close()
@@ -608,10 +687,10 @@ async def async_main_client(options: CliOptions) -> None: # noqa: PLR0912
 @click.option("-m", "--model", default=None, help="ID of the model to use.",
               cls=SectionedOption, section="AI Configuration")
 @click.option("-b", "--backend", default=None,
-              type=click.Choice(["ollama", "gemini", "anthropic", "openai", "groq"]),
+              type=click.Choice(["ollama", "gemini", "anthropic", "openai", "groq", "local"]),
               help="The backend to use.",
               cls=SectionedOption, section="AI Configuration")
-@click.option("-f", "--framework", default="agno",
+@click.option("-f", "--framework", default=None,
               type=click.Choice(["agno", "pydantic_ai"]), help="Specify the AI framework to use.",
               cls=SectionedOption, section="AI Configuration")
 # Section: Output Formatting
@@ -632,7 +711,9 @@ async def async_main_client(options: CliOptions) -> None: # noqa: PLR0912
 @click.option("--session", "session_override", default=None,
               help="Run in a specific session for this command only.",
               cls=SectionedOption, section="Session & Debugging")
-@click.option("--debug", is_flag=True, help="Enable debug logging.",
+@click.option("--log-level", "log_level_opt", default=None,
+              type=click.Choice(["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"], case_sensitive=False),
+              help="Set the logging level.",
               cls=SectionedOption, section="Session & Debugging")
 @click.option("--config", "config_path", default=None,
               help="Path to a custom configuration file.",
@@ -647,10 +728,22 @@ def cli(ctx: click.Context, **kwargs: Any) -> None: # noqa: ANN401
     Use '--connect' to connect to a server.
     Use 'rai serve' to run a server.
     """
+    # Load environment variables from .env file
+    from dotenv import load_dotenv
+    load_dotenv()
+
     ctx.obj = kwargs
 
     # Configure logging globally for all commands (standalone, client, serve)
-    log_level = logging.DEBUG if kwargs.get("debug") else getattr(logging, os.getenv("LOG_LEVEL", "INFO").upper(), logging.INFO)
+    # Precedence: CLI --log-level > RAI_LOG_LEVEL > Default (INFO)
+    
+    # 1. Determine level string
+    level_str = kwargs.get("log_level_opt")
+    if not level_str:
+        level_str = os.getenv("RAI_LOG_LEVEL", "INFO")
+    
+    # 2. Convert to logging constant
+    log_level = getattr(logging, level_str.upper(), logging.INFO)
 
     # Silence noisy libraries
     logging.getLogger("httpx").setLevel(logging.WARNING)

@@ -11,7 +11,7 @@ from pydantic import BaseModel, ValidationError
 from returns.result import Failure, Success
 
 from .. import config_manager
-from ..engine import run_chain, stream_chain
+from ..services.chat import ChatService
 from ..dependencies import get_config, get_model_registry
 from ..services.model_registry import ModelRegistry
 
@@ -57,10 +57,12 @@ async def execute_chain(
     """
     Runs a chain of agents with the given input and configurations.
     """
-    result = await run_chain(
+    chat_service = ChatService()
+    result = await chat_service.run_chain(
         chain_input=request.chain_input,
         chain_configs=request.chain_configs,
-        app_config=app_config
+        session_id=request.session_id,
+        context=request.context,
     )
 
     match result:
@@ -104,11 +106,12 @@ async def stream_chain_endpoint(
     Streams the result of a chain execution using Server-Sent Events (SSE).
     """
     async def event_generator() -> AsyncGenerator[str, None]:
-        async for chunk in stream_chain(
+        chat_service = ChatService()
+        async for chunk in chat_service.stream_chain(
             chain_input=request.chain_input,
             chain_configs=request.chain_configs,
             session_id=request.session_id,
-            app_config=app_config
+            context=request.context,
         ):
             if isinstance(chunk, Failure):
                 # Send error as a specific event or data
@@ -179,11 +182,12 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
                 await websocket.send_json({"status": "error", "detail": e.errors()})
                 continue
 
-            result = await run_chain(
+            chat_service = ChatService()
+            result = await chat_service.run_chain(
                 chain_input=request.chain_input,
                 chain_configs=request.chain_configs,
                 session_id=request.session_id,
-                app_config=app_config
+                context=request.context,
             )
 
             match result:

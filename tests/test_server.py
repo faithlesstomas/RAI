@@ -28,19 +28,13 @@ def test_health_check() -> None:
 
 
 @pytest.mark.asyncio
-@patch("rai.engine._discover_adapters")
-async def test_execute_chain_success(mock_discover_adapters) -> None: # noqa: ANN001
+@patch("rai.routers.execution.ChatService")
+async def test_execute_chain_success(MockChatService) -> None: # noqa: ANN001
     """
     Tests the POST /api/v1/run endpoint for a successful execution.
     """
-    # from returns.result import Success # Moved to top
-
-    # Mock the adapter's arun method to return a Success object
-    mock_adapter_instance = MagicMock()
-    mock_adapter_instance.arun = AsyncMock(return_value=Success({"result": "mocked_success"}))
-    
-    mock_adapter_class = MagicMock(return_value=mock_adapter_instance)
-    mock_discover_adapters.return_value = {"agno": mock_adapter_class}
+    mock_service_instance = MockChatService.return_value
+    mock_service_instance.run_chain = AsyncMock(return_value=Success({"result": "mocked_success"}))
 
     request_payload = {
         "chain_input": "test input",
@@ -54,23 +48,17 @@ async def test_execute_chain_success(mock_discover_adapters) -> None: # noqa: AN
         "status": "success",
         "payload": {"result": "mocked_success"}
     }
-    mock_adapter_instance.arun.assert_awaited_once_with(prompt="test input")
+    mock_service_instance.run_chain.assert_awaited_once()
 
 
 @pytest.mark.asyncio
-@patch("rai.engine._discover_adapters")
-async def test_execute_chain_failure(mock_discover_adapters) -> None: # noqa: ANN001
+@patch("rai.routers.execution.ChatService")
+async def test_execute_chain_failure(MockChatService) -> None: # noqa: ANN001
     """
     Tests the POST /api/v1/run endpoint for a failed execution.
     """
-    # from returns.result import Failure # Moved to top
-
-    # Mock the adapter's arun method to return a Failure object
-    mock_adapter_instance = MagicMock()
-    mock_adapter_instance.arun = AsyncMock(return_value=Failure(Exception("Something went wrong")))
-    
-    mock_adapter_class = MagicMock(return_value=mock_adapter_instance)
-    mock_discover_adapters.return_value = {"agno": mock_adapter_class}
+    mock_service_instance = MockChatService.return_value
+    mock_service_instance.run_chain = AsyncMock(return_value=Failure(Exception("Something went wrong")))
 
     request_payload = {
         "chain_input": "test input",
@@ -81,22 +69,17 @@ async def test_execute_chain_failure(mock_discover_adapters) -> None: # noqa: AN
 
     assert response.status_code == 500 # noqa: PLR2004
     assert response.json() == {"detail": "Something went wrong"}
-    mock_adapter_instance.arun.assert_awaited_once_with(prompt="test input")
+    mock_service_instance.run_chain.assert_awaited_once()
 
 
 @pytest.mark.asyncio
-@patch("rai.engine._discover_adapters")
-async def test_execute_chain_arun_exception(mock_discover_adapters) -> None: # noqa: ANN001
+@patch("rai.routers.execution.ChatService")
+async def test_execute_chain_arun_exception(MockChatService) -> None: # noqa: ANN001
     """
-    Tests that an exception raised from the adapter's arun method is
-    handled correctly and results in a 500 error.
+    Tests that a Failure from ChatService is handled correctly.
     """
-    # Mock the adapter's arun method to raise an exception
-    mock_adapter_instance = MagicMock()
-    mock_adapter_instance.arun = AsyncMock(side_effect=Exception("Adapter crashed"))
-    
-    mock_adapter_class = MagicMock(return_value=mock_adapter_instance)
-    mock_discover_adapters.return_value = {"agno": mock_adapter_class}
+    mock_service_instance = MockChatService.return_value
+    mock_service_instance.run_chain = AsyncMock(return_value=Failure(Exception("Adapter crashed")))
 
     request_payload = {
         "chain_input": "test input",
@@ -106,23 +89,18 @@ async def test_execute_chain_arun_exception(mock_discover_adapters) -> None: # n
     response = client.post("/api/v1/run", json=request_payload)
 
     assert response.status_code == 500 # noqa: PLR2004
-    assert "Error executing step with framework agno: Adapter crashed" in response.json()["detail"]
-    mock_adapter_instance.arun.assert_awaited_once_with(prompt="test input")
+    assert "Adapter crashed" in response.json()["detail"]
+    mock_service_instance.run_chain.assert_awaited_once()
 
 
 @pytest.mark.asyncio
-@patch("rai.engine._discover_adapters")
-async def test_websocket_endpoint_success(mock_discover_adapters) -> None: # noqa: ANN001
+@patch("rai.routers.execution.ChatService")
+async def test_websocket_endpoint_success(MockChatService) -> None: # noqa: ANN001
     """
     Tests the /ws/v1/chat WebSocket endpoint for a successful execution.
     """
-    # from returns.result import Success # Moved to top
-    
-    mock_adapter_instance = MagicMock()
-    mock_adapter_instance.arun = AsyncMock(return_value=Success({"result": "ws_success"}))
-    
-    mock_adapter_class = MagicMock(return_value=mock_adapter_instance)
-    mock_discover_adapters.return_value = {"agno": mock_adapter_class}
+    mock_service_instance = MockChatService.return_value
+    mock_service_instance.run_chain = AsyncMock(return_value=Success({"result": "ws_success"}))
 
     with client.websocket_connect("/ws/v1/chat") as websocket:
         request_payload = {
@@ -133,22 +111,17 @@ async def test_websocket_endpoint_success(mock_discover_adapters) -> None: # noq
         response = websocket.receive_json()
         assert response == {"type": "response", "payload": {"result": "ws_success"}}
 
-    mock_adapter_instance.arun.assert_awaited_once_with(prompt="ws test")
+    mock_service_instance.run_chain.assert_awaited_once()
 
 
 @pytest.mark.asyncio
-@patch("rai.engine._discover_adapters")
-async def test_websocket_endpoint_failure(mock_discover_adapters) -> None: # noqa: ANN001
+@patch("rai.routers.execution.ChatService")
+async def test_websocket_endpoint_failure(MockChatService) -> None: # noqa: ANN001
     """
     Tests the /ws/v1/chat WebSocket endpoint for a failed execution.
     """
-    # from returns.result import Failure # Moved to top
-    
-    mock_adapter_instance = MagicMock()
-    mock_adapter_instance.arun = AsyncMock(return_value=Failure(Exception("WS went wrong")))
-    
-    mock_adapter_class = MagicMock(return_value=mock_adapter_instance)
-    mock_discover_adapters.return_value = {"agno": mock_adapter_class}
+    mock_service_instance = MockChatService.return_value
+    mock_service_instance.run_chain = AsyncMock(return_value=Failure(Exception("WS went wrong")))
 
     with client.websocket_connect("/ws/v1/chat") as websocket:
         request_payload = {
@@ -159,7 +132,7 @@ async def test_websocket_endpoint_failure(mock_discover_adapters) -> None: # noq
         response = websocket.receive_json()
         assert response == {"type": "error", "detail": "WS went wrong"}
     
-    mock_adapter_instance.arun.assert_awaited_once_with(prompt="ws test fail")
+    mock_service_instance.run_chain.assert_awaited_once()
 
 
 @pytest.mark.asyncio

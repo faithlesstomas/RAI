@@ -46,7 +46,11 @@ class AgnoAdapter:  # pylint: disable=too-few-public-methods
             system_prompt += f"\n\nContext:\n{json.dumps(context, indent=2)}"
 
         use_markdown = run_config.get("markdown", not run_config.get("stream", False))
-        enable_tools = enabled_tool_names is not None or backend != "ollama"
+        
+        # Use config-provided flag or fall back to default logic
+        enable_tools = run_config.get("enable_tools")
+        if enable_tools is None:
+             enable_tools = enabled_tool_names is not None or backend != "ollama"
 
         # Validate environment using Core
         model_config, _ = validate_model_env(
@@ -87,6 +91,32 @@ class AgnoAdapter:  # pylint: disable=too-few-public-methods
 
     def _instantiate_model(self, backend: str, config: Dict[str, Any]) -> Any:  # noqa: ANN401
         """Instantiates the Agno model object based on validated config."""
+
+        # 1. Handle Local Inference (IREE / Llama.cpp)
+        if backend == "local" or config.get("model_id", "").endswith((".vmfb", ".gguf", ".onnx")):
+             # Lazy import to avoid circular dependencies if any
+            try:
+                from ..inference import load_local_model  # noqa: PLC0415
+                from ..inference.bridges import LocalAgnoModel  # noqa: PLC0415
+                from returns.result import Failure  # noqa: PLC0415
+
+                model_path = config["model_id"]
+                # We can pass explicit backend if needed, e.g. config.get("engine")
+                engine_result = load_local_model(model_path)
+
+                if isinstance(engine_result, Failure):
+                    raise engine_result.failure()
+
+                engine = engine_result.unwrap()
+                return LocalAgnoModel(
+                    id=model_path,
+                    engine=engine,
+                    name=config.get("model", "local-model")
+                )
+            except Exception as e: # pylint: disable=broad-except
+                error_console.print(f"[bold red]ERROR: Failed to load local model: {e}[/bold red]")
+                sys.exit(1)
+
         model_map = {
             "ollama": "agno.models.ollama.Ollama",
             "gemini": "agno.models.google.Gemini",
@@ -126,7 +156,12 @@ class AgnoAdapter:  # pylint: disable=too-few-public-methods
                 )
             sys.exit(1)
 
-    async def arun(self, prompt: str, session_id: Optional[str] = None) -> Result[Dict[str, Any], Exception]:
+    async def arun(
+        self, 
+        prompt: str, 
+        session_id: Optional[str] = None, 
+        history: Optional[List[Dict[str, Any]]] = None
+    ) -> Result[Dict[str, Any], Exception]:
         """
         Runs a chat interaction using a session-specific Agno agent.
         """
@@ -136,11 +171,28 @@ class AgnoAdapter:  # pylint: disable=too-few-public-methods
 
             # Determine session_id
             target_session_id = session_id or self.config.get("session_id", "default-session")
-
             agent = self._get_or_create_agent(target_session_id)
 
+            # Inject history if provided (Unified History Support)
+            final_prompt = prompt
+            if history:
+                history_text = "\n".join(
+                     f"{msg['role'].capitalize()}: {msg['content']}" 
+                     for msg in history 
+                     if msg.get('role') in ['user', 'assistant']
+                )
+                if history_text:
+                    final_prompt = (
+                        f"Below is the conversation history so far. Use it as context.\n\n"
+                        f"{history_text}\n\n"
+                        f"User: {prompt}"
+                    )
+                # Note: Agno might already wrap the prompt as "User: ...", so we just provide context.
+                # Actually, if we change the prompt completely, Agno treats it as the new user message.
+                # This works for statelessness since Agno's internal memory for this specific 'message' is fresh.
+
             # Ensure we are using the latest model/tools if reload happened (re-creation handles this)
-            ai_response = await agent.arun(prompt)
+            ai_response = await agent.arun(final_prompt)
 
             # Handle potential list content from multimodal responses
             content = ai_response.content if ai_response else ""
@@ -183,7 +235,7 @@ class AgnoAdapter:  # pylint: disable=too-few-public-methods
         logger.debug("Reloading AgnoAdapter configuration (clearing agent cache)...")
         self.agents.clear()
 
-    async def astream(self, prompt: str) -> AsyncIterator[Any]:
+    async def astream(self, prompt: str, history: Optional[List[Dict[str, Any]]] = None) -> AsyncIterator[Any]:
         """
         Streams the chat interaction using the pre-configured Agno agent.
         """
@@ -306,7 +358,7 @@ class AgnoAdapter:  # pylint: disable=too-few-public-methods
         """Clean up resources, like closing the model client."""
         # Close all agents
         for agent in self.agents.values():
-            if hasattr(agent, "model"):
+            if hasattr(agent, "model") and hasattr(agent.model, "get_client"):
                 client = agent.model.get_client()
                 if client and hasattr(client, "aio") and hasattr(client.aio, "aclose"):
                     await client.aio.aclose()
