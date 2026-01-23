@@ -196,6 +196,10 @@ def check_model_tool_support(model_id: str) -> bool:
             "tool_use",             # Explicit parameter
             "{{ .Tools",            # Template variable (standard)
             "{{.Tools",             # Template variable (standard)
+            "{{ $.Tools",           # Template variable (with global context)
+            "{{$.Tools",            # Template variable (with global context)
+            "{{- if .Tools",        # Conditional check (standard)
+            "{{- if $.Tools",       # Conditional check (global)
             "PARSER functiongemma", # specialized parser
             "RENDERER functiongemma" # specialized renderer
         ]
