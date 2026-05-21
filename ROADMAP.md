@@ -104,6 +104,7 @@ This frees RAI from maintaining core AI execution code, allowing full focus on:
 *   [ ] **Guix Alternative:** Provide a fallback option for `guix shell --container` environments to guarantee reproducible, isolated tool executions.
 *   [ ] **Safety Guardrails:** Implement high-level system prompt checks and verification constraints on the server before executing potentially destructive command outputs.
 *   [ ] **Model Context Protocol (MCP) Gateway:** Implement a standard JSON-RPC MCP server endpoint (e.g. using the python-mcp SDK) in `rai serve` to securely expose local OS-level tools to external orchestrators and standalone Antigravity CLI.
+*   [ ] **Human-in-the-Loop (HITL) Consent Mechanism:** Implement a centralized transaction authorization layer in the server daemon to intercept high-risk or unsandboxed actions, suspend tool execution asynchronously, and prompt the user for approval via active client WebSockets or native D-Bus desktop dialogs.
 
 ### Phase 4: Multi-Client Ecosystem
 *   [ ] **CLI Stabilization:** Standardize CLI output with beautiful options (`--table` / `--details` / `--json`) and clean interactive prompts.
