@@ -6,7 +6,7 @@ from fastapi.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 from dotenv import load_dotenv
 
-from .routers import agents, execution, history
+from .routers import agents, execution, history, mcp
 
 load_dotenv()
 
@@ -30,6 +30,7 @@ app.add_middleware(
 app.include_router(agents.router)
 app.include_router(history.router)
 app.include_router(execution.router)
+app.include_router(mcp.router)
 
 # --- Global Endpoints ---
 
