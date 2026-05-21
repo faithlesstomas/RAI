@@ -8,7 +8,7 @@ from returns.result import Failure, Result, Success
 
 from google.antigravity import Agent, LocalAgentConfig
 from rai.core import setup_tools
-from rai.config_manager import load_config
+from rai.config_manager import load_config, load_agents
 from rai.exceptions import ChainExecutionError
 from rai.services.history import HistoryService
 
@@ -25,8 +25,14 @@ class ChatService:
     def _resolve_agent_config(
         self,
         chain_configs: Optional[List[Dict[str, Any]]] = None,
+        agent_id: Optional[str] = None,
     ) -> Dict[str, Any]:
-        """Resolves agent configuration from either overrides or system config."""
+        """Resolves agent configuration from either explicit agent_id, overrides, or system config."""
+        if agent_id:
+            agents = load_agents()
+            if agent_id in agents:
+                return agents[agent_id]
+
         if chain_configs and len(chain_configs) > 0:
             # First element contains overrides (e.g. from CLI or API request)
             return chain_configs[0]
@@ -41,6 +47,7 @@ class ChatService:
         chain_configs: Optional[List[Dict[str, Any]]] = None,
         session_id: Optional[str] = None,
         context: Optional[Dict[str, Any]] = None,
+        agent_id: Optional[str] = None,
     ) -> Result[Dict[str, Any], Exception]:
         """
         Runs a stateful agent execution turn with the Antigravity SDK.
@@ -49,7 +56,7 @@ class ChatService:
             return Failure(ValueError("Missing input."))
 
         final_session_id = session_id or str(uuid.uuid4())
-        agent_config = self._resolve_agent_config(chain_configs)
+        agent_config = self._resolve_agent_config(chain_configs, agent_id)
 
         # Retrieve user history in RAI history database
         await self._history_service.add_message(final_session_id, "user", chain_input)
@@ -109,6 +116,7 @@ class ChatService:
         chain_configs: Optional[List[Dict[str, Any]]] = None,
         session_id: Optional[str] = None,
         context: Optional[Dict[str, Any]] = None,
+        agent_id: Optional[str] = None,
     ) -> AsyncIterator[Any]:
         """
         Streams agent execution token deltas.
@@ -118,7 +126,7 @@ class ChatService:
             return
 
         final_session_id = session_id or str(uuid.uuid4())
-        agent_config = self._resolve_agent_config(chain_configs)
+        agent_config = self._resolve_agent_config(chain_configs, agent_id)
 
         # Record user query in history
         await self._history_service.add_message(final_session_id, "user", chain_input)

@@ -33,20 +33,89 @@ from rich.panel import Panel
 from rich.table import Table
 from rich.rule import Rule
 # from websockets.exceptions import ConnectionClosed, WebSocketException
-from returns.result import Success, Failure
+from returns.result import Success, Failure, Result
 
 from . import config_manager
-from .adapters.agno import AgnoAdapter
-from .adapters.base import Processor
-from .adapters.ws_client import WebSocketAdapter
-try:
-    from .adapters.pydantic_ai import PydanticAIAdapter
-    HAS_PYDANTIC_AI = True
-except ImportError:
-    HAS_PYDANTIC_AI = False
-
 from .core import console, error_console
 from .services.chat import ChatService
+from typing import Union
+
+class LocalProcessor:
+    """Processor running agent executions locally inside the CLI process via google-antigravity."""
+    def __init__(self, run_config: Dict[str, Any], session_name: str) -> None:
+        self.run_config = run_config
+        self.session_name = session_name
+        self.chat_service = ChatService()
+
+    async def arun(self, prompt: str, history: Optional[List[Dict[str, Any]]] = None) -> Result[Dict[str, Any], Exception]:
+        return await self.chat_service.run_chain(
+            chain_input=prompt,
+            chain_configs=[self.run_config],
+            session_id=self.session_name,
+        )
+
+    def reload(self) -> None:
+        pass
+
+    async def close(self) -> None:
+        pass
+
+
+class ClientProcessor:
+    """Processor running agent executions remotely by talking to the 'rai serve' daemon."""
+    def __init__(self, run_config: Dict[str, Any], session_name: str, server_uri: str) -> None:
+        self.run_config = run_config
+        self.session_name = session_name
+        self.server_uri = server_uri
+        self.base_url = server_uri.replace("ws://", "http://").replace("wss://", "https://").split("/ws/")[0]
+        self.transport = None
+        if server_uri.startswith("unix://"):
+            uds_path = server_uri[len("unix://") :]
+            self.transport = httpx.AsyncHTTPTransport(uds=uds_path)
+            self.base_url = "http://localhost"
+        self.client = httpx.AsyncClient(transport=self.transport, base_url=self.base_url, timeout=60)
+        self.stateful_session_id = None
+
+    async def connect(self) -> Result[None, Exception]:
+        try:
+            response = await self.client.get("/api/v1/models")
+            response.raise_for_status()
+            return Success(None)
+        except Exception as e:
+            error_console.print(
+                "[bold red]Connection Error:[/bold red]"
+                f" Could not connect to the rai server at {self.server_uri}. Error: {e}"
+            )
+            return Failure(e)
+
+    async def arun(self, prompt: str, history: Optional[List[Dict[str, Any]]] = None) -> Result[Dict[str, Any], Exception]:
+        payload = {
+            "prompt": prompt,
+            "agent_id": self.session_name,
+            "session_id": self.stateful_session_id,
+            "chain_configs": [self.run_config],
+        }
+        try:
+            response = await self.client.post("/api/v1/run", json=payload)
+            response.raise_for_status()
+            data = response.json()
+            if data.get("status") == "success":
+                payload_data = data.get("payload", {})
+                self.stateful_session_id = payload_data.get("session_id")
+                return Success(payload_data)
+            else:
+                return Failure(Exception(data.get("detail", "Server error")))
+        except Exception as e:
+            return Failure(e)
+
+    def reload(self) -> None:
+        pass
+
+    async def close(self) -> None:
+        await self.client.aclose()
+
+
+Processor = Union[LocalProcessor, ClientProcessor]
 
 # from .exceptions import ChainExecutionError
 # from .tts import TTS, resolve_voice_path
@@ -190,7 +259,7 @@ def check_model_tool_support(model_id: str) -> bool:
     """Checks if the specified Ollama model supports tool use."""
     try:
         details = ollama.show(model_id)
-        modelfile = details.get("modelfile", "")
+        modelfile = str(details.get("modelfile", "") or "")
         # Robust check for tool support indicators
         indicators = [
             "tool_use",             # Explicit parameter
@@ -530,7 +599,7 @@ def _setup_standalone_processor(
     run_config: Dict[str, Any],
     session_to_use: str,
     quiet: bool
-) -> Tuple[Processor, ChatService]:
+) -> Tuple[LocalProcessor, ChatService]:
     """Sets up the processor for standalone execution."""
     # Perform backend-specific checks
     enable_tools = True
@@ -542,19 +611,14 @@ def _setup_standalone_processor(
             if not quiet:
                  console.print(f"[yellow]Warning: Tools disabled for model '{run_config['model']}'.[/yellow]")
 
-    # This config is passed to the adapter constructor
-    adapter_config = run_config.copy()
-    adapter_config["session_id"] = session_to_use
-    adapter_config["enable_tools"] = enable_tools # Pass the flag explicitly
+    # Filter out tools if they are explicitly disabled
+    updated_config = run_config.copy()
+    if not enable_tools:
+        updated_config["tools"] = []
 
     chat_service = ChatService()
-    processor_result = chat_service.create_processor(adapter_config, session_to_use)
-
-    if isinstance(processor_result, Failure):
-        error_console.print(f"[bold red]Error initializing agent: {processor_result.failure()}[/bold red]")
-        sys.exit(1)
-
-    return processor_result.unwrap(), chat_service
+    processor = LocalProcessor(updated_config, session_to_use)
+    return processor, chat_service
 
 
 async def async_run_standalone(options: CliOptions) -> None:
@@ -613,7 +677,7 @@ async def async_run_standalone(options: CliOptions) -> None:
 async def async_main_client(options: CliOptions) -> None: # noqa: PLR0912
     # pylint: disable=too-many-branches
     """The main entry point for the CLI in client mode."""
-    run_config, _, _, _ = _build_run_config(options)
+    run_config, _, session_to_use, _ = _build_run_config(options)
 
     # Determine server URI
     uri = options.connect_uri
@@ -658,19 +722,16 @@ async def async_main_client(options: CliOptions) -> None: # noqa: PLR0912
         except Exception as e: # pylint: disable=broad-exception-caught # pylint: disable=broad-exception-caught # pylint: disable=broad-exception-caught
             error_console.print(f"[bold red]An unexpected client error occurred:[/bold red]\n{e}")
     else:
-        # Interactive mode using WebSocket
-        adapter_config = run_config.copy()
-        adapter_config["server_uri"] = uri
-        processor = WebSocketAdapter(agent_config=adapter_config)
+        # Interactive mode using ClientProcessor
+        processor = ClientProcessor(
+            run_config=run_config,
+            session_name=session_to_use,
+            server_uri=uri
+        )
 
         # Eagerly connect to the server before starting the interactive chat.
-        if not isinstance(processor, WebSocketAdapter):
-             # This should not happen, but it's a good practice to check
-            error_console.print("[red]Error: Invalid processor for client mode.[/red]")
-            return
         connect_result = await processor.connect()
         if isinstance(connect_result, Failure):
-            # The connect method in the adapter is responsible for printing the error.
             return  # Exit gracefully
 
         await run_interactive_chat(processor, run_config, options)
@@ -760,18 +821,7 @@ def cli(ctx: click.Context, **kwargs: Any) -> None: # noqa: ANN401
         handlers=[RichHandler(console=console, rich_tracebacks=True)]
     )
 
-    # Force 'agno' logger to use our Rich configuration
-    logging.getLogger("agno").handlers = []
-    logging.getLogger("agno").propagate = True
-
-    # Try to clean up agno.utils.log if imported
-    try:
-        # pylint: disable=import-outside-toplevel
-        from agno.utils.log import logger as agno_log # noqa: PLC0415
-        agno_log.handlers = []
-        agno_log.propagate = True
-    except ImportError:
-        pass    # This logic replaces the old invoke_without_command behavior
+    # Agno loggers and handlers are no longer needed as the library is deprecated.
     if ctx.invoked_subcommand is None:
         if not kwargs.get("prompt") and not sys.stdin.isatty():
             kwargs["prompt"] = sys.stdin.read().strip()

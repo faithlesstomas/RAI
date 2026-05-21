@@ -216,26 +216,26 @@ async def test_run_interactive_chat_success(mock_console_print, mock_prompt_sess
     mock_processor.close.assert_awaited_once()
 
 
-@patch("rai.cli.AgnoAdapter", autospec=True)
+@patch("rai.cli.LocalProcessor", autospec=True)
 @patch("rai.cli.console.print")
 @patch("rai.cli._setup_standalone_processor")
 @patch("rai.cli._build_run_config")
 async def test_async_run_standalone_one_shot_success(
-    mock_build_run_config, mock_setup_processor, mock_console_print, MockAgnoAdapter
+    mock_build_run_config, mock_setup_processor, mock_console_print, MockLocalProcessor
 ) -> None:
     """Test async_run_standalone in one-shot mode with a successful response."""
     mock_build_run_config.return_value = ({}, {}, "default", {})
     
-    mock_adapter_instance = MockAgnoAdapter.return_value
-    mock_adapter_instance.arun = AsyncMock(return_value=Success({"content": "Standalone one-shot response"}))
-    mock_adapter_instance.close = AsyncMock()
+    mock_processor_instance = MockLocalProcessor.return_value
+    mock_processor_instance.arun = AsyncMock(return_value=Success({"content": "Standalone one-shot response"}))
+    mock_processor_instance.close = AsyncMock()
     
     mock_chat_service = MagicMock()
     mock_chat_service.get_session_history = AsyncMock(return_value=Success([]))
     mock_chat_service._history_service.add_message = AsyncMock(return_value=Success(None))
     mock_chat_service.add_message_to_history = AsyncMock(return_value=Success(None))
 
-    mock_setup_processor.return_value = (mock_adapter_instance, mock_chat_service)
+    mock_setup_processor.return_value = (mock_processor_instance, mock_chat_service)
 
     options = rai_cli.CliOptions(prompt="test prompt")
     await rai_cli.async_run_standalone(options)
@@ -246,8 +246,7 @@ async def test_async_run_standalone_one_shot_success(
     mock_chat_service.add_message_to_history.assert_awaited()
     
     # Verify arun called with history
-    mock_adapter_instance.arun.assert_awaited_once() 
-    # assert_awaited_once_with("test prompt", history=[]) # arguments might vary slightly
+    mock_processor_instance.arun.assert_awaited_once() 
 
     # Find the call to print with the Markdown object
     found_markdown = False
@@ -258,4 +257,4 @@ async def test_async_run_standalone_one_shot_success(
             break
     assert found_markdown, "Markdown response was not printed"
 
-    mock_adapter_instance.close.assert_awaited_once()
+    mock_processor_instance.close.assert_awaited_once()

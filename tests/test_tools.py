@@ -37,7 +37,7 @@ class TestSendNotification:
 
         summary = "Test Summary"
         body = "Test Body"
-        result = send_notification.entrypoint(summary=summary, body=body)
+        result = send_notification(summary=summary, body=body)
 
         mock_bus.get.assert_called_once_with(
             "org.freedesktop.Notifications", "/org/freedesktop/Notifications"
@@ -48,7 +48,7 @@ class TestSendNotification:
     @patch('rai.tools.gnome.pydbus.SessionBus', side_effect=Exception("DBus error"))
     def test_send_notification_failure(self, _mock_session_bus: MagicMock) -> None:
         """Test failure in sending notification due to DBus error."""
-        result = send_notification.entrypoint(summary="Test", body="Test")
+        result = send_notification(summary="Test", body="Test")
         assert "Failed to send notification: DBus error." in result
 
 
@@ -69,7 +69,7 @@ class TestTakeScreenshot:
         mock_b64.return_value.decode.return_value = "fake_base64_string"
 
         with patch('rai.tools.gnome.os.path.join', return_value='/tmp/s.png'):
-            result = take_screenshot.entrypoint(delay=0)
+            result = take_screenshot(delay=0)
             result_json = json.loads(result)
 
             mock_run.assert_called_once_with(
@@ -86,7 +86,7 @@ class TestTakeScreenshot:
     def test_capture_fails(self, mock_run: MagicMock) -> None:
         """Test failure when the screenshot command itself fails."""
         mock_run.side_effect = CalledProcessError(1, "cmd", stderr="Error")
-        result = take_screenshot.entrypoint(delay=0)
+        result = take_screenshot(delay=0)
         result_json = json.loads(result)
         assert result_json["status"] == "error"
         assert "Failed to take screenshot" in result_json["message"]
@@ -95,7 +95,7 @@ class TestTakeScreenshot:
     @patch('rai.tools.gnome.subprocess.run')
     def test_file_not_found(self, _mock_run: MagicMock, _mock_exists: MagicMock) -> None:
         """Test failure when the screenshot file is not found after capture."""
-        result = take_screenshot.entrypoint(delay=0)
+        result = take_screenshot(delay=0)
         result_json = json.loads(result)
         assert result_json["status"] == "error"
         assert "Screenshot file not found" in result_json["message"]
@@ -110,4 +110,4 @@ class TestWeather:
         """Test weather tool with a DBus connection error."""
         mock_session_bus.side_effect = Exception("DBus connection error")
         with pytest.raises(Exception, match="DBus connection error"):
-            weather.entrypoint(location="Warsaw")
+            weather(location="Warsaw")
