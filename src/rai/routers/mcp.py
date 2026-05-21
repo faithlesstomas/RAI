@@ -141,3 +141,14 @@ async def mcp_messages(request: Request) -> None:
     await sse_transport.handle_post_message(
         request.scope, request.receive, request._send
     )
+
+
+@router.post("/sse")
+async def mcp_post_sse(request: Request) -> None:
+    """
+    Fallback POST endpoint if client sends message to the main SSE endpoint instead of messages endpoint.
+    """
+    logger.info("Received POST message on fallback /sse endpoint")
+    await sse_transport.handle_post_message(
+        request.scope, request.receive, request._send
+    )
