@@ -92,11 +92,11 @@ This frees RAI from maintaining core AI execution code, allowing full focus on:
 *   [x] **Documentation Overhaul:** Update the main `README.md` to reflect the new Agentic OS Daemon & Secure Linux Gateway vision, new setup requirements, and Antigravity SDK integration.
 *   [x] **Repository Markdown Consolidation:** Clean up, consolidate, and archive/delete obsolete or redundant `.md` files (such as `DEVELOPMENT.md` and previous planning files) to prevent developer confusion.
 
-### Phase 2: Linux Desktop & D-Bus Abstraction
-*   [ ] **Create Desktop Abstraction:** Implement `src/rai/tools/desktop/base.py` defining standard signatures for notifications, focus tracking, and UI interactions.
-*   [ ] **Refactor GNOME Tool:** Move `src/rai/tools/gnome.py` to `src/rai/tools/desktop/gnome.py` inheriting from the new base class.
-*   [ ] **COSMIC Desktop Support:** Implement `src/rai/tools/desktop/cosmic.py` talking to COSMIC applets and its Rust/Wayland-based IPC.
-*   [ ] **Environment Auto-detection:** Add desktop detection using the `XDG_CURRENT_DESKTOP` env variable, loading the correct subclass dynamically at startup.
+### Phase 2: Linux Desktop & D-Bus Abstraction (Completed)
+*   [x] **Create Desktop Abstraction:** Implement `src/rai/tools/desktop/base.py` defining standard signatures for notifications, focus tracking, and UI interactions.
+*   [x] **Refactor GNOME Tool:** Move `src/rai/tools/gnome.py` to `src/rai/tools/desktop/gnome.py` inheriting from the new base class.
+*   [x] **COSMIC Desktop Support:** Implement `src/rai/tools/desktop/cosmic.py` talking to COSMIC applets and its Rust/Wayland-based IPC.
+*   [x] **Environment Auto-detection:** Add desktop detection using the `XDG_CURRENT_DESKTOP` env variable, loading the correct subclass dynamically at startup.
 
 ### Phase 3: The Security Layer (Isolated Commands)
 *   [ ] **Sandbox Runtime:** Implement a secure runner inside `src/rai/tools/security/`.
