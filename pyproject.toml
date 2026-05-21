@@ -13,6 +13,7 @@ license = {text = "MIT"}
 dependencies = [
     "python-dotenv",
     "google-antigravity",
+    "protobuf>=5.30.0",
     "rich",
     "click>=8.1,<8.3",
     "ollama",
@@ -39,7 +40,7 @@ dependencies = [
 
 [project.optional-dependencies]
 anthropic = ["anthropic"]
-gemini = ["google-generativeai"]
+gemini = ["google-genai"]
 openai = ["openai"]
 groq = ["groq"]
 test = ["pytest", "pytest-asyncio", "pytest-cov"]
