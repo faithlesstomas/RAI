@@ -11,9 +11,9 @@ except ImportError:
     ollama = None  # type: ignore
 
 try:
-    import google.generativeai as genai
+    from google import genai
 except ImportError:
-    genai = None # type: ignore
+    genai = None  # type: ignore
 
 class ModelRegistry:
     """
@@ -81,19 +81,19 @@ class ModelRegistry:
 
         try:
             if not genai:
-                raise ImportError("google-generativeai package not installed.")
-            genai.configure(api_key=api_key)
-
-            # List models and filter for those that support content generation
+                raise ImportError("google-genai package not installed.")
+            
+            client = genai.Client(api_key=api_key)
             models = []
-            for m in genai.list_models():
-                if 'generateContent' in m.supported_generation_methods:
-                    # The name usually comes as 'models/gemini-pro', we might want just 'gemini-pro'
-                    # or keep the full name. Let's keep the full name for precision.
-                    models.append(m.name.replace("models/", ""))
+            for m in client.models.list():
+                name = m.name or ""
+                if name.startswith("models/"):
+                    name = name.replace("models/", "")
+                if "gemini" in name.lower() or "text" in name.lower():
+                    models.append(name)
             return models
         except ImportError:
-            logging.warning("google-generativeai package not installed.")
+            logging.warning("google-genai package not installed.")
             return []
         except Exception as e: # pylint: disable=broad-exception-caught
             logging.error("Failed to fetch models from Gemini: %s", e)
