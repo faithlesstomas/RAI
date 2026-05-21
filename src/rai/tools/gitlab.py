@@ -30,36 +30,22 @@ GitLab Authentication Setup Guide
 
 
 import os
+import gitlab
 from typing import Any, Dict, List, Optional
 
-import gitlab
-from agno.tools import Toolkit
-from agno.utils.log import logger
+import logging
 from requests import exceptions as requests_exceptions
 
+logger = logging.getLogger(__name__)
 
-class GitlabTools(Toolkit):
+
+class GitlabTools:
     """
     A collection of tools for interacting with the GitLab API.
     Requires GITLAB_ACCESS_TOKEN and GITLAB_BASE_URL environment variables to be set.
     """
 
     def __init__(self, **kwargs: Any) -> None:  # noqa: ANN401
-        super().__init__(
-            name="gitlab_tools",
-            tools=[
-                self.list_projects,
-                self.get_project,
-                self.list_merge_requests,
-                self.get_merge_request,
-                self.list_issues,
-                self.get_issue,
-                self.get_file_content,
-                self.create_issue,
-                self.create_merge_request,
-            ],
-            **kwargs,
-        )
         self.gitlab_token = os.getenv("GITLAB_ACCESS_TOKEN")
         gitlab_url = os.getenv("GITLAB_BASE_URL", "https://gitlab.com")
         self.gitlab_url = gitlab_url.strip('"\'').rstrip("/")

@@ -6,11 +6,9 @@ import os
 import subprocess
 
 import pydbus
-from agno.tools import tool
 from gi.repository import GLib
 
 
-@tool
 def send_notification(summary: str, body: str, app_name: str = "AI Assistant") -> str:
     """
     Sends a desktop notification to the GNOME (or Freedesktop.org compatible)
@@ -48,7 +46,6 @@ def send_notification(summary: str, body: str, app_name: str = "AI Assistant") -
         )
 
 
-@tool
 def take_screenshot(delay: int = 0) -> str:
     """
     Takes a full-screen screenshot, encodes it in base64,
@@ -102,7 +99,6 @@ def take_screenshot(delay: int = 0) -> str:
 loop = GLib.MainLoop()
 
 
-@tool
 def weather(location: str | None = "current_location") -> str:
     """
     Retrieves current weather information directly from the GNOME desktop system.
