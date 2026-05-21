@@ -1,6 +1,7 @@
 """
 Chat Service for handling agent interactions using the Google Antigravity SDK.
 """
+import os
 import uuid
 import logging
 from typing import Any, AsyncIterator, Dict, List, Optional
@@ -8,7 +9,13 @@ from returns.result import Failure, Result, Success
 
 from google.antigravity import Agent, LocalAgentConfig
 from rai.core import setup_tools
-from rai.config_manager import load_config, load_agents
+from rai.config_manager import (
+    load_config,
+    load_agents,
+    TRAJECTORY_DIR,
+    get_conversation_id_for_session,
+    set_conversation_id_for_session,
+)
 from rai.exceptions import ChainExecutionError
 from rai.services.history import HistoryService
 
@@ -69,17 +76,34 @@ class ChatService:
             enabled_tool_names=enabled_tool_names,
         )
 
+        # Resolve persistent conversation ID
+        conv_id = get_conversation_id_for_session(final_session_id)
+        traj_file = os.path.join(TRAJECTORY_DIR, f"traj-{conv_id}") if conv_id else ""
+
+        if conv_id and os.path.exists(traj_file):
+            logger.info("Resuming conversation %s from %s", conv_id, traj_file)
+            actual_conv_id = conv_id
+        else:
+            logger.info("Starting a new conversation for session %s", final_session_id)
+            actual_conv_id = None
+
         try:
             # Construct LocalAgentConfig
             config = LocalAgentConfig(
                 system_instructions=agent_config.get("system") or agent_config.get("system_instructions"),
                 model=agent_config.get("model", "gemini-1.5-flash"),
                 tools=agent_tools,
-                conversation_id=final_session_id,
+                conversation_id=actual_conv_id,
+                save_dir=TRAJECTORY_DIR,
             )
 
             # Start agent session
             async with Agent(config) as ag:
+                # Capture the actual conversation ID and persist it
+                new_conv_id = ag.conversation_id
+                if new_conv_id:
+                    set_conversation_id_for_session(final_session_id, new_conv_id)
+
                 response = await ag.chat(prompt=chain_input)
                 content = await response.text()
 
@@ -138,16 +162,33 @@ class ChatService:
             enabled_tool_names=enabled_tool_names,
         )
 
+        # Resolve persistent conversation ID
+        conv_id = get_conversation_id_for_session(final_session_id)
+        traj_file = os.path.join(TRAJECTORY_DIR, f"traj-{conv_id}") if conv_id else ""
+
+        if conv_id and os.path.exists(traj_file):
+            logger.info("Resuming conversation %s from %s", conv_id, traj_file)
+            actual_conv_id = conv_id
+        else:
+            logger.info("Starting a new conversation for session %s", final_session_id)
+            actual_conv_id = None
+
         try:
             config = LocalAgentConfig(
                 system_instructions=agent_config.get("system") or agent_config.get("system_instructions"),
                 model=agent_config.get("model", "gemini-1.5-flash"),
                 tools=agent_tools,
-                conversation_id=final_session_id,
+                conversation_id=actual_conv_id,
+                save_dir=TRAJECTORY_DIR,
             )
 
             accumulated_response = ""
             async with Agent(config) as ag:
+                # Capture the actual conversation ID and persist it
+                new_conv_id = ag.conversation_id
+                if new_conv_id:
+                    set_conversation_id_for_session(final_session_id, new_conv_id)
+
                 response = await ag.chat(prompt=chain_input)
                 async for chunk in response:
                     accumulated_response += chunk
