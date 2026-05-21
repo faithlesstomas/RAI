@@ -2,8 +2,9 @@
 Unit tests for the Model Context Protocol (MCP) router and server.
 """
 import pytest
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 from mcp import types
+
 
 from rai.routers.mcp import mcp_server, list_tools, call_tool
 
@@ -86,3 +87,133 @@ async def test_mcp_call_unknown_tool() -> None:
     result = await call_tool("non_existent_tool", {})
     assert result.isError
     assert "Error: Unknown tool" in result.content[0].text
+
+
+from fastapi.testclient import TestClient
+from rai.server import app
+
+client = TestClient(app)
+
+def test_stateless_mcp_initialize() -> None:
+    """
+    Tests the stateless fallback POST /api/v1/mcp/sse endpoint with initialize method.
+    """
+    payload = {
+        "jsonrpc": "2.0",
+        "id": 42,
+        "method": "initialize",
+        "params": {}
+    }
+    response = client.post("/api/v1/mcp/sse", json=payload)
+    assert response.status_code == 200
+    data = response.json()
+    assert data["jsonrpc"] == "2.0"
+    assert data["id"] == 42
+    assert "result" in data
+    assert "protocolVersion" in data["result"]
+    assert data["result"]["serverInfo"]["name"] == "rai-secure-gateway"
+
+
+def test_stateless_mcp_tools_list() -> None:
+    """
+    Tests the stateless fallback POST /api/v1/mcp/sse endpoint with tools/list method.
+    """
+    payload = {
+        "jsonrpc": "2.0",
+        "id": 43,
+        "method": "tools/list",
+        "params": {}
+    }
+    response = client.post("/api/v1/mcp/sse", json=payload)
+    assert response.status_code == 200
+    data = response.json()
+    assert data["jsonrpc"] == "2.0"
+    assert data["id"] == 43
+    assert "result" in data
+    assert "tools" in data["result"]
+    
+    tools = data["result"]["tools"]
+    assert len(tools) == 2
+    tool_names = [t["name"] for t in tools]
+    assert "run_shell_command" in tool_names
+    assert "run_python_code" in tool_names
+
+
+@patch("rai.routers.mcp.run_secure_shell_command")
+def test_stateless_mcp_tools_call(mock_run_shell: MagicMock) -> None:
+    """
+    Tests the stateless fallback POST /api/v1/mcp/sse endpoint with tools/call method.
+    """
+    mock_run_shell.return_value = "stateless output"
+    payload = {
+        "jsonrpc": "2.0",
+        "id": 44,
+        "method": "tools/call",
+        "params": {
+            "name": "run_shell_command",
+            "arguments": {
+                "command": "echo stateless",
+                "allow_network": True
+            }
+        }
+    }
+    response = client.post("/api/v1/mcp/sse", json=payload)
+    assert response.status_code == 200
+    data = response.json()
+    assert data["jsonrpc"] == "2.0"
+    assert data["id"] == 44
+    assert "result" in data
+    assert data["result"]["content"][0]["text"] == "stateless output"
+    assert not data["result"]["isError"]
+    mock_run_shell.assert_called_once_with("echo stateless", allow_network=True)
+
+
+def test_stateless_mcp_ping() -> None:
+    """
+    Tests the stateless fallback POST /api/v1/mcp/sse endpoint with ping method.
+    """
+    payload = {
+        "jsonrpc": "2.0",
+        "id": 45,
+        "method": "ping",
+        "params": {}
+    }
+    response = client.post("/api/v1/mcp/sse", json=payload)
+    assert response.status_code == 200
+    data = response.json()
+    assert data["jsonrpc"] == "2.0"
+    assert data["id"] == 45
+    assert data["result"] == {}
+
+
+def test_stateless_mcp_unsupported_method() -> None:
+    """
+    Tests the stateless fallback POST /api/v1/mcp/sse endpoint with an unsupported method.
+    """
+    payload = {
+        "jsonrpc": "2.0",
+        "id": 46,
+        "method": "unsupported/method",
+        "params": {}
+    }
+    response = client.post("/api/v1/mcp/sse", json=payload)
+    assert response.status_code == 200
+    data = response.json()
+    assert data["jsonrpc"] == "2.0"
+    assert data["id"] == 46
+    assert "error" in data
+    assert data["error"]["code"] == -32601
+    assert "not found" in data["error"]["message"]
+
+
+def test_stateless_mcp_invalid_json() -> None:
+    """
+    Tests the stateless fallback POST /api/v1/mcp/sse endpoint with invalid JSON body.
+    """
+    response = client.post("/api/v1/mcp/sse", content="invalid json")
+    assert response.status_code == 400
+    data = response.json()
+    assert data["jsonrpc"] == "2.0"
+    assert "error" in data
+    assert data["error"]["code"] == -32700
+
