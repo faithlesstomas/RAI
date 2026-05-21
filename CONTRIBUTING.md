@@ -42,15 +42,14 @@ How Can I Contribute?
 
 ## Technical Focus Areas (What we need help with)
 
-If you're looking for a place to start, check our TODO.md. Current priorities include:
+If you're looking for a place to start, check our [ROADMAP.md](ROADMAP.md). Current priorities include:
 
-  * Session Management: Fixing the session_id propagation in execution.py.
-  * Resource Cleanup: Investigating and fixing unclosed database/transport warnings on exit.
-  * New Adapters: Implementing adapters for LangChain or LangGraph.
-  * WebUI: Enhancing the current nicegui implementation.
+  * Agent & Session separation implementation.
+  * Desktop Integrations: GNOME and COSMIC modules in `src/rai/tools/desktop/`.
+  * Security Sandboxing: Isolated bubblewrap/guix command execution.
+  * Multi-client frontends (Emacs, GNU Guile WASM dashboard).
 
 ### Architecture Guidance
-  * Adapters: If you are adding a new AI framework, look at src/rai/adapters/base.py for the required interface and src/rai/engine.py for how they are discovered.
-  * Tools: System-level tools should be added to src/rai/tools/ and registered in src/rai/core.py.
+  * Tools & Environment: System-level tools and adapters are built as standalone, secure utilities. Desktop-specific tools belong in `src/rai/tools/desktop/` and inherit from the base desktop class to ensure dynamic compatibility across Linux desktop environments.
 
 *** Thank you for helping us build the best AI assistant for the Linux ecosystem! ***
