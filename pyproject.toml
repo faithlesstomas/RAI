@@ -12,7 +12,7 @@ license = {text = "MIT"}
 
 dependencies = [
     "python-dotenv",
-    "agno>=2.0",
+    "google-antigravity",
     "rich",
     "click>=8.1,<8.3",
     "ollama",
@@ -42,12 +42,11 @@ anthropic = ["anthropic"]
 gemini = ["google-generativeai"]
 openai = ["openai"]
 groq = ["groq"]
-test = ["pytest", "pytest-asyncio", "pytest-cov", "pydantic-ai"]
+test = ["pytest", "pytest-asyncio", "pytest-cov"]
 lint = ["ruff", "pylint"]
 dev = ["rai[test]", "rai[lint]", "rai[tools]"]
 gnome-tools = ["pydbus", "pygobject"]
 tts = ["piper-tts", "sounddevice", "requests"]
-pydantic-ai = ["pydantic-ai"]
 docs = ["sphinx", "myst-parser", "furo", "sphinx-autobuild"]
 tools = [
     "duckduckgo-search",
@@ -64,7 +63,6 @@ all = [
     "rai[groq]",
     "rai[gnome-tools]",
     "rai[tts]",
-    "rai[pydantic-ai]",
     "rai[tools]",
 ]
 
