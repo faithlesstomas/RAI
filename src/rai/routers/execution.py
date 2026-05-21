@@ -138,6 +138,39 @@ async def stream_chain_endpoint(
     return StreamingResponse(event_generator(), media_type="text/event-stream")
 
 
+from ..tools.security.hitl import get_approval_manager
+
+class ApprovalResolutionRequest(BaseModel):
+    """Request model to resolve a pending HITL authorization request."""
+    approved: bool
+
+@router.get("/api/v1/approvals")
+async def list_approvals() -> JSONResponse:
+    """
+    Lists all pending HITL tool execution approval requests.
+    """
+    manager = get_approval_manager()
+    return JSONResponse(content={"approvals": manager.list_pending()})
+
+
+@router.post("/api/v1/approvals/{approval_id}/resolve")
+async def resolve_approval(
+    approval_id: str,
+    request: ApprovalResolutionRequest
+) -> JSONResponse:
+    """
+    Resolves a pending HITL authorization request (approves or denies execution).
+    """
+    manager = get_approval_manager()
+    success = manager.resolve_request(approval_id, request.approved)
+    if not success:
+        raise HTTPException(
+            status_code=404,
+            detail=f"Pending approval request '{approval_id}' not found or already resolved."
+        )
+    return JSONResponse(content={"status": "success", "message": f"Approval '{approval_id}' resolved to: {request.approved}"})
+
+
 @router.get("/api/v1/models")
 async def get_all_models(
     registry: ModelRegistry = Depends(get_model_registry)

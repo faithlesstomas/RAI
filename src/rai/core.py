@@ -23,6 +23,8 @@ class ResponseDict(TypedDict, total=False):
     tool_calls: List[object]
 
 from rai.tools.desktop import get_desktop_adapter
+from rai.tools.shell import run_secure_shell_command
+from rai.tools.python import run_secure_python_code
 
 # --- Globals ---
 console = Console(record=True)
@@ -113,6 +115,8 @@ TOOL_REGISTRY = {
     "WikipediaTools": [wikipedia_search],
     "DuckDuckGoTools": [web_search],
     "YFinanceTools": [get_stock_price],
+    "ShellTools": [run_secure_shell_command],
+    "PythonTools": [run_secure_python_code],
 }
 
 
