@@ -1,9 +1,14 @@
 """Abstract base class for desktop environment integrations."""
 from abc import ABC, abstractmethod
-from typing import Optional
+from typing import Optional, Any
 
 class DesktopAdapter(ABC):
     """Abstract base class representing Linux desktop tools interface."""
+
+    def __deepcopy__(self, memo: Any) -> "DesktopAdapter":
+        # Desktop adapters are service singletons/adapters and should not be deep-copied.
+        # Returning self prevents recursive deep-copying of D-Bus / GLib objects (like MainLoop).
+        return self
 
     @abstractmethod
     def send_notification(self, summary: str, body: str, app_name: str = "AI Assistant") -> str:

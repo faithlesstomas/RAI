@@ -164,3 +164,30 @@ class TestCosmicDesktopAdapter:
         assert "Warsaw" in result_json["location"]
         assert result_json["temperature_c"] == 22.0
         assert result_json["conditions"] == "Sunny"
+
+
+def test_desktop_adapter_deepcopy() -> None:
+    """Test that DesktopAdapter instances return themselves when deepcopied."""
+    import copy
+    from rai.tools.desktop.gnome import GnomeDesktopAdapter
+    from rai.tools.desktop.cosmic import CosmicDesktopAdapter
+
+    gnome_adapter = GnomeDesktopAdapter()
+    assert copy.deepcopy(gnome_adapter) is gnome_adapter
+
+    cosmic_adapter = CosmicDesktopAdapter()
+    assert copy.deepcopy(cosmic_adapter) is cosmic_adapter
+
+
+def test_gitlab_tools_deepcopy() -> None:
+    """Test that GitlabTools instances return themselves when deepcopied."""
+    import copy
+    from rai.tools.gitlab import GitlabTools
+
+    # Mock environment variable for GitlabTools initialization to prevent validation error
+    import os
+    from unittest.mock import patch
+
+    with patch.dict(os.environ, {"GITLAB_ACCESS_TOKEN": "mock-token"}):
+        gitlab_tools = GitlabTools()
+        assert copy.deepcopy(gitlab_tools) is gitlab_tools

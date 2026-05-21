@@ -82,15 +82,15 @@ This frees RAI from maintaining core AI execution code, allowing full focus on:
 
 ## 3. Milestones & Phases
 
-### Phase 1: Architectural Pivot & SDK Integration (Current Focus)
-*   [ ] **Dependency Clean-up:** Update `pyproject.toml` to deprecate `agno` and `pydantic-ai` from the main dependency tree; add `google-antigravity`.
-*   [ ] **Deprecate `engine.py`:** Delete the custom multi-adapter abstraction.
-*   [ ] **Server Adaptation:** Rewrite `src/rai/server.py` and `routers/execution.py` to use `google-antigravity` runtime for execution and streaming.
-*   [ ] **Implement Agent/Session Split:** 
-    *   Write config migration logic to separate templates (`agents.yaml`) from histories (`sessions/`).
-    *   Update CLI commands (`rai agents` and `rai sessions`) to reflect this change.
-*   [ ] **Documentation Overhaul:** Update the main `README.md` to reflect the new Agentic OS Daemon & Secure Linux Gateway vision, new setup requirements, and Antigravity SDK integration.
-*   [ ] **Repository Markdown Consolidation:** Clean up, consolidate, and archive/delete obsolete or redundant `.md` files (such as `DEVELOPMENT.md` and previous planning files) to prevent developer confusion.
+### Phase 1: Architectural Pivot & SDK Integration (Completed)
+*   [x] **Dependency Clean-up:** Update `pyproject.toml` to deprecate `agno` and `pydantic-ai` from the main dependency tree; add `google-antigravity`.
+*   [x] **Deprecate `engine.py`:** Delete the custom multi-adapter abstraction.
+*   [x] **Server Adaptation:** Rewrite `src/rai/server.py` and `routers/execution.py` to use `google-antigravity` runtime for execution and streaming.
+*   [x] **Implement Agent/Session Split:** 
+    *   [x] Write config migration logic to separate templates (`agents.yaml`) from histories (`sessions/`).
+    *   [x] Update CLI commands (`rai agents` and `rai sessions`) to reflect this change.
+*   [x] **Documentation Overhaul:** Update the main `README.md` to reflect the new Agentic OS Daemon & Secure Linux Gateway vision, new setup requirements, and Antigravity SDK integration.
+*   [x] **Repository Markdown Consolidation:** Clean up, consolidate, and archive/delete obsolete or redundant `.md` files (such as `DEVELOPMENT.md` and previous planning files) to prevent developer confusion.
 
 ### Phase 2: Linux Desktop & D-Bus Abstraction
 *   [ ] **Create Desktop Abstraction:** Implement `src/rai/tools/desktop/base.py` defining standard signatures for notifications, focus tracking, and UI interactions.
@@ -122,7 +122,7 @@ This frees RAI from maintaining core AI execution code, allowing full focus on:
 ### 4.1 High Priority Fixes
 *   [ ] **Session ID Leak in Routing:** In `src/rai/routers/execution.py`, fix `execute_chain` (or the new runtime execution endpoint) to respect and propagate `session_id`, rather than creating new sessions per call.
 *   [ ] **Resource Cleanup:** Fix the `ResourceWarning: unclosed database/transport` warnings that occur during daemon exit.
-*   [ ] **Config Discrepancy:** Unify `rai config` CLI outputs so that active runtime config and stored `config.json` remain in sync.
+*   [x] **Config Discrepancy:** Unify `rai config` CLI outputs so that active runtime config and stored `config.json` remain in sync.
 
 ### 4.2 CI/CD and Linting
 *   [ ] **CI Linter Environment:** Fix `pylint` failures in GitLab CI by ensuring optional dependencies are installed via `pip install -e .[test,dev,lint]` in the `.gitlab-ci.yml`.

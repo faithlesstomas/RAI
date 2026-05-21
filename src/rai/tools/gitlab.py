@@ -45,6 +45,9 @@ class GitlabTools:
     Requires GITLAB_ACCESS_TOKEN and GITLAB_BASE_URL environment variables to be set.
     """
 
+    def __deepcopy__(self, memo: Any) -> "GitlabTools":
+        return self
+
     def __init__(self, **kwargs: Any) -> None:  # noqa: ANN401
         self.gitlab_token = os.getenv("GITLAB_ACCESS_TOKEN")
         gitlab_url = os.getenv("GITLAB_BASE_URL", "https://gitlab.com")

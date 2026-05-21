@@ -206,7 +206,6 @@ class CliOptions:  # pylint: disable=too-many-instance-attributes
     system: Optional[str] = None
     model: Optional[str] = None
     backend: Optional[str] = None
-    framework: Optional[str] = None
     no_markdown: bool = False
     json_output: bool = False
     quiet: bool = False
@@ -589,7 +588,6 @@ def _build_run_config(options: CliOptions) -> Tuple[Dict[str, Any], Dict[str, An
         "backend": options.backend or session_config.get("backend"),
         "system": options.system or session_config.get("system"),
         "tools": session_config.get("tools"),
-        "framework": options.framework or session_config.get("framework", "agno"),
         "active_tts_task": None,  # This is a client-side concern
     }
     return run_config, session_config, session_to_use, app_config
@@ -754,9 +752,6 @@ async def async_main_client(options: CliOptions) -> None: # noqa: PLR0912
 @click.option("-b", "--backend", default=None,
               type=click.Choice(["ollama", "gemini", "anthropic", "openai", "groq", "local"]),
               help="The backend to use.",
-              cls=SectionedOption, section="AI Configuration")
-@click.option("-f", "--framework", default=None,
-              type=click.Choice(["agno", "pydantic_ai"]), help="Specify the AI framework to use.",
               cls=SectionedOption, section="AI Configuration")
 # Section: Output Formatting
 @click.option("--no-markdown", is_flag=True, help="Disable Markdown rendering for LLM responses.",

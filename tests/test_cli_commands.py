@@ -258,3 +258,51 @@ async def test_async_run_standalone_one_shot_success(
     assert found_markdown, "Markdown response was not printed"
 
     mock_processor_instance.close.assert_awaited_once()
+
+
+def test_config_manager_migration(tmp_path) -> None:
+    """Test that load_agents automatically migrates legacy configuration fields."""
+    import yaml
+    from rai import config_manager
+
+    # Create a temporary agents.yaml file with legacy keys and tools
+    agents_file = tmp_path / "agents.yaml"
+    legacy_data = {
+        "custom_agent": {
+            "name": "custom_agent",
+            "model": "gpt-4",
+            "framework": "agno",
+            "tools": [
+                "CalculatorTools",
+                "GnomeNotificationTool",
+                "GnomeScreenshotTool",
+                "GnomeWeatherTool",
+                "WikipediaTools"
+            ]
+        }
+    }
+
+    with open(agents_file, "w", encoding="utf-8") as f:
+        yaml.safe_dump(legacy_data, f)
+
+    # Call load_agents
+    loaded = config_manager.load_agents(path=str(agents_file))
+
+    # Assert in-memory migration
+    assert "framework" not in loaded["custom_agent"]
+    assert "DesktopNotificationTool" in loaded["custom_agent"]["tools"]
+    assert "DesktopScreenshotTool" in loaded["custom_agent"]["tools"]
+    assert "DesktopWeatherTool" in loaded["custom_agent"]["tools"]
+    assert "GnomeNotificationTool" not in loaded["custom_agent"]["tools"]
+    assert "GnomeScreenshotTool" not in loaded["custom_agent"]["tools"]
+    assert "GnomeWeatherTool" not in loaded["custom_agent"]["tools"]
+
+    # Assert on-disk migration (it should have written back to agents_file)
+    with open(agents_file, "r", encoding="utf-8") as f:
+        on_disk = yaml.safe_load(f)
+
+    assert "framework" not in on_disk["custom_agent"]
+    assert "DesktopNotificationTool" in on_disk["custom_agent"]["tools"]
+    assert "DesktopScreenshotTool" in on_disk["custom_agent"]["tools"]
+    assert "DesktopWeatherTool" in on_disk["custom_agent"]["tools"]
+

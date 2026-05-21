@@ -45,47 +45,99 @@ def save_state(state_data: Dict[str, Any], path: Optional[str] = None) -> None:
 def load_agents(path: Optional[str] = None) -> Dict[str, Any]:
     """Loads agent templates from agents.yaml with automatic backward compatibility migration."""
     agents_file = path or DEFAULT_AGENTS_FILE
+    agents = {}
+    loaded_from_yaml = False
+
     if os.path.exists(agents_file):
         try:
             with open(agents_file, "r", encoding="utf-8") as f:
-                return yaml.safe_load(f) or {}
+                agents = yaml.safe_load(f) or {}
+            loaded_from_yaml = True
         except Exception as e:
             error_console.print(f"[bold red]Error loading agents file {agents_file}: {e}[/bold red]")
-            return {}
+            agents = {}
 
     # Migration path: If old config.json contains "sessions" (which were assistant configurations)
-    config_file = DEFAULT_CONFIG_FILE
-    if os.path.exists(config_file):
-        try:
-            with open(config_file, "r", encoding="utf-8") as f:
-                data = json.load(f)
-            if "sessions" in data and data["sessions"]:
-                # Save old sessions as agent profiles in agents.yaml
-                save_agents(data["sessions"], agents_file)
-                # Remove sessions key to clean up old config.json
-                data.pop("sessions", None)
-                with open(config_file, "w", encoding="utf-8") as f:
-                    json.dump(data, f, indent=2)
-                return load_agents(path)
-        except Exception:
-            pass
+    if not loaded_from_yaml:
+        config_file = DEFAULT_CONFIG_FILE
+        if os.path.exists(config_file):
+            try:
+                with open(config_file, "r", encoding="utf-8") as f:
+                    data = json.load(f)
+                if "sessions" in data and data["sessions"]:
+                    agents = data["sessions"]
+                    # Save old sessions as agent profiles in agents.yaml
+                    save_agents(agents, agents_file)
+                    # Remove sessions key to clean up old config.json
+                    data.pop("sessions", None)
+                    with open(config_file, "w", encoding="utf-8") as f:
+                        json.dump(data, f, indent=2)
+                    loaded_from_yaml = True
+            except Exception:
+                pass
 
-    # Default fallback agent template (utilizes Antigravity native capabilities)
-    default_agents = {
-        "default": {
-            "name": "default",
-            "model": "gemini-1.5-flash",
-            "system": "You are a versatile and helpful AI assistant deeply integrated with Linux.",
-            "tools": [
-                "CalculatorTools", "ArxivTools", "WikipediaTools",
-                "DuckDuckGoTools", "WebBrowserTools", "FileTools",
-                "PythonTools", "ShellTools",
-                "DesktopNotificationTool", "DesktopScreenshotTool", "DesktopWeatherTool"
-            ],
+    if not agents and not loaded_from_yaml:
+        # Default fallback agent template (utilizes Antigravity native capabilities)
+        default_agents = {
+            "default": {
+                "name": "default",
+                "model": "gemini-1.5-flash",
+                "system": "You are a versatile and helpful AI assistant deeply integrated with Linux.",
+                "tools": [
+                    "CalculatorTools", "ArxivTools", "WikipediaTools",
+                    "DuckDuckGoTools", "WebBrowserTools", "FileTools",
+                    "PythonTools", "ShellTools",
+                    "DesktopNotificationTool", "DesktopScreenshotTool", "DesktopWeatherTool"
+                ],
+            }
         }
+        save_agents(default_agents, agents_file)
+        return default_agents
+
+    # Perform in-memory migration & clean up of legacy keys/tools
+    modified = False
+    tool_migration_map = {
+        "GnomeNotificationTool": "DesktopNotificationTool",
+        "GnomeScreenshotTool": "DesktopScreenshotTool",
+        "GnomeWeatherTool": "DesktopWeatherTool"
     }
-    save_agents(default_agents, agents_file)
-    return default_agents
+
+    for agent_name, agent_data in list(agents.items()):
+        if not isinstance(agent_data, dict):
+            continue
+        
+        # 1. Strip 'framework' key
+        if "framework" in agent_data:
+            agent_data.pop("framework")
+            modified = True
+            
+        # 2. Migrate tools list
+        if "tools" in agent_data and isinstance(agent_data["tools"], list):
+            new_tools = []
+            for tool in agent_data["tools"]:
+                if tool in tool_migration_map:
+                    new_tools.append(tool_migration_map[tool])
+                    modified = True
+                else:
+                    new_tools.append(tool)
+            # Ensure unique tools while preserving order if possible
+            seen = set()
+            unique_new_tools = []
+            for t in new_tools:
+                if t not in seen:
+                    seen.add(t)
+                    unique_new_tools.append(t)
+            if unique_new_tools != agent_data["tools"]:
+                agent_data["tools"] = unique_new_tools
+                modified = True
+
+    if modified and loaded_from_yaml:
+        try:
+            save_agents(agents, agents_file)
+        except Exception as e:
+            error_console.print(f"[bold red]Error saving migrated agents to {agents_file}: {e}[/bold red]")
+
+    return agents
 
 
 def save_agents(agents_data: Dict[str, Any], path: Optional[str] = None) -> None:
