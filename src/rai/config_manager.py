@@ -339,3 +339,24 @@ def get_config_logic(key: str) -> None:
             f"[bold red]Error: Key '{key}' not found in agent profile '{active_agent}'.[/bold red]"
         )
 
+
+TRAJECTORY_DIR = os.path.join(CONFIG_DIR, "trajectories")
+os.makedirs(TRAJECTORY_DIR, exist_ok=True)
+
+
+def get_conversation_id_for_session(session_name: str) -> str:
+    """Returns the persistent Antigravity conversation ID associated with a session name."""
+    state = load_state()
+    mapping = state.get("session_conversation_ids", {})
+    return mapping.get(session_name, "")
+
+
+def set_conversation_id_for_session(session_name: str, conv_id: str) -> None:
+    """Associates a persistent Antigravity conversation ID with a session name."""
+    state = load_state()
+    if "session_conversation_ids" not in state:
+        state["session_conversation_ids"] = {}
+    state["session_conversation_ids"][session_name] = conv_id
+    save_state(state)
+
+
