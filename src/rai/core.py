@@ -22,12 +22,7 @@ class ResponseDict(TypedDict, total=False):
     content: str
     tool_calls: List[object]
 
-_HAS_GNOME_TOOLS = False  # pylint: disable=invalid-name
-try:
-    from rai.tools.gnome import send_notification, take_screenshot, weather
-    _HAS_GNOME_TOOLS = True  # pylint: disable=invalid-name
-except ImportError:
-    pass
+from rai.tools.desktop import get_desktop_adapter
 
 # --- Globals ---
 console = Console(record=True)
@@ -142,16 +137,21 @@ def setup_tools(  # noqa: PLR0912 # pylint: disable=too-many-branches, too-many-
     )
 
     for tool_name in tools_to_enable:
-        # Handle GNOME tools
-        if _HAS_GNOME_TOOLS and tool_name in [
-            "GnomeNotificationTool", "GnomeScreenshotTool", "GnomeWeatherTool"
+        # Handle Desktop tools
+        if tool_name in [
+            "DesktopNotificationTool", "DesktopScreenshotTool", "DesktopWeatherTool"
         ]:
-            if tool_name == "GnomeNotificationTool":
-                agent_tools.append(send_notification)
-            elif tool_name == "GnomeScreenshotTool":
-                agent_tools.append(take_screenshot)
-            elif tool_name == "GnomeWeatherTool":
-                agent_tools.append(weather)
+            try:
+                adapter = get_desktop_adapter()
+                if tool_name == "DesktopNotificationTool":
+                    agent_tools.append(adapter.send_notification)
+                elif tool_name == "DesktopScreenshotTool":
+                    agent_tools.append(adapter.take_screenshot)
+                elif tool_name == "DesktopWeatherTool":
+                    agent_tools.append(adapter.weather)
+                logger.debug("%s successfully enabled.", tool_name)
+            except Exception as e:
+                logger.debug("Could not enable %s: %s", tool_name, e)
             continue
 
         # Handle ClientTools
@@ -200,10 +200,6 @@ def setup_tools(  # noqa: PLR0912 # pylint: disable=too-many-branches, too-many-
         for func in TOOL_REGISTRY[tool_name]:
             agent_tools.append(func)
             logger.debug("%s successfully enabled.", tool_name)
-
-    if _HAS_GNOME_TOOLS is False and not quiet:
-        # Keep GNOME tools warning clean
-        pass
 
     return agent_tools, messages
 

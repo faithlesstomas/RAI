@@ -9,28 +9,34 @@ This document establishes the single source of truth for the strategic vision, a
 
 Initially, RAI was conceived as a framework-agnostic LLM orchestrator. However, trying to unify distinct asynchronous pydantic loops and execution flows (such as Agno/Phidata and Pydantic AI) under a custom unified `Processor` interface (`src/rai/engine.py`) led to continuous refactoring and high technical debt.
 
-### The Pivot
-Instead of recreating existing orchestration frameworks (like `liteLLM` or custom multi-framework wrappers), **RAI is pivoting to become an Agentic OS Daemon & Secure Gateway for Linux system environments, powered by the Google Antigravity SDK.**
+### The Pivot: Brain vs. Body Architecture
+Instead of recreating existing orchestration frameworks (like `liteLLM` or custom multi-framework wrappers), **RAI is pivoting to become an Agentic OS Daemon & Secure Linux Gateway, powered by the Google Antigravity SDK.**
+
+We separate the system into two distinct architectural roles:
+1. **The Brain (Orchestration & LLM)**: Delegated fully to the **Google Antigravity SDK (`AgentRuntime`)** or other standard external agents.
+2. **The Body & Shield (Secure System Gateway)**: Provided locally by the persistent **RAI System Daemon (`rai serve`)** which manages OS-level tools and keeps the system safe via isolated runtimes.
 
 ```
 ┌────────────────────────────────────────────────────────────────────────┐
-│                          CLIENT APPLICATION LAYER                      │
-│      [ Emacs Client ]    [ GNU Guile Dashboard (WASM) ]    [ CLI ]     │
-└───────────────────────────────────┬────────────────────────────────────┘
-                                    │ HTTP / WebSockets (JSON API)
-                                    ▼
+│                        BRAIN / ORCHESTRATION LAYER                     │
+│  [ Dedicated RAI Clients ]            [ External Agents / Raw SDKs ]   │
+│ (Emacs, Gnome-Shell, Guile)            (Antigravity CLI, IDE Agents)   │
+└──────────────┬──────────────────────────────────────┬──────────────────┘
+               │                                      │
+               │ HTTP / WebSockets (JSON API)         │ Model Context Protocol (MCP)
+               ▼                                      ▼
 ┌────────────────────────────────────────────────────────────────────────┐
-│                        RAI SYSTEM DAEMON (`rai serve`)                 │
+│             RAI SYSTEM SECURE GATEWAY DAEMON (`rai serve`)             │
 │                                                                        │
 │   ┌────────────────────────────────────────────────────────────────┐   │
-│   │               Antigravity SDK AgentRuntime                     │   │
-│   │    - Session management, routing, & history delegated to SDK   │   │
+│   │                 Dual Interface Gateway Router                  │   │
+│   │   - JSON-RPC MCP Server Endpoint  |  WebSocket / REST API      │   │
 │   └───────────────────────────────┬────────────────────────────────┘   │
-│                                   │ Injects secure context & tools
+│                                   │ Secure Tool Intermediation
 │                                   ▼
 │   ┌────────────────────────────────────────────────────────────────┐   │
-│   │                  RAI Secure Context & Tool Layer               │   │
-│   │    - Custom system tools registered via MCP or SDK decorators │   │
+│   │                 Desktop D-Bus & Sandbox Tool Layer             │   │
+│   │   - Restricts commands and desktop hooks dynamically           │   │
 │   └───────────────┬───────────────────────────────┬────────────────┘   │
 └───────────────────┼───────────────────────────────┼────────────────────┘
                     │                               │
@@ -41,10 +47,14 @@ Instead of recreating existing orchestration frameworks (like `liteLLM` or custo
 └──────────────────────────────────────┘ └───────────────────────────────┘
 ```
 
-By delegating session routing, memory, and model communication to the **Google Antigravity SDK (`AgentRuntime`)**, RAI frees itself from maintaining core AI execution code. Instead, RAI focuses entirely on providing:
+By separating these layers, RAI exposes a **Dual Gateway Interface**:
+1. **JSON/WebSocket API**: Tailored for lightweight RAI clients (GNOME extensions, Emacs package, Guile Hoot dashboard) that want RAI to drive the agent execution loop and stream output directly.
+2. **Standard MCP Server Interface**: Tailored for external orchestrators (standalone Antigravity CLI, VS Code/Cursor extensions, cloud agents) that want to use the local Linux OS as their physical "body" via standardized, safe tool-calling APIs.
+
+This frees RAI from maintaining core AI execution code, allowing full focus on:
 1. **Deep Desktop & D-Bus Integrations** (GNOME, COSMIC).
 2. **Secure System Sandboxing** (Bubblewrap, Guix containers for arbitrary command execution).
-3. **Multi-client Ecosystems** (CLI, Emacs, GNU Guile/Hoot WASM).
+3. **Exposing OS Tools universally** via the Model Context Protocol (MCP).
 
 ---
 

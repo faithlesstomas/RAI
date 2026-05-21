@@ -30,7 +30,7 @@ class AgentDefinition(BaseModel):
     def validate_tools(cls, v: List[str]) -> List[str]: # pylint: disable=no-self-argument
         """Validates that requested tools exist in the registry."""
         known_tools = set(TOOL_REGISTRY.keys()) | {
-            "GnomeNotificationTool", "GnomeScreenshotTool", "GnomeWeatherTool",
+            "DesktopNotificationTool", "DesktopScreenshotTool", "DesktopWeatherTool",
             "ClientTools", "GitlabTools", "WebBrowserTools", "FileTools", "PythonTools", "ShellTools"
         }
         invalid_tools = [tool for tool in v if tool not in known_tools]

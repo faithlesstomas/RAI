@@ -80,7 +80,7 @@ def load_agents(path: Optional[str] = None) -> Dict[str, Any]:
                 "CalculatorTools", "ArxivTools", "WikipediaTools",
                 "DuckDuckGoTools", "WebBrowserTools", "FileTools",
                 "PythonTools", "ShellTools",
-                "GnomeNotificationTool", "GnomeScreenshotTool", "GnomeWeatherTool"
+                "DesktopNotificationTool", "DesktopScreenshotTool", "DesktopWeatherTool"
             ],
         }
     }

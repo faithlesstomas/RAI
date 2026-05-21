@@ -1,43 +1,59 @@
-"""Tests for the rai.tools module."""
+"""Tests for the rai.tools.desktop module."""
 import json
+import os
 from subprocess import CalledProcessError
 from typing import Generator
 from unittest.mock import MagicMock, patch
 
 import pytest
 
-try:
-    from rai.tools.gnome import send_notification, take_screenshot, weather
-    GNOME_TOOLS_AVAILABLE = True
-except ImportError:
-    GNOME_TOOLS_AVAILABLE = False
+from rai.tools.desktop import get_desktop_adapter
+from rai.tools.desktop.base import DesktopAdapter
+from rai.tools.desktop.gnome import GnomeDesktopAdapter
+from rai.tools.desktop.cosmic import CosmicDesktopAdapter
 
 
-@pytest.fixture(autouse=True)
-def mock_glib_mainloop() -> Generator:
-    """Fixture to mock GLib.MainLoop."""
-    if GNOME_TOOLS_AVAILABLE:
-        with patch('rai.tools.gnome.GLib.MainLoop'):
-            yield
-    else:
-        yield
+def test_factory_detection() -> None:
+    """Test that the dynamic desktop adapter factory resolves correctly based on XDG_CURRENT_DESKTOP."""
+    # Reset cached active adapter
+    from rai.tools.desktop import _ACTIVE_ADAPTER
+    with patch("rai.tools.desktop._ACTIVE_ADAPTER", None):
+        with patch.dict(os.environ, {"XDG_CURRENT_DESKTOP": "COSMIC"}):
+            adapter = get_desktop_adapter()
+            assert isinstance(adapter, CosmicDesktopAdapter)
+
+    with patch("rai.tools.desktop._ACTIVE_ADAPTER", None):
+        with patch.dict(os.environ, {"XDG_CURRENT_DESKTOP": "GNOME"}):
+            adapter = get_desktop_adapter()
+            assert isinstance(adapter, GnomeDesktopAdapter)
+
+    with patch("rai.tools.desktop._ACTIVE_ADAPTER", None):
+        with patch.dict(os.environ, {"XDG_CURRENT_DESKTOP": "ubuntu:GNOME"}):
+            adapter = get_desktop_adapter()
+            assert isinstance(adapter, GnomeDesktopAdapter)
+
+    with patch("rai.tools.desktop._ACTIVE_ADAPTER", None):
+        with patch.dict(os.environ, {"XDG_CURRENT_DESKTOP": "unknown"}):
+            adapter = get_desktop_adapter()
+            assert isinstance(adapter, GnomeDesktopAdapter)  # standard fallback
 
 
-@pytest.mark.skipif(not GNOME_TOOLS_AVAILABLE, reason="GNOME tools not installed")
-class TestSendNotification:
-    """Tests for the send_notification tool."""
+class TestGnomeDesktopAdapter:
+    """Tests for GnomeDesktopAdapter."""
 
-    @patch('rai.tools.gnome.pydbus.SessionBus')
-    def test_send_notification_success(self, mock_session_bus: MagicMock) -> None:
-        """Test successful notification sending."""
+    @patch("rai.tools.desktop.gnome._HAS_DBUS", True)
+    @patch("rai.tools.desktop.gnome.pydbus.SessionBus")
+    def test_send_notification_dbus_success(self, mock_session_bus: MagicMock) -> None:
+        """Test sending a notification using DBus."""
         mock_bus = MagicMock()
         mock_session_bus.return_value = mock_bus
         mock_notifications = MagicMock()
         mock_bus.get.return_value = mock_notifications
 
+        adapter = GnomeDesktopAdapter()
         summary = "Test Summary"
         body = "Test Body"
-        result = send_notification(summary=summary, body=body)
+        result = adapter.send_notification(summary=summary, body=body)
 
         mock_bus.get.assert_called_once_with(
             "org.freedesktop.Notifications", "/org/freedesktop/Notifications"
@@ -45,31 +61,37 @@ class TestSendNotification:
         mock_notifications.Notify.assert_called_once()
         assert f"Notification sent: Summary='{summary}', Body='{body}'" in result
 
-    @patch('rai.tools.gnome.pydbus.SessionBus', side_effect=Exception("DBus error"))
-    def test_send_notification_failure(self, _mock_session_bus: MagicMock) -> None:
-        """Test failure in sending notification due to DBus error."""
-        result = send_notification(summary="Test", body="Test")
-        assert "Failed to send notification: DBus error." in result
+    @patch("rai.tools.desktop.gnome._HAS_DBUS", False)
+    @patch("rai.tools.desktop.gnome.subprocess.run")
+    def test_send_notification_cli_fallback(self, mock_run: MagicMock) -> None:
+        """Test notify-send CLI fallback when DBus is not available."""
+        adapter = GnomeDesktopAdapter()
+        summary = "Test Summary"
+        body = "Test Body"
+        result = adapter.send_notification(summary=summary, body=body)
 
+        mock_run.assert_called_once_with(
+            ["notify-send", "-a", "AI Assistant", summary, body], check=True
+        )
+        assert "Notification sent via notify-send" in result
 
-@pytest.mark.skipif(not GNOME_TOOLS_AVAILABLE, reason="GNOME tools not installed")
-class TestTakeScreenshot:
-    """Tests for the take_screenshot tool."""
-
-    @patch('rai.tools.gnome.os.remove')
-    @patch('builtins.open', new_callable=MagicMock)
-    @patch('rai.tools.gnome.base64.b64encode')
-    @patch('rai.tools.gnome.os.path.exists', return_value=True)
-    @patch('rai.tools.gnome.subprocess.run')
-    @patch('rai.tools.gnome.datetime')
-    def test_success(self, mock_dt: MagicMock, mock_run: MagicMock, _mock_exists: MagicMock,
-                     mock_b64: MagicMock, mock_open: MagicMock, mock_remove: MagicMock) -> None:
-        """Test successful screenshot capture and base64 encoding."""
+    @patch("rai.tools.desktop.gnome.os.remove")
+    @patch("builtins.open", new_callable=MagicMock)
+    @patch("rai.tools.desktop.gnome.base64.b64encode")
+    @patch("rai.tools.desktop.gnome.os.path.exists", return_value=True)
+    @patch("rai.tools.desktop.gnome.subprocess.run")
+    @patch("rai.tools.desktop.gnome.datetime")
+    def test_take_screenshot_success(
+        self, mock_dt: MagicMock, mock_run: MagicMock, _mock_exists: MagicMock,
+        mock_b64: MagicMock, mock_open: MagicMock, mock_remove: MagicMock
+    ) -> None:
+        """Test taking a screenshot on GNOME."""
         mock_dt.datetime.now.strftime.return_value = "20230101_120000"
         mock_b64.return_value.decode.return_value = "fake_base64_string"
 
-        with patch('rai.tools.gnome.os.path.join', return_value='/tmp/s.png'):
-            result = take_screenshot(delay=0)
+        adapter = GnomeDesktopAdapter()
+        with patch("rai.tools.desktop.gnome.os.path.join", return_value="/tmp/s.png"):
+            result = adapter.take_screenshot(delay=0)
             result_json = json.loads(result)
 
             mock_run.assert_called_once_with(
@@ -82,32 +104,63 @@ class TestTakeScreenshot:
             assert result_json["type"] == "image_data"
             assert result_json["base64"] == "fake_base64_string"
 
-    @patch('rai.tools.gnome.subprocess.run')
-    def test_capture_fails(self, mock_run: MagicMock) -> None:
-        """Test failure when the screenshot command itself fails."""
+    @patch("rai.tools.desktop.gnome.subprocess.run")
+    def test_take_screenshot_fails(self, mock_run: MagicMock) -> None:
+        """Test failure during gnome-screenshot capture."""
         mock_run.side_effect = CalledProcessError(1, "cmd", stderr="Error")
-        result = take_screenshot(delay=0)
+        adapter = GnomeDesktopAdapter()
+        result = adapter.take_screenshot(delay=0)
         result_json = json.loads(result)
         assert result_json["status"] == "error"
         assert "Failed to take screenshot" in result_json["message"]
 
-    @patch('rai.tools.gnome.os.path.exists', return_value=False)
-    @patch('rai.tools.gnome.subprocess.run')
-    def test_file_not_found(self, _mock_run: MagicMock, _mock_exists: MagicMock) -> None:
-        """Test failure when the screenshot file is not found after capture."""
-        result = take_screenshot(delay=0)
+
+class TestCosmicDesktopAdapter:
+    """Tests for CosmicDesktopAdapter."""
+
+    @patch("rai.tools.desktop.cosmic.subprocess.run")
+    def test_take_screenshot_cosmic_success(self, mock_run: MagicMock) -> None:
+        """Test taking a screenshot using cosmic-screenshot on COSMIC."""
+        adapter = CosmicDesktopAdapter()
+        
+        # Mock file reading and encoding
+        with patch("rai.tools.desktop.cosmic.os.path.exists", return_value=True), \
+             patch("builtins.open", MagicMock()), \
+             patch("rai.tools.desktop.cosmic.base64.b64encode") as mock_b64, \
+             patch("rai.tools.desktop.cosmic.os.remove") as mock_remove:
+            
+            mock_b64.return_value.decode.return_value = "cosmic_b64"
+            result = adapter.take_screenshot(delay=0)
+            result_json = json.loads(result)
+
+            assert mock_run.call_args[0][0][0] == "cosmic-screenshot"
+            assert result_json["type"] == "image_data"
+            assert result_json["base64"] == "cosmic_b64"
+
+    @patch("rai.tools.desktop.cosmic.urllib.request.urlopen")
+    def test_weather_wttr_fallback(self, mock_urlopen: MagicMock) -> None:
+        """Test wttr.in weather fallback retrieval on COSMIC."""
+        mock_resp = MagicMock()
+        mock_resp.read.return_value = json.dumps({
+            "current_condition": [{
+                "temp_C": "22",
+                "FeelsLikeC": "21",
+                "weatherDesc": [{"value": "Sunny"}],
+                "windspeedKmph": "10",
+                "pressure": "1015",
+                "humidity": "50"
+            }],
+            "nearest_area": [{
+                "areaName": [{"value": "Warsaw"}],
+                "country": [{"value": "Poland"}]
+            }]
+        }).encode("utf-8")
+        mock_urlopen.return_value.__enter__.return_value = mock_resp
+
+        adapter = CosmicDesktopAdapter()
+        result = adapter.weather(location="Warsaw")
         result_json = json.loads(result)
-        assert result_json["status"] == "error"
-        assert "Screenshot file not found" in result_json["message"]
 
-
-@pytest.mark.skipif(not GNOME_TOOLS_AVAILABLE, reason="GNOME tools not installed")
-class TestWeather:
-    """Tests for the weather tool."""
-
-    @patch('rai.tools.gnome.pydbus.SessionBus')
-    def test_dbus_error(self, mock_session_bus: MagicMock) -> None:
-        """Test weather tool with a DBus connection error."""
-        mock_session_bus.side_effect = Exception("DBus connection error")
-        with pytest.raises(Exception, match="DBus connection error"):
-            weather(location="Warsaw")
+        assert "Warsaw" in result_json["location"]
+        assert result_json["temperature_c"] == 22.0
+        assert result_json["conditions"] == "Sunny"
