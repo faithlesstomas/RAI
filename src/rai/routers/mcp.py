@@ -12,6 +12,7 @@ from starlette.types import Receive, Scope, Send
 
 from rai.tools.shell import run_secure_shell_command
 from rai.tools.python import run_secure_python_code
+from rai.tools.desktop import get_desktop_adapter
 
 
 class EmptyResponse(Response):
@@ -79,12 +80,63 @@ async def list_tools() -> list[types.Tool]:
                 },
                 "required": ["code"]
             }
+        ),
+        types.Tool(
+            name="send_desktop_notification",
+            description="Send a pop-up desktop notification to the host Linux environment.",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "summary": {
+                        "type": "string",
+                        "description": "The title of the notification."
+                    },
+                    "body": {
+                        "type": "string",
+                        "description": "The main content of the notification."
+                    },
+                    "app_name": {
+                        "type": "string",
+                        "description": "Name of the sending application.",
+                        "default": "AI Assistant"
+                    }
+                },
+                "required": ["summary", "body"]
+            }
+        ),
+        types.Tool(
+            name="take_desktop_screenshot",
+            description="Take a full-screen screenshot of the host desktop environment.",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "delay": {
+                        "type": "integer",
+                        "description": "Delay in seconds before taking the screenshot.",
+                        "default": 0
+                    }
+                }
+            }
+        ),
+        types.Tool(
+            name="get_desktop_weather",
+            description="Get current weather information using the host environment APIs.",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "location": {
+                        "type": "string",
+                        "description": "The location/city to retrieve weather for.",
+                        "default": "current_location"
+                    }
+                }
+            }
         )
     ]
 
 
 @mcp_server.call_tool()
-async def call_tool(name: str, arguments: dict) -> types.CallToolResult:
+async def call_tool(name: str, arguments: dict) -> types.CallToolResult:  # noqa: PLR0911
     """
     Handles MCP tool calls by routing them to the secure sandboxed runners.
     """
@@ -117,6 +169,39 @@ async def call_tool(name: str, arguments: dict) -> types.CallToolResult:
             content=[types.TextContent(type="text", text=result)],
             isError=is_error
         )
+    elif name == "send_desktop_notification":
+        summary = arguments.get("summary")
+        body = arguments.get("body")
+        app_name = arguments.get("app_name", "AI Assistant")
+        if not summary or not body:
+            return types.CallToolResult(
+                content=[types.TextContent(type="text", text="Error: Missing 'summary' or 'body'.")],
+                isError=True
+            )
+        try:
+            adapter = get_desktop_adapter()
+            res = adapter.send_notification(summary, body, app_name)
+            return types.CallToolResult(content=[types.TextContent(type="text", text=res)], isError=False)
+        except Exception as e:
+            return types.CallToolResult(content=[types.TextContent(type="text", text=f"Error: {str(e)}")], isError=True)
+
+    elif name == "take_desktop_screenshot":
+        delay = arguments.get("delay", 0)
+        try:
+            adapter = get_desktop_adapter()
+            res = adapter.take_screenshot(delay)
+            return types.CallToolResult(content=[types.TextContent(type="text", text=res)], isError=False)
+        except Exception as e:
+            return types.CallToolResult(content=[types.TextContent(type="text", text=f"Error: {str(e)}")], isError=True)
+
+    elif name == "get_desktop_weather":
+        location = arguments.get("location", "current_location")
+        try:
+            adapter = get_desktop_adapter()
+            res = adapter.weather(location)
+            return types.CallToolResult(content=[types.TextContent(type="text", text=res)], isError=False)
+        except Exception as e:
+            return types.CallToolResult(content=[types.TextContent(type="text", text=f"Error: {str(e)}")], isError=True)
     else:
         logger.warning("MCP requested unknown tool: '%s'", name)
         return types.CallToolResult(

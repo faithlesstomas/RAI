@@ -15,11 +15,14 @@ async def test_mcp_list_tools() -> None:
     Tests that the MCP server exposes the secure execution tools with correct schemas.
     """
     tools = await list_tools()
-    assert len(tools) == 2
+    assert len(tools) == 5
 
     tool_names = [tool.name for tool in tools]
     assert "run_shell_command" in tool_names
     assert "run_python_code" in tool_names
+    assert "send_desktop_notification" in tool_names
+    assert "take_desktop_screenshot" in tool_names
+    assert "get_desktop_weather" in tool_names
 
     # Verify run_shell_command schema
     shell_tool = next(t for t in tools if t.name == "run_shell_command")
@@ -133,10 +136,13 @@ def test_stateless_mcp_tools_list() -> None:
     assert "tools" in data["result"]
     
     tools = data["result"]["tools"]
-    assert len(tools) == 2
+    assert len(tools) == 5
     tool_names = [t["name"] for t in tools]
     assert "run_shell_command" in tool_names
     assert "run_python_code" in tool_names
+    assert "send_desktop_notification" in tool_names
+    assert "take_desktop_screenshot" in tool_names
+    assert "get_desktop_weather" in tool_names
 
 
 @patch("rai.routers.mcp.run_secure_shell_command")
@@ -216,4 +222,88 @@ def test_stateless_mcp_invalid_json() -> None:
     assert data["jsonrpc"] == "2.0"
     assert "error" in data
     assert data["error"]["code"] == -32700
+
+
+@patch("rai.routers.mcp.get_desktop_adapter")
+def test_stateless_mcp_send_notification(mock_get_adapter: MagicMock) -> None:
+    """
+    Tests calling send_desktop_notification tool.
+    """
+    mock_adapter = MagicMock()
+    mock_adapter.send_notification.return_value = "Notification sent successfully"
+    mock_get_adapter.return_value = mock_adapter
+
+    payload = {
+        "jsonrpc": "2.0",
+        "id": 101,
+        "method": "tools/call",
+        "params": {
+            "name": "send_desktop_notification",
+            "arguments": {
+                "summary": "Hello",
+                "body": "World",
+                "app_name": "TestApp"
+            }
+        }
+    }
+    response = client.post("/api/v1/mcp/sse", json=payload)
+    assert response.status_code == 200
+    data = response.json()
+    assert data["result"]["content"][0]["text"] == "Notification sent successfully"
+    mock_adapter.send_notification.assert_called_once_with("Hello", "World", "TestApp")
+
+
+@patch("rai.routers.mcp.get_desktop_adapter")
+def test_stateless_mcp_take_screenshot(mock_get_adapter: MagicMock) -> None:
+    """
+    Tests calling take_desktop_screenshot tool.
+    """
+    mock_adapter = MagicMock()
+    mock_adapter.take_screenshot.return_value = "screenshot base64 data"
+    mock_get_adapter.return_value = mock_adapter
+
+    payload = {
+        "jsonrpc": "2.0",
+        "id": 102,
+        "method": "tools/call",
+        "params": {
+            "name": "take_desktop_screenshot",
+            "arguments": {
+                "delay": 5
+            }
+        }
+    }
+    response = client.post("/api/v1/mcp/sse", json=payload)
+    assert response.status_code == 200
+    data = response.json()
+    assert data["result"]["content"][0]["text"] == "screenshot base64 data"
+    mock_adapter.take_screenshot.assert_called_once_with(5)
+
+
+@patch("rai.routers.mcp.get_desktop_adapter")
+def test_stateless_mcp_get_weather(mock_get_adapter: MagicMock) -> None:
+    """
+    Tests calling get_desktop_weather tool.
+    """
+    mock_adapter = MagicMock()
+    mock_adapter.weather.return_value = "sunny and warm"
+    mock_get_adapter.return_value = mock_adapter
+
+    payload = {
+        "jsonrpc": "2.0",
+        "id": 103,
+        "method": "tools/call",
+        "params": {
+            "name": "get_desktop_weather",
+            "arguments": {
+                "location": "Paris"
+            }
+        }
+    }
+    response = client.post("/api/v1/mcp/sse", json=payload)
+    assert response.status_code == 200
+    data = response.json()
+    assert data["result"]["content"][0]["text"] == "sunny and warm"
+    mock_adapter.weather.assert_called_once_with("Paris")
+
 
