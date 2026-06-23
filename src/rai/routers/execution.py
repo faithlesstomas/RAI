@@ -3,6 +3,7 @@ API endpoints for executing agent chains.
 """
 import json
 import logging
+import uuid
 from typing import Any, AsyncGenerator, Dict, List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, WebSocket, WebSocketDisconnect
@@ -101,6 +102,8 @@ async def stream_chain_endpoint(
     """
     Streams the result of an agent execution using Server-Sent Events (SSE).
     """
+    session_id = request.session_id or str(uuid.uuid4())
+
     async def event_generator() -> AsyncGenerator[str, None]:
         chat_service = ChatService()
         prompt = request.prompt or request.chain_input
@@ -111,7 +114,7 @@ async def stream_chain_endpoint(
         async for chunk in chat_service.stream_chain(
             chain_input=prompt,
             chain_configs=request.chain_configs,
-            session_id=request.session_id,
+            session_id=session_id,
             context=request.context,
             agent_id=request.agent_id,
         ):
@@ -133,7 +136,7 @@ async def stream_chain_endpoint(
             yield f"data: {json.dumps({'content': content})}\n\n"
 
         # End of stream
-        yield "event: done\ndata: {}\n\n"
+        yield f"event: done\ndata: {json.dumps({'session_id': session_id})}\n\n"
 
     return StreamingResponse(event_generator(), media_type="text/event-stream")
 

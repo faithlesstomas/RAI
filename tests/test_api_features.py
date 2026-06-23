@@ -20,6 +20,7 @@ async def test_stream_endpoint() -> None:
 
         mock_stream.return_value = mock_generator()
 
+        # Case 1: No session_id passed (should generate one)
         response = client.post(
             "/api/v1/stream",
             json={
@@ -33,3 +34,20 @@ async def test_stream_endpoint() -> None:
         assert "data: {\"content\": \"Hello\"}" in content
         assert "data: {\"content\": \" World\"}" in content
         assert "event: done" in content
+        # Ensure session_id is present in the done event
+        assert "data: {\"session_id\": \"" in content
+
+        # Case 2: session_id passed (should propagate it)
+        response_prop = client.post(
+            "/api/v1/stream",
+            json={
+                "prompt": "Test input",
+                "agent_id": "default",
+                "session_id": "custom-session-123"
+            }
+        )
+        assert response_prop.status_code == 200
+        content_prop = response_prop.content.decode("utf-8")
+        assert "event: done" in content_prop
+        assert "data: {\"session_id\": \"custom-session-123\"}" in content_prop
+
