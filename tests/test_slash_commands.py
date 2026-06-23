@@ -10,10 +10,10 @@ from rai import cli as rai_cli
 async def test_handle_history_command_with_history() -> None:
     """Test the /history command when history is available."""
     mock_processor = MagicMock()
-    mock_processor.get_history.return_value = [
+    mock_processor.get_history = AsyncMock(return_value=[
         {"role": "user", "content": "Hello"},
         {"role": "assistant", "content": "Hi there!"},
-    ]
+    ])
 
     # No chat_service in config, fallbacks to processor.get_history
     run_config = {}
@@ -39,7 +39,7 @@ async def test_handle_history_command_with_history() -> None:
 async def test_handle_history_command_with_no_history() -> None:
     """Test the /history command when no history is available."""
     mock_processor = MagicMock()
-    mock_processor.get_history.return_value = []
+    mock_processor.get_history = AsyncMock(return_value=[])
     run_config = {}
 
     with patch("rai.cli.console.print") as mock_print:
@@ -52,10 +52,10 @@ async def test_handle_history_command_with_no_history() -> None:
 async def test_handle_save_command_with_history() -> None:
     """Test the /save command when history is available."""
     mock_processor = MagicMock()
-    mock_processor.get_history.return_value = [
+    mock_processor.get_history = AsyncMock(return_value=[
         {"role": "user", "content": "Hello"},
         {"role": "assistant", "content": "Hi there!"},
-    ]
+    ])
     run_config = {}
     m = mock_open()
     with patch("builtins.open", m):
@@ -73,7 +73,7 @@ async def test_handle_save_command_with_history() -> None:
 async def test_handle_save_command_no_history() -> None:
     """Test the /save command when no history is available."""
     mock_processor = MagicMock()
-    mock_processor.get_history.return_value = []
+    mock_processor.get_history = AsyncMock(return_value=[])
     run_config = {}
 
     with patch("rai.cli.console.print") as mock_print:
@@ -86,7 +86,7 @@ async def test_handle_save_command_no_history() -> None:
 async def test_handle_save_command_no_filename() -> None:
     """Test the /save command when no filename is provided."""
     mock_processor = MagicMock()
-    mock_processor.get_history.return_value = [{"role": "user", "content": "Hello"}]
+    mock_processor.get_history = AsyncMock(return_value=[{"role": "user", "content": "Hello"}])
     run_config = {}
 
     with patch("rai.cli.error_console.print") as mock_print:
@@ -99,11 +99,12 @@ async def test_handle_save_command_no_filename() -> None:
 async def test_handle_clear_command() -> None:
     """Test the /clear command."""
     mock_processor = MagicMock()
+    mock_processor.clear_history = AsyncMock()
     run_config = {}
     with patch("rai.cli.console.print") as mock_print:
         await rai_cli._handle_clear_command([], run_config, mock_processor)
 
-        mock_processor.clear_history.assert_called_once()
+        mock_processor.clear_history.assert_awaited_once()
         mock_print.assert_called_once_with("[green]Chat history cleared.[/green]")
 
 

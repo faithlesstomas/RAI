@@ -15,6 +15,7 @@ from rai.config_manager import (
     TRAJECTORY_DIR,
     get_conversation_id_for_session,
     set_conversation_id_for_session,
+    clear_conversation_id_for_session,
 )
 from rai.exceptions import ChainExecutionError
 from rai.services.history import HistoryService
@@ -219,8 +220,16 @@ class ChatService:
         return await self._history_service.get_session_history(session_id)
 
     async def clear_session_history(self, session_id: str) -> Result[None, Exception]:
-        """Clears history for a specific session."""
-        return await self._history_service.clear_history(session_id)
+        """Clears history for a specific session and resets the conversation trajectory."""
+        db_res = await self._history_service.clear_history(session_id)
+        if isinstance(db_res, Failure):
+            return db_res
+        try:
+            clear_conversation_id_for_session(session_id)
+            return Success(None)
+        except Exception as e:
+            logger.error(f"Failed to clear conversation id mapping: {e}")
+            return Failure(e)
 
     async def add_message_to_history(
         self,

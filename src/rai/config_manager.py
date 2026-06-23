@@ -2,6 +2,7 @@
 Centralized configuration management for the RAI application.
 """
 import json
+import logging
 import os
 import yaml
 from typing import Any, Dict, Optional, Tuple
@@ -410,5 +411,23 @@ def set_conversation_id_for_session(session_name: str, conv_id: str) -> None:
         state["session_conversation_ids"] = {}
     state["session_conversation_ids"][session_name] = conv_id
     save_state(state)
+
+
+def clear_conversation_id_for_session(session_name: str) -> None:
+    """Removes the persistent Antigravity conversation ID mapping and deletes the trajectory file."""
+    state = load_state()
+    mapping = state.get("session_conversation_ids", {})
+    if session_name in mapping:
+        conv_id = mapping.pop(session_name)
+        save_state(state)
+
+        # Also delete the trajectory file if it exists
+        traj_file = os.path.join(TRAJECTORY_DIR, f"traj-{conv_id}")
+        if os.path.exists(traj_file):
+            try:
+                os.remove(traj_file)
+            except Exception as e:
+                logging.getLogger(__name__).warning(f"Failed to remove trajectory file {traj_file}: {e}")
+
 
 

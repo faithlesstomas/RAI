@@ -54,6 +54,15 @@ class LocalProcessor:
             session_id=self.session_name,
         )
 
+    async def get_history(self) -> List[Dict[str, Any]]:
+        result = await self.chat_service.get_session_history(self.session_name)
+        if isinstance(result, Success):
+            return result.unwrap()
+        return []
+
+    async def clear_history(self) -> None:
+        await self.chat_service.clear_session_history(self.session_name)
+
     def reload(self) -> None:
         pass
 
@@ -107,6 +116,24 @@ class ClientProcessor:
                 return Failure(Exception(data.get("detail", "Server error")))
         except Exception as e:
             return Failure(e)
+
+    async def get_history(self) -> List[Dict[str, Any]]:
+        session_to_query = self.stateful_session_id or self.session_name
+        try:
+            response = await self.client.get(f"/api/v1/history/sessions/{session_to_query}")
+            response.raise_for_status()
+            return response.json().get("messages", [])
+        except Exception as e:
+            logging.getLogger(__name__).error(f"Failed to fetch history from server: {e}")
+            return []
+
+    async def clear_history(self) -> None:
+        session_to_clear = self.stateful_session_id or self.session_name
+        try:
+            response = await self.client.delete(f"/api/v1/history/sessions/{session_to_clear}")
+            response.raise_for_status()
+        except Exception as e:
+            logging.getLogger(__name__).error(f"Failed to clear history on server: {e}")
 
     def reload(self) -> None:
         pass
@@ -341,18 +368,7 @@ async def _handle_config_command(args: List[str], run_config: Dict[str, Any], pr
 
 async def _handle_history_command(_: List[str], run_config: Dict[str, Any], processor: Processor) -> None:
     """Handles the /history command."""
-    history = []
-    
-    chat_service = run_config.get("chat_service")
-    if chat_service:
-        # Standalone mode with unified history
-        session_id = run_config.get("session_id", "default")
-        result = await chat_service.get_session_history(session_id)
-        if isinstance(result, Success):
-            history = result.unwrap()
-    else:
-        # Fallback or client mode
-        history = processor.get_history()
+    history = await processor.get_history()
 
     if not history:
         console.print("[dim]No history available.[/dim]")
@@ -366,29 +382,12 @@ async def _handle_history_command(_: List[str], run_config: Dict[str, Any], proc
 
 async def _handle_clear_command(_: List[str], run_config: Dict[str, Any], processor: Processor) -> None:
     """Handles the /clear command."""
-    chat_service = run_config.get("chat_service")
-    if chat_service:
-        session_id = run_config.get("session_id", "default")
-        await chat_service.clear_session_history(session_id)
-        # Also clear in-memory adapter state if needed
-        processor.clear_history() 
-    else:
-        processor.clear_history()
-
+    await processor.clear_history()
     console.print("[green]Chat history cleared.[/green]")
 
 async def _handle_save_command(args: List[str], run_config: Dict[str, Any], processor: Processor) -> None:
     """Handles the /save command."""
-    history = []
-    
-    chat_service = run_config.get("chat_service")
-    if chat_service:
-        session_id = run_config.get("session_id", "default")
-        result = await chat_service.get_session_history(session_id)
-        if isinstance(result, Success):
-            history = result.unwrap()
-    else:
-        history = processor.get_history()
+    history = await processor.get_history()
 
     if not history:
         console.print("[dim]No history available to save.[/dim]")
