@@ -124,6 +124,7 @@ async def test_handle_model_command_set_new_model() -> None:
     """Test the /model command to set a new model."""
     run_config = {"model": "old-model"}
     mock_processor = MagicMock()
+    mock_processor.reload = AsyncMock()
     with patch("rai.cli.console.print") as mock_print:
         await rai_cli._handle_model_command(["new-model"], run_config, mock_processor)
 

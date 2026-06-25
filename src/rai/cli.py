@@ -68,7 +68,7 @@ class LocalProcessor:
     async def clear_history(self) -> None:
         await self.chat_service.clear_session_history(self.session_name)
 
-    def reload(self) -> None:
+    async def reload(self) -> None:
         self.enable_tools = True
         if self.run_config.get("backend") == "ollama":
             try:
@@ -146,8 +146,22 @@ class ClientProcessor:
         except Exception as e:
             logging.getLogger(__name__).error(f"Failed to clear history on server: {e}")
 
-    def reload(self) -> None:
-        pass
+    async def sync_config(self) -> None:
+        """Sends the active configuration to the daemon to keep it in sync."""
+        payload = {
+            "model": self.run_config.get("model", ""),
+            "backend": self.run_config.get("backend", "ollama"),
+            "system": self.run_config.get("system", ""),
+            "tools": self.run_config.get("tools", []),
+        }
+        try:
+            response = await self.client.put(f"/api/v1/agents/{self.session_name}", json=payload)
+            response.raise_for_status()
+        except Exception as e:
+            logging.getLogger(__name__).warning("Failed to sync config with server: %s", e)
+
+    async def reload(self) -> None:
+        await self.sync_config()
 
     async def close(self) -> None:
         await self.client.aclose()
@@ -371,7 +385,7 @@ async def _handle_config_command(args: List[str], run_config: Dict[str, Any], pr
 
         # Reload the processor to apply changes immediately
         console.print("[dim]Reloading agent...[/dim]")
-        processor.reload()
+        await processor.reload()
 
         console.print(f"Set '{key}' to '{value}' (persisted).")
         console.print("[dim]Note: New settings will be used on the next interaction.[/dim]")
@@ -433,7 +447,7 @@ async def _handle_model_command(args: List[str], run_config: Dict[str, Any], pro
 
     # Reload processor
     console.print("[dim]Reloading agent...[/dim]")
-    processor.reload()
+    await processor.reload()
 
     console.print(f"Set model to '{model_name}' (persisted).")
     console.print("[dim]Note: New settings will be used on the next interaction.[/dim]")

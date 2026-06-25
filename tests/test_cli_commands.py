@@ -66,6 +66,7 @@ async def test_config_command_get_implementation(mock_print) -> None:
 async def test_config_command_set_implementation() -> None:
     """Test the implementation of the '/config set' command."""
     agent = MagicMock()
+    agent.reload = AsyncMock()
     run_config = {"model": "old-model"}
 
     # Test the 'set' subcommand

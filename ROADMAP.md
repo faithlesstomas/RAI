@@ -122,8 +122,8 @@ This frees RAI from maintaining core AI execution code, allowing full focus on:
 ## 4. Technical Debt & Outstanding Bugs
 
 ### 4.1 High Priority Fixes
-*   [ ] **Session ID Leak in Routing:** In `src/rai/routers/execution.py`, fix `execute_chain` (or the new runtime execution endpoint) to respect and propagate `session_id`, rather than creating new sessions per call.
-*   [ ] **Resource Cleanup:** Fix the `ResourceWarning: unclosed database/transport` warnings that occur during daemon exit.
+*   [x] **Session ID Leak in Routing:** In `src/rai/routers/execution.py`, fix `execute_chain` (or the new runtime execution endpoint) to respect and propagate `session_id`, rather than creating new sessions per call.
+*   [x] **Resource Cleanup:** Fix the `ResourceWarning: unclosed database/transport` warnings that occur during daemon exit.
 *   [x] **Config Discrepancy:** Unify `rai config` CLI outputs so that active runtime config and stored `config.json` remain in sync.
 
 ### 4.2 CI/CD and Linting

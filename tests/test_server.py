@@ -164,3 +164,13 @@ async def test_clear_session_history_success(mock_history_service) -> None:
     }
     mock_history_service.clear_history.assert_awaited_once_with("test-session")
 
+
+def test_server_lifespan_closes_dependencies() -> None:
+    """Test that application lifespan closes dependencies during shutdown."""
+    with patch("rai.server.close_dependencies", new_callable=AsyncMock) as mock_close:
+        # Create a new TestClient to trigger the lifespan events
+        from fastapi.testclient import TestClient
+        with TestClient(app):
+            pass
+        mock_close.assert_awaited_once()
+

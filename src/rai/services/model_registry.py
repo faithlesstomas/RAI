@@ -110,3 +110,14 @@ class ModelRegistry:
             if models:
                 results[backend] = models
         return results
+
+    async def close(self) -> None:
+        """Closes any active client connections."""
+        if self._ollama_client:
+            try:
+                if hasattr(self._ollama_client, "aclose"):
+                    await self._ollama_client.aclose()
+                elif hasattr(self._ollama_client, "close"):
+                    await self._ollama_client.close()
+            except Exception as e:
+                logging.getLogger(__name__).warning("Failed to close Ollama client: %s", e)

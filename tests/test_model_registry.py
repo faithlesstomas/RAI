@@ -95,3 +95,28 @@ async def test_get_all_models(mock_config: dict) -> None:
             "ollama": ["llama2"],
             "gemini": ["gemini-pro"]
         }
+
+
+@pytest.mark.asyncio
+async def test_close_model_registry_aclose(mock_config: dict) -> None:
+    """Test ModelRegistry.close when ollama_client has async close."""
+    registry = ModelRegistry(mock_config)
+    mock_client = AsyncMock()
+    # Explicitly configure aclose/close behavior
+    del mock_client.close  # Ensure it doesn't fall back to close if aclose exists
+    registry._ollama_client = mock_client
+    
+    await registry.close()
+    mock_client.aclose.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_close_model_registry_close(mock_config: dict) -> None:
+    """Test ModelRegistry.close when ollama_client has sync close only."""
+    registry = ModelRegistry(mock_config)
+    mock_client = MagicMock()
+    del mock_client.aclose  # Ensure it uses close
+    registry._ollama_client = mock_client
+    
+    await registry.close()
+    mock_client.close.assert_called_once()
