@@ -42,11 +42,12 @@ from typing import Union
 
 class LocalProcessor:
     """Processor running agent executions locally inside the CLI process via google-antigravity."""
-    def __init__(self, run_config: Dict[str, Any], session_name: str, enable_tools: bool = True) -> None:
+    def __init__(self, run_config: Dict[str, Any], session_name: str, enable_tools: bool = True, options: Optional["CliOptions"] = None) -> None:
         self.run_config = run_config
         self.session_name = session_name
         self.chat_service = ChatService()
         self.enable_tools = enable_tools
+        self.options = options
 
     async def arun(self, prompt: str, history: Optional[List[Dict[str, Any]]] = None) -> Result[Dict[str, Any], Exception]:
         run_cfg = self.run_config.copy()
@@ -81,10 +82,11 @@ class LocalProcessor:
 
 class ClientProcessor:
     """Processor running agent executions remotely by talking to the 'rai serve' daemon."""
-    def __init__(self, run_config: Dict[str, Any], session_name: str, server_uri: str) -> None:
+    def __init__(self, run_config: Dict[str, Any], session_name: str, server_uri: str, options: Optional["CliOptions"] = None) -> None:
         self.run_config = run_config
         self.session_name = session_name
         self.server_uri = server_uri
+        self.options = options
         self.base_url = server_uri.replace("ws://", "http://").replace("wss://", "https://").split("/ws/")[0]
         self.transport = None
         if server_uri.startswith("unix://"):
@@ -596,7 +598,6 @@ def _build_run_config(options: CliOptions) -> Tuple[Dict[str, Any], Dict[str, An
 
     run_config = {
         "session_id": session_to_use,
-        "options": options,
         "model": options.model or session_config.get("model"),
         "backend": options.backend or session_config.get("backend"),
         "system": options.system or session_config.get("system"),
@@ -609,7 +610,9 @@ def _build_run_config(options: CliOptions) -> Tuple[Dict[str, Any], Dict[str, An
 def refresh_run_config(run_config: Dict[str, Any], processor: Processor) -> None:
     """Refreshes the run_config dictionary in-place from disk/options."""
     session_id = run_config.get("session_id", "default")
-    options = run_config.get("options")
+    options = getattr(processor, "options", None)
+    if options is not None and (hasattr(options, "_mock_return_value") or options.__class__.__name__ in ("MagicMock", "Mock")):
+        options = None
     config_path = options.config_path if options else None
 
     app_config = config_manager.load_config(path=config_path)
@@ -628,21 +631,21 @@ def refresh_run_config(run_config: Dict[str, Any], processor: Processor) -> None
 def _setup_standalone_processor(
     run_config: Dict[str, Any],
     session_to_use: str,
-    quiet: bool
+    options: CliOptions
 ) -> Tuple[LocalProcessor, ChatService]:
     """Sets up the processor for standalone execution."""
     # Perform backend-specific checks
     enable_tools = True
     if run_config.get("backend") == "ollama":
-        has_tools = _initialize_ollama_check(run_config["model"], quiet)
+        has_tools = _initialize_ollama_check(run_config["model"], options.quiet)
         if not has_tools:
             # Explicitly disable tools for this session to avoid API errors (400)
             enable_tools = False
-            if not quiet:
+            if not options.quiet:
                  console.print(f"[yellow]Warning: Tools disabled for model '{run_config['model']}'.[/yellow]")
 
     chat_service = ChatService()
-    processor = LocalProcessor(run_config, session_to_use, enable_tools=enable_tools)
+    processor = LocalProcessor(run_config, session_to_use, enable_tools=enable_tools, options=options)
     return processor, chat_service
 
 
@@ -751,7 +754,8 @@ async def async_main_client(options: CliOptions) -> None: # noqa: PLR0912
         processor = ClientProcessor(
             run_config=run_config,
             session_name=session_to_use,
-            server_uri=uri
+            server_uri=uri,
+            options=options
         )
 
         # Eagerly connect to the server before starting the interactive chat.

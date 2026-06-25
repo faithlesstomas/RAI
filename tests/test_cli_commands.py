@@ -307,8 +307,8 @@ def test_config_manager_migration(tmp_path) -> None:
     assert "DesktopWeatherTool" in on_disk["custom_agent"]["tools"]
 
 
-def test_build_run_config_sets_session_id_and_options() -> None:
-    """Test that _build_run_config sets the session_id and options fields."""
+def test_build_run_config_sets_session_id() -> None:
+    """Test that _build_run_config sets the session_id fields."""
     options = rai_cli.CliOptions(model="test-model", backend="gemini", session_override="test-session")
     with patch("rai.cli.config_manager.load_config") as mock_load_config, \
          patch("rai.cli.config_manager.initialize_session") as mock_init_session:
@@ -319,7 +319,7 @@ def test_build_run_config_sets_session_id_and_options() -> None:
         run_config, session_config, session_to_use, app_config = rai_cli._build_run_config(options)
         
         assert run_config["session_id"] == "test-session"
-        assert run_config["options"] is options
+        assert "options" not in run_config
         assert run_config["model"] == "test-model"
         assert run_config["backend"] == "gemini"
         assert run_config["tools"] == ["ToolA"]
@@ -330,7 +330,6 @@ def test_refresh_run_config() -> None:
     options = rai_cli.CliOptions(model="new-model", backend="gemini")
     run_config = {
         "session_id": "test-session",
-        "options": options,
         "model": "old-model",
         "backend": "ollama",
         "tools": []
@@ -350,6 +349,7 @@ def test_refresh_run_config() -> None:
         mock_init_session.return_value = ("test-session", session_config)
         
         mock_processor = MagicMock()
+        mock_processor.options = options
         rai_cli.refresh_run_config(run_config, mock_processor)
         
         # Check in-place updates:
@@ -361,6 +361,4 @@ def test_refresh_run_config() -> None:
         assert run_config["tools"] == ["ToolA", "ToolB"]
         # In-place metadata is preserved:
         assert run_config["session_id"] == "test-session"
-        assert run_config["options"] is options
-
-
+        assert "options" not in run_config
