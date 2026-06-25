@@ -140,6 +140,7 @@ async def test_handle_config_command_filtering() -> None:
         "model": "test-model",
         "chat_service": MagicMock(),  # Not JSON serializable
         "active_tts_task": MagicMock(), # Not JSON serializable
+        "options": MagicMock(),  # Not JSON serializable
         "other_setting": "value"
     }
 
@@ -158,3 +159,4 @@ async def test_handle_config_command_filtering() -> None:
         assert content["other_setting"] == "value"
         assert "chat_service" not in content
         assert "active_tts_task" not in content
+        assert "options" not in content

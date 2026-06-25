@@ -333,7 +333,7 @@ async def _handle_config_command(args: List[str], run_config: Dict[str, Any], pr
     if subcommand == "show":
         config_copy = {
             k: v for k, v in run_config.items() 
-            if k not in ["chat_service", "active_tts_task"]
+            if k not in ["chat_service", "active_tts_task", "options"]
         }
         console.print(
             Panel(
