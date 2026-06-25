@@ -82,7 +82,7 @@ def load_agents(path: Optional[str] = None) -> Dict[str, Any]:
         default_agents = {
             "default": {
                 "name": "default",
-                "model": "gemini-1.5-flash",
+                "model": "gemini-2.5-flash",
                 "system": "You are a versatile and helpful AI assistant deeply integrated with Linux.",
                 "tools": [
                     "CalculatorTools", "ArxivTools", "WikipediaTools",
@@ -131,6 +131,11 @@ def load_agents(path: Optional[str] = None) -> Dict[str, Any]:
             if unique_new_tools != agent_data["tools"]:
                 agent_data["tools"] = unique_new_tools
                 modified = True
+
+        # 3. Migrate model from gemini-1.5-flash to gemini-2.5-flash
+        if agent_data.get("model") == "gemini-1.5-flash":
+            agent_data["model"] = "gemini-2.5-flash"
+            modified = True
 
     if modified and loaded_from_yaml:
         try:
@@ -228,7 +233,7 @@ def initialize_session(
     if active_agent not in agents:
         agents[active_agent] = {
             "name": active_agent,
-            "model": "gemini-1.5-flash",
+            "model": "gemini-2.5-flash",
             "system": "You are a versatile and helpful AI assistant.",
             "tools": [
                 "CalculatorTools", "ArxivTools", "WikipediaTools",
@@ -258,7 +263,7 @@ def switch_session_logic(session_name: str) -> None:
         console.print(f"Creating new agent profile: [bold]{session_name}[/bold]")
         agents[session_name] = {
             "name": session_name,
-            "model": "gemini-1.5-flash",
+            "model": "gemini-2.5-flash",
             "system": "You are a versatile and helpful AI assistant.",
         }
         save_agents(agents)

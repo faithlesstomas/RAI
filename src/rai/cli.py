@@ -775,41 +775,42 @@ async def async_main_client(options: CliOptions) -> None: # noqa: PLR0912
         uri = "ws://127.0.0.1:8000/ws/v1/chat"
 
     if options.prompt:
-        # Single-shot mode using REST
-        payload = {"chain_input": options.prompt, "chain_configs": [run_config]}
+        # Single-shot mode using ClientProcessor
+        processor = ClientProcessor(
+            run_config=run_config,
+            session_name=session_to_use,
+            server_uri=uri,
+            options=options
+        )
         try:
-            transport = None
-            base_url = uri.replace("ws://", "http://").replace("wss://", "https://").split("/ws/")[0]
-
-            if uri.startswith("unix://"):
-                uds_path = uri[len("unix://") :]
-                transport = httpx.AsyncHTTPTransport(uds=uds_path)
-                base_url = "http://localhost"  # Dummy base URL for UDS
-                if not options.quiet:
-                    console.print(f"[dim]Connecting to server via UDS at {uds_path}...[/dim]")
-            elif not options.quiet:
-                console.print(f"[dim]Connecting to server at {base_url}...[/dim]")
-
-            async with httpx.AsyncClient(transport=transport, base_url=base_url) as client:
-                response = await client.post("/api/v1/run", json=payload, timeout=None)
-                response.raise_for_status()
-                data = response.json()
-                if data.get("status") == "success":
-                    content = data.get("payload", {}).get("content", "")
-                    if options.json_output:
-                        console.print(json.dumps(data.get("payload"), indent=2))
-                    else:
-                        console.print(Markdown(content) if not options.no_markdown else content)
+            if not options.quiet:
+                if uri.startswith("unix://"):
+                    console.print(f"[dim]Connecting to server via UDS at {uri[len('unix://'):]}...[/dim]")
                 else:
-                    error_console.print(f"[red]Server Error: {data.get('detail')}[/red]")
-        except httpx.RequestError as e:
-            error_console.print(
-                "[bold red]Connection Error:[/bold red]"
-                f" Could not connect to the rai server at {uri}."
-            )
-            error_console.print(f"[dim]Is the server running? ('rai serve'). Error: {e}[/dim]")
-        except Exception as e: # pylint: disable=broad-exception-caught # pylint: disable=broad-exception-caught # pylint: disable=broad-exception-caught
+                    console.print(f"[dim]Connecting to server at {processor.base_url}...[/dim]")
+
+            # Eagerly connect and sync config
+            connect_result = await processor.connect()
+            if isinstance(connect_result, Failure):
+                return
+            await processor.sync_config()
+
+            with console.status("[bold green]Assistant is thinking..."):
+                result = await processor.arun(options.prompt)
+
+            if isinstance(result, Success):
+                payload_data = result.unwrap()
+                content = payload_data.get("content", "")
+                if options.json_output:
+                    console.print(json.dumps(payload_data, indent=2))
+                else:
+                    console.print(Markdown(content) if not options.no_markdown else content)
+            else:
+                error_console.print(f"[red]Error: {result.failure()}[/red]")
+        except Exception as e:
             error_console.print(f"[bold red]An unexpected client error occurred:[/bold red]\n{e}")
+        finally:
+            await processor.close()
     else:
         # Interactive mode using ClientProcessor
         processor = ClientProcessor(
@@ -1092,7 +1093,7 @@ def rename_agent(ctx: click.Context, old_name: str, new_name: str) -> None:
 
             post_payload = {
                 "name": new_name,
-                "model": old_config.get("model", "gemini-1.5-flash"),
+                "model": old_config.get("model", "gemini-2.5-flash"),
                 "backend": old_config.get("backend", "ollama"),
                 "system_prompt": old_config.get("system") or old_config.get("system_prompt"),
                 "tools": old_config.get("tools", []),
@@ -1304,6 +1305,8 @@ def serve(
     Runs the FastAPI server for REST, WebSocket, and IPC communication.
     """
     # pylint: disable=import-outside-toplevel
+    import os
+    os.environ["RAI_SERVE"] = "1"
     try:
         import uvicorn  # noqa: PLC0415
     except ImportError:

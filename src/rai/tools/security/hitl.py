@@ -5,8 +5,11 @@ import uuid
 import shutil
 import logging
 import asyncio
+import sys
+import os
 from asyncio.subprocess import Process
 from typing import Dict, Any, Optional
+from rich.panel import Panel
 
 logger = logging.getLogger(__name__)
 
@@ -138,10 +141,32 @@ class ApprovalManager:
         # 1. Spawn Zenity desktop prompt in the background (concurrently)
         asyncio.create_task(self.prompt_desktop_async(req))
 
-        # 2. Block until the request event is set (either by Zenity or by REST/WebSocket APIs)
+        # 2. If running standalone and stdin is a TTY, also run a console approval prompt
+        async def console_prompt() -> None:
+            if os.environ.get("RAI_SERVE") != "1" and sys.stdin.isatty():
+                try:
+                    from ...core import console
+                    print("\n")
+                    console.print(Panel(
+                        f"[bold yellow]Command:[/bold yellow] {req.command}\n"
+                        f"[bold yellow]Tool:[/bold yellow] {req.tool_name}",
+                        title="🚨 RAI STANDALONE GATEWAY - AUTHORIZATION REQUIRED 🚨",
+                        border_style="red"
+                    ))
+                    loop = asyncio.get_running_loop()
+                    user_val = await loop.run_in_executor(None, input, "Authorize this execution? (y/n): ")
+                    approved = user_val.strip().lower() in ("y", "yes")
+                    if req.status == "pending":
+                        self.resolve_request(req.id, approved)
+                except Exception as e:
+                    logger.error("Error in console approval prompt: %s", e)
+
+        asyncio.create_task(console_prompt())
+
+        # 3. Block until the request event is set (either by Zenity or by REST/WebSocket APIs)
         await req.event.wait()
 
-        # 3. Clean up registry
+        # 4. Clean up registry
         if req.id in self._pending:
             # We keep resolved requests in case clients query them later, but can pop them or expire them
             pass

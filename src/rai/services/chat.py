@@ -97,7 +97,7 @@ class ChatService:
             # Construct LocalAgentConfig
             config = LocalAgentConfig(
                 system_instructions=agent_config.get("system") or agent_config.get("system_instructions"),
-                model=agent_config.get("model", "gemini-1.5-flash"),
+                model=agent_config.get("model", "gemini-2.5-flash"),
                 tools=agent_tools,
                 conversation_id=actual_conv_id,
                 save_dir=TRAJECTORY_DIR,
@@ -182,7 +182,7 @@ class ChatService:
         try:
             config = LocalAgentConfig(
                 system_instructions=agent_config.get("system") or agent_config.get("system_instructions"),
-                model=agent_config.get("model", "gemini-1.5-flash"),
+                model=agent_config.get("model", "gemini-2.5-flash"),
                 tools=agent_tools,
                 conversation_id=actual_conv_id,
                 save_dir=TRAJECTORY_DIR,
