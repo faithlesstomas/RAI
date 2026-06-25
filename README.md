@@ -68,14 +68,45 @@ uv pip install -e .[test,dev,lint]
 
 *For GNOME D-Bus tools integration:* `uv pip install -e .[gnome-tools]`
 
-### 2. Configuration
-Create your configurations in `~/.config/rai/agents.yaml` to define your customized agents, and standard sessions will be persisted locally in `~/.config/rai/sessions/`.
+### 2. Configuration & Local Models
+Create your configurations in `~/.config/rai/agents.yaml` to define your customized agents.
+
+#### Running Local Models (Ollama)
+RAI supports running local models (such as `gemma4:e2b` or `llama3.2`) from a local Ollama server:
+* **Auto-Routing:** When a non-gemini model name is specified, RAI automatically configures the connection strategy to talk to Ollama (`http://127.0.0.1:11434`) via the SDK's `gemma_config` field. This is a constraint of the Go-based `localharness` binary protocol.
+* **Harness Isolation:** To prevent local models from crashing due to the harness's hardcoded 16,384-token limit, RAI runs the harness process in an isolated environment. This keeps prompt sizes small (~11k tokens) by excluding unrelated system plugins/skills.
+* **HITL Shell Tools:** Custom shell command execution automatically triggers the Human-In-The-Loop (HITL) approval flow if high-risk actions (e.g. `sudo` or network access) are requested. Pending approvals can be reviewed and resolved via the API.
 
 ### 3. Usage
 * **Interactive CLI:** `rai`
 * **One-shot Inference:** `rai -p "List all active pull requests in Gitlab"`
 * **Run Daemon Server:** `rai serve`
 * **Connect Client to Remote Daemon:** `rai --connect`
+
+### 4. Running as a Background Daemon (systemd)
+To run the RAI daemon automatically in the background as a user-level systemd service:
+
+1. Copy the static service template to your user systemd directory:
+   ```bash
+   mkdir -p ~/.config/systemd/user/
+   cp dist/systemd/rai.service ~/.config/systemd/user/
+   ```
+2. Reload the systemd daemon:
+   ```bash
+   systemctl --user daemon-reload
+   ```
+3. Enable and start the service:
+   ```bash
+   systemctl --user enable rai.service
+   systemctl --user start rai.service
+   ```
+4. Check daemon logs and status:
+   ```bash
+   systemctl --user status rai.service
+   journalctl --user -u rai.service -f
+   ```
+
+Note: By default, the service binds to port `8585`. Ensure that your clients use this port (or connection strings like `ws://localhost:8585`) when talking to the daemon.
 
 ---
 

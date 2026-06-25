@@ -63,11 +63,17 @@ async def test_config_command_get_implementation(mock_print) -> None:
 
 
 @pytest.mark.asyncio
-async def test_config_command_set_implementation() -> None:
+@patch("rai.cli.config_manager.set_config_logic")
+@patch("rai.cli.refresh_run_config")
+async def test_config_command_set_implementation(mock_refresh, mock_set_logic) -> None:
     """Test the implementation of the '/config set' command."""
     agent = MagicMock()
     agent.reload = AsyncMock()
     run_config = {"model": "old-model"}
+
+    def side_effect(rc, proc) -> None:
+        rc["model"] = "new-model"
+    mock_refresh.side_effect = side_effect
 
     # Test the 'set' subcommand
     user_input_set = "/config set model new-model"
@@ -80,6 +86,8 @@ async def test_config_command_set_implementation() -> None:
 
     # Check that the run_config was modified
     assert run_config["model"] == "new-model"
+    mock_set_logic.assert_called_once_with("model", "new-model")
+    mock_refresh.assert_called_once()
 
 
 @patch("rai.cli.click.launch")

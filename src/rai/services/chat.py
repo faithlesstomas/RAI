@@ -8,6 +8,7 @@ from typing import Any, AsyncIterator, Dict, List, Optional
 from returns.result import Failure, Result, Success
 
 from google.antigravity import Agent, LocalAgentConfig
+from google.antigravity.types import CapabilitiesConfig, BuiltinTools
 from rai.core import setup_tools
 from rai.config_manager import (
     load_config,
@@ -101,6 +102,9 @@ class ChatService:
                 tools=agent_tools,
                 conversation_id=actual_conv_id,
                 save_dir=TRAJECTORY_DIR,
+                capabilities=CapabilitiesConfig(
+                    disabled_tools=[BuiltinTools.RUN_COMMAND]
+                )
             )
 
             # Start agent session

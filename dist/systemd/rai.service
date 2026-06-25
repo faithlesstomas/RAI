@@ -1,0 +1,12 @@
+[Unit]
+Description=RAI - Rich AI Assistant Daemon
+After=network.target
+
+[Service]
+Type=simple
+ExecStart=%h/.local/bin/rai serve --port 8585
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=default.target

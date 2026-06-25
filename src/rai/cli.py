@@ -150,8 +150,10 @@ async def poll_approvals_loop(client: httpx.AsyncClient, stop_event: asyncio.Eve
                         finally:
                             if status_ref:
                                 status_ref.start()
-        except Exception:
-            pass
+        except Exception as e:
+            error_console.print(f"[red]Error in approvals loop: {e}[/red]")
+            import traceback
+            traceback.print_exc(file=sys.stderr)
         await asyncio.sleep(1.0)
 
 
@@ -770,7 +772,7 @@ async def async_run_standalone(options: CliOptions) -> None:
             f"backend: [bold]{run_config['backend']}[/bold][/dim]"
         )
 
-    processor, chat_service = _setup_standalone_processor(run_config, session_to_use, options.quiet)
+    processor, chat_service = _setup_standalone_processor(run_config, session_to_use, options)
     run_config["chat_service"] = chat_service
 
     if options.prompt:
