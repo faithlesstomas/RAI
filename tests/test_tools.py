@@ -42,24 +42,25 @@ class TestGnomeDesktopAdapter:
     """Tests for GnomeDesktopAdapter."""
 
     @patch("rai.tools.desktop.gnome._HAS_DBUS", True)
-    @patch("rai.tools.desktop.gnome.pydbus.SessionBus")
-    def test_send_notification_dbus_success(self, mock_session_bus: MagicMock) -> None:
+    def test_send_notification_dbus_success(self) -> None:
         """Test sending a notification using DBus."""
+        mock_pydbus = MagicMock()
         mock_bus = MagicMock()
-        mock_session_bus.return_value = mock_bus
+        mock_pydbus.SessionBus.return_value = mock_bus
         mock_notifications = MagicMock()
         mock_bus.get.return_value = mock_notifications
 
-        adapter = GnomeDesktopAdapter()
-        summary = "Test Summary"
-        body = "Test Body"
-        result = adapter.send_notification(summary=summary, body=body)
+        with patch("rai.tools.desktop.gnome.pydbus", mock_pydbus, create=True):
+            adapter = GnomeDesktopAdapter()
+            summary = "Test Summary"
+            body = "Test Body"
+            result = adapter.send_notification(summary=summary, body=body)
 
-        mock_bus.get.assert_called_once_with(
-            "org.freedesktop.Notifications", "/org/freedesktop/Notifications"
-        )
-        mock_notifications.Notify.assert_called_once()
-        assert f"Notification sent: Summary='{summary}', Body='{body}'" in result
+            mock_bus.get.assert_called_once_with(
+                "org.freedesktop.Notifications", "/org/freedesktop/Notifications"
+            )
+            mock_notifications.Notify.assert_called_once()
+            assert f"Notification sent: Summary='{summary}', Body='{body}'" in result
 
     @patch("rai.tools.desktop.gnome._HAS_DBUS", False)
     @patch("rai.tools.desktop.gnome.subprocess.run")
