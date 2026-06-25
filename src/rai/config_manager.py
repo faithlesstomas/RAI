@@ -154,14 +154,20 @@ def save_agents(agents_data: Dict[str, Any], path: Optional[str] = None) -> None
 
 def load_config(path: Optional[str] = None) -> Dict[str, Any]:
     """
-    Loads unified configuration mapping agents.yaml into 'sessions' 
-    key to preserve backward compatibility.
+    Loads unified configuration mapping agents.yaml into 'agents' 
+    key.
     """
     agents = load_agents()
     state = load_state(path)
+    
+    # Check if there is an old sessions key in state and migrate it
+    if "sessions" in state and not state.get("agents"):
+        state["agents"] = state.pop("sessions")
+        save_state(state, path)
+
     return {
-        "sessions": agents,
-        "active_session": state.get("active_agent", "default"),
+        "agents": agents,
+        "active_agent": state.get("active_agent", "default"),
         "active_session_id": state.get("active_session_id", ""),
         "tts": state.get("tts", {
             "data_dir": DEFAULT_TTS_DATA_DIR,
@@ -172,11 +178,12 @@ def load_config(path: Optional[str] = None) -> Dict[str, Any]:
 
 def save_config(config_data: Dict[str, Any], path: Optional[str] = None) -> None:
     """Saves configuration by splitting agent profiles and general state."""
-    if "sessions" in config_data:
-        save_agents(config_data["sessions"])
+    agents_data = config_data.get("agents") or config_data.get("sessions")
+    if agents_data:
+        save_agents(agents_data)
 
     state = {
-        "active_agent": config_data.get("active_session", "default"),
+        "active_agent": config_data.get("active_agent") or config_data.get("active_session", "default"),
         "active_session_id": config_data.get("active_session_id", ""),
         "tts": config_data.get("tts", {
             "data_dir": DEFAULT_TTS_DATA_DIR,
@@ -215,8 +222,8 @@ def initialize_session(
     """
     Ensures active agent exists, hydrates fields, and returns active agent name and config.
     """
-    agents = app_config.get("sessions", {})
-    active_agent = session_override or app_config.get("active_session", "default")
+    agents = app_config.get("agents") or app_config.get("sessions", {})
+    active_agent = session_override or app_config.get("active_agent") or app_config.get("active_session", "default")
 
     if active_agent not in agents:
         agents[active_agent] = {
@@ -236,6 +243,8 @@ def initialize_session(
             "default_voice": "pl_PL-gosia-medium",
         }
 
+    app_config["agents"] = agents
+    app_config["active_agent"] = active_agent
     save_config(app_config, path=config_path)
     return active_agent, agents[active_agent]
 
@@ -327,6 +336,31 @@ def rename_session_logic(old_name: str, new_name: str) -> None:
         state["active_agent"] = new_name
         save_state(state)
         console.print(f"Active agent profile has been updated to '[bold green]{new_name}[/bold green]'.")
+
+
+def switch_agent_logic(agent_name: str) -> None:
+    """Switches active agent profile."""
+    switch_session_logic(agent_name)
+
+
+def list_agents_logic() -> None:
+    """Lists all available agent profiles."""
+    list_sessions_logic()
+
+
+def show_agent_logic(agent_name: Optional[str] = None) -> None:
+    """Shows configuration for a specific agent profile."""
+    show_session_logic(agent_name)
+
+
+def delete_agent_logic(agent_name: str) -> None:
+    """Deletes a specified agent profile."""
+    delete_session_logic(agent_name)
+
+
+def rename_agent_logic(old_name: str, new_name: str) -> None:
+    """Renames an agent profile."""
+    rename_session_logic(old_name, new_name)
 
 
 def show_config_logic() -> None:

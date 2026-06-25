@@ -85,17 +85,17 @@ async def list_agents(config: Dict[str, Any] = Depends(get_config)) -> Dict[str,
     """
     Lists all available agents.
     """
-    return config.get("sessions", {})
+    return config.get("agents") or config.get("sessions", {})
 
 @router.get("/{agent_id}", response_model=Dict[str, Any])
 async def get_agent(agent_id: str, config: Dict[str, Any] = Depends(get_config)) -> Dict[str, Any]:
     """
     Get configuration for a specific agent.
     """
-    sessions = config.get("sessions", {})
-    if agent_id not in sessions:
+    agents = config.get("agents") or config.get("sessions", {})
+    if agent_id not in agents:
         raise HTTPException(status_code=404, detail="Agent not found")
-    return sessions[agent_id]
+    return agents[agent_id]
 
 @router.post("/{agent_id}")
 async def create_agent(agent_id: str, agent_config: AgentConfig) -> Dict[str, Any]:
@@ -103,17 +103,17 @@ async def create_agent(agent_id: str, agent_config: AgentConfig) -> Dict[str, An
     Create a new agent (session) - Legacy/Active Session creation.
     """
     config = config_manager.load_config()
-    sessions = config.get("sessions", {})
+    agents = config.get("agents") or config.get("sessions", {})
 
-    if agent_id in sessions:
+    if agent_id in agents:
         raise HTTPException(status_code=400, detail="Agent already exists")
 
     # Convert Pydantic model to dict
-    sessions[agent_id] = agent_config.model_dump()
-    config["sessions"] = sessions
+    agents[agent_id] = agent_config.model_dump()
+    config["agents"] = agents
 
     config_manager.save_config(config)
-    return {"status": "success", "agent_id": agent_id, "config": sessions[agent_id]}
+    return {"status": "success", "agent_id": agent_id, "config": agents[agent_id]}
 
 @router.put("/{agent_id}")
 async def update_agent(agent_id: str, agent_config: AgentConfig) -> Dict[str, Any]:
@@ -121,17 +121,17 @@ async def update_agent(agent_id: str, agent_config: AgentConfig) -> Dict[str, An
     Update an existing agent (session).
     """
     config = config_manager.load_config()
-    sessions = config.get("sessions", {})
+    agents = config.get("agents") or config.get("sessions", {})
 
-    if agent_id not in sessions:
+    if agent_id not in agents:
         raise HTTPException(status_code=404, detail="Agent not found")
 
     # Update existing config
-    sessions[agent_id] = agent_config.model_dump()
-    config["sessions"] = sessions
+    agents[agent_id] = agent_config.model_dump()
+    config["agents"] = agents
 
     config_manager.save_config(config)
-    return {"status": "success", "agent_id": agent_id, "config": sessions[agent_id]}
+    return {"status": "success", "agent_id": agent_id, "config": agents[agent_id]}
 
 @router.delete("/{agent_id}")
 async def delete_agent(agent_id: str) -> Dict[str, Any]:
@@ -139,18 +139,19 @@ async def delete_agent(agent_id: str) -> Dict[str, Any]:
     Delete an agent (session).
     """
     config = config_manager.load_config()
-    sessions = config.get("sessions", {})
+    agents = config.get("agents") or config.get("sessions", {})
 
-    if agent_id not in sessions:
+    if agent_id not in agents:
         raise HTTPException(status_code=404, detail="Agent not found")
 
     if agent_id == "default":
         raise HTTPException(status_code=400, detail="Cannot delete default agent")
 
-    if agent_id == config.get("active_session"):
+    active_agent = config.get("active_agent") or config.get("active_session")
+    if agent_id == active_agent:
         raise HTTPException(status_code=400, detail="Cannot delete active agent")
 
-    del sessions[agent_id]
-    config["sessions"] = sessions
+    del agents[agent_id]
+    config["agents"] = agents
     config_manager.save_config(config)
     return {"status": "success", "deleted": agent_id}

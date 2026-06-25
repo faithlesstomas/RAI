@@ -36,8 +36,8 @@ class ModelRegistry:
         # Prioritize environment variable, then session config, then default
         host = os.getenv("OLLAMA_HOST")
         if not host:
-            active_session_name = self.config.get("active_session", "default")
-            session_config = self.config.get("sessions", {}).get(active_session_name, {})
+            active_session_name = self.config.get("active_agent") or self.config.get("active_session", "default")
+            session_config = (self.config.get("agents") or self.config.get("sessions", {})).get(active_session_name, {})
             host = session_config.get("ollama_host", "http://127.0.0.1:11434")
 
         logging.debug("Initializing Ollama client with host: %s", host)

@@ -43,8 +43,8 @@ class ChatService:
                 config = agents[agent_id].copy()
         else:
             app_config = load_config()
-            active_agent = app_config.get("active_session", "default")
-            config = app_config.get("sessions", {}).get(active_agent, {}).copy()
+            active_agent = app_config.get("active_agent") or app_config.get("active_session", "default")
+            config = (app_config.get("agents") or app_config.get("sessions", {})).get(active_agent, {}).copy()
 
         if chain_configs and len(chain_configs) > 0:
             overrides = chain_configs[0]

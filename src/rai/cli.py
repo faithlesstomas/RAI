@@ -80,6 +80,41 @@ class LocalProcessor:
         pass
 
 
+async def poll_approvals_loop(client: httpx.AsyncClient, stop_event: asyncio.Event) -> None:
+    seen_approvals = set()
+    while not stop_event.is_set():
+        try:
+            response = await client.get("/api/v1/approvals")
+            if response.status_code == 200:
+                approvals = response.json().get("approvals", {})
+                for app_id, app_info in approvals.items():
+                    if app_id not in seen_approvals and app_info.get("status") == "pending":
+                        seen_approvals.add(app_id)
+                        print("\n")
+                        console.print(Panel(
+                            f"[bold yellow]Command:[/bold yellow] {app_info.get('command')}\n"
+                            f"[bold yellow]Tool:[/bold yellow] {app_info.get('tool_name')}",
+                            title="🚨 RAI SECURITY GATEWAY - AUTHORIZATION REQUIRED 🚨",
+                            border_style="red"
+                        ))
+                        
+                        loop = asyncio.get_running_loop()
+                        user_val = await loop.run_in_executor(None, input, "Authorize this execution? (y/n): ")
+                        approved = user_val.strip().lower() in ("y", "yes")
+                        
+                        resolve_response = await client.post(
+                            f"/api/v1/approvals/{app_id}/resolve",
+                            json={"approved": approved}
+                        )
+                        if resolve_response.status_code == 200:
+                            console.print(f"[green]Decision sent: {'Approved' if approved else 'Denied'}.[/green]")
+                        else:
+                            console.print(f"[red]Failed to resolve approval on server: {resolve_response.text}[/red]")
+        except Exception:
+            pass
+        await asyncio.sleep(1.0)
+
+
 class ClientProcessor:
     """Processor running agent executions remotely by talking to the 'rai serve' daemon."""
     def __init__(self, run_config: Dict[str, Any], session_name: str, server_uri: str, options: Optional["CliOptions"] = None) -> None:
@@ -115,6 +150,11 @@ class ClientProcessor:
             "session_id": self.stateful_session_id,
             "chain_configs": [self.run_config],
         }
+        
+        # Start approvals polling task in background
+        stop_event = asyncio.Event()
+        polling_task = asyncio.create_task(poll_approvals_loop(self.client, stop_event))
+        
         try:
             response = await self.client.post("/api/v1/run", json=payload)
             response.raise_for_status()
@@ -127,6 +167,13 @@ class ClientProcessor:
                 return Failure(Exception(data.get("detail", "Server error")))
         except Exception as e:
             return Failure(e)
+        finally:
+            stop_event.set()
+            polling_task.cancel()
+            try:
+                await polling_task
+            except asyncio.CancelledError:
+                pass
 
     async def get_history(self) -> List[Dict[str, Any]]:
         session_to_query = self.stateful_session_id or self.session_name
@@ -285,7 +332,7 @@ async def _cancel_active_tts_task(run_config: Dict[str, Any]) -> None:
 def _build_completer(config_path: Optional[str] = None) -> NestedCompleter:
     """Builds a nested completer for interactive slash commands."""
     app_config = config_manager.load_config(path=config_path)
-    session_names = list(app_config.get("sessions", {}).keys())
+    session_names = list((app_config.get("agents") or app_config.get("sessions", {})).keys())
     # session_name_completer was unused
     config_key_completer = WordCompleter(
         ["model", "backend", "system", "tools", "tts.data_dir", "tts.default_voice"],
@@ -879,44 +926,329 @@ def cli(ctx: click.Context, **kwargs: Any) -> None: # noqa: ANN401
 
 
 
+def _get_httpx_client(ctx: click.Context) -> Tuple[Optional[httpx.Client], str]:
+    """Returns a tuple of (httpx.Client, base_url)."""
+    options = ctx.obj or {}
+    uri = options.get("connect_uri")
+    if not uri:
+        return None, ""
+    if uri == "_auto_":
+        uri = "ws://127.0.0.1:8000/ws/v1/chat"
+    
+    if uri.startswith("unix://"):
+        uds_path = uri[len("unix://"):]
+        transport = httpx.HTTPTransport(uds=uds_path)
+        return httpx.Client(transport=transport), "http://localhost"
+        
+    base_url = uri.replace("ws://", "http://").replace("wss://", "https://").split("/ws/")[0]
+    return httpx.Client(), base_url
+
+
+@cli.group()
+def agents() -> None:
+    """Manage AI agents."""
+
+
+@agents.command(name="switch")
+@click.argument("agent_name")
+@click.pass_context
+def switch_agent(ctx: click.Context, agent_name: str) -> None:
+    """Switches the active agent configuration."""
+    client, base_url = _get_httpx_client(ctx)
+    if client:
+        try:
+            response = client.get(f"{base_url}/api/v1/agents/{agent_name}")
+            if response.status_code == 404:
+                error_console.print(f"[bold red]Error: Agent '{agent_name}' not found on server.[/bold red]")
+                return
+            response.raise_for_status()
+        except Exception as e:
+            error_console.print(f"[yellow]Warning: Could not verify agent on server: {e}[/yellow]")
+    
+    config_manager.switch_agent_logic(agent_name)
+
+
+@agents.command(name="list")
+@click.option("--json", "json_output", is_flag=True, help="Output in JSON format.")
+@click.option("--table", "table_output", is_flag=True, help="Output as a formatted table.")
+@click.pass_context
+def list_agents_group(ctx: click.Context, json_output: bool, table_output: bool) -> None:
+    """Lists all available agents."""
+    client, base_url = _get_httpx_client(ctx)
+    agents_data = {}
+
+    if client:
+        try:
+            response = client.get(f"{base_url}/api/v1/agents/")
+            response.raise_for_status()
+            agents_data = response.json()
+        except Exception as e:
+            error_console.print(f"[red]Error fetching agents from server: {e}[/red]")
+            return
+    else:
+        try:
+            app_config = config_manager.load_config()
+            agents_data = app_config.get("agents") or app_config.get("sessions", {})
+        except Exception as e:
+            error_console.print(f"[red]Error loading configuration: {e}[/red]")
+            return
+
+    if not agents_data:
+        console.print("[dim]No agents found.[/dim]")
+        return
+
+    if json_output:
+        console.print(json.dumps(agents_data, indent=2))
+    elif table_output:
+        table = Table(title="Available Agents", border_style="blue")
+        table.add_column("ID", style="cyan", no_wrap=True)
+        table.add_column("Model", style="magenta")
+        table.add_column("Backend", style="green")
+        table.add_column("Description", style="white")
+
+        for agent_id, agt_config in agents_data.items():
+            model = agt_config.get("model", "N/A")
+            backend = agt_config.get("backend", "N/A")
+            system = agt_config.get("system", "")
+            max_len = 50
+            description = (system[:max_len] + "...") if len(system) > max_len else system
+            table.add_row(agent_id, model, backend, description)
+
+        console.print(table)
+    else:
+        console.print("[bold]Available Agents:[/bold]")
+        for agent_id in agents_data:
+            console.print(f"- {agent_id}")
+
+
+@agents.command(name="show")
+@click.argument("agent_name", required=False)
+@click.pass_context
+def show_agent(ctx: click.Context, agent_name: Optional[str]) -> None:
+    """Shows configuration for a specific or active agent."""
+    client, base_url = _get_httpx_client(ctx)
+    if client:
+        target = agent_name
+        if not target:
+            state = config_manager.load_state()
+            target = state.get("active_agent", "default")
+        try:
+            response = client.get(f"{base_url}/api/v1/agents/{target}")
+            if response.status_code == 404:
+                error_console.print(f"[bold red]Error: Agent '{target}' not found on server.[/bold red]")
+                return
+            response.raise_for_status()
+            console.print(f"[bold]Configuration for agent: [cyan]{target}[/cyan] (from server)[/bold]")
+            console.print(json.dumps(response.json(), indent=2))
+        except Exception as e:
+            error_console.print(f"[red]Error fetching agent from server: {e}[/red]")
+    else:
+        config_manager.show_agent_logic(agent_name)
+
+
+@agents.command(name="delete")
+@click.argument("agent_name")
+@click.pass_context
+def delete_agent(ctx: click.Context, agent_name: str) -> None:
+    """Deletes a specified agent."""
+    client, base_url = _get_httpx_client(ctx)
+    if client:
+        try:
+            response = client.delete(f"{base_url}/api/v1/agents/{agent_name}")
+            if response.status_code == 404:
+                error_console.print(f"[bold red]Error: Agent '{agent_name}' not found on server.[/bold red]")
+                return
+            if response.status_code == 400:
+                error_console.print(f"[bold red]Error: {response.json().get('detail')}[/bold red]")
+                return
+            response.raise_for_status()
+            console.print(f"Agent '[bold red]{agent_name}[/bold red]' has been deleted from server.")
+        except Exception as e:
+            error_console.print(f"[red]Error deleting agent from server: {e}[/red]")
+    else:
+        config_manager.delete_agent_logic(agent_name)
+
+
+@agents.command(name="rename")
+@click.argument("old_name")
+@click.argument("new_name")
+@click.pass_context
+def rename_agent(ctx: click.Context, old_name: str, new_name: str) -> None:
+    """Renames an agent."""
+    client, base_url = _get_httpx_client(ctx)
+    if client:
+        try:
+            get_resp = client.get(f"{base_url}/api/v1/agents/{old_name}")
+            if get_resp.status_code == 404:
+                error_console.print(f"[bold red]Error: Agent '{old_name}' not found on server.[/bold red]")
+                return
+            get_resp.raise_for_status()
+            old_config = get_resp.json()
+
+            check_resp = client.get(f"{base_url}/api/v1/agents/{new_name}")
+            if check_resp.status_code == 200:
+                error_console.print(f"[bold red]Error: Agent '{new_name}' already exists on server.[/bold red]")
+                return
+
+            post_payload = {
+                "name": new_name,
+                "model": old_config.get("model", "gemini-1.5-flash"),
+                "backend": old_config.get("backend", "ollama"),
+                "system_prompt": old_config.get("system") or old_config.get("system_prompt"),
+                "tools": old_config.get("tools", []),
+                "description": old_config.get("description"),
+            }
+            create_resp = client.post(f"{base_url}/api/v1/agents/", json=post_payload)
+            create_resp.raise_for_status()
+
+            del_resp = client.delete(f"{base_url}/api/v1/agents/{old_name}")
+            del_resp.raise_for_status()
+
+            console.print(f"Agent '{old_name}' has been renamed to '[bold green]{new_name}[/bold green]' on server.")
+            
+            state = config_manager.load_state()
+            if state.get("active_agent") == old_name:
+                config_manager.switch_agent_logic(new_name)
+        except Exception as e:
+            error_console.print(f"[red]Error renaming agent on server: {e}[/red]")
+    else:
+        config_manager.rename_agent_logic(old_name, new_name)
+
+
 @cli.group()
 def sessions() -> None:
-    """Manage chat sessions."""
+    """Manage conversation history threads."""
+
+
+@sessions.command(name="list")
+@click.pass_context
+def list_history_sessions(ctx: click.Context) -> None:
+    """Lists past conversation sessions/threads."""
+    client, base_url = _get_httpx_client(ctx)
+    session_ids = []
+
+    if client:
+        try:
+            response = client.get(f"{base_url}/api/v1/history/sessions")
+            response.raise_for_status()
+            session_ids = response.json().get("sessions", [])
+        except Exception as e:
+            error_console.print(f"[red]Error fetching sessions from server: {e}[/red]")
+            return
+    else:
+        from .services.history import HistoryService
+        async def run_list() -> List[Any]:
+            hs = HistoryService()
+            res = await hs.list_sessions()
+            return res.unwrap() if isinstance(res, Success) else []
+        try:
+            session_ids = asyncio.run(run_list())
+        except Exception as e:
+            error_console.print(f"[red]Error loading history sessions: {e}[/red]")
+            return
+
+    if not session_ids:
+        console.print("[dim]No past conversation sessions found.[/dim]")
+        return
+
+    console.print("[bold]Past Conversation Sessions (Threads):[/bold]")
+    for s in session_ids:
+        sid = s.get("id") if isinstance(s, dict) else s
+        console.print(f"- {sid}")
+
+
+@sessions.command(name="show")
+@click.argument("session_id")
+@click.pass_context
+def show_history_session(ctx: click.Context, session_id: str) -> None:
+    """Shows the full message history for a specific conversation session."""
+    client, base_url = _get_httpx_client(ctx)
+    messages = []
+
+    if client:
+        try:
+            response = client.get(f"{base_url}/api/v1/history/sessions/{session_id}")
+            if response.status_code == 404:
+                error_console.print(f"[bold red]Error: Session '{session_id}' not found on server.[/bold red]")
+                return
+            response.raise_for_status()
+            messages = response.json().get("messages", [])
+        except Exception as e:
+            error_console.print(f"[red]Error fetching session history from server: {e}[/red]")
+            return
+    else:
+        from .services.history import HistoryService
+        async def run_show() -> List[Any]:
+            hs = HistoryService()
+            res = await hs.get_session_history(session_id)
+            return res.unwrap() if isinstance(res, Success) else []
+        try:
+            messages = asyncio.run(run_show())
+        except Exception as e:
+            error_console.print(f"[red]Error loading session history: {e}[/red]")
+            return
+
+    if not messages:
+        console.print(f"[dim]No messages found for session '{session_id}'.[/dim]")
+        return
+
+    for msg in messages:
+        role = msg.get("role", "unknown")
+        content = msg.get("content", "")
+        console.print(Panel(content, title=role.capitalize(), border_style="cyan" if role == "user" else "magenta"))
+
+
+@sessions.command(name="delete")
+@click.argument("session_id")
+@click.pass_context
+def delete_history_session(ctx: click.Context, session_id: str) -> None:
+    """Clears/deletes chat history for a specific conversation session."""
+    client, base_url = _get_httpx_client(ctx)
+
+    if client:
+        try:
+            response = client.delete(f"{base_url}/api/v1/history/sessions/{session_id}")
+            if response.status_code == 404:
+                error_console.print(f"[bold red]Error: Session '{session_id}' not found on server.[/bold red]")
+                return
+            response.raise_for_status()
+            console.print(f"Session history for '[bold red]{session_id}[/bold red]' has been deleted from server.")
+        except Exception as e:
+            error_console.print(f"[red]Error deleting session history on server: {e}[/red]")
+    else:
+        from .services.history import HistoryService
+        async def run_delete() -> Result[None, Exception]:
+            hs = HistoryService()
+            res = await hs.clear_history(session_id)
+            return res
+        try:
+            res = asyncio.run(run_delete())
+            if isinstance(res, Success):
+                config_manager.clear_conversation_id_for_session(session_id)
+                console.print(f"Session history for '[bold red]{session_id}[/bold red]' has been deleted.")
+            else:
+                error_console.print(f"[red]Error: {res.failure()}[/red]")
+        except Exception as e:
+            error_console.print(f"[red]Error deleting session history: {e}[/red]")
 
 
 @sessions.command(name="switch")
 @click.argument("session_name")
-def switch_session(session_name: str) -> None:
-    """Creates a new session or switches to an existing one."""
-    config_manager.switch_session_logic(session_name)
-
-
-@sessions.command(name="list")
-def list_sessions() -> None:
-    """Lists all available sessions."""
-    config_manager.list_sessions_logic()
-
-
-@sessions.command(name="show")
-@click.argument("session_name", required=False)
-def show_session(session_name: Optional[str]) -> None:
-    """Shows configuration for a specific or active session."""
-    config_manager.show_session_logic(session_name)
-
-
-@sessions.command(name="delete")
-@click.argument("session_name")
-def delete_session(session_name: str) -> None:
-    """Deletes a specified session."""
-    config_manager.delete_session_logic(session_name)
+@click.pass_context
+def switch_session_deprecated(ctx: click.Context, session_name: str) -> None:
+    """(Deprecated) Switches active agent profile."""
+    console.print("[yellow]Warning: 'rai sessions switch' is deprecated. Please use 'rai agents switch <name>' instead.[/yellow]")
+    ctx.invoke(switch_agent, agent_name=session_name)
 
 
 @sessions.command(name="rename")
 @click.argument("old_name")
 @click.argument("new_name")
-def rename_session(old_name: str, new_name: str) -> None:
-    """Renames a session."""
-    config_manager.rename_session_logic(old_name, new_name)
+@click.pass_context
+def rename_session_deprecated(ctx: click.Context, old_name: str, new_name: str) -> None:
+    """(Deprecated) Renames an agent profile."""
+    console.print("[yellow]Warning: 'rai sessions rename' is deprecated. Please use 'rai agents rename <old> <new>' instead.[/yellow]")
+    ctx.invoke(rename_agent, old_name=old_name, new_name=new_name)
 
 
 @cli.group(invoke_without_command=True)
@@ -994,75 +1326,6 @@ def serve(
         reload=reload,
         log_config=None,
     )
-
-
-@cli.group()
-def agents() -> None:
-    """Manage AI agents."""
-
-
-@agents.command(name="list")
-@click.option("--json", "json_output", is_flag=True, help="Output in JSON format.")
-@click.option("--table", "table_output", is_flag=True, help="Output as a formatted table.")
-@click.pass_context
-def list_agents(ctx: click.Context, json_output: bool, table_output: bool) -> None:
-    # pylint: disable=too-many-locals
-    """Lists all available agents."""
-    options = ctx.obj
-    uri = options.get("connect_uri")
-
-    agents_data = {}
-
-    # Try to fetch from server if URI is provided explicitly
-    if uri and uri != "_auto_":
-        base_url = uri.replace("ws://", "http://").replace("wss://", "https://").split("/ws/")[0]
-        try:
-            response = httpx.get(f"{base_url}/api/v1/agents/")
-            response.raise_for_status()
-            agents_data = response.json()
-        except httpx.RequestError as e:
-            error_console.print(f"[red]Error connecting to server at {base_url}: {e}[/red]")
-            return
-        except Exception as e: # pylint: disable=broad-exception-caught
-            error_console.print(f"[red]Error fetching agents: {e}[/red]")
-            return
-    else:
-        # Standalone mode: Load directly from config
-        try:
-            app_config = config_manager.load_config()
-            agents_data = app_config.get("sessions", {})
-        except Exception as e: # pylint: disable=broad-exception-caught
-            error_console.print(f"[red]Error loading configuration: {e}[/red]")
-            return
-
-    if not agents_data:
-        console.print("[dim]No agents found.[/dim]")
-        return
-
-    if json_output:
-        console.print(json.dumps(agents_data, indent=2))
-    elif table_output:
-        table = Table(title="Available Agents", border_style="blue")
-        table.add_column("ID", style="cyan", no_wrap=True)
-        table.add_column("Model", style="magenta")
-        table.add_column("Backend", style="green")
-        table.add_column("Description", style="white")
-
-        for agent_id, agt_config in agents_data.items():
-            model = agt_config.get("model", "N/A")
-            backend = agt_config.get("backend", "N/A")
-            system = agt_config.get("system", "")
-            # Truncate system prompt for display
-            max_len = 50
-            description = (system[:max_len] + "...") if len(system) > max_len else system
-            table.add_row(agent_id, model, backend, description)
-
-        console.print(table)
-    else:
-        # Default: Simple list
-        console.print("[bold]Available Agents:[/bold]")
-        for agent_id in agents_data:
-            console.print(f"- {agent_id}")
 
 
 if __name__ == "__main__":

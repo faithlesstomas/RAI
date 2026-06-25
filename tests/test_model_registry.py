@@ -9,8 +9,8 @@ from rai.services.model_registry import ModelRegistry
 @pytest.fixture
 def mock_config() -> dict:
     return {
-        "active_session": "default",
-        "sessions": {
+        "active_agent": "default",
+        "agents": {
             "default": {
                 "ollama_host": "http://test-host:11434"
             }

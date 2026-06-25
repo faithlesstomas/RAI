@@ -44,7 +44,7 @@ def test_resolve_agent_config_no_agent_id_merging() -> None:
 
     # Base active config returned by load_config
     app_config = {
-        "sessions": {
+        "agents": {
             "active-session": {
                 "name": "active-session",
                 "model": "base-model",
@@ -53,7 +53,7 @@ def test_resolve_agent_config_no_agent_id_merging() -> None:
                 "tools": ["ToolB"]
             }
         },
-        "active_session": "active-session"
+        "active_agent": "active-session"
     }
 
     chain_configs = [{

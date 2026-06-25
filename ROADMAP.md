@@ -111,6 +111,7 @@ This frees RAI from maintaining core AI execution code, allowing full focus on:
 *   [ ] **GNU Guile Dashboard (WASM):** Complete the dashboard inside `guile-dashboard/` using Guile Hoot. Connect the Scheme frontend to the FastAPI server endpoints.
 *   [ ] **Emacs Integration:** Develop a lightweight Emacs package (`rai.el`) interacting with the `rai serve` daemon over HTTP/WebSockets.
 *   [ ] **NiceGUI Playground:** Redesign the `webui/` playground to serve as a visualization tool for active Antigravity sessions and active agent configurations.
+*   [ ] **GNOME Shell Extension & Desktop Integration:** Develop a GNOME Shell extension (+ UI overlay) that integrates the RAI server with GNOME Overviews, native search providers, and the system tray/status menu to provide seamless system-wide agent interaction.
 
 ### Phase 5: High-Performance Local Inference (Backlog)
 *   [ ] **Local Inference Protocol:** Expose high-performance local runtimes (llama.cpp, ONNX, and IREE/MLIR) for fully offline operation.
