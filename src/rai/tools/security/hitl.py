@@ -89,6 +89,10 @@ class ApprovalManager:
         Attempts to display a system GUI prompt to the user using Zenity on a desktop environment.
         Runs asynchronously without blocking the event loop.
         """
+        if os.environ.get("RAI_USE_GUI") != "1":
+            logger.debug("GUI prompts are disabled. Skipping Zenity popup.")
+            return
+
         zenity_path = shutil.which("zenity")
         if not zenity_path:
             logger.debug("Zenity not available. Skipping GUI popup.")
@@ -139,11 +143,12 @@ class ApprovalManager:
         and waits until approval is resolved.
         """
         # 1. Spawn Zenity desktop prompt in the background (concurrently)
-        asyncio.create_task(self.prompt_desktop_async(req))
+        zenity_task = asyncio.create_task(self.prompt_desktop_async(req))
 
         # 2. If running standalone and stdin is a TTY, also run a console approval prompt
-        async def console_prompt() -> None:
-            if os.environ.get("RAI_SERVE") != "1" and sys.stdin.isatty():
+        console_task = None
+        if os.environ.get("RAI_SERVE") != "1" and sys.stdin.isatty():
+            async def console_prompt() -> None:
                 try:
                     from ...core import console
                     print("\n")
@@ -174,33 +179,49 @@ class ApprovalManager:
                         input_task = asyncio.create_task(get_user_input())
                         check_task = asyncio.create_task(check_local_resolution())
                         
-                        done, pending = await asyncio.wait(
-                            [input_task, check_task],
-                            return_when=asyncio.FIRST_COMPLETED
-                        )
-                        
-                        for task in pending:
-                            task.cancel()
+                        try:
+                            done, pending = await asyncio.wait(
+                                [input_task, check_task],
+                                return_when=asyncio.FIRST_COMPLETED
+                            )
+                            winner = list(done)[0]
+                            result_val = winner.result()
                             
-                        winner = list(done)[0]
-                        result_val = winner.result()
-                        
-                        if result_val == "resolved_externally":
-                            console.print("[dim]Execution authorized/denied via another interface.[/dim]")
-                        else:
-                            approved = result_val.strip().lower() in ("y", "yes")
-                            if req.status == "pending":
-                                self.resolve_request(req.id, approved)
+                            if result_val == "resolved_externally":
+                                console.print("[dim]Execution authorized/denied via another interface.[/dim]")
+                            else:
+                                approved = result_val.strip().lower() in ("y", "yes")
+                                if req.status == "pending":
+                                    self.resolve_request(req.id, approved)
+                        finally:
+                            for task in [input_task, check_task]:
+                                if not task.done():
+                                    task.cancel()
+                            await asyncio.gather(input_task, check_task, return_exceptions=True)
                     finally:
                         if status_ref:
                             status_ref.start()
                 except Exception as e:
                     logger.error("Error in console approval prompt: %s", e)
 
-        asyncio.create_task(console_prompt())
+            console_task = asyncio.create_task(console_prompt())
 
         # 3. Block until the request event is set (either by Zenity or by REST/WebSocket APIs)
-        await req.event.wait()
+        try:
+            await req.event.wait()
+        finally:
+            if console_task and not console_task.done():
+                console_task.cancel()
+                try:
+                    await console_task
+                except asyncio.CancelledError:
+                    pass
+            if zenity_task and not zenity_task.done():
+                zenity_task.cancel()
+                try:
+                    await zenity_task
+                except asyncio.CancelledError:
+                    pass
 
         # 4. Clean up registry
         if req.id in self._pending:

@@ -116,35 +116,37 @@ async def poll_approvals_loop(client: httpx.AsyncClient, stop_event: asyncio.Eve
                                     check_resp = await client.get("/api/v1/approvals")
                                     if check_resp.status_code == 200:
                                         check_apps = check_resp.json().get("approvals", {})
-                                        if app_id not in check_apps:
+                                        if app_id not in check_apps or check_apps[app_id].get("status") != "pending":
                                             return "resolved_externally"
                             
                             input_task = asyncio.create_task(get_user_input())
                             check_task = asyncio.create_task(check_remote_resolution())
                             
-                            done, pending = await asyncio.wait(
-                                [input_task, check_task],
-                                return_when=asyncio.FIRST_COMPLETED
-                            )
-                            
-                            for task in pending:
-                                task.cancel()
-                                
-                            winner = list(done)[0]
-                            result_val = winner.result()
-                            
-                            if result_val == "resolved_externally":
-                                console.print("[dim]Execution authorized/denied via another interface.[/dim]")
-                            else:
-                                approved = result_val.strip().lower() in ("y", "yes")
-                                resolve_response = await client.post(
-                                    f"/api/v1/approvals/{app_id}/resolve",
-                                    json={"approved": approved}
+                            try:
+                                done, pending = await asyncio.wait(
+                                    [input_task, check_task],
+                                    return_when=asyncio.FIRST_COMPLETED
                                 )
-                                if resolve_response.status_code == 200:
-                                    console.print(f"[green]Decision sent: {'Approved' if approved else 'Denied'}.[/green]")
+                                winner = list(done)[0]
+                                result_val = winner.result()
+                                
+                                if result_val == "resolved_externally":
+                                    console.print("[dim]Execution authorized/denied via another interface.[/dim]")
                                 else:
-                                    console.print(f"[red]Failed to resolve approval on server: {resolve_response.text}[/red]")
+                                    approved = result_val.strip().lower() in ("y", "yes")
+                                    resolve_response = await client.post(
+                                        f"/api/v1/approvals/{app_id}/resolve",
+                                        json={"approved": approved}
+                                    )
+                                    if resolve_response.status_code == 200:
+                                        console.print(f"[green]Decision sent: {'Approved' if approved else 'Denied'}.[/green]")
+                                    else:
+                                        console.print(f"[red]Failed to resolve approval on server: {resolve_response.text}[/red]")
+                            finally:
+                                for task in [input_task, check_task]:
+                                    if not task.done():
+                                        task.cancel()
+                                await asyncio.gather(input_task, check_task, return_exceptions=True)
                         finally:
                             if status_ref:
                                 status_ref.start()
@@ -943,7 +945,10 @@ def cli(ctx: click.Context, **kwargs: Any) -> None: # noqa: ANN401
     # 1. Determine level string
     level_str = kwargs.get("log_level_opt")
     if not level_str:
-        level_str = os.getenv("RAI_LOG_LEVEL", "INFO")
+        if ctx.invoked_subcommand == "serve":
+            level_str = os.getenv("RAI_LOG_LEVEL", "INFO")
+        else:
+            level_str = os.getenv("RAI_LOG_LEVEL", "WARNING")
     
     # 2. Convert to logging constant
     log_level = getattr(logging, level_str.upper(), logging.INFO)
