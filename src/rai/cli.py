@@ -128,7 +128,7 @@ class ClientProcessor:
             uds_path = server_uri[len("unix://") :]
             self.transport = httpx.AsyncHTTPTransport(uds=uds_path)
             self.base_url = "http://localhost"
-        self.client = httpx.AsyncClient(transport=self.transport, base_url=self.base_url, timeout=60)
+        self.client = httpx.AsyncClient(transport=self.transport, base_url=self.base_url, timeout=None)
         self.stateful_session_id = None
 
     async def connect(self) -> Result[None, Exception]:
@@ -791,7 +791,7 @@ async def async_main_client(options: CliOptions) -> None: # noqa: PLR0912
                 console.print(f"[dim]Connecting to server at {base_url}...[/dim]")
 
             async with httpx.AsyncClient(transport=transport, base_url=base_url) as client:
-                response = await client.post("/api/v1/run", json=payload, timeout=60)
+                response = await client.post("/api/v1/run", json=payload, timeout=None)
                 response.raise_for_status()
                 data = response.json()
                 if data.get("status") == "success":
