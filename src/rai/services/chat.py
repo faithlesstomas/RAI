@@ -36,18 +36,23 @@ class ChatService:
         agent_id: Optional[str] = None,
     ) -> Dict[str, Any]:
         """Resolves agent configuration from either explicit agent_id, overrides, or system config."""
+        config = {}
         if agent_id:
             agents = load_agents()
             if agent_id in agents:
-                return agents[agent_id]
+                config = agents[agent_id].copy()
+        else:
+            app_config = load_config()
+            active_agent = app_config.get("active_session", "default")
+            config = app_config.get("sessions", {}).get(active_agent, {}).copy()
 
         if chain_configs and len(chain_configs) > 0:
-            # First element contains overrides (e.g. from CLI or API request)
-            return chain_configs[0]
+            overrides = chain_configs[0]
+            for key, val in overrides.items():
+                if val is not None:
+                    config[key] = val
 
-        app_config = load_config()
-        active_agent = app_config.get("active_session", "default")
-        return app_config.get("sessions", {}).get(active_agent, {})
+        return config
 
     async def run_chain(
         self,

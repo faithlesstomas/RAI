@@ -306,3 +306,61 @@ def test_config_manager_migration(tmp_path) -> None:
     assert "DesktopScreenshotTool" in on_disk["custom_agent"]["tools"]
     assert "DesktopWeatherTool" in on_disk["custom_agent"]["tools"]
 
+
+def test_build_run_config_sets_session_id_and_options() -> None:
+    """Test that _build_run_config sets the session_id and options fields."""
+    options = rai_cli.CliOptions(model="test-model", backend="gemini", session_override="test-session")
+    with patch("rai.cli.config_manager.load_config") as mock_load_config, \
+         patch("rai.cli.config_manager.initialize_session") as mock_init_session:
+        
+        mock_load_config.return_value = {}
+        mock_init_session.return_value = ("test-session", {"model": "test-model", "backend": "gemini", "tools": ["ToolA"]})
+        
+        run_config, session_config, session_to_use, app_config = rai_cli._build_run_config(options)
+        
+        assert run_config["session_id"] == "test-session"
+        assert run_config["options"] is options
+        assert run_config["model"] == "test-model"
+        assert run_config["backend"] == "gemini"
+        assert run_config["tools"] == ["ToolA"]
+
+
+def test_refresh_run_config() -> None:
+    """Test that refresh_run_config updates the configuration in-place."""
+    options = rai_cli.CliOptions(model="new-model", backend="gemini")
+    run_config = {
+        "session_id": "test-session",
+        "options": options,
+        "model": "old-model",
+        "backend": "ollama",
+        "tools": []
+    }
+    
+    session_config = {
+        "model": "other-model",
+        "backend": "gemini",
+        "system": "test system prompt",
+        "tools": ["ToolA", "ToolB"]
+    }
+    
+    with patch("rai.cli.config_manager.load_config") as mock_load_config, \
+         patch("rai.cli.config_manager.initialize_session") as mock_init_session:
+        
+        mock_load_config.return_value = {}
+        mock_init_session.return_value = ("test-session", session_config)
+        
+        mock_processor = MagicMock()
+        rai_cli.refresh_run_config(run_config, mock_processor)
+        
+        # Check in-place updates:
+        # Note: options.model="new-model" overrides session_config's model "other-model".
+        assert run_config["model"] == "new-model"
+        # options.backend="gemini" overrides.
+        assert run_config["backend"] == "gemini"
+        assert run_config["system"] == "test system prompt"
+        assert run_config["tools"] == ["ToolA", "ToolB"]
+        # In-place metadata is preserved:
+        assert run_config["session_id"] == "test-session"
+        assert run_config["options"] is options
+
+

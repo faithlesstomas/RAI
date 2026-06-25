@@ -42,15 +42,19 @@ from typing import Union
 
 class LocalProcessor:
     """Processor running agent executions locally inside the CLI process via google-antigravity."""
-    def __init__(self, run_config: Dict[str, Any], session_name: str) -> None:
+    def __init__(self, run_config: Dict[str, Any], session_name: str, enable_tools: bool = True) -> None:
         self.run_config = run_config
         self.session_name = session_name
         self.chat_service = ChatService()
+        self.enable_tools = enable_tools
 
     async def arun(self, prompt: str, history: Optional[List[Dict[str, Any]]] = None) -> Result[Dict[str, Any], Exception]:
+        run_cfg = self.run_config.copy()
+        if not self.enable_tools:
+            run_cfg["tools"] = []
         return await self.chat_service.run_chain(
             chain_input=prompt,
-            chain_configs=[self.run_config],
+            chain_configs=[run_cfg],
             session_id=self.session_name,
         )
 
@@ -64,7 +68,12 @@ class LocalProcessor:
         await self.chat_service.clear_session_history(self.session_name)
 
     def reload(self) -> None:
-        pass
+        self.enable_tools = True
+        if self.run_config.get("backend") == "ollama":
+            try:
+                self.enable_tools = check_model_tool_support(self.run_config.get("model", ""))
+            except Exception:
+                self.enable_tools = False
 
     async def close(self) -> None:
         pass
@@ -351,11 +360,12 @@ async def _handle_config_command(args: List[str], run_config: Dict[str, Any], pr
             return
         key = command_args[0]
         value = " ".join(command_args[1:])
-        run_config[key] = value
 
         # Also persist the change to the configuration file using config_manager
-        # We need to handle potential errors implicitly handled by config_manager or just call it.
         config_manager.set_config_logic(key, value) # This persists to disk
+
+        # Refresh run_config in-place from disk
+        refresh_run_config(run_config, processor)
 
         # Reload the processor to apply changes immediately
         console.print("[dim]Reloading agent...[/dim]")
@@ -412,10 +422,12 @@ async def _handle_model_command(args: List[str], run_config: Dict[str, Any], pro
         console.print(f"Current model: {run_config.get('model')}")
         return
     model_name = args[0]
-    run_config["model"] = model_name
 
     # Persist changes
     config_manager.set_config_logic("model", model_name)
+
+    # Refresh run_config in-place from disk
+    refresh_run_config(run_config, processor)
 
     # Reload processor
     console.print("[dim]Reloading agent...[/dim]")
@@ -575,7 +587,7 @@ def _initialize_ollama_check(model_id: str, quiet: bool) -> bool:
     return has_tools
 
 
-def _build_run_config(options: CliOptions) -> Tuple[Dict[str, Any], Dict[str, Any], str]:
+def _build_run_config(options: CliOptions) -> Tuple[Dict[str, Any], Dict[str, Any], str, Dict[str, Any]]:
     """Builds the run configuration from CLI options and the config file."""
     app_config = config_manager.load_config(path=options.config_path)
     session_to_use, session_config = config_manager.initialize_session(
@@ -583,6 +595,8 @@ def _build_run_config(options: CliOptions) -> Tuple[Dict[str, Any], Dict[str, An
     )
 
     run_config = {
+        "session_id": session_to_use,
+        "options": options,
         "model": options.model or session_config.get("model"),
         "backend": options.backend or session_config.get("backend"),
         "system": options.system or session_config.get("system"),
@@ -590,6 +604,25 @@ def _build_run_config(options: CliOptions) -> Tuple[Dict[str, Any], Dict[str, An
         "active_tts_task": None,  # This is a client-side concern
     }
     return run_config, session_config, session_to_use, app_config
+
+
+def refresh_run_config(run_config: Dict[str, Any], processor: Processor) -> None:
+    """Refreshes the run_config dictionary in-place from disk/options."""
+    session_id = run_config.get("session_id", "default")
+    options = run_config.get("options")
+    config_path = options.config_path if options else None
+
+    app_config = config_manager.load_config(path=config_path)
+    # Reinitialize session to get the latest config from agents.yaml / state
+    _, session_config = config_manager.initialize_session(
+        app_config, session_id, config_path
+    )
+
+    # Update top level config keys in place
+    run_config["model"] = (options.model if options and options.model else None) or session_config.get("model")
+    run_config["backend"] = (options.backend if options and options.backend else None) or session_config.get("backend")
+    run_config["system"] = (options.system if options and options.system else None) or session_config.get("system")
+    run_config["tools"] = session_config.get("tools")
 
 
 def _setup_standalone_processor(
@@ -608,13 +641,8 @@ def _setup_standalone_processor(
             if not quiet:
                  console.print(f"[yellow]Warning: Tools disabled for model '{run_config['model']}'.[/yellow]")
 
-    # Filter out tools if they are explicitly disabled
-    updated_config = run_config.copy()
-    if not enable_tools:
-        updated_config["tools"] = []
-
     chat_service = ChatService()
-    processor = LocalProcessor(updated_config, session_to_use)
+    processor = LocalProcessor(run_config, session_to_use, enable_tools=enable_tools)
     return processor, chat_service
 
 
