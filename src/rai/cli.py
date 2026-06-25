@@ -36,6 +36,7 @@ from rich.rule import Rule
 from returns.result import Success, Failure, Result
 
 from . import config_manager
+from . import core
 from .core import console, error_console
 from .services.chat import ChatService
 from typing import Union
@@ -98,18 +99,55 @@ async def poll_approvals_loop(client: httpx.AsyncClient, stop_event: asyncio.Eve
                             border_style="red"
                         ))
                         
-                        loop = asyncio.get_running_loop()
-                        user_val = await loop.run_in_executor(None, input, "Authorize this execution? (y/n): ")
-                        approved = user_val.strip().lower() in ("y", "yes")
+                        status_ref = core.active_status
+                        if status_ref:
+                            status_ref.stop()
                         
-                        resolve_response = await client.post(
-                            f"/api/v1/approvals/{app_id}/resolve",
-                            json={"approved": approved}
-                        )
-                        if resolve_response.status_code == 200:
-                            console.print(f"[green]Decision sent: {'Approved' if approved else 'Denied'}.[/green]")
-                        else:
-                            console.print(f"[red]Failed to resolve approval on server: {resolve_response.text}[/red]")
+                        try:
+                            from prompt_toolkit import PromptSession
+                            prompt_session = PromptSession()
+                            
+                            async def get_user_input() -> str:
+                                return await prompt_session.prompt_async("Authorize this execution? (y/n): ")
+                                
+                            async def check_remote_resolution() -> str:
+                                while True:
+                                    await asyncio.sleep(0.5)
+                                    check_resp = await client.get("/api/v1/approvals")
+                                    if check_resp.status_code == 200:
+                                        check_apps = check_resp.json().get("approvals", {})
+                                        if app_id not in check_apps:
+                                            return "resolved_externally"
+                            
+                            input_task = asyncio.create_task(get_user_input())
+                            check_task = asyncio.create_task(check_remote_resolution())
+                            
+                            done, pending = await asyncio.wait(
+                                [input_task, check_task],
+                                return_when=asyncio.FIRST_COMPLETED
+                            )
+                            
+                            for task in pending:
+                                task.cancel()
+                                
+                            winner = list(done)[0]
+                            result_val = winner.result()
+                            
+                            if result_val == "resolved_externally":
+                                console.print("[dim]Execution authorized/denied via another interface.[/dim]")
+                            else:
+                                approved = result_val.strip().lower() in ("y", "yes")
+                                resolve_response = await client.post(
+                                    f"/api/v1/approvals/{app_id}/resolve",
+                                    json={"approved": approved}
+                                )
+                                if resolve_response.status_code == 200:
+                                    console.print(f"[green]Decision sent: {'Approved' if approved else 'Denied'}.[/green]")
+                                else:
+                                    console.print(f"[red]Failed to resolve approval on server: {resolve_response.text}[/red]")
+                        finally:
+                            if status_ref:
+                                status_ref.start()
         except Exception:
             pass
         await asyncio.sleep(1.0)
@@ -589,8 +627,12 @@ async def run_interactive_chat(
                     # Save user input
                     await chat_service.add_message_to_history(session_id, "user", user_input)
 
-                with console.status("[bold green]Assistant is thinking..."):
-                    response_result = await processor.arun(user_input, history=history)
+                with console.status("[bold green]Assistant is thinking...") as status:
+                    core.active_status = status
+                    try:
+                        response_result = await processor.arun(user_input, history=history)
+                    finally:
+                        core.active_status = None
 
                 match response_result:
                     case Success(response):
@@ -738,8 +780,12 @@ async def async_run_standalone(options: CliOptions) -> None:
         # Save user message
         await chat_service.add_message_to_history(session_to_use, "user", options.prompt)
 
-        with console.status("[bold green]Assistant is thinking..."):
-            result = await processor.arun(options.prompt, history=history)
+        with console.status("[bold green]Assistant is thinking...") as status:
+            core.active_status = status
+            try:
+                result = await processor.arun(options.prompt, history=history)
+            finally:
+                core.active_status = None
 
         if isinstance(result, Success):
             response_payload = result.unwrap()
@@ -795,8 +841,12 @@ async def async_main_client(options: CliOptions) -> None: # noqa: PLR0912
                 return
             await processor.sync_config()
 
-            with console.status("[bold green]Assistant is thinking..."):
-                result = await processor.arun(options.prompt)
+            with console.status("[bold green]Assistant is thinking...") as status:
+                core.active_status = status
+                try:
+                    result = await processor.arun(options.prompt)
+                finally:
+                    core.active_status = None
 
             if isinstance(result, Success):
                 payload_data = result.unwrap()

@@ -29,6 +29,7 @@ from rai.tools.python import run_secure_python_code
 # --- Globals ---
 console = Console(record=True)
 error_console = Console(stderr=True)
+active_status = None
 
 # --- Standard Tool Implementations (Decoupled from Agno) ---
 

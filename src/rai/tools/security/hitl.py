@@ -153,11 +153,47 @@ class ApprovalManager:
                         title="🚨 RAI STANDALONE GATEWAY - AUTHORIZATION REQUIRED 🚨",
                         border_style="red"
                     ))
-                    loop = asyncio.get_running_loop()
-                    user_val = await loop.run_in_executor(None, input, "Authorize this execution? (y/n): ")
-                    approved = user_val.strip().lower() in ("y", "yes")
-                    if req.status == "pending":
-                        self.resolve_request(req.id, approved)
+                    
+                    import rai.core
+                    status_ref = rai.core.active_status
+                    if status_ref:
+                        status_ref.stop()
+                        
+                    try:
+                        from prompt_toolkit import PromptSession
+                        prompt_session = PromptSession()
+                        
+                        async def get_user_input() -> str:
+                            return await prompt_session.prompt_async("Authorize this execution? (y/n): ")
+                            
+                        async def check_local_resolution() -> str:
+                            while req.status == "pending":
+                                await asyncio.sleep(0.5)
+                            return "resolved_externally"
+                            
+                        input_task = asyncio.create_task(get_user_input())
+                        check_task = asyncio.create_task(check_local_resolution())
+                        
+                        done, pending = await asyncio.wait(
+                            [input_task, check_task],
+                            return_when=asyncio.FIRST_COMPLETED
+                        )
+                        
+                        for task in pending:
+                            task.cancel()
+                            
+                        winner = list(done)[0]
+                        result_val = winner.result()
+                        
+                        if result_val == "resolved_externally":
+                            console.print("[dim]Execution authorized/denied via another interface.[/dim]")
+                        else:
+                            approved = result_val.strip().lower() in ("y", "yes")
+                            if req.status == "pending":
+                                self.resolve_request(req.id, approved)
+                    finally:
+                        if status_ref:
+                            status_ref.start()
                 except Exception as e:
                     logger.error("Error in console approval prompt: %s", e)
 
