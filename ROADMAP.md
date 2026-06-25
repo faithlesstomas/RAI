@@ -117,6 +117,11 @@ This frees RAI from maintaining core AI execution code, allowing full focus on:
 *   [ ] **Engine Factories:** Build `src/rai/inference/` loading `.vmfb`, `.gguf`, or `.onnx` files, using functional adapters to wrap them for the Antigravity runner.
 *   [ ] **Grammar Enforcement:** Integrate GBNF grammar constraints to force structured JSON output from raw local LLMs.
 
+### Phase 6: Advanced Client-Server Integration & Remote Security (Planned)
+*   [ ] **Server-Aware CLI Profile Management:** Extend the `rai sessions` (and new `rai agents`) CLI commands to interact with the daemon's REST API (`/api/v1/agents`) when in client mode (`--connect`), allowing remote creation, listing, and deletion of agent profiles.
+*   [ ] **Remote HITL WebSocket Protocol:** Support forwarding daemon-side HITL tool authorizations to active WebSocket CLI clients, allowing users to interactively approve high-risk/unsandboxed operations directly in the console without requiring desktop D-Bus prompts.
+*   [ ] **Configuration Schema & Terminology Decoupling:** Complete the renaming transition in `config.json` and the codebase from `"sessions"` (legacy name for agent profiles) to `"agents"`, keeping the word "session" strictly reserved for conversation history threads.
+
 ---
 
 ## 4. Technical Debt & Outstanding Bugs
