@@ -63,16 +63,16 @@ async def test_get_gemini_models_success(mock_config: dict) -> None:
     with patch.dict(os.environ, {"GOOGLE_API_KEY": "fake-key"}):
         # Patch rai.services.model_registry.genai instead of sys.modules
         with patch("rai.services.model_registry.genai") as mock_genai:
-            # Mock the list_models function
+            mock_client = MagicMock()
+            mock_genai.Client.return_value = mock_client
+            
             model1 = MagicMock()
             model1.name = "models/gemini-pro"
-            model1.supported_generation_methods = ["generateContent"]
     
             model2 = MagicMock()
             model2.name = "models/embedding-001"
-            model2.supported_generation_methods = ["embedContent"]
     
-            mock_genai.list_models.return_value = [model1, model2]
+            mock_client.models.list.return_value = [model1, model2]
 
             registry = ModelRegistry(mock_config)
             models = await registry.get_models("gemini")
@@ -95,3 +95,28 @@ async def test_get_all_models(mock_config: dict) -> None:
             "ollama": ["llama2"],
             "gemini": ["gemini-pro"]
         }
+
+
+@pytest.mark.asyncio
+async def test_close_model_registry_aclose(mock_config: dict) -> None:
+    """Test ModelRegistry.close when ollama_client has async close."""
+    registry = ModelRegistry(mock_config)
+    mock_client = AsyncMock()
+    # Explicitly configure aclose/close behavior
+    del mock_client.close  # Ensure it doesn't fall back to close if aclose exists
+    registry._ollama_client = mock_client
+    
+    await registry.close()
+    mock_client.aclose.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_close_model_registry_close(mock_config: dict) -> None:
+    """Test ModelRegistry.close when ollama_client has sync close only."""
+    registry = ModelRegistry(mock_config)
+    mock_client = MagicMock()
+    del mock_client.aclose  # Ensure it uses close
+    registry._ollama_client = mock_client
+    
+    await registry.close()
+    mock_client.close.assert_called_once()

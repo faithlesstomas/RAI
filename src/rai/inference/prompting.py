@@ -100,6 +100,10 @@ def clean_response_text(text: str) -> str:
     pattern = re.compile(r"<tool_code>.*?</tool_code>", re.DOTALL)
     return pattern.sub("", text).strip()
 
+def _fg_format_function_declaration(tool: Dict[str, Any]) -> str:
+    """Formats a single tool definition for FunctionGemma."""
+    return json.dumps(tool)
+
 def format_tools_for_function_gemma(tools: List[Dict[str, Any]]) -> str:
     """
     Formats tools for FunctionGemma using specialized tokens.

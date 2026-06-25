@@ -29,7 +29,11 @@ class AgentDefinition(BaseModel):
     @validator("tools")
     def validate_tools(cls, v: List[str]) -> List[str]: # pylint: disable=no-self-argument
         """Validates that requested tools exist in the registry."""
-        invalid_tools = [tool for tool in v if tool not in TOOL_REGISTRY]
+        known_tools = set(TOOL_REGISTRY.keys()) | {
+            "DesktopNotificationTool", "DesktopScreenshotTool", "DesktopWeatherTool",
+            "ClientTools", "GitlabTools", "WebBrowserTools", "FileTools", "PythonTools", "ShellTools"
+        }
+        invalid_tools = [tool for tool in v if tool not in known_tools]
         if invalid_tools:
             raise ValueError(f"Unknown tools: {', '.join(invalid_tools)}")
         return v

@@ -3,6 +3,7 @@ API endpoints for executing agent chains.
 """
 import json
 import logging
+import uuid
 from typing import Any, AsyncGenerator, Dict, List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, WebSocket, WebSocketDisconnect
@@ -14,13 +15,6 @@ from .. import config_manager
 from ..services.chat import ChatService
 from ..dependencies import get_config, get_model_registry
 from ..services.model_registry import ModelRegistry
-
-try:
-    from agno.exceptions import ModelProviderError # pylint: disable=unused-import
-except ImportError:
-    # Agno might not be installed or version mismatch, define dummy
-    class ModelProviderError(Exception):
-        """Dummy exception when agno is not installed."""
 
 try:
     from ollama import ResponseError # pylint: disable=unused-import
@@ -36,42 +30,45 @@ router = APIRouter(
 
 # --- Pydantic Models ---
 
-class ChainRequest(BaseModel):
-    """Request model for running a chain of agents."""
-    chain_input: str
-    chain_configs: List[Dict[str, Any]]
-    session_id: Optional[str] = None
+class AgentExecutionRequest(BaseModel):
+    """Simplified request model for running an agent execution."""
+    prompt: Optional[str] = None
+    chain_input: Optional[str] = None  # Backward compatibility
+    agent_id: Optional[str] = None
+    session_id: Optional[str] = None  # Conversation session ID
     context: Optional[Dict[str, Any]] = None
+    chain_configs: Optional[List[Dict[str, Any]]] = None  # Backward compatibility
 
-# --- Dependencies ---
-
-
+# Keep ChainRequest alias for backward compatibility
+ChainRequest = AgentExecutionRequest
 
 # --- Endpoints ---
 
 @router.post("/api/v1/run")
 async def execute_chain(
-        request: ChainRequest,
+        request: AgentExecutionRequest,
         app_config: Dict[str, Any] = Depends(get_config)
 ) -> JSONResponse:
     """
-    Runs a chain of agents with the given input and configurations.
+    Runs an agent with the given input and configurations.
     """
     chat_service = ChatService()
+    prompt = request.prompt or request.chain_input
+    if not prompt:
+        raise HTTPException(status_code=400, detail="Missing prompt or chain_input.")
+
     result = await chat_service.run_chain(
-        chain_input=request.chain_input,
+        chain_input=prompt,
         chain_configs=request.chain_configs,
         session_id=request.session_id,
         context=request.context,
+        agent_id=request.agent_id,
     )
 
     match result:
         case Success(payload):
             return JSONResponse(content={"status": "success", "payload": payload})
         case Failure(error):
-            # The ChainExecutionError strings the original exception,
-            # but we might want to check the original exception if possible.
-
             error_str = str(error)
 
             if "429" in error_str and (
@@ -93,25 +90,33 @@ async def execute_chain(
                     logging.error("Ollama bad request: %s", error_str)
                     raise HTTPException(status_code=400, detail=error_str)
 
-            logging.error("Error during chain execution: %s", error, exc_info=error)
+            logging.error("Error during agent execution: %s", error, exc_info=error)
             raise HTTPException(status_code=500, detail=str(error))
 
 
 @router.post("/api/v1/stream")
 async def stream_chain_endpoint(
-        request: ChainRequest,
+        request: AgentExecutionRequest,
         app_config: Dict[str, Any] = Depends(get_config)
 ) -> StreamingResponse:
     """
-    Streams the result of a chain execution using Server-Sent Events (SSE).
+    Streams the result of an agent execution using Server-Sent Events (SSE).
     """
+    session_id = request.session_id or str(uuid.uuid4())
+
     async def event_generator() -> AsyncGenerator[str, None]:
         chat_service = ChatService()
+        prompt = request.prompt or request.chain_input
+        if not prompt:
+            yield f"event: error\ndata: {json.dumps({'detail': 'Missing prompt or chain_input.'})}\n\n"
+            return
+
         async for chunk in chat_service.stream_chain(
-            chain_input=request.chain_input,
+            chain_input=prompt,
             chain_configs=request.chain_configs,
-            session_id=request.session_id,
+            session_id=session_id,
             context=request.context,
+            agent_id=request.agent_id,
         ):
             if isinstance(chunk, Failure):
                 # Send error as a specific event or data
@@ -119,9 +124,6 @@ async def stream_chain_endpoint(
                 yield f"event: error\ndata: {json.dumps({'detail': error_msg})}\n\n"
                 return
 
-            # Assuming chunk is an object with delta or content
-            # We need to serialize it to JSON
-            # Agno chunks might be objects, let's try to get content
             content = ""
             if hasattr(chunk, "content"):
                 content = chunk.content
@@ -134,9 +136,42 @@ async def stream_chain_endpoint(
             yield f"data: {json.dumps({'content': content})}\n\n"
 
         # End of stream
-        yield "event: done\ndata: {}\n\n"
+        yield f"event: done\ndata: {json.dumps({'session_id': session_id})}\n\n"
 
     return StreamingResponse(event_generator(), media_type="text/event-stream")
+
+
+from ..tools.security.hitl import get_approval_manager
+
+class ApprovalResolutionRequest(BaseModel):
+    """Request model to resolve a pending HITL authorization request."""
+    approved: bool
+
+@router.get("/api/v1/approvals")
+async def list_approvals() -> JSONResponse:
+    """
+    Lists all pending HITL tool execution approval requests.
+    """
+    manager = get_approval_manager()
+    return JSONResponse(content={"approvals": manager.list_pending()})
+
+
+@router.post("/api/v1/approvals/{approval_id}/resolve")
+async def resolve_approval(
+    approval_id: str,
+    request: ApprovalResolutionRequest
+) -> JSONResponse:
+    """
+    Resolves a pending HITL authorization request (approves or denies execution).
+    """
+    manager = get_approval_manager()
+    success = manager.resolve_request(approval_id, request.approved)
+    if not success:
+        raise HTTPException(
+            status_code=404,
+            detail=f"Pending approval request '{approval_id}' not found or already resolved."
+        )
+    return JSONResponse(content={"status": "success", "message": f"Approval '{approval_id}' resolved to: {request.approved}"})
 
 
 @router.get("/api/v1/models")
@@ -173,25 +208,36 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
     """Handles WebSocket connections for real-time chat."""
     await websocket.accept()
     app_config = config_manager.load_config()  # Load config manually
+    session_id = None  # Preserve the stateful session ID across turns!
     try:
         while True:
             data = await websocket.receive_json()
             try:
-                request = ChainRequest.model_validate(data)
+                request = AgentExecutionRequest.model_validate(data)
             except ValidationError as e:
                 await websocket.send_json({"status": "error", "detail": e.errors()})
                 continue
 
+            prompt = request.prompt or request.chain_input
+            if not prompt:
+                await websocket.send_json({"status": "error", "detail": ["Missing prompt or chain_input."]})
+                continue
+
+            current_session_id = request.session_id or session_id
+
             chat_service = ChatService()
             result = await chat_service.run_chain(
-                chain_input=request.chain_input,
+                chain_input=prompt,
                 chain_configs=request.chain_configs,
-                session_id=request.session_id,
+                session_id=current_session_id,
                 context=request.context,
+                agent_id=request.agent_id,
             )
 
             match result:
                 case Success(payload):
+                    # Store/update the active session ID to preserve session propagation!
+                    session_id = payload.get("session_id")
                     await websocket.send_json({"type": "response", "payload": payload})
                 case Failure(error):
                     logging.error("Error during WebSocket chain execution: %s", error, exc_info=error)

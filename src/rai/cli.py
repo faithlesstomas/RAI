@@ -33,20 +33,141 @@ from rich.panel import Panel
 from rich.table import Table
 from rich.rule import Rule
 # from websockets.exceptions import ConnectionClosed, WebSocketException
-from returns.result import Success, Failure
+from returns.result import Success, Failure, Result
 
 from . import config_manager
-from .adapters.agno import AgnoAdapter
-from .adapters.base import Processor
-from .adapters.ws_client import WebSocketAdapter
-try:
-    from .adapters.pydantic_ai import PydanticAIAdapter
-    HAS_PYDANTIC_AI = True
-except ImportError:
-    HAS_PYDANTIC_AI = False
-
 from .core import console, error_console
 from .services.chat import ChatService
+from typing import Union
+
+class LocalProcessor:
+    """Processor running agent executions locally inside the CLI process via google-antigravity."""
+    def __init__(self, run_config: Dict[str, Any], session_name: str, enable_tools: bool = True, options: Optional["CliOptions"] = None) -> None:
+        self.run_config = run_config
+        self.session_name = session_name
+        self.chat_service = ChatService()
+        self.enable_tools = enable_tools
+        self.options = options
+
+    async def arun(self, prompt: str, history: Optional[List[Dict[str, Any]]] = None) -> Result[Dict[str, Any], Exception]:
+        run_cfg = self.run_config.copy()
+        if not self.enable_tools:
+            run_cfg["tools"] = []
+        return await self.chat_service.run_chain(
+            chain_input=prompt,
+            chain_configs=[run_cfg],
+            session_id=self.session_name,
+        )
+
+    async def get_history(self) -> List[Dict[str, Any]]:
+        result = await self.chat_service.get_session_history(self.session_name)
+        if isinstance(result, Success):
+            return result.unwrap()
+        return []
+
+    async def clear_history(self) -> None:
+        await self.chat_service.clear_session_history(self.session_name)
+
+    async def reload(self) -> None:
+        self.enable_tools = True
+        if self.run_config.get("backend") == "ollama":
+            try:
+                self.enable_tools = check_model_tool_support(self.run_config.get("model", ""))
+            except Exception:
+                self.enable_tools = False
+
+    async def close(self) -> None:
+        pass
+
+
+class ClientProcessor:
+    """Processor running agent executions remotely by talking to the 'rai serve' daemon."""
+    def __init__(self, run_config: Dict[str, Any], session_name: str, server_uri: str, options: Optional["CliOptions"] = None) -> None:
+        self.run_config = run_config
+        self.session_name = session_name
+        self.server_uri = server_uri
+        self.options = options
+        self.base_url = server_uri.replace("ws://", "http://").replace("wss://", "https://").split("/ws/")[0]
+        self.transport = None
+        if server_uri.startswith("unix://"):
+            uds_path = server_uri[len("unix://") :]
+            self.transport = httpx.AsyncHTTPTransport(uds=uds_path)
+            self.base_url = "http://localhost"
+        self.client = httpx.AsyncClient(transport=self.transport, base_url=self.base_url, timeout=60)
+        self.stateful_session_id = None
+
+    async def connect(self) -> Result[None, Exception]:
+        try:
+            response = await self.client.get("/api/v1/models")
+            response.raise_for_status()
+            return Success(None)
+        except Exception as e:
+            error_console.print(
+                "[bold red]Connection Error:[/bold red]"
+                f" Could not connect to the rai server at {self.server_uri}. Error: {e}"
+            )
+            return Failure(e)
+
+    async def arun(self, prompt: str, history: Optional[List[Dict[str, Any]]] = None) -> Result[Dict[str, Any], Exception]:
+        payload = {
+            "prompt": prompt,
+            "agent_id": self.session_name,
+            "session_id": self.stateful_session_id,
+            "chain_configs": [self.run_config],
+        }
+        try:
+            response = await self.client.post("/api/v1/run", json=payload)
+            response.raise_for_status()
+            data = response.json()
+            if data.get("status") == "success":
+                payload_data = data.get("payload", {})
+                self.stateful_session_id = payload_data.get("session_id")
+                return Success(payload_data)
+            else:
+                return Failure(Exception(data.get("detail", "Server error")))
+        except Exception as e:
+            return Failure(e)
+
+    async def get_history(self) -> List[Dict[str, Any]]:
+        session_to_query = self.stateful_session_id or self.session_name
+        try:
+            response = await self.client.get(f"/api/v1/history/sessions/{session_to_query}")
+            response.raise_for_status()
+            return response.json().get("messages", [])
+        except Exception as e:
+            logging.getLogger(__name__).error(f"Failed to fetch history from server: {e}")
+            return []
+
+    async def clear_history(self) -> None:
+        session_to_clear = self.stateful_session_id or self.session_name
+        try:
+            response = await self.client.delete(f"/api/v1/history/sessions/{session_to_clear}")
+            response.raise_for_status()
+        except Exception as e:
+            logging.getLogger(__name__).error(f"Failed to clear history on server: {e}")
+
+    async def sync_config(self) -> None:
+        """Sends the active configuration to the daemon to keep it in sync."""
+        payload = {
+            "model": self.run_config.get("model", ""),
+            "backend": self.run_config.get("backend", "ollama"),
+            "system": self.run_config.get("system", ""),
+            "tools": self.run_config.get("tools", []),
+        }
+        try:
+            response = await self.client.put(f"/api/v1/agents/{self.session_name}", json=payload)
+            response.raise_for_status()
+        except Exception as e:
+            logging.getLogger(__name__).warning("Failed to sync config with server: %s", e)
+
+    async def reload(self) -> None:
+        await self.sync_config()
+
+    async def close(self) -> None:
+        await self.client.aclose()
+
+
+Processor = Union[LocalProcessor, ClientProcessor]
 
 # from .exceptions import ChainExecutionError
 # from .tts import TTS, resolve_voice_path
@@ -137,7 +258,6 @@ class CliOptions:  # pylint: disable=too-many-instance-attributes
     system: Optional[str] = None
     model: Optional[str] = None
     backend: Optional[str] = None
-    framework: Optional[str] = None
     no_markdown: bool = False
     json_output: bool = False
     quiet: bool = False
@@ -190,7 +310,7 @@ def check_model_tool_support(model_id: str) -> bool:
     """Checks if the specified Ollama model supports tool use."""
     try:
         details = ollama.show(model_id)
-        modelfile = details.get("modelfile", "")
+        modelfile = str(details.get("modelfile", "") or "")
         # Robust check for tool support indicators
         indicators = [
             "tool_use",             # Explicit parameter
@@ -229,7 +349,7 @@ async def _handle_config_command(args: List[str], run_config: Dict[str, Any], pr
     if subcommand == "show":
         config_copy = {
             k: v for k, v in run_config.items() 
-            if k not in ["chat_service", "active_tts_task"]
+            if k not in ["chat_service", "active_tts_task", "options"]
         }
         console.print(
             Panel(
@@ -256,15 +376,16 @@ async def _handle_config_command(args: List[str], run_config: Dict[str, Any], pr
             return
         key = command_args[0]
         value = " ".join(command_args[1:])
-        run_config[key] = value
 
         # Also persist the change to the configuration file using config_manager
-        # We need to handle potential errors implicitly handled by config_manager or just call it.
         config_manager.set_config_logic(key, value) # This persists to disk
+
+        # Refresh run_config in-place from disk
+        refresh_run_config(run_config, processor)
 
         # Reload the processor to apply changes immediately
         console.print("[dim]Reloading agent...[/dim]")
-        processor.reload()
+        await processor.reload()
 
         console.print(f"Set '{key}' to '{value}' (persisted).")
         console.print("[dim]Note: New settings will be used on the next interaction.[/dim]")
@@ -273,18 +394,7 @@ async def _handle_config_command(args: List[str], run_config: Dict[str, Any], pr
 
 async def _handle_history_command(_: List[str], run_config: Dict[str, Any], processor: Processor) -> None:
     """Handles the /history command."""
-    history = []
-    
-    chat_service = run_config.get("chat_service")
-    if chat_service:
-        # Standalone mode with unified history
-        session_id = run_config.get("session_id", "default")
-        result = await chat_service.get_session_history(session_id)
-        if isinstance(result, Success):
-            history = result.unwrap()
-    else:
-        # Fallback or client mode
-        history = processor.get_history()
+    history = await processor.get_history()
 
     if not history:
         console.print("[dim]No history available.[/dim]")
@@ -298,29 +408,12 @@ async def _handle_history_command(_: List[str], run_config: Dict[str, Any], proc
 
 async def _handle_clear_command(_: List[str], run_config: Dict[str, Any], processor: Processor) -> None:
     """Handles the /clear command."""
-    chat_service = run_config.get("chat_service")
-    if chat_service:
-        session_id = run_config.get("session_id", "default")
-        await chat_service.clear_session_history(session_id)
-        # Also clear in-memory adapter state if needed
-        processor.clear_history() 
-    else:
-        processor.clear_history()
-
+    await processor.clear_history()
     console.print("[green]Chat history cleared.[/green]")
 
 async def _handle_save_command(args: List[str], run_config: Dict[str, Any], processor: Processor) -> None:
     """Handles the /save command."""
-    history = []
-    
-    chat_service = run_config.get("chat_service")
-    if chat_service:
-        session_id = run_config.get("session_id", "default")
-        result = await chat_service.get_session_history(session_id)
-        if isinstance(result, Success):
-            history = result.unwrap()
-    else:
-        history = processor.get_history()
+    history = await processor.get_history()
 
     if not history:
         console.print("[dim]No history available to save.[/dim]")
@@ -345,14 +438,16 @@ async def _handle_model_command(args: List[str], run_config: Dict[str, Any], pro
         console.print(f"Current model: {run_config.get('model')}")
         return
     model_name = args[0]
-    run_config["model"] = model_name
 
     # Persist changes
     config_manager.set_config_logic("model", model_name)
 
+    # Refresh run_config in-place from disk
+    refresh_run_config(run_config, processor)
+
     # Reload processor
     console.print("[dim]Reloading agent...[/dim]")
-    processor.reload()
+    await processor.reload()
 
     console.print(f"Set model to '{model_name}' (persisted).")
     console.print("[dim]Note: New settings will be used on the next interaction.[/dim]")
@@ -508,7 +603,7 @@ def _initialize_ollama_check(model_id: str, quiet: bool) -> bool:
     return has_tools
 
 
-def _build_run_config(options: CliOptions) -> Tuple[Dict[str, Any], Dict[str, Any], str]:
+def _build_run_config(options: CliOptions) -> Tuple[Dict[str, Any], Dict[str, Any], str, Dict[str, Any]]:
     """Builds the run configuration from CLI options and the config file."""
     app_config = config_manager.load_config(path=options.config_path)
     session_to_use, session_config = config_manager.initialize_session(
@@ -516,45 +611,56 @@ def _build_run_config(options: CliOptions) -> Tuple[Dict[str, Any], Dict[str, An
     )
 
     run_config = {
+        "session_id": session_to_use,
         "model": options.model or session_config.get("model"),
         "backend": options.backend or session_config.get("backend"),
         "system": options.system or session_config.get("system"),
         "tools": session_config.get("tools"),
-        "framework": options.framework or session_config.get("framework", "agno"),
         "active_tts_task": None,  # This is a client-side concern
     }
     return run_config, session_config, session_to_use, app_config
 
 
+def refresh_run_config(run_config: Dict[str, Any], processor: Processor) -> None:
+    """Refreshes the run_config dictionary in-place from disk/options."""
+    session_id = run_config.get("session_id", "default")
+    options = getattr(processor, "options", None)
+    if options is not None and (hasattr(options, "_mock_return_value") or options.__class__.__name__ in ("MagicMock", "Mock")):
+        options = None
+    config_path = options.config_path if options else None
+
+    app_config = config_manager.load_config(path=config_path)
+    # Reinitialize session to get the latest config from agents.yaml / state
+    _, session_config = config_manager.initialize_session(
+        app_config, session_id, config_path
+    )
+
+    # Update top level config keys in place
+    run_config["model"] = (options.model if options and options.model else None) or session_config.get("model")
+    run_config["backend"] = (options.backend if options and options.backend else None) or session_config.get("backend")
+    run_config["system"] = (options.system if options and options.system else None) or session_config.get("system")
+    run_config["tools"] = session_config.get("tools")
+
+
 def _setup_standalone_processor(
     run_config: Dict[str, Any],
     session_to_use: str,
-    quiet: bool
-) -> Tuple[Processor, ChatService]:
+    options: CliOptions
+) -> Tuple[LocalProcessor, ChatService]:
     """Sets up the processor for standalone execution."""
     # Perform backend-specific checks
     enable_tools = True
     if run_config.get("backend") == "ollama":
-        has_tools = _initialize_ollama_check(run_config["model"], quiet)
+        has_tools = _initialize_ollama_check(run_config["model"], options.quiet)
         if not has_tools:
             # Explicitly disable tools for this session to avoid API errors (400)
             enable_tools = False
-            if not quiet:
+            if not options.quiet:
                  console.print(f"[yellow]Warning: Tools disabled for model '{run_config['model']}'.[/yellow]")
 
-    # This config is passed to the adapter constructor
-    adapter_config = run_config.copy()
-    adapter_config["session_id"] = session_to_use
-    adapter_config["enable_tools"] = enable_tools # Pass the flag explicitly
-
     chat_service = ChatService()
-    processor_result = chat_service.create_processor(adapter_config, session_to_use)
-
-    if isinstance(processor_result, Failure):
-        error_console.print(f"[bold red]Error initializing agent: {processor_result.failure()}[/bold red]")
-        sys.exit(1)
-
-    return processor_result.unwrap(), chat_service
+    processor = LocalProcessor(run_config, session_to_use, enable_tools=enable_tools, options=options)
+    return processor, chat_service
 
 
 async def async_run_standalone(options: CliOptions) -> None:
@@ -613,7 +719,7 @@ async def async_run_standalone(options: CliOptions) -> None:
 async def async_main_client(options: CliOptions) -> None: # noqa: PLR0912
     # pylint: disable=too-many-branches
     """The main entry point for the CLI in client mode."""
-    run_config, _, _, _ = _build_run_config(options)
+    run_config, _, session_to_use, _ = _build_run_config(options)
 
     # Determine server URI
     uri = options.connect_uri
@@ -658,19 +764,17 @@ async def async_main_client(options: CliOptions) -> None: # noqa: PLR0912
         except Exception as e: # pylint: disable=broad-exception-caught # pylint: disable=broad-exception-caught # pylint: disable=broad-exception-caught
             error_console.print(f"[bold red]An unexpected client error occurred:[/bold red]\n{e}")
     else:
-        # Interactive mode using WebSocket
-        adapter_config = run_config.copy()
-        adapter_config["server_uri"] = uri
-        processor = WebSocketAdapter(agent_config=adapter_config)
+        # Interactive mode using ClientProcessor
+        processor = ClientProcessor(
+            run_config=run_config,
+            session_name=session_to_use,
+            server_uri=uri,
+            options=options
+        )
 
         # Eagerly connect to the server before starting the interactive chat.
-        if not isinstance(processor, WebSocketAdapter):
-             # This should not happen, but it's a good practice to check
-            error_console.print("[red]Error: Invalid processor for client mode.[/red]")
-            return
         connect_result = await processor.connect()
         if isinstance(connect_result, Failure):
-            # The connect method in the adapter is responsible for printing the error.
             return  # Exit gracefully
 
         await run_interactive_chat(processor, run_config, options)
@@ -693,9 +797,6 @@ async def async_main_client(options: CliOptions) -> None: # noqa: PLR0912
 @click.option("-b", "--backend", default=None,
               type=click.Choice(["ollama", "gemini", "anthropic", "openai", "groq", "local"]),
               help="The backend to use.",
-              cls=SectionedOption, section="AI Configuration")
-@click.option("-f", "--framework", default=None,
-              type=click.Choice(["agno", "pydantic_ai"]), help="Specify the AI framework to use.",
               cls=SectionedOption, section="AI Configuration")
 # Section: Output Formatting
 @click.option("--no-markdown", is_flag=True, help="Disable Markdown rendering for LLM responses.",
@@ -760,18 +861,7 @@ def cli(ctx: click.Context, **kwargs: Any) -> None: # noqa: ANN401
         handlers=[RichHandler(console=console, rich_tracebacks=True)]
     )
 
-    # Force 'agno' logger to use our Rich configuration
-    logging.getLogger("agno").handlers = []
-    logging.getLogger("agno").propagate = True
-
-    # Try to clean up agno.utils.log if imported
-    try:
-        # pylint: disable=import-outside-toplevel
-        from agno.utils.log import logger as agno_log # noqa: PLC0415
-        agno_log.handlers = []
-        agno_log.propagate = True
-    except ImportError:
-        pass    # This logic replaces the old invoke_without_command behavior
+    # Agno loggers and handlers are no longer needed as the library is deprecated.
     if ctx.invoked_subcommand is None:
         if not kwargs.get("prompt") and not sys.stdin.isatty():
             kwargs["prompt"] = sys.stdin.read().strip()

@@ -12,7 +12,8 @@ license = {text = "MIT"}
 
 dependencies = [
     "python-dotenv",
-    "agno>=2.0",
+    "google-antigravity",
+    "protobuf>=5.30.0",
     "rich",
     "click>=8.1,<8.3",
     "ollama",
@@ -39,15 +40,14 @@ dependencies = [
 
 [project.optional-dependencies]
 anthropic = ["anthropic"]
-gemini = ["google-generativeai"]
+gemini = ["google-genai"]
 openai = ["openai"]
 groq = ["groq"]
-test = ["pytest", "pytest-asyncio", "pytest-cov", "pydantic-ai"]
+test = ["pytest", "pytest-asyncio", "pytest-cov"]
 lint = ["ruff", "pylint"]
 dev = ["rai[test]", "rai[lint]", "rai[tools]"]
 gnome-tools = ["pydbus", "pygobject"]
 tts = ["piper-tts", "sounddevice", "requests"]
-pydantic-ai = ["pydantic-ai"]
 docs = ["sphinx", "myst-parser", "furo", "sphinx-autobuild"]
 tools = [
     "duckduckgo-search",
@@ -64,7 +64,6 @@ all = [
     "rai[groq]",
     "rai[gnome-tools]",
     "rai[tts]",
-    "rai[pydantic-ai]",
     "rai[tools]",
 ]
 
@@ -74,6 +73,7 @@ rai = "rai.cli:cli"
 
 [tool.pytest.ini_options]
 pythonpath = ["src"]
+testpaths = ["tests"]
 asyncio_mode = "auto"
 
 

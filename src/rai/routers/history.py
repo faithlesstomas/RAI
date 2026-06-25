@@ -44,3 +44,16 @@ async def get_session_history(session_id: str) -> Dict[str, Any]:
     # Current implementation returns empty list which is fine.
     
     return {"id": session_id, "messages": messages}
+
+
+@router.delete("/sessions/{session_id}")
+async def clear_session_history(session_id: str) -> Dict[str, Any]:
+    """
+    Clear chat history for a specific session.
+    """
+    result = await history_service.clear_history(session_id)
+    if isinstance(result, Failure):
+        raise HTTPException(status_code=500, detail=str(result.failure()))
+        
+    return {"status": "success", "message": f"History cleared for session '{session_id}'."}
+

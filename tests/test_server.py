@@ -146,3 +146,31 @@ async def test_websocket_endpoint_invalid_request() -> None:
         assert response["status"] == "error"
         assert "detail" in response
         assert isinstance(response["detail"], list)
+
+
+@pytest.mark.asyncio
+@patch("rai.routers.history.history_service")
+async def test_clear_session_history_success(mock_history_service) -> None:
+    """
+    Tests the DELETE /api/v1/history/sessions/{session_id} endpoint.
+    """
+    mock_history_service.clear_history = AsyncMock(return_value=Success(None))
+    
+    response = client.delete("/api/v1/history/sessions/test-session")
+    assert response.status_code == 200
+    assert response.json() == {
+        "status": "success",
+        "message": "History cleared for session 'test-session'."
+    }
+    mock_history_service.clear_history.assert_awaited_once_with("test-session")
+
+
+def test_server_lifespan_closes_dependencies() -> None:
+    """Test that application lifespan closes dependencies during shutdown."""
+    with patch("rai.server.close_dependencies", new_callable=AsyncMock) as mock_close:
+        # Create a new TestClient to trigger the lifespan events
+        from fastapi.testclient import TestClient
+        with TestClient(app):
+            pass
+        mock_close.assert_awaited_once()
+

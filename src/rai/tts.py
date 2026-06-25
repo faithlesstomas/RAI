@@ -11,7 +11,8 @@ from pathlib import Path
 from typing import Optional
 
 import requests
-from agno.utils.log import logger  # Import logger
+import logging
+logger = logging.getLogger(__name__)
 
 try:
     import numpy as np

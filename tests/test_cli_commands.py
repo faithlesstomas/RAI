@@ -66,6 +66,7 @@ async def test_config_command_get_implementation(mock_print) -> None:
 async def test_config_command_set_implementation() -> None:
     """Test the implementation of the '/config set' command."""
     agent = MagicMock()
+    agent.reload = AsyncMock()
     run_config = {"model": "old-model"}
 
     # Test the 'set' subcommand
@@ -216,26 +217,26 @@ async def test_run_interactive_chat_success(mock_console_print, mock_prompt_sess
     mock_processor.close.assert_awaited_once()
 
 
-@patch("rai.cli.AgnoAdapter", autospec=True)
+@patch("rai.cli.LocalProcessor", autospec=True)
 @patch("rai.cli.console.print")
 @patch("rai.cli._setup_standalone_processor")
 @patch("rai.cli._build_run_config")
 async def test_async_run_standalone_one_shot_success(
-    mock_build_run_config, mock_setup_processor, mock_console_print, MockAgnoAdapter
+    mock_build_run_config, mock_setup_processor, mock_console_print, MockLocalProcessor
 ) -> None:
     """Test async_run_standalone in one-shot mode with a successful response."""
     mock_build_run_config.return_value = ({}, {}, "default", {})
     
-    mock_adapter_instance = MockAgnoAdapter.return_value
-    mock_adapter_instance.arun = AsyncMock(return_value=Success({"content": "Standalone one-shot response"}))
-    mock_adapter_instance.close = AsyncMock()
+    mock_processor_instance = MockLocalProcessor.return_value
+    mock_processor_instance.arun = AsyncMock(return_value=Success({"content": "Standalone one-shot response"}))
+    mock_processor_instance.close = AsyncMock()
     
     mock_chat_service = MagicMock()
     mock_chat_service.get_session_history = AsyncMock(return_value=Success([]))
     mock_chat_service._history_service.add_message = AsyncMock(return_value=Success(None))
     mock_chat_service.add_message_to_history = AsyncMock(return_value=Success(None))
 
-    mock_setup_processor.return_value = (mock_adapter_instance, mock_chat_service)
+    mock_setup_processor.return_value = (mock_processor_instance, mock_chat_service)
 
     options = rai_cli.CliOptions(prompt="test prompt")
     await rai_cli.async_run_standalone(options)
@@ -246,8 +247,7 @@ async def test_async_run_standalone_one_shot_success(
     mock_chat_service.add_message_to_history.assert_awaited()
     
     # Verify arun called with history
-    mock_adapter_instance.arun.assert_awaited_once() 
-    # assert_awaited_once_with("test prompt", history=[]) # arguments might vary slightly
+    mock_processor_instance.arun.assert_awaited_once() 
 
     # Find the call to print with the Markdown object
     found_markdown = False
@@ -258,4 +258,108 @@ async def test_async_run_standalone_one_shot_success(
             break
     assert found_markdown, "Markdown response was not printed"
 
-    mock_adapter_instance.close.assert_awaited_once()
+    mock_processor_instance.close.assert_awaited_once()
+
+
+def test_config_manager_migration(tmp_path) -> None:
+    """Test that load_agents automatically migrates legacy configuration fields."""
+    import yaml
+    from rai import config_manager
+
+    # Create a temporary agents.yaml file with legacy keys and tools
+    agents_file = tmp_path / "agents.yaml"
+    legacy_data = {
+        "custom_agent": {
+            "name": "custom_agent",
+            "model": "gpt-4",
+            "framework": "agno",
+            "tools": [
+                "CalculatorTools",
+                "GnomeNotificationTool",
+                "GnomeScreenshotTool",
+                "GnomeWeatherTool",
+                "WikipediaTools"
+            ]
+        }
+    }
+
+    with open(agents_file, "w", encoding="utf-8") as f:
+        yaml.safe_dump(legacy_data, f)
+
+    # Call load_agents
+    loaded = config_manager.load_agents(path=str(agents_file))
+
+    # Assert in-memory migration
+    assert "framework" not in loaded["custom_agent"]
+    assert "DesktopNotificationTool" in loaded["custom_agent"]["tools"]
+    assert "DesktopScreenshotTool" in loaded["custom_agent"]["tools"]
+    assert "DesktopWeatherTool" in loaded["custom_agent"]["tools"]
+    assert "GnomeNotificationTool" not in loaded["custom_agent"]["tools"]
+    assert "GnomeScreenshotTool" not in loaded["custom_agent"]["tools"]
+    assert "GnomeWeatherTool" not in loaded["custom_agent"]["tools"]
+
+    # Assert on-disk migration (it should have written back to agents_file)
+    with open(agents_file, "r", encoding="utf-8") as f:
+        on_disk = yaml.safe_load(f)
+
+    assert "framework" not in on_disk["custom_agent"]
+    assert "DesktopNotificationTool" in on_disk["custom_agent"]["tools"]
+    assert "DesktopScreenshotTool" in on_disk["custom_agent"]["tools"]
+    assert "DesktopWeatherTool" in on_disk["custom_agent"]["tools"]
+
+
+def test_build_run_config_sets_session_id() -> None:
+    """Test that _build_run_config sets the session_id fields."""
+    options = rai_cli.CliOptions(model="test-model", backend="gemini", session_override="test-session")
+    with patch("rai.cli.config_manager.load_config") as mock_load_config, \
+         patch("rai.cli.config_manager.initialize_session") as mock_init_session:
+        
+        mock_load_config.return_value = {}
+        mock_init_session.return_value = ("test-session", {"model": "test-model", "backend": "gemini", "tools": ["ToolA"]})
+        
+        run_config, session_config, session_to_use, app_config = rai_cli._build_run_config(options)
+        
+        assert run_config["session_id"] == "test-session"
+        assert "options" not in run_config
+        assert run_config["model"] == "test-model"
+        assert run_config["backend"] == "gemini"
+        assert run_config["tools"] == ["ToolA"]
+
+
+def test_refresh_run_config() -> None:
+    """Test that refresh_run_config updates the configuration in-place."""
+    options = rai_cli.CliOptions(model="new-model", backend="gemini")
+    run_config = {
+        "session_id": "test-session",
+        "model": "old-model",
+        "backend": "ollama",
+        "tools": []
+    }
+    
+    session_config = {
+        "model": "other-model",
+        "backend": "gemini",
+        "system": "test system prompt",
+        "tools": ["ToolA", "ToolB"]
+    }
+    
+    with patch("rai.cli.config_manager.load_config") as mock_load_config, \
+         patch("rai.cli.config_manager.initialize_session") as mock_init_session:
+        
+        mock_load_config.return_value = {}
+        mock_init_session.return_value = ("test-session", session_config)
+        
+        mock_processor = MagicMock()
+        mock_processor.options = options
+        rai_cli.refresh_run_config(run_config, mock_processor)
+        
+        # Check in-place updates:
+        # Note: options.model="new-model" overrides session_config's model "other-model".
+        assert run_config["model"] == "new-model"
+        # options.backend="gemini" overrides.
+        assert run_config["backend"] == "gemini"
+        assert run_config["system"] == "test system prompt"
+        assert run_config["tools"] == ["ToolA", "ToolB"]
+        # In-place metadata is preserved:
+        assert run_config["session_id"] == "test-session"
+        assert "options" not in run_config

@@ -1,301 +1,240 @@
 """
-Chat Service for handling agent interactions.
+Chat Service for handling agent interactions using the Google Antigravity SDK.
 """
-import functools
-import importlib
-import inspect
-import pkgutil
+import os
 import uuid
 import logging
-from typing import Any, AsyncIterator, Dict, List, Optional, Type
-
+from typing import Any, AsyncIterator, Dict, List, Optional
 from returns.result import Failure, Result, Success
 
-from .. import adapters
-from ..adapters.base import Processor
-from ..exceptions import AdapterNotFoundError, ChainExecutionError, AgentConfigError
-from ..adapters.pydantic_ai import PydanticAIAdapter
-from ..adapters.agno import AgnoAdapter
+from google.antigravity import Agent, LocalAgentConfig
+from rai.core import setup_tools
+from rai.config_manager import (
+    load_config,
+    load_agents,
+    TRAJECTORY_DIR,
+    get_conversation_id_for_session,
+    set_conversation_id_for_session,
+    clear_conversation_id_for_session,
+)
+from rai.exceptions import ChainExecutionError
+from rai.services.history import HistoryService
 
 logger = logging.getLogger(__name__)
 
-from .history import HistoryService
-
 class ChatService:
     """
-    Service for managing chat interactions and agent lifecycles.
+    Service for managing chat interactions and agent lifecycles via google-antigravity.
     """
 
     def __init__(self) -> None:
-        self._adapters: Dict[str, Type[Processor]] = self._discover_adapters()
         self._history_service = HistoryService()
 
-    @functools.lru_cache(maxsize=None)
-    def _discover_adapters(self) -> Dict[str, Type[Processor]]:
-        """Dynamically discovers and loads adapter classes."""
-        discovered: Dict[str, Type[Processor]] = {}
-        for module_info in pkgutil.iter_modules(adapters.__path__, adapters.__name__ + "."):
-            if module_info.name.endswith(".base") or module_info.name.endswith(".__init__"):
-                continue
+    def _resolve_agent_config(
+        self,
+        chain_configs: Optional[List[Dict[str, Any]]] = None,
+        agent_id: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        """Resolves agent configuration from either explicit agent_id, overrides, or system config."""
+        config = {}
+        if agent_id:
+            agents = load_agents()
+            if agent_id in agents:
+                config = agents[agent_id].copy()
+        else:
+            app_config = load_config()
+            active_agent = app_config.get("active_session", "default")
+            config = app_config.get("sessions", {}).get(active_agent, {}).copy()
 
-            try:
-                module = importlib.import_module(module_info.name)
-                for _, obj in inspect.getmembers(module, inspect.isclass):
-                    if issubclass(obj, Processor) and not inspect.isabstract(obj):
-                        # Use framework mapping logic or name convention
-                        # Here we assume module name maps to framework or class name
-                        adapter_name = module_info.name.split(".")[-1]
-                        discovered[adapter_name] = obj
-            except ImportError:
-                # Ignore modules that cannot be imported (missing deps)
-                pass
-        
-        # Hardcode known ones to ensure they are available even if discovery fails or logic differs
-        # This acts as a registry
-        discovered["agno"] = AgnoAdapter
-        discovered["pydantic_ai"] = PydanticAIAdapter
-        
-        return discovered
+        if chain_configs and len(chain_configs) > 0:
+            overrides = chain_configs[0]
+            for key, val in overrides.items():
+                if val is not None:
+                    config[key] = val
 
-    def _get_adapter_class(self, framework: str) -> Result[Type[Processor], Exception]:
-        """Retrieves the adapter class for the given framework."""
-        adapter_class = self._adapters.get(framework)
-        if not adapter_class:
-            return Failure(AdapterNotFoundError(f"Framework '{framework}' not supported."))
-        return Success(adapter_class)
-
-    def _infer_backend(self, agent_config: Dict[str, Any]) -> Dict[str, Any]:
-        """Infers the backend based on the model name if not explicitly provided."""
-        if "backend" not in agent_config:
-            model = agent_config.get("model", "")
-            if model.startswith("gemini"):
-                agent_config["backend"] = "gemini"
-            elif model.startswith("claude"):
-                agent_config["backend"] = "anthropic"
-            elif model.startswith("gpt"):
-                agent_config["backend"] = "openai"
-            else:
-                agent_config["backend"] = "ollama"
-        return agent_config
-
-    def create_processor(self, config: Dict[str, Any], session_id: str) -> Result[Processor, Exception]:
-        """
-        Creates a processor instance for the given configuration and session.
-        This is used for stateful/interactive sessions (CLI).
-        """
-        framework = config.get("framework", "agno")
-        adapter_class_result = self._get_adapter_class(framework)
-        
-        if isinstance(adapter_class_result, Failure):
-            return adapter_class_result
-
-        adapter_class = adapter_class_result.unwrap()
-        
-        # Prepare adapter config
-        adapter_config = self._infer_backend(config.copy())
-        adapter_config["session_id"] = session_id
-
-        try:
-            return Success(adapter_class(agent_config=adapter_config))
-        except Exception as e:
-            return Failure(ChainExecutionError(f"Failed to instantiate processor: {e}"))
+        return config
 
     async def run_chain(
         self,
         chain_input: str,
-        chain_configs: List[Dict[str, Any]],
+        chain_configs: Optional[List[Dict[str, Any]]] = None,
         session_id: Optional[str] = None,
         context: Optional[Dict[str, Any]] = None,
+        agent_id: Optional[str] = None,
     ) -> Result[Dict[str, Any], Exception]:
         """
-        Runs a stateless chain of agents. 
-        Compatible with `engine.run_chain` logic but moved here.
+        Runs a stateful agent execution turn with the Antigravity SDK.
         """
         if not chain_input:
             return Failure(ValueError("Missing input."))
-        if not chain_configs:
-            return Failure(ValueError("Missing chain configuration."))
 
         final_session_id = session_id or str(uuid.uuid4())
-        current_input = chain_input
-        final_payload: Dict[str, Any] = {}
+        agent_config = self._resolve_agent_config(chain_configs, agent_id)
 
-        # Fetch history for the session
-        history_result = await self._history_service.get_session_history(final_session_id)
-        history = history_result.unwrap() if isinstance(history_result, Success) else []
-
-        # Save user input to history
+        # Retrieve user history in RAI history database
         await self._history_service.add_message(final_session_id, "user", chain_input)
 
-        for agent_config in chain_configs:
-            # Determine framework for this step
-            framework = agent_config.get("agent_class", "AgentAgno").replace("Agent", "").lower()
-            if framework == "agno": # Normalize default
-                framework = "agno"
+        # Set up active agent tools
+        enabled_tool_names = agent_config.get("tools")
+        agent_tools, _ = setup_tools(
+            enable_tools=True,
+            quiet=True,
+            enabled_tool_names=enabled_tool_names,
+        )
 
-            # Create Processor
-            # Note: We create a fresh processor for each step in the chain (stateless execution)
-            # The session_id allows hydration from DB if supported
-            proc_config = agent_config.copy()
-            proc_config["framework"] = framework
-            # context is passed via config in some adapters
-            if context:
-                proc_config["context"] = context
+        # Resolve persistent conversation ID
+        conv_id = get_conversation_id_for_session(final_session_id)
+        traj_file = os.path.join(TRAJECTORY_DIR, f"traj-{conv_id}") if conv_id else ""
 
-            processor_result = self.create_processor(proc_config, final_session_id)
-            if isinstance(processor_result, Failure):
-                return processor_result
-            
-            processor = processor_result.unwrap()
-            
-            # Execute
-            try:
-                # Pass history to arun (if supported by adapter, but we will make base support it)
-                # We need to update Processor protocol to accept history
-                result = await processor.arun(prompt=current_input, history=history)
-                if isinstance(result, Failure):
-                    return result
-                
-                final_payload = result.unwrap()
-                current_input = final_payload.get("content", "")
-                
-                # Save assistant response to history
+        if conv_id and os.path.exists(traj_file):
+            logger.info("Resuming conversation %s from %s", conv_id, traj_file)
+            actual_conv_id = conv_id
+        else:
+            logger.info("Starting a new conversation for session %s", final_session_id)
+            actual_conv_id = None
+
+        try:
+            # Construct LocalAgentConfig
+            config = LocalAgentConfig(
+                system_instructions=agent_config.get("system") or agent_config.get("system_instructions"),
+                model=agent_config.get("model", "gemini-1.5-flash"),
+                tools=agent_tools,
+                conversation_id=actual_conv_id,
+                save_dir=TRAJECTORY_DIR,
+            )
+
+            # Start agent session
+            async with Agent(config) as ag:
+                # Capture the actual conversation ID and persist it
+                new_conv_id = ag.conversation_id
+                if new_conv_id:
+                    set_conversation_id_for_session(final_session_id, new_conv_id)
+
+                response = await ag.chat(prompt=chain_input)
+                content = await response.text()
+
+                # Extract tool calls safely
+                tool_calls = []
+                async for tc in response.tool_calls:
+                    tool_calls.append({
+                        "name": tc.name,
+                        "arguments": tc.args,
+                    })
+
+                # Save turn response to history DB
                 await self._history_service.add_message(
-                    final_session_id, 
-                    "assistant", 
-                    current_input,
-                    tool_calls=final_payload.get("tool_calls")
+                    final_session_id,
+                    "assistant",
+                    content,
+                    tool_calls=tool_calls if tool_calls else None
                 )
-                
-                # Update local history for next step in chain ?? 
-                # Chains usually pass output as input to next, not full history?
-                # But for chat usage, we want full context. 
-                # If it's a chain of different agents, maybe disjoint history?
-                # For now, let's append response to 'history' list so next agent sees it too
-                history.append({
-                    "role": "assistant",
-                    "content": current_input,
-                    "tool_calls": final_payload.get("tool_calls")
-                })
 
-            finally:
-                await processor.close()
+                payload = {
+                    "content": content,
+                    "tool_calls": tool_calls if tool_calls else None,
+                    "session_id": final_session_id,
+                }
+                return Success(payload)
 
-        return Success(final_payload)
+        except Exception as e:
+            logger.error("Error during agent execution: %s", e, exc_info=True)
+            return Failure(ChainExecutionError(f"Agent execution failed: {e}"))
 
     async def stream_chain(
         self,
         chain_input: str,
-        chain_configs: List[Dict[str, Any]],
+        chain_configs: Optional[List[Dict[str, Any]]] = None,
         session_id: Optional[str] = None,
         context: Optional[Dict[str, Any]] = None,
+        agent_id: Optional[str] = None,
     ) -> AsyncIterator[Any]:
         """
-        Streams the execution of a chain of agents.
-        Only the last agent's response is streamed.
+        Streams agent execution token deltas.
         """
         if not chain_input:
             yield Failure(ValueError("Missing input."))
             return
-        if not chain_configs:
-            yield Failure(ValueError("Missing chain configuration."))
 
         final_session_id = session_id or str(uuid.uuid4())
-        current_input = chain_input
+        agent_config = self._resolve_agent_config(chain_configs, agent_id)
 
-        # Fetch history for the session
-        history_result = await self._history_service.get_session_history(final_session_id)
-        history = history_result.unwrap() if isinstance(history_result, Success) else []
-
-        # Save user input to history
+        # Record user query in history
         await self._history_service.add_message(final_session_id, "user", chain_input)
 
-        # Execute all previous steps
-        for agent_config in chain_configs[:-1]:
-            # Use run_chain logic for intermediate steps (we could optimize this to avoid re-creation logic if we had private methods)
-            # but simplest is just to run them one by one.
-            # Or better, just instantiate directly like in run_chain
-            framework = agent_config.get("agent_class", "AgentAgno").replace("Agent", "").lower()
-            if framework == "agno": 
-                framework = "agno"
+        enabled_tool_names = agent_config.get("tools")
+        agent_tools, _ = setup_tools(
+            enable_tools=True,
+            quiet=True,
+            enabled_tool_names=enabled_tool_names,
+        )
 
-            proc_config = agent_config.copy()
-            proc_config["framework"] = framework
-            if context:
-                proc_config["context"] = context
-            
-            processor_result = self.create_processor(proc_config, final_session_id)
-            if isinstance(processor_result, Failure):
-                yield processor_result
-                return
-            
-            processor = processor_result.unwrap()
-            try:
-                result = await processor.arun(prompt=current_input, history=history)
-                if isinstance(result, Failure):
-                    yield result
-                    return
-                
-                final_payload = result.unwrap()
-                current_input = final_payload.get("content", "")
-                
-                # Save intermediate agent response to history
-                await self._history_service.add_message(
-                    final_session_id, 
-                    "assistant", 
-                    current_input,
-                    tool_calls=final_payload.get("tool_calls")
-                )
-                history.append({
-                    "role": "assistant",
-                    "content": current_input,
-                    "tool_calls": final_payload.get("tool_calls")
-                })
-            finally:
-                await processor.close()
+        # Resolve persistent conversation ID
+        conv_id = get_conversation_id_for_session(final_session_id)
+        traj_file = os.path.join(TRAJECTORY_DIR, f"traj-{conv_id}") if conv_id else ""
 
-        # Stream the last step
-        last_config = chain_configs[-1]
-        framework = last_config.get("agent_class", "AgentAgno").replace("Agent", "").lower()
-        if framework == "agno": 
-             framework = "agno"
-             
-        proc_config = last_config.copy()
-        proc_config["framework"] = framework
-        proc_config["stream"] = True
-        if context:
-            proc_config["context"] = context
+        if conv_id and os.path.exists(traj_file):
+            logger.info("Resuming conversation %s from %s", conv_id, traj_file)
+            actual_conv_id = conv_id
+        else:
+            logger.info("Starting a new conversation for session %s", final_session_id)
+            actual_conv_id = None
 
-        processor_result = self.create_processor(proc_config, final_session_id)
-        if isinstance(processor_result, Failure):
-            yield processor_result
-            return
-
-        processor = processor_result.unwrap()
-        accumulated_response = ""
         try:
-            # We don't support passing history to astream yet in BaseAdapter, but we should.
-            # Assuming we update astream signature too.
-            async for chunk in processor.astream(prompt=current_input): # TODO: history=history
-                accumulated_response += str(chunk) if isinstance(chunk, str) else "" # Simple accum for now
-                yield chunk
-            
-            # Save final streamed response
-            # Note: capturing tool calls from stream is tricky unless expected format
-            await self._history_service.add_message(final_session_id, "assistant", accumulated_response)
+            config = LocalAgentConfig(
+                system_instructions=agent_config.get("system") or agent_config.get("system_instructions"),
+                model=agent_config.get("model", "gemini-1.5-flash"),
+                tools=agent_tools,
+                conversation_id=actual_conv_id,
+                save_dir=TRAJECTORY_DIR,
+            )
+
+            accumulated_response = ""
+            async with Agent(config) as ag:
+                # Capture the actual conversation ID and persist it
+                new_conv_id = ag.conversation_id
+                if new_conv_id:
+                    set_conversation_id_for_session(final_session_id, new_conv_id)
+
+                response = await ag.chat(prompt=chain_input)
+                async for chunk in response:
+                    accumulated_response += chunk
+                    yield chunk
+
+                # Collect tool calls at the end of the turn
+                tool_calls = []
+                async for tc in response.tool_calls:
+                    tool_calls.append({
+                        "name": tc.name,
+                        "arguments": tc.args,
+                    })
+
+                # Save streamed assistant response to history
+                await self._history_service.add_message(
+                    final_session_id,
+                    "assistant",
+                    accumulated_response,
+                    tool_calls=tool_calls if tool_calls else None
+                )
 
         except Exception as e:
+            logger.error("Error during streaming execution: %s", e, exc_info=True)
             yield Failure(ChainExecutionError(f"Error during streaming: {e}"))
-        finally:
-            await processor.close()
 
     async def get_session_history(self, session_id: str) -> Result[List[Dict[str, Any]], Exception]:
         """Retrieves history for a session."""
         return await self._history_service.get_session_history(session_id)
 
     async def clear_session_history(self, session_id: str) -> Result[None, Exception]:
-        """Clears history for a specific session."""
-        return await self._history_service.clear_history(session_id)
+        """Clears history for a specific session and resets the conversation trajectory."""
+        db_res = await self._history_service.clear_history(session_id)
+        if isinstance(db_res, Failure):
+            return db_res
+        try:
+            clear_conversation_id_for_session(session_id)
+            return Success(None)
+        except Exception as e:
+            logger.error(f"Failed to clear conversation id mapping: {e}")
+            return Failure(e)
 
     async def add_message_to_history(
         self,
