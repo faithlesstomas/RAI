@@ -9,7 +9,7 @@ from typing import Any, AsyncIterator, Dict, List, Optional
 from returns.result import Failure, Result, Success
 
 from google.antigravity import Agent, LocalAgentConfig
-from google.antigravity.types import CapabilitiesConfig, BuiltinTools
+from google.antigravity.types import CapabilitiesConfig, BuiltinTools, CustomSystemInstructions
 from rai.core import setup_tools
 from rai.config_manager import (
     load_config,
@@ -96,9 +96,12 @@ class ChatService:
             actual_conv_id = None
 
         try:
+            sys_inst = agent_config.get("system") or agent_config.get("system_instructions") or agent_config.get("system_prompt")
+            custom_sys_inst = CustomSystemInstructions(text=sys_inst) if sys_inst else None
+
             # Construct LocalAgentConfig
             config = LocalAgentConfig(
-                system_instructions=agent_config.get("system") or agent_config.get("system_instructions"),
+                system_instructions=custom_sys_inst,
                 model=agent_config.get("model", "gemini-2.5-flash"),
                 tools=agent_tools,
                 conversation_id=actual_conv_id,
@@ -197,8 +200,11 @@ class ChatService:
             actual_conv_id = None
 
         try:
+            sys_inst = agent_config.get("system") or agent_config.get("system_instructions") or agent_config.get("system_prompt")
+            custom_sys_inst = CustomSystemInstructions(text=sys_inst) if sys_inst else None
+
             config = LocalAgentConfig(
-                system_instructions=agent_config.get("system") or agent_config.get("system_instructions"),
+                system_instructions=custom_sys_inst,
                 model=agent_config.get("model", "gemini-2.5-flash"),
                 tools=agent_tools,
                 conversation_id=actual_conv_id,

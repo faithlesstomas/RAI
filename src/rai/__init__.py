@@ -14,14 +14,19 @@ original_build_harness_config = local_connection.LocalConnectionStrategy._build_
 def patched_build_harness_config(self) -> Any:
     harness_config = original_build_harness_config(self)
     model_name = self._gemini_config.models.default.name if self._gemini_config else None
-    
+
     if model_name and not model_name.startswith("gemini"):
         logging.info(f"[RAI Patch] Routing model {model_name} to GemmaConfig")
         harness_config.ClearField("gemini_config")
-        
-        # Determine host dynamically from configuration if possible
-        # Default to standard Ollama endpoint
-        host = "http://127.0.0.1:11434"
+
+        # Determine host dynamically from configuration or environment
+        from rai.config_manager import load_config
+        app_config = load_config()
+        active_agent = app_config.get("active_agent") or "default"
+        agent_cfg = app_config.get("agents", {}).get(active_agent, {})
+        host = os.environ.get("OLLAMA_HOST") or agent_cfg.get("ollama_host") or "http://127.0.0.1:11434"
+
+        logging.info(f"[RAI Patch] Using Ollama host: {host}")
         harness_config.gemma_config.CopyFrom(
             localharness_pb2.GemmaConfig(
                 base_url=host,
@@ -52,5 +57,3 @@ def patched_popen(*args, **kwargs):
 subprocess.Popen = patched_popen
 
 __version__ = "0.2.0"
-
-
