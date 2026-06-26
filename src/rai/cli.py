@@ -645,15 +645,6 @@ async def run_interactive_chat(
                             # TODO: Add back streaming support
                             # TODO: Add back TTS support
                             console.print(Markdown(content))
-                            
-                            # Save assistant response
-                            if chat_service:
-                                await chat_service.add_message_to_history(
-                                    session_id, 
-                                    "assistant", 
-                                    content,
-                                    tool_calls=response.get("tool_calls")
-                                )
 
                             if response.get("tool_calls"):
                                 console.print(
@@ -796,14 +787,6 @@ async def async_run_standalone(options: CliOptions) -> None:
             if response_payload:
                 content = response_payload.get("content", "")
                 console.print(Markdown(content))
-                
-                # Save assistant response
-                await chat_service.add_message_to_history(
-                    session_to_use, 
-                    "assistant", 
-                    content,
-                    tool_calls=response_payload.get("tool_calls")
-                )
     
         elif isinstance(result, Failure):
             error_console.print(f"[red]Error: {result.failure()}[/red]")

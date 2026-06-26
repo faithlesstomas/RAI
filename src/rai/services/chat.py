@@ -72,8 +72,8 @@ class ChatService:
         final_session_id = session_id or str(uuid.uuid4())
         agent_config = self._resolve_agent_config(chain_configs, agent_id)
 
-        # Retrieve user history in RAI history database
-        await self._history_service.add_message(final_session_id, "user", chain_input)
+        # NOTE: User message is persisted by the caller (CLI interactive loop
+        # or single-shot handler) to avoid double-writes.
 
         # Set up active agent tools
         enabled_tool_names = agent_config.get("tools")
@@ -109,13 +109,14 @@ class ChatService:
 
             # Start agent session
             async with Agent(config) as ag:
-                # Capture the actual conversation ID and persist it
+                response = await ag.chat(prompt=chain_input)
+                content = await response.text()
+
+                # Capture the conversation ID AFTER ag.chat() — the cascade_id
+                # is populated by the WebSocket reader loop during chat().
                 new_conv_id = ag.conversation_id
                 if new_conv_id:
                     set_conversation_id_for_session(final_session_id, new_conv_id)
-
-                response = await ag.chat(prompt=chain_input)
-                content = await response.text()
 
                 # Extract tool calls safely
                 tool_calls = []
@@ -162,8 +163,7 @@ class ChatService:
         final_session_id = session_id or str(uuid.uuid4())
         agent_config = self._resolve_agent_config(chain_configs, agent_id)
 
-        # Record user query in history
-        await self._history_service.add_message(final_session_id, "user", chain_input)
+        # NOTE: User message is persisted by the caller to avoid double-writes.
 
         enabled_tool_names = agent_config.get("tools")
         agent_tools, _ = setup_tools(
@@ -194,15 +194,16 @@ class ChatService:
 
             accumulated_response = ""
             async with Agent(config) as ag:
-                # Capture the actual conversation ID and persist it
-                new_conv_id = ag.conversation_id
-                if new_conv_id:
-                    set_conversation_id_for_session(final_session_id, new_conv_id)
-
                 response = await ag.chat(prompt=chain_input)
                 async for chunk in response:
                     accumulated_response += chunk
                     yield chunk
+
+                # Capture the conversation ID AFTER ag.chat() — the cascade_id
+                # is populated by the WebSocket reader loop during chat().
+                new_conv_id = ag.conversation_id
+                if new_conv_id:
+                    set_conversation_id_for_session(final_session_id, new_conv_id)
 
                 # Collect tool calls at the end of the turn
                 tool_calls = []
