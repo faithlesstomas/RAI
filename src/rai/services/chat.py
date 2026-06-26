@@ -56,6 +56,40 @@ class ChatService:
 
         return config
 
+    async def _drain_replay(self, ag: Agent) -> None:
+        """Robustly drains replayed steps from the connection queue before starting the turn."""
+        if not hasattr(ag, "conversation"):
+            return
+        connection = ag.conversation.connection
+        queue = connection._step_queue
+
+        max_timeout = 1.0
+        poll_interval = 0.01
+        elapsed = 0.0
+        last_size = -1
+        stable_count = 0
+        stability_threshold = 5  # 50ms of stability (5 * 10ms poll interval)
+
+        while elapsed < max_timeout:
+            current_size = queue.qsize()
+            if current_size == last_size:
+                stable_count += 1
+                if stable_count >= stability_threshold:
+                    break
+            else:
+                stable_count = 0
+                last_size = current_size
+            await asyncio.sleep(poll_interval)
+            elapsed += poll_interval
+
+        while not queue.empty():
+            try:
+                step = queue.get_nowait()
+                if step is not None and not isinstance(step, Exception):
+                    ag.conversation._steps.append(step)
+            except asyncio.QueueEmpty:
+                break
+
     async def run_chain(
         self,
         chain_input: str,
@@ -114,15 +148,8 @@ class ChatService:
             # Start agent session
             async with Agent(config) as ag:
                 # If resuming, wait a fraction of a second and drain history steps from connection queue
-                if actual_conv_id and hasattr(ag, "conversation"):
-                    await asyncio.sleep(0.15)
-                    queue = ag.conversation.connection._step_queue
-                    while not queue.empty():
-                        try:
-                            step = queue.get_nowait()
-                            ag.conversation._steps.append(step)
-                        except asyncio.QueueEmpty:
-                            break
+                if actual_conv_id:
+                    await self._drain_replay(ag)
 
                 response = await ag.chat(prompt=chain_input)
                 content = await response.text()
@@ -214,15 +241,8 @@ class ChatService:
             accumulated_response = ""
             async with Agent(config) as ag:
                 # If resuming, wait a fraction of a second and drain history steps from connection queue
-                if actual_conv_id and hasattr(ag, "conversation"):
-                    await asyncio.sleep(0.15)
-                    queue = ag.conversation.connection._step_queue
-                    while not queue.empty():
-                        try:
-                            step = queue.get_nowait()
-                            ag.conversation._steps.append(step)
-                        except asyncio.QueueEmpty:
-                            break
+                if actual_conv_id:
+                    await self._drain_replay(ag)
 
                 response = await ag.chat(prompt=chain_input)
                 async for chunk in response:
