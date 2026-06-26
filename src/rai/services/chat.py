@@ -4,6 +4,7 @@ Chat Service for handling agent interactions using the Google Antigravity SDK.
 import os
 import uuid
 import logging
+import asyncio
 from typing import Any, AsyncIterator, Dict, List, Optional
 from returns.result import Failure, Result, Success
 
@@ -109,6 +110,17 @@ class ChatService:
 
             # Start agent session
             async with Agent(config) as ag:
+                # If resuming, wait a fraction of a second and drain history steps from connection queue
+                if actual_conv_id and hasattr(ag, "conversation"):
+                    await asyncio.sleep(0.15)
+                    queue = ag.conversation.connection._step_queue
+                    while not queue.empty():
+                        try:
+                            step = queue.get_nowait()
+                            ag.conversation._steps.append(step)
+                        except asyncio.QueueEmpty:
+                            break
+
                 response = await ag.chat(prompt=chain_input)
                 content = await response.text()
 
@@ -195,6 +207,17 @@ class ChatService:
 
             accumulated_response = ""
             async with Agent(config) as ag:
+                # If resuming, wait a fraction of a second and drain history steps from connection queue
+                if actual_conv_id and hasattr(ag, "conversation"):
+                    await asyncio.sleep(0.15)
+                    queue = ag.conversation.connection._step_queue
+                    while not queue.empty():
+                        try:
+                            step = queue.get_nowait()
+                            ag.conversation._steps.append(step)
+                        except asyncio.QueueEmpty:
+                            break
+
                 response = await ag.chat(prompt=chain_input)
                 async for chunk in response:
                     accumulated_response += chunk
