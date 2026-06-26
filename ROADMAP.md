@@ -1,16 +1,16 @@
 # RAI: Agentic OS Daemon & Secure Linux Gateway
 ## Project Roadmap & Evolution Plan
 
-This document establishes the single source of truth for the strategic vision, architectural pivot, and tactical implementation phases for **RAI**. It rationalizes and merges the goals in `DEVELOPMENT.md`, `local_inference_plan.md`, `guile_hoot_webui_demo_plan.md`, and the **Antigravity SDK Pivot proposal**.
+This document establishes the single source of truth for the strategic vision, architectural pivot, and tactical implementation phases for **RAI**. It rationalizes and merges the goals in `DEVELOPMENT.md`, `local_inference_plan.md`, `guile_hoot_webui_demo_plan.md`, the **Antigravity SDK Pivot**, and the **Q2 2026 Interactive Features Expansion**.
 
 ---
 
 ## 1. The Vision: From Orchestrator to Agentic OS Daemon
 
-Initially, RAI was conceived as a framework-agnostic LLM orchestrator. However, trying to unify distinct asynchronous pydantic loops and execution flows (such as Agno/Phidata and Pydantic AI) under a custom unified `Processor` interface (`src/rai/engine.py`) led to continuous refactoring and high technical debt.
+Initially, RAI was conceived as a framework-agnostic LLM orchestrator. However, trying to unify distinct asynchronous pydantic loops and execution flows under a custom unified `Processor` interface led to continuous refactoring and high technical debt.
 
 ### The Pivot: Brain vs. Body Architecture
-Instead of recreating existing orchestration frameworks (like `liteLLM` or custom multi-framework wrappers), **RAI is pivoting to become an Agentic OS Daemon & Secure Linux Gateway, powered by the Google Antigravity SDK.**
+Instead of recreating orchestration frameworks, **RAI is an Agentic OS Daemon & Secure Linux Gateway, powered by the Google Antigravity SDK.**
 
 We separate the system into two distinct architectural roles:
 1. **The Brain (Orchestration & LLM)**: Delegated fully to the **Google Antigravity SDK (`AgentRuntime`)** or other standard external agents.
@@ -98,7 +98,7 @@ This frees RAI from maintaining core AI execution code, allowing full focus on:
 *   [x] **COSMIC Desktop Support:** Implement `src/rai/tools/desktop/cosmic.py` talking to COSMIC applets and its Rust/Wayland-based IPC.
 *   [x] **Environment Auto-detection:** Add desktop detection using the `XDG_CURRENT_DESKTOP` env variable, loading the correct subclass dynamically at startup.
 
-### Phase 3: The Security Layer (Isolated Commands)
+### Phase 3: The Security Layer & Gateways (Completed)
 *   [x] **Sandbox Runtime:** Implement a secure runner inside `src/rai/tools/security/`.
 *   [x] **Bubblewrap Integration:** Wrap shell command execution within a read-only bubblewrap (`bwrap`) container, allowing write access only to designated temporary folders.
 *   [x] **Guix Alternative:** Provide a fallback option for `guix shell --container` environments to guarantee reproducible, isolated tool executions.
@@ -106,31 +106,40 @@ This frees RAI from maintaining core AI execution code, allowing full focus on:
 *   [x] **Model Context Protocol (MCP) Gateway:** Implement a standard JSON-RPC MCP server endpoint (e.g. using the python-mcp SDK) in `rai serve` to securely expose local OS-level tools to external orchestrators and standalone Antigravity CLI.
 *   [x] **Human-in-the-Loop (HITL) Consent Mechanism:** Implement a centralized transaction authorization layer in the server daemon to intercept high-risk or unsandboxed actions, suspend tool execution asynchronously, and prompt the user for approval via active client WebSockets or native D-Bus desktop dialogs.
 
-### Phase 4: Multi-Client Ecosystem
-*   [ ] **CLI Stabilization:** Standardize CLI output with beautiful options (`--table` / `--details` / `--json`) and clean interactive prompts.
-*   [ ] **GNU Guile Dashboard (WASM):** Complete the dashboard inside `guile-dashboard/` using Guile Hoot. Connect the Scheme frontend to the FastAPI server endpoints.
+### Phase 4: API Stabilization, Streaming & Client-Server Sync (High Priority)
+*   [ ] **Fix and Stabilize Streaming:** Diagnose and fix the streaming pipeline under the new Antigravity SDK architecture (`stream_chain` and `/api/v1/stream`), ensuring it streams token updates reliably.
+*   [ ] **CLI Streaming Integration:** Add streaming support back to the interactive CLI session loop (`cli.py`), allowing real-time token rendering instead of displaying the block only at the end.
+*   [ ] **Server-Aware CLI Profile Management:** Extend the `rai sessions` (and new `rai agents`) CLI commands to interact with the daemon's REST API (`/api/v1/agents`) when in client mode (`--connect`), allowing remote creation, listing, and deletion of agent profiles.
+*   [ ] **Configuration Schema & Terminology Decoupling:** Complete the renaming transition in `config.json` and the codebase from `"sessions"` (legacy name for agent profiles) to `"agents"`, keeping the word "session" strictly reserved for conversation history threads.
+
+### Phase 5: Rich Interactive Features & Antigravity Integrations (High Priority)
+*   [ ] **Task A: Thinking/Reasoning Stream:** Implement real-time thoughts extraction. Route `response.thoughts` to both the SSE stream and the interactive CLI UI (e.g. rendering reasoning steps in a distinct console style).
+*   [ ] **Task B: Real-time Tool Call Visibility:** Intercept and yield `ToolCall` and `ToolResult` chunks during streaming so that the client (CLI/WebUI) notifies the user *immediately* when a tool is called and with what parameters, rather than at the end of the execution turn.
+*   [ ] **Task C: Dynamic MCP Server Config:** Allow registering arbitrary external stdio/HTTP/SSE MCP servers through `agents.yaml` configurations.
+*   [ ] **Task D: Security Policy Alignment:** Align the custom sandboxing and command guardrails with Antigravity's native `policy` engine and hooks (e.g., subclassing or extending `policy.confirm_run_command()`).
+*   [ ] **Remote HITL WebSocket Protocol:** Support forwarding daemon-side HITL tool authorizations to active WebSocket CLI clients, allowing users to interactively approve high-risk/unsandboxed operations directly in the console without requiring desktop D-Bus prompts.
+
+### Phase 6: Local Model (Ollama) Optimization & Diagnostics (Medium Priority)
+*   [ ] **Task E: Local Model Harness Optimizations:**
+    *   **Grammar Enforcement:** Integrate GBNF grammar constraints for local Ollama endpoints (using `GemmaConfig`) to ensure reliable tool-calling and structured JSON output.
+    *   **Tool-calling Fallbacks:** Detect models without native tool-calling capabilities and automatically degrade them to text-only agents to prevent API errors.
+*   [ ] **Validation & Configuration Safeguards:** Add checks and warnings when setting up incorrect or mismatched configurations (e.g., wrong model name, missing environment variables, or unreachable Ollama instances) on both local and remote backends.
+
+### Phase 7: Multi-Client Ecosystem & UI (Low Priority)
+*   [ ] **GNU Guile Dashboard (WASM):** Complete the Scheme frontend dashboard using Guile Hoot. Connect it to the FastAPI server endpoints.
 *   [ ] **Emacs Integration:** Develop a lightweight Emacs package (`rai.el`) interacting with the `rai serve` daemon over HTTP/WebSockets.
 *   [ ] **NiceGUI Playground:** Redesign the `webui/` playground to serve as a visualization tool for active Antigravity sessions and active agent configurations.
 *   [ ] **GNOME Shell Extension & Desktop Integration:** Develop a GNOME Shell extension (+ UI overlay) that integrates the RAI server with GNOME Overviews, native search providers, and the system tray/status menu to provide seamless system-wide agent interaction.
-
-### Phase 5: High-Performance Local Inference (Backlog)
-*   [ ] **Local Inference Protocol:** Expose high-performance local runtimes (llama.cpp, ONNX, and IREE/MLIR) for fully offline operation.
-*   [ ] **Engine Factories:** Build `src/rai/inference/` loading `.vmfb`, `.gguf`, or `.onnx` files, using functional adapters to wrap them for the Antigravity runner.
-*   [ ] **Grammar Enforcement:** Integrate GBNF grammar constraints to force structured JSON output from raw local LLMs.
-
-### Phase 6: Advanced Client-Server Integration & Remote Security (Planned)
-*   [ ] **Server-Aware CLI Profile Management:** Extend the `rai sessions` (and new `rai agents`) CLI commands to interact with the daemon's REST API (`/api/v1/agents`) when in client mode (`--connect`), allowing remote creation, listing, and deletion of agent profiles.
-*   [ ] **Remote HITL WebSocket Protocol:** Support forwarding daemon-side HITL tool authorizations to active WebSocket CLI clients, allowing users to interactively approve high-risk/unsandboxed operations directly in the console without requiring desktop D-Bus prompts.
-*   [ ] **Configuration Schema & Terminology Decoupling:** Complete the renaming transition in `config.json` and the codebase from `"sessions"` (legacy name for agent profiles) to `"agents"`, keeping the word "session" strictly reserved for conversation history threads.
 
 ---
 
 ## 4. Technical Debt & Outstanding Bugs
 
 ### 4.1 High Priority Fixes
-*   [x] **Session ID Leak in Routing:** In `src/rai/routers/execution.py`, fix `execute_chain` (or the new runtime execution endpoint) to respect and propagate `session_id`, rather than creating new sessions per call.
+*   [x] **Session ID Leak in Routing:** Respect and propagate `session_id`, rather than creating new sessions per call.
 *   [x] **Resource Cleanup:** Fix the `ResourceWarning: unclosed database/transport` warnings that occur during daemon exit.
 *   [x] **Config Discrepancy:** Unify `rai config` CLI outputs so that active runtime config and stored `config.json` remain in sync.
+*   [ ] **fix: Server Logging Formatting:** Clean up log formatting in the daemon server for `systemd` user service mode to ensure it remains legible, avoiding verbose clutter.
 
 ### 4.2 CI/CD and Linting
 *   [ ] **CI Linter Environment:** Fix `pylint` failures in GitLab CI by ensuring optional dependencies are installed via `pip install -e .[test,dev,lint]` in the `.gitlab-ci.yml`.
