@@ -208,8 +208,6 @@ async def test_run_interactive_chat_success(mock_console_print, mock_prompt_sess
 
     # Verify history interaction
     mock_chat_service.get_session_history.assert_awaited_with("test-session")
-    # Verify user message add
-    mock_chat_service.add_message_to_history.assert_awaited() 
     
     mock_processor.arun.assert_awaited_once() # Called with history now
 
@@ -251,8 +249,6 @@ async def test_async_run_standalone_one_shot_success(
 
     # Verify history interaction
     mock_chat_service.get_session_history.assert_awaited()
-    # verify user message saved
-    mock_chat_service.add_message_to_history.assert_awaited()
     
     # Verify arun called with history
     mock_processor_instance.arun.assert_awaited_once() 

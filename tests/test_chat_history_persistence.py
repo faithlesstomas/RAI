@@ -92,21 +92,17 @@ async def test_run_chain_loads_existing_conversation_id():
 
 @pytest.mark.asyncio
 async def test_history_deduplication():
-    """Test that run_chain does NOT write duplicate user messages, and assistant writes are handled by run_chain."""
+    """Test that run_chain writes exactly one user message and one assistant message, without duplicates."""
     session_id = f"test-session-{uuid.uuid4()}"
     chat_service = ChatService()
     
-    # Let's clean up after testing
     try:
         with patch("rai.services.chat.Agent", side_effect=MockAgent), \
              patch("rai.services.chat.load_config", return_value={"active_agent": "default"}), \
              patch("rai.services.chat.load_agents", return_value={"default": {}}), \
              patch("rai.services.chat.set_conversation_id_for_session"):
              
-            # 1. Simulator: caller (like CLI loop) writes the user message
-            await chat_service._history_service.add_message(session_id, "user", "User message")
-            
-            # 2. run_chain is called
+            # Call run_chain
             result = await chat_service.run_chain(
                 chain_input="User message",
                 chain_configs=[{"model": "test-model"}],
@@ -115,7 +111,7 @@ async def test_history_deduplication():
             
             assert isinstance(result, Success)
             
-            # 3. Retrieve history and check message list
+            # Retrieve history and check message list
             history_res = await chat_service.get_session_history(session_id)
             assert isinstance(history_res, Success)
             messages = history_res.unwrap()

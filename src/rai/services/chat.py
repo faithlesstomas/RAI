@@ -72,8 +72,8 @@ class ChatService:
         final_session_id = session_id or str(uuid.uuid4())
         agent_config = self._resolve_agent_config(chain_configs, agent_id)
 
-        # NOTE: User message is persisted by the caller (CLI interactive loop
-        # or single-shot handler) to avoid double-writes.
+        # Record user query in history
+        await self._history_service.add_message(final_session_id, "user", chain_input)
 
         # Set up active agent tools
         enabled_tool_names = agent_config.get("tools")
@@ -163,7 +163,8 @@ class ChatService:
         final_session_id = session_id or str(uuid.uuid4())
         agent_config = self._resolve_agent_config(chain_configs, agent_id)
 
-        # NOTE: User message is persisted by the caller to avoid double-writes.
+        # Record user query in history
+        await self._history_service.add_message(final_session_id, "user", chain_input)
 
         enabled_tool_names = agent_config.get("tools")
         agent_tools, _ = setup_tools(

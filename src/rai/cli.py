@@ -627,9 +627,6 @@ async def run_interactive_chat(
                     # Fetch history
                     history_result = await chat_service.get_session_history(session_id)
                     history = history_result.unwrap() if isinstance(history_result, Success) else []
-                    
-                    # Save user input
-                    await chat_service.add_message_to_history(session_id, "user", user_input)
 
                 with console.status("[bold green]Assistant is thinking...") as status:
                     core.active_status = status
@@ -771,9 +768,6 @@ async def async_run_standalone(options: CliOptions) -> None:
         # Fetch history first? arun now accepts history
         history_result = await chat_service.get_session_history(session_to_use)
         history = history_result.unwrap() if isinstance(history_result, Success) else []
-        
-        # Save user message
-        await chat_service.add_message_to_history(session_to_use, "user", options.prompt)
 
         with console.status("[bold green]Assistant is thinking...") as status:
             core.active_status = status
