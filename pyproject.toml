@@ -25,6 +25,7 @@ dependencies = [
     "fastapi",
     "uvicorn[standard]",
     "httpx",
+    "mcp>=1.19,<2",
     "returns",
 ]
 
