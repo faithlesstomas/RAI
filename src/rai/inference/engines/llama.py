@@ -5,7 +5,7 @@ from typing import List, Optional, AsyncIterator
 import functools
 
 from returns.result import Result, Success, Failure, safe
-from llama_cpp import Llama
+from llama_cpp import Llama  # pylint: disable=import-error
 
 from ..protocols import InferenceEngine, InferenceResult, GenerationStats
 

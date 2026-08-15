@@ -37,7 +37,7 @@ sse_transport = SseServerTransport("/api/v1/mcp/messages")
 
 
 # 2. Register MCP Tools
-@mcp_server.list_tools()
+@mcp_server.list_tools()  # pylint: disable=no-member
 async def list_tools() -> list[types.Tool]:
     """
     Exposes secure local execution tools to external MCP clients.
@@ -135,7 +135,7 @@ async def list_tools() -> list[types.Tool]:
     ]
 
 
-@mcp_server.call_tool()
+@mcp_server.call_tool()  # pylint: disable=no-member
 async def call_tool(name: str, arguments: dict) -> types.CallToolResult:  # noqa: PLR0911
     """
     Handles MCP tool calls by routing them to the secure sandboxed runners.
@@ -430,4 +430,3 @@ async def mcp_post_sse(request: Request) -> Response:
         request.scope, request.receive, request._send
     )
     return EmptyResponse()
-
