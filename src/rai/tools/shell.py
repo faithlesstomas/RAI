@@ -5,6 +5,7 @@ import os
 import logging
 from typing import Optional
 
+from rai.paths import cache_dir
 from rai.tools.security.sandbox import get_sandbox_runner
 from rai.tools.security.guardrails import validate_command
 from rai.tools.security.hitl import get_approval_manager
@@ -49,7 +50,7 @@ async def run_secure_shell_command(
 
     # 3. Spawn sandboxed runner
     # Resolve a clean sandbox working cache dir for outputs
-    user_cache = os.path.expanduser("~/.cache/rai/sandbox")
+    user_cache = str(cache_dir() / "sandbox")
     active_rw_dir = rw_dir or os.path.join(user_cache, "workspace_outputs")
     os.makedirs(active_rw_dir, exist_ok=True)
 

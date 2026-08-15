@@ -20,10 +20,18 @@ rai.tools.gitlab module
    :show-inheritance:
    :undoc-members:
 
-rai.tools.gnome module
-----------------------
+rai.tools.desktop package
+-------------------------
 
-.. automodule:: rai.tools.gnome
+.. automodule:: rai.tools.desktop
+   :members:
+   :show-inheritance:
+   :undoc-members:
+
+rai.tools.security package
+--------------------------
+
+.. automodule:: rai.tools.security
    :members:
    :show-inheritance:
    :undoc-members:

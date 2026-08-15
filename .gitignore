@@ -11,6 +11,13 @@ __pycache__/
 
 # misc
 .env
+.env.*
+!.env.example
+gemini_api_key_for_rai
+gitlab_access_token
+hf_token
+*_access_token
+*_api_key
 tmp/
 .aider*
 build/
@@ -31,3 +38,10 @@ webui/.nicegui/
 .coverage
 htmlcov/
 site/
+
+# Local model weights and generated runtimes
+models/
+*.gguf
+*.onnx
+*.onnx_data
+.antigravitycli/

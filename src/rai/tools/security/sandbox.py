@@ -47,8 +47,30 @@ class SandboxRunner(ABC):
 
     @abstractmethod
     def is_available(self) -> bool:
-        """Returns True if the sandboxing technology is available on the system."""
+        """Return whether this sandbox implementation can be used."""
         pass
+
+
+class UnavailableSandboxRunner(SandboxRunner):
+    """Fail-closed runner used when no supported sandbox is available."""
+
+    def run(
+        self,
+        command: List[str],
+        env: Optional[Dict[str, str]] = None,
+        allow_network: bool = False,
+        rw_dir: Optional[str] = None,
+    ) -> SandboxResult:
+        del command, env, allow_network, rw_dir
+        return SandboxResult(
+            -1,
+            "",
+            "No supported sandbox is available; host execution was refused.",
+            "unavailable",
+        )
+
+    def is_available(self) -> bool:
+        return False
 
 
 class BubblewrapRunner(SandboxRunner):
@@ -59,9 +81,32 @@ class BubblewrapRunner(SandboxRunner):
     def __init__(self, workspace_dir: Optional[str] = None) -> None:
         self.bwrap_path = shutil.which("bwrap")
         self.workspace_dir = workspace_dir or os.getcwd()
+        self._usable: Optional[bool] = None
 
     def is_available(self) -> bool:
-        return self.bwrap_path is not None
+        if self.bwrap_path is None:
+            return False
+        if self._usable is None:
+            try:
+                probe = subprocess.run(
+                    [
+                        self.bwrap_path,
+                        "--unshare-user",
+                        "--ro-bind",
+                        "/",
+                        "/",
+                        "--",
+                        "/bin/true",
+                    ],
+                    capture_output=True,
+                    text=True,
+                    check=False,
+                    timeout=3,
+                )
+                self._usable = probe.returncode == 0
+            except (OSError, subprocess.SubprocessError):
+                self._usable = False
+        return self._usable
 
     def run(
         self,
@@ -71,10 +116,7 @@ class BubblewrapRunner(SandboxRunner):
         rw_dir: Optional[str] = None
     ) -> SandboxResult:
         if not self.is_available():
-            logger.warning("bubblewrap (bwrap) not found on system. Running command UNSANDBOXED!")
-            # Fallback to local unsandboxed run
-            res = subprocess.run(command, capture_output=True, text=True, env=env, check=False)
-            return SandboxResult(res.returncode, res.stdout, res.stderr, "none")
+            return UnavailableSandboxRunner().run(command, env, allow_network, rw_dir)
 
         bwrap_cmd = [self.bwrap_path]
 
@@ -168,9 +210,7 @@ class GuixContainerRunner(SandboxRunner):
         rw_dir: Optional[str] = None
     ) -> SandboxResult:
         if not self.is_available():
-            logger.warning("GNU Guix not found. Falling back to unsandboxed execution.")
-            res = subprocess.run(command, capture_output=True, text=True, env=env, check=False)
-            return SandboxResult(res.returncode, res.stdout, res.stderr, "none")
+            return UnavailableSandboxRunner().run(command, env, allow_network, rw_dir)
 
         guix_cmd = [self.guix_path, "shell", "--container"]
         
@@ -183,7 +223,11 @@ class GuixContainerRunner(SandboxRunner):
         # Bind read-write directory
         if rw_dir:
             os.makedirs(rw_dir, exist_ok=True)
-            guix_cmd.extend([f"--expose={rw_dir}"])
+            guix_cmd.extend([f"--share={rw_dir}=/output"])
+
+        # Match the Bubblewrap contract: source workspace is visible read-only.
+        workspace_dir = os.getcwd()
+        guix_cmd.extend([f"--expose={workspace_dir}=/workspace"])
 
         # command execution
         guix_cmd.append("--")
@@ -217,5 +261,5 @@ def get_sandbox_runner(workspace_dir: Optional[str] = None) -> SandboxRunner:
     if guix.is_available():
         return guix
 
-    logger.warning("No sandboxing tools (bubblewrap or Guix) found. Commands will run UNSANDBOXED!")
-    return bwrap  # BubblewrapRunner defaults to unsandboxed run if not available
+    logger.error("No sandboxing tools (bubblewrap or Guix) are available; execution is disabled.")
+    return UnavailableSandboxRunner()

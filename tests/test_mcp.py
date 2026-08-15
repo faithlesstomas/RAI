@@ -92,12 +92,10 @@ async def test_mcp_call_unknown_tool() -> None:
     assert "Error: Unknown tool" in result.content[0].text
 
 
-from fastapi.testclient import TestClient
 from rai.server import app
+from conftest import ASGITestClient
 
-client = TestClient(app)
-
-def test_stateless_mcp_initialize() -> None:
+def test_stateless_mcp_initialize(client: ASGITestClient) -> None:
     """
     Tests the stateless fallback POST /api/v1/mcp/sse endpoint with initialize method.
     """
@@ -117,7 +115,7 @@ def test_stateless_mcp_initialize() -> None:
     assert data["result"]["serverInfo"]["name"] == "rai-secure-gateway"
 
 
-def test_stateless_mcp_tools_list() -> None:
+def test_stateless_mcp_tools_list(client: ASGITestClient) -> None:
     """
     Tests the stateless fallback POST /api/v1/mcp/sse endpoint with tools/list method.
     """
@@ -146,7 +144,9 @@ def test_stateless_mcp_tools_list() -> None:
 
 
 @patch("rai.routers.mcp.run_secure_shell_command")
-def test_stateless_mcp_tools_call(mock_run_shell: MagicMock) -> None:
+def test_stateless_mcp_tools_call(
+    mock_run_shell: MagicMock, client: ASGITestClient
+) -> None:
     """
     Tests the stateless fallback POST /api/v1/mcp/sse endpoint with tools/call method.
     """
@@ -174,7 +174,7 @@ def test_stateless_mcp_tools_call(mock_run_shell: MagicMock) -> None:
     mock_run_shell.assert_called_once_with("echo stateless", allow_network=True)
 
 
-def test_stateless_mcp_ping() -> None:
+def test_stateless_mcp_ping(client: ASGITestClient) -> None:
     """
     Tests the stateless fallback POST /api/v1/mcp/sse endpoint with ping method.
     """
@@ -192,7 +192,7 @@ def test_stateless_mcp_ping() -> None:
     assert data["result"] == {}
 
 
-def test_stateless_mcp_unsupported_method() -> None:
+def test_stateless_mcp_unsupported_method(client: ASGITestClient) -> None:
     """
     Tests the stateless fallback POST /api/v1/mcp/sse endpoint with an unsupported method.
     """
@@ -212,7 +212,7 @@ def test_stateless_mcp_unsupported_method() -> None:
     assert "not found" in data["error"]["message"]
 
 
-def test_stateless_mcp_invalid_json() -> None:
+def test_stateless_mcp_invalid_json(client: ASGITestClient) -> None:
     """
     Tests the stateless fallback POST /api/v1/mcp/sse endpoint with invalid JSON body.
     """
@@ -225,7 +225,9 @@ def test_stateless_mcp_invalid_json() -> None:
 
 
 @patch("rai.routers.mcp.get_desktop_adapter")
-def test_stateless_mcp_send_notification(mock_get_adapter: MagicMock) -> None:
+def test_stateless_mcp_send_notification(
+    mock_get_adapter: MagicMock, client: ASGITestClient
+) -> None:
     """
     Tests calling send_desktop_notification tool.
     """
@@ -254,7 +256,9 @@ def test_stateless_mcp_send_notification(mock_get_adapter: MagicMock) -> None:
 
 
 @patch("rai.routers.mcp.get_desktop_adapter")
-def test_stateless_mcp_take_screenshot(mock_get_adapter: MagicMock) -> None:
+def test_stateless_mcp_take_screenshot(
+    mock_get_adapter: MagicMock, client: ASGITestClient
+) -> None:
     """
     Tests calling take_desktop_screenshot tool.
     """
@@ -281,7 +285,9 @@ def test_stateless_mcp_take_screenshot(mock_get_adapter: MagicMock) -> None:
 
 
 @patch("rai.routers.mcp.get_desktop_adapter")
-def test_stateless_mcp_get_weather(mock_get_adapter: MagicMock) -> None:
+def test_stateless_mcp_get_weather(
+    mock_get_adapter: MagicMock, client: ASGITestClient
+) -> None:
     """
     Tests calling get_desktop_weather tool.
     """
@@ -305,5 +311,3 @@ def test_stateless_mcp_get_weather(mock_get_adapter: MagicMock) -> None:
     data = response.json()
     assert data["result"]["content"][0]["text"] == "sunny and warm"
     mock_adapter.weather.assert_called_once_with("Paris")
-
-

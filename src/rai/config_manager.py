@@ -8,12 +8,13 @@ import yaml
 from typing import Any, Dict, Optional, Tuple
 
 from .core import console, error_console
+from .paths import config_dir, data_dir
 
 # --- Constants ---
-CONFIG_DIR = os.path.expanduser("~/.config/rai")
+CONFIG_DIR = str(config_dir())
 DEFAULT_CONFIG_FILE = os.path.join(CONFIG_DIR, "config.json")
 DEFAULT_AGENTS_FILE = os.path.join(CONFIG_DIR, "agents.yaml")
-DEFAULT_TTS_DATA_DIR = os.path.expanduser("~/.local/share/rai/piper_voices")
+DEFAULT_TTS_DATA_DIR = str(data_dir() / "piper_voices")
 
 # --- Core Helper Functions ---
 
@@ -433,7 +434,6 @@ def get_config_logic(key: str) -> None:
 
 
 TRAJECTORY_DIR = os.path.join(CONFIG_DIR, "trajectories")
-os.makedirs(TRAJECTORY_DIR, exist_ok=True)
 
 
 def get_conversation_id_for_session(session_name: str) -> str:
@@ -467,6 +467,5 @@ def clear_conversation_id_for_session(session_name: str) -> None:
                 os.remove(traj_file)
             except Exception as e:
                 logging.getLogger(__name__).warning(f"Failed to remove trajectory file {traj_file}: {e}")
-
 
 

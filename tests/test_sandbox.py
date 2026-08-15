@@ -2,11 +2,26 @@ import os
 import tempfile
 import pytest
 from unittest.mock import MagicMock, patch
-from rai.tools.security.sandbox import BubblewrapRunner, GuixContainerRunner, get_sandbox_runner
+from rai.tools.security.sandbox import (
+    BubblewrapRunner,
+    GuixContainerRunner,
+    UnavailableSandboxRunner,
+    get_sandbox_runner,
+)
 
-def test_get_sandbox_runner():
+def test_get_sandbox_runner() -> None:
     runner = get_sandbox_runner()
     assert runner is not None
+
+
+@patch("rai.tools.security.sandbox.shutil.which", return_value=None)
+def test_missing_sandbox_fails_closed(_mock_which: MagicMock) -> None:
+    runner = get_sandbox_runner()
+    assert isinstance(runner, UnavailableSandboxRunner)
+    result = runner.run(["echo", "must not execute"])
+    assert not result.is_success()
+    assert result.sandbox_type == "unavailable"
+    assert "refused" in result.stderr
 
 def test_bubblewrap_availability():
     runner = BubblewrapRunner()
@@ -82,7 +97,8 @@ def test_guix_container_runner_arguments_construction(mock_which, mock_run):
     assert "shell" in guix_args
     assert "--container" in guix_args
     assert "--network" in guix_args
-    assert "--expose=/tmp/mock-rw" in guix_args
+    assert "--share=/tmp/mock-rw=/output" in guix_args
+    assert any(arg.endswith("=/workspace") for arg in guix_args)
 
 def test_bubblewrap_runner_actual_execution_if_available():
     runner = BubblewrapRunner()

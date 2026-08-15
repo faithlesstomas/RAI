@@ -46,7 +46,11 @@ critical_lint:
   stage: lint
   script:
     - pylint --ignore tui.py,gnome.py -E src
-  allow_failure: true
+
+ruff_critical:
+  stage: lint
+  script:
+    - ruff check src tests --select E9,F63,F7,F82
 
 ruff:
   stage: lint
@@ -63,4 +67,4 @@ pylint:
 test:
   stage: test
   script:
-    - pytest
+    - pytest --timeout=30 --cov=src/rai --cov-report=term

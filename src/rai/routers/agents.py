@@ -4,7 +4,7 @@ API endpoints for managing agents.
 from typing import Any, Dict, List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException
-from pydantic import BaseModel, Field, validator
+from pydantic import BaseModel, Field, field_validator
 
 from .. import config_manager
 from ..core import TOOL_REGISTRY
@@ -26,8 +26,9 @@ class AgentDefinition(BaseModel):
     tools: List[str] = Field(default_factory=list, description="List of tool names")
     description: Optional[str] = Field(None, description="Short description of the agent's specialization")
 
-    @validator("tools")
-    def validate_tools(cls, v: List[str]) -> List[str]: # pylint: disable=no-self-argument
+    @field_validator("tools")
+    @classmethod
+    def validate_tools(cls, v: List[str]) -> List[str]:
         """Validates that requested tools exist in the registry."""
         known_tools = set(TOOL_REGISTRY.keys()) | {
             "DesktopNotificationTool", "DesktopScreenshotTool", "DesktopWeatherTool",

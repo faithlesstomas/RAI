@@ -15,6 +15,7 @@ from .. import config_manager
 from ..services.chat import ChatService
 from ..dependencies import get_config, get_model_registry
 from ..services.model_registry import ModelRegistry
+from ..tools.security.auth import is_authorized
 
 try:
     from ollama import ResponseError # pylint: disable=unused-import
@@ -206,6 +207,9 @@ async def get_models_for_backend(
 @router.websocket("/ws/v1/chat")
 async def websocket_endpoint(websocket: WebSocket) -> None:
     """Handles WebSocket connections for real-time chat."""
+    if not is_authorized(websocket.headers, websocket.query_params.get("token")):
+        await websocket.close(code=1008, reason="Unauthorized")
+        return
     await websocket.accept()
     app_config = config_manager.load_config()  # Load config manually
     session_id = None  # Preserve the stateful session ID across turns!

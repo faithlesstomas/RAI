@@ -2,10 +2,11 @@
 History router for RAI.
 """
 from typing import Any, Dict
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 from returns.result import Success, Failure
 
 from ..services.history import HistoryService
+from ..dependencies import get_history_service
 
 router = APIRouter(
     prefix="/api/v1/history",
@@ -13,14 +14,12 @@ router = APIRouter(
     responses={404: {"description": "Not found"}},
 )
 
-# Instantiate service (singleton-like for now, or per request if needed)
-# Ideally this should come from dependencies.
-history_service = HistoryService()
-
 # --- Endpoints ---
 
 @router.get("/sessions")
-async def list_history_sessions() -> Dict[str, Any]:
+async def list_history_sessions(
+    history_service: HistoryService = Depends(get_history_service),
+) -> Dict[str, Any]:
     """
     List past conversation sessions.
     """
@@ -31,7 +30,10 @@ async def list_history_sessions() -> Dict[str, Any]:
     return {"sessions": result.unwrap()}
 
 @router.get("/sessions/{session_id}")
-async def get_session_history(session_id: str) -> Dict[str, Any]:
+async def get_session_history(
+    session_id: str,
+    history_service: HistoryService = Depends(get_history_service),
+) -> Dict[str, Any]:
     """
     Get full chat history for a specific session.
     """
@@ -47,7 +49,10 @@ async def get_session_history(session_id: str) -> Dict[str, Any]:
 
 
 @router.delete("/sessions/{session_id}")
-async def clear_session_history(session_id: str) -> Dict[str, Any]:
+async def clear_session_history(
+    session_id: str,
+    history_service: HistoryService = Depends(get_history_service),
+) -> Dict[str, Any]:
     """
     Clear chat history for a specific session.
     """
@@ -56,4 +61,3 @@ async def clear_session_history(session_id: str) -> Dict[str, Any]:
         raise HTTPException(status_code=500, detail=str(result.failure()))
         
     return {"status": "success", "message": f"History cleared for session '{session_id}'."}
-

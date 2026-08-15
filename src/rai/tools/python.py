@@ -5,6 +5,7 @@ import os
 import logging
 from typing import Optional
 
+from rai.paths import cache_dir
 from rai.tools.security.sandbox import get_sandbox_runner
 from rai.tools.security.hitl import get_approval_manager
 
@@ -47,7 +48,7 @@ async def run_secure_python_code(
         logger.info("Execution approved by user. Resuming...")
 
     # 2. Setup the sandbox read-write working directory
-    user_cache = os.path.expanduser("~/.cache/rai/sandbox")
+    user_cache = str(cache_dir() / "sandbox")
     active_rw_dir = rw_dir or os.path.join(user_cache, "workspace_outputs")
     os.makedirs(active_rw_dir, exist_ok=True)
 

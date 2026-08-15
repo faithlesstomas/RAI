@@ -50,15 +50,6 @@ wheels = [
 ]
 
 [[package]]
-name = "aiosqlite"
-version = "0.22.1"
-source = { registry = "https://pypi.org/simple" }
-sdist = { url = "https://files.pythonhosted.org/packages/4e/8a/64761f4005f17809769d23e518d915db74e6310474e733e3593cfc854ef1/aiosqlite-0.22.1.tar.gz", hash = "sha256:043e0bd78d32888c0a9ca90fc788b38796843360c855a7262a532813133a0650", size = 14821, upload-time = "2025-12-23T19:25:43.997Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/00/b7/e3bf5133d697a08128598c8d0abc5e16377b51465a33756de24fa7dee953/aiosqlite-0.22.1-py3-none-any.whl", hash = "sha256:21c002eb13823fad740196c5a2e9d8e62f6243bd9e7e4a1f87fb5e44ecb4fceb", size = 17405, upload-time = "2025-12-23T19:25:42.139Z" },
-]
-
-[[package]]
 name = "alabaster"
 version = "1.0.0"
 source = { registry = "https://pypi.org/simple" }
@@ -2364,6 +2355,18 @@ wheels = [
 ]
 
 [[package]]
+name = "pytest-timeout"
+version = "2.4.0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "pytest" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/ac/82/4c9ecabab13363e72d880f2fb504c5f750433b2b6f16e99f4ec21ada284c/pytest_timeout-2.4.0.tar.gz", hash = "sha256:7e68e90b01f9eff71332b25001f85c75495fc4e3a836701876183c4bcfd0540a", size = 17973, upload-time = "2025-05-05T19:44:34.99Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/fa/b6/3127540ecdf1464a00e5a01ee60a1b09175f6913f0644ac748494d9c4b21/pytest_timeout-2.4.0-py3-none-any.whl", hash = "sha256:c42667e5cdadb151aeb5b26d114aff6bdf5a907f176a007a30b940d3d865b5c2", size = 14382, upload-time = "2025-05-05T19:44:33.502Z" },
+]
+
+[[package]]
 name = "python-dateutil"
 version = "2.9.0.post0"
 source = { registry = "https://pypi.org/simple" }
@@ -2486,18 +2489,11 @@ name = "rai"
 version = "0.2.0"
 source = { editable = "." }
 dependencies = [
-    { name = "accelerate" },
-    { name = "aiosqlite" },
     { name = "click" },
     { name = "fastapi" },
     { name = "google-antigravity" },
     { name = "httpx" },
-    { name = "iree-base-compiler" },
-    { name = "iree-base-runtime" },
-    { name = "llama-cpp-python" },
     { name = "ollama" },
-    { name = "onnx" },
-    { name = "onnxruntime" },
     { name = "packaging" },
     { name = "prompt-toolkit" },
     { name = "protobuf" },
@@ -2507,19 +2503,22 @@ dependencies = [
     { name = "rich" },
     { name = "sqlalchemy" },
     { name = "textual" },
-    { name = "tokenizers" },
-    { name = "torch" },
-    { name = "transformers" },
     { name = "uvicorn", extra = ["standard"] },
 ]
 
 [package.optional-dependencies]
 all = [
+    { name = "accelerate" },
     { name = "anthropic" },
     { name = "arxiv" },
     { name = "duckduckgo-search" },
     { name = "google-genai" },
     { name = "groq" },
+    { name = "iree-base-compiler" },
+    { name = "iree-base-runtime" },
+    { name = "llama-cpp-python" },
+    { name = "onnx" },
+    { name = "onnxruntime" },
     { name = "openai" },
     { name = "piper-tts" },
     { name = "pydbus" },
@@ -2528,6 +2527,9 @@ all = [
     { name = "requests" },
     { name = "sounddevice" },
     { name = "tavily-python" },
+    { name = "tokenizers" },
+    { name = "torch" },
+    { name = "transformers" },
     { name = "wikipedia" },
     { name = "yfinance" },
 ]
@@ -2542,6 +2544,7 @@ dev = [
     { name = "pytest" },
     { name = "pytest-asyncio" },
     { name = "pytest-cov" },
+    { name = "pytest-timeout" },
     { name = "ruff" },
     { name = "tavily-python" },
     { name = "wikipedia" },
@@ -2565,6 +2568,23 @@ gnome-tools = [
 groq = [
     { name = "groq" },
 ]
+inference-iree = [
+    { name = "iree-base-compiler" },
+    { name = "iree-base-runtime" },
+]
+inference-llama = [
+    { name = "llama-cpp-python" },
+]
+inference-onnx = [
+    { name = "onnx" },
+    { name = "onnxruntime" },
+]
+inference-transformers = [
+    { name = "accelerate" },
+    { name = "tokenizers" },
+    { name = "torch" },
+    { name = "transformers" },
+]
 lint = [
     { name = "pylint" },
     { name = "ruff" },
@@ -2576,6 +2596,7 @@ test = [
     { name = "pytest" },
     { name = "pytest-asyncio" },
     { name = "pytest-cov" },
+    { name = "pytest-timeout" },
 ]
 tools = [
     { name = "arxiv" },
@@ -2593,8 +2614,7 @@ tts = [
 
 [package.metadata]
 requires-dist = [
-    { name = "accelerate", specifier = ">=1.12.0" },
-    { name = "aiosqlite" },
+    { name = "accelerate", marker = "extra == 'inference-transformers'", specifier = ">=1.12.0" },
     { name = "anthropic", marker = "extra == 'anthropic'" },
     { name = "arxiv", marker = "extra == 'tools'" },
     { name = "click", specifier = ">=8.1,<8.3" },
@@ -2605,13 +2625,13 @@ requires-dist = [
     { name = "google-genai", marker = "extra == 'gemini'" },
     { name = "groq", marker = "extra == 'groq'" },
     { name = "httpx" },
-    { name = "iree-base-compiler", specifier = ">=3.9.0" },
-    { name = "iree-base-runtime", specifier = ">=3.9.0" },
-    { name = "llama-cpp-python", specifier = ">=0.3.16" },
+    { name = "iree-base-compiler", marker = "extra == 'inference-iree'", specifier = ">=3.9.0" },
+    { name = "iree-base-runtime", marker = "extra == 'inference-iree'", specifier = ">=3.9.0" },
+    { name = "llama-cpp-python", marker = "extra == 'inference-llama'", specifier = ">=0.3.16" },
     { name = "myst-parser", marker = "extra == 'docs'" },
     { name = "ollama" },
-    { name = "onnx", specifier = ">=1.20.1" },
-    { name = "onnxruntime", specifier = ">=1.23.2" },
+    { name = "onnx", marker = "extra == 'inference-onnx'", specifier = ">=1.20.1" },
+    { name = "onnxruntime", marker = "extra == 'inference-onnx'", specifier = ">=1.23.2" },
     { name = "openai", marker = "extra == 'openai'" },
     { name = "packaging" },
     { name = "piper-tts", marker = "extra == 'tts'" },
@@ -2624,12 +2644,17 @@ requires-dist = [
     { name = "pytest", marker = "extra == 'test'" },
     { name = "pytest-asyncio", marker = "extra == 'test'" },
     { name = "pytest-cov", marker = "extra == 'test'" },
+    { name = "pytest-timeout", marker = "extra == 'test'" },
     { name = "python-dotenv" },
     { name = "python-gitlab" },
     { name = "rai", extras = ["anthropic"], marker = "extra == 'all'" },
     { name = "rai", extras = ["gemini"], marker = "extra == 'all'" },
     { name = "rai", extras = ["gnome-tools"], marker = "extra == 'all'" },
     { name = "rai", extras = ["groq"], marker = "extra == 'all'" },
+    { name = "rai", extras = ["inference-iree"], marker = "extra == 'all'" },
+    { name = "rai", extras = ["inference-llama"], marker = "extra == 'all'" },
+    { name = "rai", extras = ["inference-onnx"], marker = "extra == 'all'" },
+    { name = "rai", extras = ["inference-transformers"], marker = "extra == 'all'" },
     { name = "rai", extras = ["lint"], marker = "extra == 'dev'" },
     { name = "rai", extras = ["openai"], marker = "extra == 'all'" },
     { name = "rai", extras = ["test"], marker = "extra == 'dev'" },
@@ -2646,14 +2671,14 @@ requires-dist = [
     { name = "sqlalchemy" },
     { name = "tavily-python", marker = "extra == 'tools'" },
     { name = "textual" },
-    { name = "tokenizers", specifier = ">=0.22.1" },
-    { name = "torch", specifier = ">=2.9.1" },
-    { name = "transformers", specifier = ">=4.57.6" },
+    { name = "tokenizers", marker = "extra == 'inference-transformers'", specifier = ">=0.22.1" },
+    { name = "torch", marker = "extra == 'inference-transformers'", specifier = ">=2.9.1" },
+    { name = "transformers", marker = "extra == 'inference-transformers'", specifier = ">=4.57.6" },
     { name = "uvicorn", extras = ["standard"] },
     { name = "wikipedia", marker = "extra == 'tools'" },
     { name = "yfinance", marker = "extra == 'tools'" },
 ]
-provides-extras = ["anthropic", "gemini", "openai", "groq", "test", "lint", "dev", "gnome-tools", "tts", "docs", "tools", "all"]
+provides-extras = ["anthropic", "gemini", "openai", "groq", "test", "lint", "dev", "gnome-tools", "tts", "docs", "tools", "inference-llama", "inference-iree", "inference-onnx", "inference-transformers", "all"]
 
 [[package]]
 name = "referencing"

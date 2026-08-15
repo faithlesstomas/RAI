@@ -7,7 +7,6 @@ Subpackages
 .. toctree::
    :maxdepth: 4
 
-   rai.adapters
    rai.routers
    rai.tools
 
@@ -54,14 +53,6 @@ rai.dependencies module
    :show-inheritance:
    :undoc-members:
 
-rai.engine module
------------------
-
-.. automodule:: rai.engine
-   :members:
-   :show-inheritance:
-   :undoc-members:
-
 rai.exceptions module
 ---------------------
 
@@ -70,26 +61,18 @@ rai.exceptions module
    :show-inheritance:
    :undoc-members:
 
+rai.paths module
+----------------
+
+.. automodule:: rai.paths
+   :members:
+   :show-inheritance:
+   :undoc-members:
+
 rai.server module
 -----------------
 
 .. automodule:: rai.server
-   :members:
-   :show-inheritance:
-   :undoc-members:
-
-rai.tts module
---------------
-
-.. automodule:: rai.tts
-   :members:
-   :show-inheritance:
-   :undoc-members:
-
-rai.tui module
---------------
-
-.. automodule:: rai.tui
    :members:
    :show-inheritance:
    :undoc-members:

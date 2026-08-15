@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "rai"
 version = "0.2.0"
-description = "Rich AI - The Intelligent AI assistant and agent ecosystem for Linux"
+description = "Rich AI - A Local-First Agent Runtime for Linux"
 readme = "README.md"
 requires-python = ">=3.10"
 license = {text = "MIT"}
@@ -26,16 +26,6 @@ dependencies = [
     "uvicorn[standard]",
     "httpx",
     "returns",
-    "llama-cpp-python>=0.3.16",
-    "iree-base-compiler>=3.9.0",
-    "iree-base-runtime>=3.9.0",
-    "onnx>=1.20.1",
-    "onnxruntime>=1.23.2",
-    "tokenizers>=0.22.1",
-    "transformers>=4.57.6",
-    "torch>=2.9.1",
-    "accelerate>=1.12.0",
-    "aiosqlite",
 ]
 
 [project.optional-dependencies]
@@ -43,7 +33,7 @@ anthropic = ["anthropic"]
 gemini = ["google-genai"]
 openai = ["openai"]
 groq = ["groq"]
-test = ["pytest", "pytest-asyncio", "pytest-cov"]
+test = ["pytest", "pytest-asyncio", "pytest-cov", "pytest-timeout"]
 lint = ["ruff", "pylint"]
 dev = ["rai[test]", "rai[lint]", "rai[tools]"]
 gnome-tools = ["pydbus", "pygobject"]
@@ -57,6 +47,15 @@ tools = [
     "tavily-python",
     "yfinance",
 ]
+inference-llama = ["llama-cpp-python>=0.3.16"]
+inference-iree = ["iree-base-compiler>=3.9.0", "iree-base-runtime>=3.9.0"]
+inference-onnx = ["onnx>=1.20.1", "onnxruntime>=1.23.2"]
+inference-transformers = [
+    "tokenizers>=0.22.1",
+    "transformers>=4.57.6",
+    "torch>=2.9.1",
+    "accelerate>=1.12.0",
+]
 all = [
     "rai[anthropic]",
     "rai[gemini]",
@@ -65,6 +64,10 @@ all = [
     "rai[gnome-tools]",
     "rai[tts]",
     "rai[tools]",
+    "rai[inference-llama]",
+    "rai[inference-iree]",
+    "rai[inference-onnx]",
+    "rai[inference-transformers]",
 ]
 
 [project.scripts]
@@ -75,6 +78,7 @@ rai = "rai.cli:cli"
 pythonpath = ["src"]
 testpaths = ["tests"]
 asyncio_mode = "auto"
+timeout = 30
 
 
 [tool.ruff.lint]

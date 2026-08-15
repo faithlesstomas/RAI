@@ -1,4 +1,9 @@
-# Antigravity Localharness Implementation & Reverse Engineering Guide
+# Historical Antigravity localharness compatibility notes
+
+> **Status:** compatibility/research document. Antigravity is not the RAI
+> runtime kernel. This protocol may inform an optional `AntigravityBackend`, but
+> new core services must not depend on SDK private fields, trajectory formats or
+> process-wide monkeypatches.
 
 This document provides a complete specification of the `localharness` communication protocol and outlines how to implement a custom replacement harness compatible with the Google Antigravity SDK.
 

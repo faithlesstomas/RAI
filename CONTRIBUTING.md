@@ -1,55 +1,75 @@
-# Contributing to RAI
+# Contributing to Rich AI
 
-Thank you for considering contributing to RAI! It’s people like you who make Open Source a great place to learn, inspire, and create.
+RAI is evolving into a local-first agent runtime for Linux. Contributions should
+strengthen a complete runtime boundary or vertical slice instead of introducing
+another provider-specific orchestration layer.
 
-RAI is an expert-grade AI assistant for Linux, and we welcome contributions from developers and researchers of all skill levels.
-How Can I Contribute?
+Read [ROADMAP.md](ROADMAP.md), [docs/architecture.md](docs/architecture.md) and
+[SECURITY.md](SECURITY.md) before changing runtime or execution code.
 
-## Reporting Bugs
-  * Check the Issues to see if the bug has already been reported.
-  * If not, open a new issue. Include a clear title, a description of the problem, and steps to reproduce it.
+## Development setup
 
-## Suggesting Enhancements
-  * We are always looking for new Adapters (e.g., LangChain, AutoGPT) and Tools (system integrations).
-  * Open an issue with the "enhancement" label to discuss your idea.
+Use `uv` and the project virtual environment:
 
-## Pull Requests / Merge Requests
-  1. Fork the repository.
-  1. Create a new branch for your feature or bugfix.
-  1. Write tests for your changes.
-  1. Ensure the CI pipeline passes (linting and existing tests).
-  1. Submit your request!
+```bash
+git clone https://gitlab.com/tk-lab1/ai/rai.git
+cd rai
+uv sync --extra test --extra lint
+```
 
-## Development Setup
+Install optional platform or inference dependencies only when needed:
 
-### To start developing on RAI, follow these steps:
-  1. Clone and Install:
-     ```bash
-     git clone https://gitlab.com/tk-lab1/ai/rai.git
-     cd rai
-     pip install -e .[test,dev,lint]
-     ```
-  1. Environment Variables: Copy .env.example to .env and add your development API keys.
-  1. Code Style: We use ruff and pylint to maintain code quality. Please run them before submitting your code:
-     ```bash
-     ruff check .
-     pylint src/rai
-     ```
-  1. Testing: We use pytest and pytest-asyncio. Run the full suite with:
-     ```bash
-     pytest
-     ```
+```bash
+uv sync --extra gnome-tools
+uv sync --extra inference-llama
+```
 
-## Technical Focus Areas (What we need help with)
+Do not commit model weights, API keys, access tokens, local databases or local
+harness state. If a credential reaches a workspace file, rotate it; adding the
+file to `.gitignore` is not a substitute for rotation.
 
-If you're looking for a place to start, check our [ROADMAP.md](ROADMAP.md). Current priorities include:
+## Development rules
 
-  * Agent & Session separation implementation.
-  * Desktop Integrations: GNOME and COSMIC modules in `src/rai/tools/desktop/`.
-  * Security Sandboxing: Isolated bubblewrap/guix command execution.
-  * Multi-client frontends (Emacs, GNU Guile WASM dashboard).
+- Prefer `Protocol` boundaries, immutable records and explicit `Result` values
+  at I/O/backend boundaries.
+- Keep operating-system state and durable memory outside LLM contexts.
+- Treat model and remote-agent output as untrusted input.
+- Security controls must fail closed.
+- Avoid package-import side effects, global monkeypatches and hidden singleton
+  construction.
+- Add one backend through a conformance contract rather than branching core
+  logic by provider name.
+- Use English commit messages and documentation/code identifiers.
 
-### Architecture Guidance
-  * Tools & Environment: System-level tools and adapters are built as standalone, secure utilities. Desktop-specific tools belong in `src/rai/tools/desktop/` and inherit from the base desktop class to ensure dynamic compatibility across Linux desktop environments.
+## Verification
 
-*** Thank you for helping us build the best AI assistant for the Linux ecosystem! ***
+Before opening a merge request:
+
+```bash
+uv run pytest --timeout=30 --cov=src/rai --cov-report=term
+uv run ruff check src tests --select E9,F63,F7,F82
+uv run pylint -E src/rai
+```
+
+Run full style diagnostics as well and avoid adding new violations:
+
+```bash
+uv run ruff check src tests
+```
+
+Tests must not use the developer's real XDG directories, network credentials or
+desktop session. Integration tests should either prove a capability is usable or
+skip with a precise platform reason.
+
+## GitLab workflow
+
+Use `glab` for issues, merge requests and CI inspection. An issue should state:
+
+- the user-visible or architectural outcome,
+- the boundary/contract affected,
+- failure and security behavior,
+- acceptance tests,
+- documentation that must change.
+
+Keep merge requests narrow enough to review, but complete enough to move the
+selected vertical slice end-to-end.

@@ -1,11 +1,11 @@
-from unittest.mock import patch
-from fastapi.testclient import TestClient
-from rai.server import app
+from unittest.mock import MagicMock, patch
 
-client = TestClient(app)
+from conftest import ASGITestClient
 
 @patch("rai.config_manager.save_agent_template")
-def test_define_agent(mock_save_template) -> None:
+def test_define_agent(
+    mock_save_template: MagicMock, client: ASGITestClient
+) -> None:
     """Tests the POST /api/v1/agents/ endpoint for defining a new agent."""
     mock_save_template.return_value = True
     
@@ -27,7 +27,7 @@ def test_define_agent(mock_save_template) -> None:
     expected_data["system"] = expected_data.pop("system_prompt")
     mock_save_template.assert_called_once_with(expected_data)
 
-def test_define_agent_invalid_tool() -> None:
+def test_define_agent_invalid_tool(client: ASGITestClient) -> None:
     """Tests defining an agent with a tool that doesn't exist."""
     agent_data = {
         "name": "bad-agent",
@@ -38,7 +38,9 @@ def test_define_agent_invalid_tool() -> None:
     assert response.status_code == 422 # Pydantic validation error
 
 @patch("rai.config_manager.save_agent_template")
-def test_define_agent_save_failure(mock_save_template) -> None:
+def test_define_agent_save_failure(
+    mock_save_template: MagicMock, client: ASGITestClient
+) -> None:
     """Tests failure during save."""
     mock_save_template.return_value = False
     

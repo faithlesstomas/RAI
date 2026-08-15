@@ -4,10 +4,7 @@ Tests for the new API features: Streaming and execution.
 from unittest.mock import patch
 from typing import Any
 import pytest
-from fastapi.testclient import TestClient
-from rai.server import app
-
-client = TestClient(app)
+from rai.routers.execution import AgentExecutionRequest, stream_chain_endpoint
 
 @pytest.mark.asyncio
 async def test_stream_endpoint() -> None:
@@ -21,16 +18,13 @@ async def test_stream_endpoint() -> None:
         mock_stream.return_value = mock_generator()
 
         # Case 1: No session_id passed (should generate one)
-        response = client.post(
-            "/api/v1/stream",
-            json={
-                "prompt": "Test input",
-                "agent_id": "default"
-            }
+        response = await stream_chain_endpoint(
+            AgentExecutionRequest(prompt="Test input", agent_id="default"),
+            app_config={},
         )
 
         assert response.status_code == 200
-        content = response.content.decode("utf-8")
+        content = "".join([chunk async for chunk in response.body_iterator])
         assert "data: {\"content\": \"Hello\"}" in content
         assert "data: {\"content\": \" World\"}" in content
         assert "event: done" in content
@@ -38,16 +32,17 @@ async def test_stream_endpoint() -> None:
         assert "data: {\"session_id\": \"" in content
 
         # Case 2: session_id passed (should propagate it)
-        response_prop = client.post(
-            "/api/v1/stream",
-            json={
-                "prompt": "Test input",
-                "agent_id": "default",
-                "session_id": "custom-session-123"
-            }
+        response_prop = await stream_chain_endpoint(
+            AgentExecutionRequest(
+                prompt="Test input",
+                agent_id="default",
+                session_id="custom-session-123",
+            ),
+            app_config={},
         )
         assert response_prop.status_code == 200
-        content_prop = response_prop.content.decode("utf-8")
+        content_prop = "".join(
+            [chunk async for chunk in response_prop.body_iterator]
+        )
         assert "event: done" in content_prop
         assert "data: {\"session_id\": \"custom-session-123\"}" in content_prop
-

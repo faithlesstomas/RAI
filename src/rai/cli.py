@@ -39,6 +39,8 @@ from . import config_manager
 from . import core
 from .core import console, error_console
 from .services.chat import ChatService
+from .paths import config_dir
+from .tools.security.auth import authorization_headers
 from typing import Union
 
 class LocalProcessor:
@@ -170,7 +172,12 @@ class ClientProcessor:
             uds_path = server_uri[len("unix://") :]
             self.transport = httpx.AsyncHTTPTransport(uds=uds_path)
             self.base_url = "http://localhost"
-        self.client = httpx.AsyncClient(transport=self.transport, base_url=self.base_url, timeout=None)
+        self.client = httpx.AsyncClient(
+            transport=self.transport,
+            base_url=self.base_url,
+            headers=authorization_headers(),
+            timeout=None,
+        )
         self.stateful_session_id = None
 
     async def connect(self) -> Result[None, Exception]:
@@ -598,7 +605,7 @@ async def run_interactive_chat(
         console.print("**Welcome to Rich AI CLI Assistant!** Type your prompt and press Enter.")
         console.print("[dim]Type /help for a list of commands, Ctrl+C or /q to exit.[/dim]")
 
-    history_file = os.path.join(os.path.expanduser("~/.config/rai"), "history.txt")
+    history_file = str(config_dir() / "history.txt")
     prompt_session = PromptSession(
         history=FileHistory(history_file),
         completer=_build_completer(options.config_path),
@@ -973,10 +980,12 @@ def _get_httpx_client(ctx: click.Context) -> Tuple[Optional[httpx.Client], str]:
     if uri.startswith("unix://"):
         uds_path = uri[len("unix://"):]
         transport = httpx.HTTPTransport(uds=uds_path)
-        return httpx.Client(transport=transport), "http://localhost"
+        return httpx.Client(
+            transport=transport, headers=authorization_headers()
+        ), "http://localhost"
         
     base_url = uri.replace("ws://", "http://").replace("wss://", "https://").split("/ws/")[0]
-    return httpx.Client(), base_url
+    return httpx.Client(headers=authorization_headers()), base_url
 
 
 @cli.group()
