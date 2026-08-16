@@ -54,10 +54,18 @@ higher-level planning, workspace and deliberation. RAI supplies perception,
 execution, policy and local state for Linux. GAIA may be an `AgentBackend` or a
 separate cognitive runtime consuming RAI through MCP.
 
+For NCSI/J-lens integration, RAI hosts the optional neural implementation but
+does not acquire cognitive-policy ownership. The J-lens provider runs as a
+separately startable sidecar responsible for model and accelerator lifecycle,
+activation access, lens artifacts and compact versioned events. GAIA consumes
+those events through the NCSI contract and remains responsible for Cognitive
+Objects, Workspace admission, Control, epistemic status and verification. The
+[canonical cross-project plan](https://gitlab.com/tk-lab1/ai/gaia/-/blob/main/docs/ncsi-jlens-integration.md)
+owns the detailed milestones and acceptance gates.
+
 ## Transitional implementation
 
 The current `ChatService` still calls Google Antigravity directly. That path is
 compatibility code and must move behind `AgentBackend`. The current MCP router
 and `TOOL_REGISTRY` duplicate capability metadata and will converge in Stage 1.
 The `inference` package is experimental and is not yet connected to routing.
-

@@ -107,6 +107,14 @@ local episode without sending data over the network.
 - Select one supported local execution path first: llama.cpp or Ollama.
 - Remove/freeze non-functional IREE and ONNX entries until they have owners and
   conformance tests.
+- [ ] **Optional NCSI/J-lens neural sidecar** — Add a separately startable
+  Transformers process that owns model/accelerator lifecycle, residual-stream
+  hooks, versioned J-lens artifacts, compact neural observations, cancellation,
+  and typed failures. Keep raw tensors inside the sidecar and keep PyTorch/J-lens
+  dependencies out of the default RAI installation. RAI provides the neural
+  runtime; GAIA retains Workspace, Control, epistemic, and verification
+  semantics. Detailed milestone status is tracked only in the
+  [canonical cross-project integration plan](https://gitlab.com/tk-lab1/ai/gaia/-/blob/main/docs/ncsi-jlens-integration.md).
 - Add schema-constrained classification, extraction, summarization, salience
   and risk tasks.
 - Run blocking inference outside the main event loop.
@@ -135,7 +143,8 @@ task is packaged and escalated with an explicit capability boundary.
 - Stabilize `AgentBackend` conformance tests.
 - Add one end-to-end harness backend before multiplying integrations.
 - Integrate GAIA either as a backend or as a cognitive runtime consuming RAI's
-  MCP/capability API.
+  MCP/capability API. Neural-state streaming uses the separately versioned NCSI
+  sidecar contract rather than coupling GAIA to RAI implementation modules.
 - Keep backend conversation identifiers as adapter-owned metadata.
 - Add cancellation, usage accounting, retry and evidence return contracts.
 - Retain Antigravity only if it passes the same contracts without process-wide
