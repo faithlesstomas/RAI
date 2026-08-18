@@ -15,5 +15,6 @@ in the roadmap are not assumed to exist until their acceptance gate is complete.
 :caption: Contents:
 
 architecture
+neural-sidecar
 reference/modules
 ```

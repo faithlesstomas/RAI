@@ -53,9 +53,15 @@ inference-iree = ["iree-base-compiler>=3.9.0", "iree-base-runtime>=3.9.0"]
 inference-onnx = ["onnx>=1.20.1", "onnxruntime>=1.23.2"]
 inference-transformers = [
     "tokenizers>=0.22.1",
-    "transformers>=4.57.6",
+    "transformers>=5.5",
     "torch>=2.9.1",
     "accelerate>=1.12.0",
+    "safetensors>=0.6.2",
+]
+inference-jlens = [
+    "accelerate>=1.12.0",
+    "safetensors>=0.6.2",
+    "jlens @ git+https://github.com/anthropics/jacobian-lens.git@581d398613e5602a5af361e1c34d3a92ea82ba8e",
 ]
 all = [
     "rai[anthropic]",
@@ -69,6 +75,7 @@ all = [
     "rai[inference-iree]",
     "rai[inference-onnx]",
     "rai[inference-transformers]",
+    "rai[inference-jlens]",
 ]
 
 [project.scripts]

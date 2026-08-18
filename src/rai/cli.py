@@ -1374,5 +1374,144 @@ def serve(
     )
 
 
+@cli.group(name="neural")
+def neural() -> None:
+    """Manage the optional NCSI Transformers/J-lens sidecar."""
+
+
+@neural.command(name="serve")
+@click.option("--model", "model_id", required=True, help="Hugging Face model repository ID.")
+@click.option(
+    "--revision", "model_revision", required=True, help="Immutable model commit/revision."
+)
+@click.option("--tokenizer-revision", default=None, help="Tokenizer revision; defaults to --revision.")
+@click.option("--lens-dir", default=None, type=click.Path(file_okay=False, path_type=str))
+@click.option("--device", default="auto", help="Transformers device map (for example auto or cpu).")
+@click.option("--dtype", default="auto", help="Torch dtype (for example auto, float16, bfloat16).")
+@click.option("--quantization", default=None, help="Declared quantization identity for lens checks.")
+@click.option("--host", default="127.0.0.1", help="Host used when --uds is omitted.")
+@click.option("--port", default=8010, type=int, help="TCP port used when --uds is omitted.")
+@click.option("--uds", default=None, type=click.Path(dir_okay=False, path_type=str))
+@click.option("--max-concurrency", default=1, type=click.IntRange(min=1, max=32))
+def neural_serve(  # noqa: PLR0913
+    model_id: str,
+    model_revision: str,
+    tokenizer_revision: Optional[str],
+    lens_dir: Optional[str],
+    device: str,
+    dtype: str,
+    quantization: Optional[str],
+    host: str,
+    port: int,
+    uds: Optional[str],
+    max_concurrency: int,
+) -> None:
+    """Run the isolated, read-only gcas.ncsi.v1 neural process."""
+    # pylint: disable=import-outside-toplevel
+    from pathlib import Path  # noqa: PLC0415
+
+    import uvicorn  # noqa: PLC0415
+
+    from .neural.artifacts import LensRegistry  # noqa: PLC0415
+    from .neural.engines.transformers import TransformersEngine  # noqa: PLC0415
+    from .neural.server import create_neural_app  # noqa: PLC0415
+    from .paths import data_dir  # noqa: PLC0415
+
+    registry = LensRegistry(Path(lens_dir) if lens_dir else data_dir() / "neural" / "lenses")
+    engine = TransformersEngine(
+        model_id,
+        model_revision,
+        tokenizer_revision,
+        registry,
+        device=device,
+        dtype=dtype,
+        quantization=quantization,
+    )
+    app = create_neural_app(engine, registry, max_concurrency=max_concurrency)
+    if uds:
+        socket_path = Path(uds)
+        socket_path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+        console.print(
+            "Starting NCSI neural sidecar on Unix socket: "
+            f"[bold green]{socket_path}[/bold green]"
+        )
+        previous_umask = os.umask(0o077)
+        try:
+            uvicorn.run(app, uds=str(socket_path), log_config=None)
+        finally:
+            os.umask(previous_umask)
+    else:
+        console.print(
+            f"Starting NCSI neural sidecar on [bold green]http://{host}:{port}[/bold green]"
+        )
+        uvicorn.run(app, host=host, port=port, log_config=None)
+
+
+@neural.command(name="fit-lens")
+@click.option("--model", "model_id", required=True)
+@click.option("--revision", "model_revision", required=True)
+@click.option("--tokenizer-revision", default=None)
+@click.option("--lens-id", required=True)
+@click.option("--lens-revision", required=True)
+@click.option("--prompts", "prompts_path", required=True, type=click.Path(exists=True))
+@click.option("--output", "output_dir", required=True, type=click.Path())
+@click.option("--corpus-id", required=True)
+@click.option("--corpus-license", required=True)
+@click.option("--layer", "layers", multiple=True, type=click.IntRange(min=0))
+@click.option("--device", default="auto")
+@click.option("--dtype", default="auto")
+@click.option("--quantization", default=None)
+@click.option("--dim-batch", default=8, type=click.IntRange(min=1))
+@click.option("--max-seq-len", default=128, type=click.IntRange(min=2))
+@click.option("--skip-first", default=16, type=click.IntRange(min=0))
+def neural_fit_lens(  # noqa: PLR0913
+    model_id: str,
+    model_revision: str,
+    tokenizer_revision: Optional[str],
+    lens_id: str,
+    lens_revision: str,
+    prompts_path: str,
+    output_dir: str,
+    corpus_id: str,
+    corpus_license: str,
+    layers: tuple[int, ...],
+    device: str,
+    dtype: str,
+    quantization: Optional[str],
+    dim_batch: int,
+    max_seq_len: int,
+    skip_first: int,
+) -> None:
+    """Fit the pinned reference J-lens and write a safe versioned artifact."""
+    from pathlib import Path  # noqa: PLC0415
+
+    from .neural.fitting import FitConfig, fit_lens_artifact  # noqa: PLC0415
+
+    manifest = fit_lens_artifact(
+        FitConfig(
+            model_id=model_id,
+            model_revision=model_revision,
+            tokenizer_revision=tokenizer_revision or model_revision,
+            lens_id=lens_id,
+            lens_revision=lens_revision,
+            prompts_path=Path(prompts_path),
+            output_dir=Path(output_dir),
+            calibration_corpus=corpus_id,
+            calibration_license=corpus_license,
+            layers=layers,
+            device=device,
+            dtype=dtype,
+            quantization=quantization,
+            dim_batch=dim_batch,
+            max_seq_len=max_seq_len,
+            skip_first=skip_first,
+        )
+    )
+    console.print(
+        f"Fitted [bold]{manifest.lens_id}@{manifest.lens_revision}[/bold] "
+        f"for layers {list(manifest.layers)}"
+    )
+
+
 if __name__ == "__main__":
     cli(obj={})  # pylint: disable=no-value-for-parameter

@@ -1,0 +1,61 @@
+[
+  {
+    "name": "mismatched-observation-request",
+    "event": {
+      "schema-version": "gcas.ncsi.v1",
+      "event-type": "NeuralStateObserved",
+      "request-id": "outer-request",
+      "timestamp": 1,
+      "payload": {
+        "schema-version": "gcas.ncsi.v1",
+        "request-id": "inner-request",
+        "forward-pass-id": "fp",
+        "model-id": "m",
+        "model-revision": "r",
+        "tokenizer-revision": "t",
+        "lens-id": "l",
+        "lens-revision": "r",
+        "layer": 0,
+        "position": 0,
+        "concepts": [],
+        "readout-method": "jlens-sparse",
+        "parameters": {},
+        "timestamp": 1
+      }
+    }
+  },
+  {
+    "name": "missing-event-timestamp",
+    "event": {
+      "schema-version": "gcas.ncsi.v1",
+      "event-type": "GenerationStarted",
+      "request-id": "request",
+      "payload": { "model-id": "m" }
+    }
+  },
+  {
+    "name": "out-of-range-concept-score",
+    "event": {
+      "schema-version": "gcas.ncsi.v1",
+      "event-type": "NeuralStateObserved",
+      "request-id": "request",
+      "timestamp": 1,
+      "payload": {
+        "schema-version": "gcas.ncsi.v1",
+        "request-id": "request",
+        "forward-pass-id": "fp",
+        "model-id": "m",
+        "model-revision": "r",
+        "tokenizer-revision": "t",
+        "lens-id": "l",
+        "lens-revision": "r",
+        "layer": 0,
+        "position": 0,
+        "concepts": [ { "token-id": 1, "display-text": "x", "score": 1.1 } ],
+        "readout-method": "jlens-sparse",
+        "parameters": {},
+        "timestamp": 1
+      }
+    }
+  }
+]

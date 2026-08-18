@@ -1,0 +1,48 @@
+[
+  {
+    "schema-version": "gcas.ncsi.v1",
+    "event-type": "GenerationStarted",
+    "request-id": "fixture-request",
+    "timestamp": 1000,
+    "payload": { "model-id": "fixture-model" }
+  },
+  {
+    "schema-version": "gcas.ncsi.v1",
+    "event-type": "TokenDelta",
+    "request-id": "fixture-request",
+    "timestamp": 1001,
+    "payload": { "token-id": 12, "token-text": "define" }
+  },
+  {
+    "schema-version": "gcas.ncsi.v1",
+    "event-type": "NeuralStateObserved",
+    "request-id": "fixture-request",
+    "timestamp": 1002,
+    "payload": {
+      "schema-version": "gcas.ncsi.v1",
+      "request-id": "fixture-request",
+      "forward-pass-id": "fixture-forward-pass",
+      "model-id": "fixture-model",
+      "model-revision": "fixture-model-revision",
+      "tokenizer-revision": "fixture-tokenizer-revision",
+      "lens-id": "fixture-lens",
+      "lens-revision": "fixture-lens-revision",
+      "layer": 3,
+      "position": [4, 4],
+      "concepts": [
+        { "token-id": 12, "display-text": "define", "score": 0.9 }
+      ],
+      "readout-method": "jlens-sparse",
+      "parameters": { "top-k": 8 },
+      "reconstruction-error": 0.1,
+      "timestamp": 1002
+    }
+  },
+  {
+    "schema-version": "gcas.ncsi.v1",
+    "event-type": "GenerationCompleted",
+    "request-id": "fixture-request",
+    "timestamp": 1003,
+    "payload": { "final-text": "done", "token-count": 1 }
+  }
+]
