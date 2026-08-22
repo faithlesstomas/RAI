@@ -17,7 +17,12 @@ from rai.paths import data_dir
 from rai.tools.security.auth import is_authorized
 
 from .artifacts import LensRegistry
-from .contracts import GenerationRequest, NCSI_SCHEMA_VERSION, NcsiContractError
+from .contracts import (
+    GenerationRequest,
+    NCSI_SCHEMA_VERSION,
+    NcsiContractError,
+    NcsiRuntimeError,
+)
 from .engines.base import GenerationEngine
 from .engines.transformers import TransformersEngine
 from .service import NeuralService
@@ -85,9 +90,15 @@ def create_neural_app(
     async def models() -> dict[str, object]:
         return {"models": [engine.description.to_wire()]}
 
-    @app.get("/api/v1/neural/lenses")
-    async def lenses() -> dict[str, object]:
-        return {"lenses": [manifest.to_public_dict() for manifest in lens_registry.manifests()]}
+    @app.get("/api/v1/neural/lenses", response_model=None)
+    async def lenses() -> dict[str, object] | JSONResponse:
+        try:
+            return {"lenses": [manifest.to_public_dict() for manifest in lens_registry.manifests()]}
+        except NcsiRuntimeError as exc:
+            return JSONResponse(
+                status_code=409,
+                content={"error-code": exc.code.value, "detail": str(exc)},
+            )
 
     @app.get("/api/v1/neural/telemetry")
     async def telemetry() -> dict[str, object]:

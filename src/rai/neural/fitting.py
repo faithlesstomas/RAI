@@ -119,6 +119,11 @@ def _sha256(path: Path) -> str:
 
 def fit_lens_artifact(config: FitConfig) -> LensManifest:
     """Fit with pinned upstream code and emit a validated, non-pickle artifact."""
+    if config.quantization is not None:
+        raise NcsiRuntimeError(
+            NcsiErrorCode.MODEL_INCOMPATIBLE,
+            "quantized J-lens fitting is not implemented; omit quantization",
+        )
     prompts = _read_prompts(config.prompts_path)
     existing = set(config.output_dir.iterdir()) if config.output_dir.exists() else set()
     checkpoint_path = config.output_dir / "fit.checkpoint.pt"

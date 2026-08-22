@@ -13,6 +13,7 @@ from .contracts import NcsiErrorCode, NcsiRuntimeError
 ARTIFACT_SCHEMA_VERSION = "rai.jlens-artifact.v1"
 MANIFEST_NAME = "manifest.json"
 SHA256_HEX_LENGTH = 64
+MAX_ARTIFACT_LAYERS = 64
 
 
 def _required_string(data: Mapping[str, Any], key: str) -> str:
@@ -85,7 +86,9 @@ class LensManifest:
         if (
             not isinstance(raw_layers, list)
             or not raw_layers
+            or len(raw_layers) > MAX_ARTIFACT_LAYERS
             or any(isinstance(layer, bool) or not isinstance(layer, int) or layer < 0 for layer in raw_layers)
+            or len(set(raw_layers)) != len(raw_layers)
         ):
             raise NcsiRuntimeError(NcsiErrorCode.LENS_INCOMPATIBLE, "layers are invalid")
         fitting = data.get("fitting-parameters")
@@ -176,15 +179,31 @@ class LensRegistry:
         if not self.root.is_dir():
             return ()
         manifests: list[LensManifest] = []
+        lens_ids: set[str] = set()
         for path in sorted(self.root.iterdir()):
             if path.is_dir() and (path / MANIFEST_NAME).is_file():
-                manifests.append(LensManifest.load(path))
+                manifest = LensManifest.load(path)
+                if manifest.lens_id in lens_ids:
+                    raise NcsiRuntimeError(
+                        NcsiErrorCode.LENS_INCOMPATIBLE,
+                        f"duplicate lens-id in registry: {manifest.lens_id}",
+                    )
+                lens_ids.add(manifest.lens_id)
+                manifests.append(manifest)
         return tuple(manifests)
 
     def get(self, lens_id: str) -> tuple[LensManifest, Path]:
+        match: tuple[LensManifest, Path] | None = None
         for path in self.root.iterdir() if self.root.is_dir() else ():
             if path.is_dir() and (path / MANIFEST_NAME).is_file():
                 manifest = LensManifest.load(path)
                 if manifest.lens_id == lens_id:
-                    return manifest, manifest.validate_payload(path)
+                    if match is not None:
+                        raise NcsiRuntimeError(
+                            NcsiErrorCode.LENS_INCOMPATIBLE,
+                            f"duplicate lens-id in registry: {lens_id}",
+                        )
+                    match = manifest, manifest.validate_payload(path)
+        if match is not None:
+            return match
         raise NcsiRuntimeError(NcsiErrorCode.LENS_NOT_FOUND, f"unknown lens: {lens_id}")

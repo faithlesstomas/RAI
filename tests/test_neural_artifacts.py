@@ -8,7 +8,7 @@ from pathlib import Path
 
 import pytest
 
-from rai.neural.artifacts import LensManifest, ModelIdentity
+from rai.neural.artifacts import LensManifest, LensRegistry, ModelIdentity
 from rai.neural.contracts import NcsiErrorCode, NcsiRuntimeError
 from rai.neural.inspectors.jlens import JLensInspector
 
@@ -79,6 +79,16 @@ def test_rejects_model_revision_mismatch(tmp_path: Path) -> None:
 
     with pytest.raises(NcsiRuntimeError) as raised:
         manifest.ensure_compatible(incompatible)
+
+    assert raised.value.code is NcsiErrorCode.LENS_INCOMPATIBLE
+
+
+def test_registry_rejects_duplicate_lens_ids(tmp_path: Path) -> None:
+    _write_artifact(tmp_path / "first")
+    _write_artifact(tmp_path / "second")
+
+    with pytest.raises(NcsiRuntimeError) as raised:
+        LensRegistry(tmp_path).manifests()
 
     assert raised.value.code is NcsiErrorCode.LENS_INCOMPATIBLE
 

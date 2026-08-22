@@ -30,6 +30,7 @@ class NeuralService:
         self.max_concurrency = max_concurrency
         self._semaphore = asyncio.Semaphore(max_concurrency)
         self._requests: dict[str, asyncio.Event] = {}
+        self._terminal_requests: set[str] = set()
         self._request_lock = asyncio.Lock()
         self._counters: Counter[str] = Counter()
         self._total_latency = 0.0
@@ -37,7 +38,7 @@ class NeuralService:
     async def reserve(self, request_id: str) -> bool:
         """Atomically reserve an ID before an HTTP streaming response starts."""
         async with self._request_lock:
-            if request_id in self._requests:
+            if request_id in self._requests or request_id in self._terminal_requests:
                 return False
             self._requests[request_id] = asyncio.Event()
             return True
@@ -90,12 +91,17 @@ class NeuralService:
             if registered:
                 async with self._request_lock:
                     self._requests.pop(request.request_id, None)
+                    self._terminal_requests.add(request.request_id)
             self._counters["requests"] += 1
             self._total_latency += time.monotonic() - started_at
 
     async def _claim_request(self, request_id: str, *, reserved: bool) -> asyncio.Event:
         async with self._request_lock:
             existing = self._requests.get(request_id)
+            if request_id in self._terminal_requests:
+                raise NcsiRuntimeError(
+                    NcsiErrorCode.INVALID_REQUEST, "request-id already reached a terminal state"
+                )
             if reserved and existing is not None:
                 return existing
             if existing is not None:
@@ -167,6 +173,7 @@ class NeuralService:
         requests = self._counters["requests"]
         return {
             "active-requests": len(self._requests),
+            "terminal-request-ids": len(self._terminal_requests),
             "max-concurrency": self.max_concurrency,
             "request-count": requests,
             "completed-count": self._counters["completed"],

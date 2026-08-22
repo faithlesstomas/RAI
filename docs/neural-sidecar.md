@@ -85,6 +85,12 @@ Model revision, tokenizer revision, architecture, dtype and quantization must
 all match. Checksum or identity failures terminate the stream with
 `GenerationFailed` and `LENS_INCOMPATIBLE`. Cancellation, timeout, model-load,
 out-of-memory and concurrency failures are likewise terminal typed events.
+Lens IDs must be unique within the configured registry; duplicate IDs are
+rejected instead of selecting an artifact according to filesystem order.
+
+Quantized loading and fitting are currently fail-closed. Passing a non-null
+quantization identity is rejected until the selected quantization backend is
+actually applied and its resolved identity can be verified.
 
 The ordinary `rai serve` process does not import Transformers or Torch, and it
 continues to operate when this optional process is absent or fails.
@@ -114,4 +120,7 @@ The prompts file is a non-empty JSON array of strings. Options such as
 reference fitter and are recorded in the manifest. A resumable pickle
 checkpoint may exist while fitting, but successful output is converted to
 checksummed `safetensors` and the checkpoint is removed. The serving process
-never loads pickle.
+never loads pickle. The manifest's `n-prompts` is the number accepted by the
+reference fitter and may be lower than the source JSON array length. Acceptance
+records must preserve rejected prompt counts and reasons when the upstream
+fitter exposes them.

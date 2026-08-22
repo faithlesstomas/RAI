@@ -107,13 +107,16 @@ local episode without sending data over the network.
 - Select one supported local execution path first: llama.cpp or Ollama.
 - Remove/freeze non-functional IREE and ONNX entries until they have owners and
   conformance tests.
-- [ ] **Optional NCSI/J-lens neural sidecar** — Add a separately startable
+- [/] **Optional NCSI/J-lens neural sidecar** — A separately startable
   Transformers process that owns model/accelerator lifecycle, residual-stream
   hooks, versioned J-lens artifacts, compact neural observations, cancellation,
   and typed failures. Keep raw tensors inside the sidecar and keep PyTorch/J-lens
   dependencies out of the default RAI installation. RAI provides the neural
   runtime; GAIA retains Workspace, Control, epistemic, and verification
-  semantics. Detailed milestone status is tracked only in the
+  semantics. The read-only server, Transformers engine, artifact fitter/loader,
+  shared fixtures and unit tests exist; live acceptance, terminal request-ID
+  replay protection, unique lens selection and GAIA transport remain open.
+  Detailed milestone status is tracked only in the
   [canonical cross-project integration plan](https://gitlab.com/tk-lab1/ai/gaia/-/blob/main/docs/ncsi-jlens-integration.md).
 - Add schema-constrained classification, extraction, summarization, salience
   and risk tasks.

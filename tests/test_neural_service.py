@@ -120,6 +120,39 @@ async def test_cancellation_is_a_typed_terminal_event() -> None:
 
 
 @pytest.mark.asyncio
+async def test_accelerator_oom_is_a_typed_terminal_event() -> None:
+    service = NeuralService(
+        FakeEngine(
+            failure=NcsiRuntimeError(
+                NcsiErrorCode.ACCELERATOR_OOM, "fixture accelerator exhausted"
+            )
+        )
+    )
+    request = GenerationRequest(prompt="test", request_id="oom")
+
+    events = [event async for event in service.generate(request)]
+
+    assert events[-1].event_type is EventType.GENERATION_FAILED
+    assert events[-1].payload["error-code"] == "ACCELERATOR_OOM"
+    assert service.telemetry()["failure-counts"] == {"ACCELERATOR_OOM": 1}
+
+
+@pytest.mark.asyncio
+async def test_client_disconnect_cleans_up_active_request() -> None:
+    service = NeuralService(FakeEngine(delay=1.0))
+    request = GenerationRequest(prompt="test", request_id="disconnect")
+    stream = service.generate(request)
+
+    started = await anext(stream)
+    assert started.event_type is EventType.GENERATION_STARTED
+    await stream.aclose()
+
+    assert service.telemetry()["active-requests"] == 0
+    assert service.telemetry()["terminal-request-ids"] == 1
+    assert not await service.cancel("disconnect")
+
+
+@pytest.mark.asyncio
 async def test_concurrency_limit_fails_explicitly() -> None:
     service = NeuralService(FakeEngine(delay=0.02), max_concurrency=1)
 
@@ -146,6 +179,18 @@ async def test_request_id_reservation_rejects_duplicate() -> None:
     events = [event async for event in service.generate(request, reserved=True)]
 
     assert events[-1].event_type is EventType.GENERATION_COMPLETED
+    assert not await service.reserve("reserved")
+
+
+@pytest.mark.asyncio
+async def test_terminal_request_id_cannot_be_reused() -> None:
+    service = NeuralService(FakeEngine())
+    request = GenerationRequest(prompt="test", request_id="terminal")
+    events = [event async for event in service.generate(request)]
+
+    assert events[-1].event_type is EventType.GENERATION_COMPLETED
+    assert not await service.reserve("terminal")
+    assert service.telemetry()["terminal-request-ids"] == 1
 
 
 @pytest.mark.asyncio

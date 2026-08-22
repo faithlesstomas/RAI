@@ -58,6 +58,10 @@ def test_bounds_requests_and_observations() -> None:
     with pytest.raises(NcsiContractError):
         GenerationRequest(prompt="x", request_id="r", top_k=65)
     with pytest.raises(NcsiContractError):
+        GenerationRequest(prompt="x", request_id="r", layers=(1, 1))
+    with pytest.raises(NcsiContractError):
+        GenerationRequest(prompt="x", request_id="r" * 257)
+    with pytest.raises(NcsiContractError):
         Concept(1, "x", float("nan"))
     with pytest.raises(NcsiContractError):
         NeuralObservation(

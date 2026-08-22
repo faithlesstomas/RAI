@@ -36,6 +36,7 @@ class TransformersEngine:
         self.lens_registry = lens_registry
         self._model: Any = None
         self._tokenizer: Any = None
+        self._inspectors: dict[str, JLensInspector] = {}
         self._load_lock = asyncio.Lock()
         self._resolved_model_revision = model_revision
         self._resolved_tokenizer_revision = self.tokenizer_revision
@@ -62,6 +63,11 @@ class TransformersEngine:
             if self._model is not None:
                 return
             started = time.monotonic()
+            if self.quantization is not None:
+                raise NcsiRuntimeError(
+                    NcsiErrorCode.MODEL_INCOMPATIBLE,
+                    "quantized model loading is not implemented; omit quantization",
+                )
             try:
                 model, tokenizer = await asyncio.to_thread(self._load_sync)
             except ImportError as exc:
@@ -124,14 +130,19 @@ class TransformersEngine:
     def _inspector(self, lens_id: str | None) -> JLensInspector | None:
         if lens_id is None:
             return None
+        cached = self._inspectors.get(lens_id)
+        if cached is not None:
+            return cached
         manifest, payload = self.lens_registry.get(lens_id)
-        return JLensInspector(
+        inspector = JLensInspector(
             manifest,
             payload,
             self._identity(),
             lambda token_id: self._tokenizer.decode([token_id]),
             self._unembed,
         )
+        self._inspectors[lens_id] = inspector
+        return inspector
 
     def _unembed(self, residual: object) -> object:
         """Apply the HF model's final norm and output embedding like upstream J-lens."""
@@ -327,6 +338,7 @@ class TransformersEngine:
         async with self._load_lock:
             self._model = None
             self._tokenizer = None
+            self._inspectors.clear()
             try:
                 import torch  # noqa: PLC0415
 

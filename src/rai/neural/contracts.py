@@ -13,6 +13,8 @@ MAX_DISPLAY_TEXT_LENGTH = 512
 MAX_PARAMETERS = 32
 MAX_PROMPT_LENGTH = 131_072
 MAX_NEW_TOKENS = 4096
+MAX_REQUEST_ID_LENGTH = 256
+MAX_REQUESTED_LAYERS = 64
 TOKEN_SPAN_LENGTH = 2
 
 
@@ -316,6 +318,8 @@ class GenerationRequest:
 
     def __post_init__(self) -> None:
         _non_empty(self.request_id, "request-id")
+        if len(self.request_id) > MAX_REQUEST_ID_LENGTH:
+            raise NcsiContractError("request-id exceeds the sidecar limit")
         if not isinstance(self.prompt, str) or not self.prompt:
             raise NcsiContractError("prompt must be a non-empty string")
         if len(self.prompt) > MAX_PROMPT_LENGTH:
@@ -334,6 +338,10 @@ class GenerationRequest:
             raise NcsiContractError("top-k is outside the supported range")
         if not all(_non_negative_int(layer, "layers") >= 0 for layer in self.layers):
             raise NcsiContractError("layers must contain non-negative integers")
+        if len(self.layers) > MAX_REQUESTED_LAYERS:
+            raise NcsiContractError("layers exceeds the sidecar limit")
+        if len(set(self.layers)) != len(self.layers):
+            raise NcsiContractError("layers must not contain duplicates")
 
     @classmethod
     def from_wire(cls, value: object) -> "GenerationRequest":
