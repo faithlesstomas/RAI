@@ -1,24 +1,51 @@
 # Rich AI roadmap
 
-This document is the source of truth for the evolution of **Rich AI — A
-Local-First Agent Runtime for Linux**.
+This document is the source of truth for the evolution of **Rich AI — a
+Linux-first local and edge embodiment runtime**. RAI connects operating systems,
+devices, sensors and policy-controlled actions to GCAS/GAIA and other replaceable
+cognitive backends. It is not a second cognitive kernel or another monolithic
+chat orchestrator.
 
 ## Product boundary
 
 RAI owns:
 
-- Linux perception and normalized observations,
-- durable local state and memory,
+- Linux-first local and edge perception and normalized observations,
+- device identity, status, discovery and capability advertisement,
+- durable local observation, action-result and audit state,
 - capability discovery and invocation,
 - policy, authorization, sandboxing and audit,
 - context packaging and privacy boundaries,
-- routing between cheap local cognition and external agent backends,
-- local MCP/HTTP/Unix-socket interfaces.
+- deterministic safety reflexes and routing between bounded local processing and
+  external cognitive backends,
+- local MCP/HTTP/Unix-socket interfaces and authenticated network transports for
+  remote device agents.
 
-RAI does not own a universal reasoning loop. GAIA, Codex, Claude, Gemini,
-Antigravity and future harnesses are consumers or implementations of an
-`AgentBackend` contract. GCAS may define shared cognitive schemas; RAI provides
-their Linux embodiment.
+RAI does not own a universal reasoning loop, Global Workspace, Cognitive
+Control, goal verification or open-ended deliberation. GAIA is the reference
+GCAS cognitive runtime and owns those semantics. RAI may perform bounded,
+schema-constrained inference and deterministic local safety reactions, but it
+must not silently become a second cognitive process controller.
+
+GCAS defines the portable cognitive and provenance contracts. RAI provides their
+Linux and edge embodiment: it produces observations, mediates actions and
+returns typed results. Codex, Claude, Gemini, Antigravity and future harnesses
+remain replaceable `AgentBackend` implementations. A remote Android, VR or
+wearable client is a thin `DeviceAgent`, not necessarily a full RAI installation.
+
+## Deployment boundary
+
+- A full RAI runtime runs on a Linux workstation, server or capable edge node
+  such as a Raspberry Pi.
+- Local collectors, processors and actuators communicate with RAI over in-process
+  ports or Unix domain sockets.
+- Separate physical devices communicate over authenticated network transports;
+  Unix domain sockets never cross a host boundary.
+- Constrained or platform-managed devices use a thin agent SDK that implements
+  the same wire contracts while respecting platform lifecycle and permission
+  models.
+- Raw media remains local by default. Cognitive backends receive normalized
+  observations or explicit, policy-approved `MediaReference` values.
 
 ## Engineering invariants
 
@@ -29,7 +56,11 @@ their Linux embodiment.
 5. Every derived memory can retain provenance to source observations.
 6. Local models receive bounded, schema-constrained tasks.
 7. External backends receive a minimal `ContextPackage`, not ambient access.
-8. A phase is complete only when its acceptance tests pass.
+8. One cognitive process has one explicit controller; RAI never competes with
+   GAIA's Workspace or Control.
+9. Network delivery is replayable and idempotent; reconnects never silently lose
+   or duplicate an accepted action.
+10. A phase is complete only when its acceptance tests pass.
 
 ## Stage 0 — trustworthy baseline
 
@@ -65,48 +96,87 @@ unauthenticated /api and WebSocket control requests are rejected
 documentation does not describe Antigravity as the architectural core
 ```
 
-## Stage 1 — runtime kernel and contracts
+## Stage 1 — embodiment kernel and portable contracts
 
 Deliver one internal invocation path shared by all interfaces.
 
-- Define immutable `Observation`, `Claim`, `Task`, `ContextPackage`,
-  `ToolRequest`, `ToolResult` and `Episode` records.
-- Introduce `Capability`, `Collector`, `LocalCognition` and `AgentBackend`
-  protocols.
+- Define immutable `DeviceDescriptor`, `Observation`, `MediaReference`,
+  `Episode`, `Claim`, `Task`, `ContextPackage`, `CapabilityRequest`,
+  `ActionResult` and `ActionFailure` records.
+- Introduce `Capability`, `Collector`, `Actuator`, `LocalProcessor`,
+  `DeviceAgent` and `AgentBackend` protocols.
+- Publish versioned, language-neutral JSON schemas and conformance fixtures for
+  observations, capabilities, actions and results. Keep the GCAS/GAIA mapping
+  explicit and test it in both projects.
 - Replace `TOOL_REGISTRY` and MCP's duplicate dispatcher with a typed
   `CapabilityRegistry`.
 - Introduce an explicit `PolicyEngine` and structured risk decisions.
 - Replace module-level services with an application container/app factory.
+- Add a synthetic collector and actuator as deterministic reference adapters.
 - Split the CLI into commands, client transport, rendering and compatibility
   backend modules.
 - Quarantine Antigravity behind `AntigravityBackend`; do not use SDK private
   fields in the runtime kernel.
 
-Acceptance slice: one capability is invoked through CLI, REST and MCP with the
-same validation, policy decision and result envelope.
+Acceptance slice: one synthetic observation is validated and stored, and one
+capability is invoked through CLI, REST and MCP with the same schema validation,
+policy decision and result envelope.
 
-## Stage 2 — Linux perception and episodes
+## Stage 2 — first RAI ↔ GAIA embodiment slice
+
+Prove the cross-project ownership boundary before expanding either side.
+
+- Add append-only observation and action-result storage with replay cursors,
+  acknowledgements and event-ID deduplication.
+- Add authenticated observation ingest and subscription APIs over HTTP and Unix
+  sockets; use TCP-based transports between physical devices.
+- Implement a GAIA adapter that converts a validated RAI `Observation` into an
+  unverified Observation Cognitive Object with complete provenance.
+- Accept bounded GAIA `Action` requests through the same capability registry and
+  return typed `ActionResult` or `ActionFailure` records.
+- Keep the generic sensor protocol separate from the NCSI/J-lens neural-state
+  protocol; neither contract is an alias for the other.
+- Add one minimal local actuator, preferably Piper TTS or a deterministic test
+  substitute, to prove the return path.
+- Preserve exactly-once cognitive terminal semantics while using idempotent,
+  at-least-once transport delivery.
+
+Acceptance slice: synthetic `person_present` observation → RAI store → GAIA
+Observation CO → policy-approved `speech.synthesize` action → durable result.
+
+## Stage 3 — local perception and deterministic episodes
 
 Start with metadata rather than continuous screenshots or key logging.
 
-- Add collector lifecycle and append-only observation storage.
+- Add production collector lifecycle and connect every collector to the Stage 2
+  observation store.
 - Implement active application/window observation for GNOME.
 - Add bounded AT-SPI semantic events, foreground process and project/Git
   context.
+- Add opt-in camera, microphone/VAD and device-status collectors behind the same
+  contracts; do not persist continuous raw media by default.
 - Redact password/secret fields before persistence.
-- Implement retention, pause, per-application exclusion and deletion controls.
+- Implement retention, pause, per-application and per-device exclusion, consent
+  and deletion controls.
 - Build episodes deterministically from time, idle, application and project
-  boundaries.
+  boundaries. Episodes segment evidence; they are not a second reasoning loop.
 - Preserve provenance from episode fields to source observations.
 
-Acceptance slice: Firefox → terminal → editor activity becomes a reviewable
-local episode without sending data over the network.
+Acceptance slice: Firefox → terminal → editor activity and one opt-in sensory
+event become reviewable local episodes without sending raw media over the
+network.
 
-## Stage 3 — bounded local cognition
+## Stage 4 — bounded edge processing and routing
+
+Local processing classifies or transforms observations. It must not acquire
+Workspace, Control, goal-verification or open-ended planning responsibilities.
 
 - Select one supported local execution path first: llama.cpp or Ollama.
 - Remove/freeze non-functional IREE and ONNX entries until they have owners and
   conformance tests.
+- Add separately startable vision, STT and TTS processor adapters. Treat Hailo,
+  Whisper and Piper as optional device capabilities with explicit resource and
+  failure reporting, not imports required by the core daemon.
 - [/] **Optional NCSI/J-lens neural sidecar** — A separately startable
   Transformers process that owns model/accelerator lifecycle, residual-stream
   hooks, versioned J-lens artifacts, compact neural observations, cancellation,
@@ -121,14 +191,9 @@ local episode without sending data over the network.
 - Add schema-constrained classification, extraction, summarization, salience
   and risk tasks.
 - Run blocking inference outside the main event loop.
-- Record latency, tokens, memory use, confidence and schema failures.
+- Record latency, tokens, memory/accelerator use, confidence, concurrency and
+  schema failures.
 - Build a small versioned evaluation corpus before model-specific tuning.
-
-Acceptance slice: a 2–4B-class local model converts an episode into validated
-structured output and fails safely on invalid output.
-
-## Stage 4 — hybrid router
-
 - Route using deterministic rules first, local classification second and policy
   last.
 - Support `LOCAL`, `ASK`, `ESCALATE` and `DENY` decisions.
@@ -138,40 +203,77 @@ structured output and fails safely on invalid output.
 - Verify important results against tool output or observations before state is
   updated.
 
-Acceptance slice: “what was I working on?” stays local, while a complex coding
-task is packaged and escalated with an explicit capability boundary.
+Acceptance slice: a bounded local processor converts an episode or utterance
+into validated structured output; deterministic policy keeps an allowed task
+local or escalates it to GAIA, and processor failure cannot terminate the core
+runtime or masquerade as a successful observation.
 
-## Stage 5 — external agent backends and GAIA
+## Stage 5 — multi-device operation and external backends
 
+- Define device registration, heartbeat, status, capability advertisement and
+  revocation contracts.
+- Add bounded offline spooling, reconnect/replay, backpressure and key rotation.
+- Provide a Linux reference `DeviceAgent`; define an SDK boundary for later
+  Android, VR and wearable clients without requiring the full Python daemon on
+  those platforms.
+- Add authenticated network deployment profiles and document mTLS or an
+  equivalent device-identity boundary before LAN exposure.
 - Stabilize `AgentBackend` conformance tests.
 - Add one end-to-end harness backend before multiplying integrations.
-- Integrate GAIA either as a backend or as a cognitive runtime consuming RAI's
-  MCP/capability API. Neural-state streaming uses the separately versioned NCSI
-  sidecar contract rather than coupling GAIA to RAI implementation modules.
+- Harden the Stage 2 GAIA bridge as the reference cognitive-runtime integration.
+  Neural-state streaming continues to use the separately versioned NCSI sidecar
+  contract rather than coupling GAIA to RAI implementation modules.
 - Keep backend conversation identifiers as adapter-owned metadata.
 - Add cancellation, usage accounting, retry and evidence return contracts.
 - Retain Antigravity only if it passes the same contracts without process-wide
   patching.
 
+Acceptance slice: a Raspberry Pi or simulated remote Linux agent disconnects,
+buffers bounded observations, reconnects without duplication, and executes one
+GAIA-requested capability with a verified action-result chain.
+
 ## Stage 6 — user experience and ecosystem
 
 - Activity/history review and deletion UI.
+- Device, permission, connectivity and local-model status UI.
 - Native GNOME approval and status surface.
 - Emacs client.
 - COSMIC parity based on actual platform APIs.
 - Guile dashboard and experimental web UI.
-- TTS and accessibility improvements.
+- TTS, audio-duplex and accessibility improvements beyond the minimal Stage 2
+  actuator.
 
 These features remain intentionally behind the runtime kernel and the first
 vertical slice.
+
+## Legacy chat retirement gates
+
+Legacy removal is incremental and follows working replacement slices rather
+than a big-bang rewrite.
+
+1. The application container and typed registry become the only capability
+   invocation path.
+2. The Stage 2 Observation → GAIA → Action → Result slice passes cross-project
+   acceptance tests.
+3. CLI, REST and MCP use the same runtime services and policy decisions.
+4. `ChatService`, agent chains and provider-specific configuration move behind
+   an explicitly named compatibility package and stop defining durable state.
+5. Antigravity becomes an optional `AgentBackend`, disabled in the default
+   installation.
+6. Legacy chain endpoints receive a documented deprecation and migration path.
+7. Compatibility code that does not pass the common backend and security
+   contracts is removed before 1.0.
 
 ## Technical debt carried into Stage 1
 
 - `cli.py` and `config_manager.py` are oversized and mix policy, I/O and UI.
 - MCP and `TOOL_REGISTRY` describe overlapping tool catalogs.
 - Antigravity compatibility still owns the current chat execution path.
+- Conversation history still has more implementation weight than normalized
+  observation and action-result state.
 - local inference protocols are disconnected from the daemon and lack tests.
 - IREE is a stub and the ONNX factory references an absent implementation.
+- Device identity, reconnect/replay and backpressure contracts do not yet exist.
 - full style linting contains legacy violations; critical lint is blocking now.
 - existing GitLab issues #8 and #9 remain relevant to lazy loading and blocking
   local inference. Issues #2 and #6 require reproduction against the new
