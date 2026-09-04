@@ -3,8 +3,9 @@
 ## [Unreleased]
 
 ### Fixed
-- Made GitLab CI install locked dependencies through `uv` and updated
-  Antigravity conversation fixtures for the current SDK contract.
+- Made GitLab CI install locked dependencies through `uv`, kept Pages
+  independent of the manual release job and updated Antigravity conversation
+  fixtures for the current SDK contract.
 
 ## [0.3.0] - 2026-09-04
 
