@@ -89,7 +89,7 @@ def _load_model(config: FitConfig) -> tuple[Any, Any]:
 def _save_tensors(path: Path, jacobians: dict[int, object]) -> None:
     temp_path: str | None = None
     try:
-        from safetensors.torch import save_file  # noqa: PLC0415
+        from safetensors.torch import save_file  # noqa: PLC0415  # pylint: disable=import-error
 
         tensors = {
             f"layer.{layer}.jacobian": tensor.detach().cpu().contiguous()

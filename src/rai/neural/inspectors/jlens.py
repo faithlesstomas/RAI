@@ -65,7 +65,7 @@ class JLensInspector:
     def read(self, layer: int, residual: object, top_k: int) -> Readout:
         """Project one last-token residual and return bounded normalized scores."""
         try:
-            import torch  # noqa: PLC0415
+            import torch  # noqa: PLC0415  # pylint: disable=import-error
 
             jacobian = self._tensors[f"layer.{layer}.jacobian"].to(
                 device=residual.device, dtype=residual.dtype

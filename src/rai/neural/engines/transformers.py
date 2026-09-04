@@ -95,8 +95,11 @@ class TransformersEngine:
             self.load_seconds = time.monotonic() - started
 
     def _load_sync(self) -> tuple[Any, Any]:
-        import torch  # noqa: PLC0415
-        from transformers import AutoModelForCausalLM, AutoTokenizer  # noqa: PLC0415
+        import torch  # noqa: PLC0415  # pylint: disable=import-error
+        from transformers import (  # noqa: PLC0415  # pylint: disable=import-error
+            AutoModelForCausalLM,
+            AutoTokenizer,
+        )
 
         dtype: str | Any = self.dtype
         if self.dtype != "auto":
@@ -146,7 +149,7 @@ class TransformersEngine:
 
     def _unembed(self, residual: object) -> object:
         """Apply the HF model's final norm and output embedding like upstream J-lens."""
-        import torch  # noqa: PLC0415
+        import torch  # noqa: PLC0415  # pylint: disable=import-error
 
         decoder = self._text_decoder()
         norm = getattr(decoder, "norm", None) or getattr(decoder, "final_layernorm", None)
@@ -231,7 +234,7 @@ class TransformersEngine:
                 past_key_values = outputs.past_key_values
                 current_ids = next_token.unsqueeze(0)
                 if attention_mask is not None:
-                    import torch  # noqa: PLC0415
+                    import torch  # noqa: PLC0415  # pylint: disable=import-error
 
                     attention_mask = torch.cat(
                         (attention_mask, attention_mask.new_ones((attention_mask.shape[0], 1))), dim=-1
@@ -314,7 +317,7 @@ class TransformersEngine:
     def _forward_sync(
         self, input_ids: object, attention_mask: object, past_key_values: object, hidden_states: bool
     ) -> object:
-        import torch  # noqa: PLC0415
+        import torch  # noqa: PLC0415  # pylint: disable=import-error
 
         with torch.inference_mode():
             return self._model(
@@ -327,7 +330,7 @@ class TransformersEngine:
 
     def _record_peak_memory(self) -> None:
         try:
-            import torch  # noqa: PLC0415
+            import torch  # noqa: PLC0415  # pylint: disable=import-error
 
             if torch.cuda.is_available():
                 self.last_peak_accelerator_bytes = int(torch.cuda.max_memory_allocated())
@@ -340,7 +343,7 @@ class TransformersEngine:
             self._tokenizer = None
             self._inspectors.clear()
             try:
-                import torch  # noqa: PLC0415
+                import torch  # noqa: PLC0415  # pylint: disable=import-error
 
                 if torch.cuda.is_available():
                     torch.cuda.empty_cache()

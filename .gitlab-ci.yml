@@ -45,7 +45,7 @@ publish_release:
 critical_lint:
   stage: lint
   script:
-    - pylint --ignore tui.py,gnome.py -E src
+    - pylint -E src/rai
 
 ruff_critical:
   stage: lint
