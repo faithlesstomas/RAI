@@ -145,6 +145,33 @@ $XDG_CACHE_HOME/rai    disposable sandbox/cache data
 $XDG_RUNTIME_DIR/rai   socket/token runtime state
 ```
 
+## Documentation
+
+The versioned documentation is published with GitLab Pages at
+[tk-lab1.gitlab.io/rai](https://tk-lab1.gitlab.io/rai/). GitLab authentication
+may be required. The source documentation lives in [`docs/`](docs/), including
+the [architecture](docs/architecture.md) and [embodiment kernel
+contracts](docs/kernel-contracts.md). The language-neutral Stage 1 contract is
+also available as a [JSON Schema](schemas/rai.kernel.v1.schema.json).
+
+Install the documentation dependencies and build the Sphinx site locally:
+
+```bash
+uv sync --extra docs
+uv run sphinx-build -W --keep-going -b html docs docs/_build/html
+```
+
+The generated site is written to `docs/_build/html/`. For a live-reloading
+preview while editing documentation, run:
+
+```bash
+uv run sphinx-autobuild docs docs/_build/html
+```
+
+The GitLab Pages job rebuilds the same site from `main`. When the daemon is
+running, its generated HTTP API reference is available at `/docs`, `/redoc` and
+`/openapi.json`.
+
 ## Security model
 
 RAI treats model output and remote agent output as untrusted. Shell and Python
