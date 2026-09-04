@@ -99,12 +99,11 @@ max-line-length=108
 [tool.pylint.typing]
 
 [tool.semantic_release]
-version_variable = "src/rai/__init__.py:__version__"
+tag_format = "v{version}"
+version_variables = ["src/rai/__init__.py:__version__"]
 version_toml = ["pyproject.toml:project.version"]
+allow_zero_version = true
 major_on_zero = false
-branch = "main"
-upload_to_repository = false
-upload_to_release = true
 build_command = "pip install build && python -m build"
 
 [tool.semantic_release.changelog]
@@ -113,3 +112,9 @@ exclude_commit_patterns = []
 
 [tool.semantic_release.branches.main]
 match = "main"
+
+[tool.semantic_release.remote]
+type = "gitlab"
+
+[tool.semantic_release.publish]
+upload_to_vcs_release = true

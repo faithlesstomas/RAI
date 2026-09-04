@@ -5,6 +5,11 @@
 ### Changed
 - Reframed RAI as a local-first agent runtime for Linux and made Antigravity a
   transitional compatibility backend.
+- Expanded the implementation roadmap for Rich History, local voice and AI,
+  safe desktop actions, hybrid backends, token budgets and privacy controls.
+- Documented the SemVer release, testing and Sphinx/GitLab Pages workflow.
+- Updated the semantic-release configuration for current version stamping,
+  pre-1.0 development and GitLab `vX.Y.Z` releases.
 - Adopted XDG-compliant configuration, data, cache and runtime directories.
 - Made conversation history independent of thread-based database helpers.
 - Moved heavyweight inference dependencies into optional extras.
@@ -21,6 +26,8 @@
 - Debug logging to `GitlabTools` methods.
 
 ### Fixed
+- Made `rai --version` use the package version instead of a stale hard-coded
+  value.
 - `TypeError: 'Function' object is not callable` by correctly implementing `GitlabTools` as a `Toolkit`.
 - `requests.exceptions.ChunkedEncodingError: Response ended prematurely` in `list_projects` by using an iterator.
 - Issue with loading `GITLAB_BASE_URL` from `.env` file by stripping quotes and trailing slashes.

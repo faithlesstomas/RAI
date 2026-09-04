@@ -35,7 +35,7 @@ from rich.rule import Rule
 # from websockets.exceptions import ConnectionClosed, WebSocketException
 from returns.result import Success, Failure, Result
 
-from . import config_manager
+from . import __version__, config_manager
 from . import core
 from .core import console, error_console
 from .services.chat import ChatService
@@ -867,7 +867,7 @@ async def async_main_client(options: CliOptions) -> None: # noqa: PLR0912
 
 
 @click.group(cls=SectionedGroup, invoke_without_command=True)
-@click.version_option(version="0.1.0")
+@click.version_option(version=__version__)
 # Section: Primary
 @click.option("-p", "--prompt", "prompt", default=None, help="The prompt to send to the AI.",
               cls=SectionedOption, section="Primary")
