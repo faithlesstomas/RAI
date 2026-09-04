@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [0.3.1] - 2026-09-04
+
 ### Fixed
 - Made GitLab CI install locked dependencies through `uv`, kept Pages
   independent of the manual release job, removed the unused Sphinx static path
