@@ -9,29 +9,49 @@ of the computer or durable state to an LLM SDK.
 
 ## Core contracts
 
-The Stage 1 kernel will formalize four primary ports:
+The Stage 1 kernel defines immutable, versioned records in `rai.kernel.records`
+and the following primary ports in `rai.kernel.ports`:
 
 ```python
 class Collector(Protocol):
-    async def events(self) -> AsyncIterator[Observation]: ...
+    async def start(self) -> Result[LifecycleState, ActionFailure]: ...
+    def events(self, cancellation: CancellationToken) -> AsyncIterator[Result[Observation, ActionFailure]]: ...
+    async def stop(self) -> Result[LifecycleState, ActionFailure]: ...
 
 class Capability(Protocol):
-    async def invoke(self, request: ToolRequest) -> Result[ToolResult, ToolError]: ...
+    async def invoke(
+        self, request: CapabilityRequest, cancellation: CancellationToken
+    ) -> Result[ActionResult, ActionFailure]: ...
 
-class LocalCognition(Protocol):
-    async def analyze(self, task: LocalTask) -> Result[StructuredOutput, InferenceError]: ...
+class LocalProcessor(Protocol):
+    async def process(
+        self, task: Task, context: ContextPackage,
+        budget: InferenceBudget, cancellation: CancellationToken,
+    ) -> Result[Claim, ActionFailure]: ...
 
 class AgentBackend(Protocol):
     async def execute(
         self,
         task: Task,
         context: ContextPackage,
-        capabilities: CapabilitySet,
-    ) -> Result[AgentResult, BackendError]: ...
+        capabilities: tuple[str, ...],
+        budget: InferenceBudget,
+        cancellation: CancellationToken,
+    ) -> Result[ActionResult, ActionFailure]: ...
 ```
 
 Models do not write durable state directly. Their outputs are validated and
 committed by runtime services with provenance.
+
+`CapabilityRegistry` is the only built-in operation catalog. CLI, REST, MCP and
+the Antigravity compatibility adapter all resolve its descriptors, validate the
+same JSON inputs and invoke `CapabilityService`. That service records a
+deterministic `PolicyDecision`, obtains approval when required, invokes the
+capability and writes exactly one terminal result to the audit ledger.
+
+`ApplicationContainer` owns runtime services. `create_app()` creates an
+independent FastAPI application and app-scoped MCP runtime; importing dependency
+modules no longer creates history or model-registry singletons.
 
 ## Data flow
 
@@ -65,7 +85,11 @@ owns the detailed milestones and acceptance gates.
 
 ## Transitional implementation
 
-The current `ChatService` still calls Google Antigravity directly. That path is
-compatibility code and must move behind `AgentBackend`. The current MCP router
-and `TOOL_REGISTRY` duplicate capability metadata and will converge in Stage 1.
-The `inference` package is experimental and is not yet connected to routing.
+Google Antigravity is quarantined in `rai.backends.antigravity` behind the
+public `AgentBackend` port. `rai.services.chat.ChatService` and the legacy CLI
+are compatibility facades; SDK conversation internals do not enter kernel
+records. New CLI capability commands are separated into command, transport and
+rendering modules while the old command set lives in `cli_compatibility`.
+
+The `inference` package remains experimental and is not yet connected to the
+Stage 1 routing boundary.

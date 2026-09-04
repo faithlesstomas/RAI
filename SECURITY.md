@@ -36,7 +36,25 @@ trusted local frontends.
   only normal write mount.
 
 Static command patterns are defense in depth, not the primary boundary. Future
-work will replace ad-hoc risk checks with a structured `PolicyEngine`.
+work may retire them after equivalent negative coverage exists. The structured
+`PolicyEngine` is authoritative for typed capability invocation: it validates
+the actor, data class, target, declared side effects, isolation, budget and
+verification plan before returning `ALLOW`, `ASK`, `DENY` or `ESCALATE`.
+
+`SECRET` and `BLOCKED` capability requests are denied. Critical-risk requests
+are denied by the Stage 1 policy, moderate/high-risk requests require approval,
+and unavailable approval or required isolation fails closed. A model-supplied
+backend/private tool name has no authority unless it resolves in the common
+`CapabilityRegistry`.
+
+Every resolved request writes a decision event and one typed terminal event to
+the protected XDG data audit ledger. A ledger failure prevents invocation. The
+audit includes the policy version, approval identifier where applicable and the
+final `ActionResult` or `ActionFailure`.
+
+Google Antigravity SDK access is confined to `rai.backends.antigravity`. Its
+private conversation fields are compatibility implementation details and never
+appear in public runtime records.
 
 ## Credentials and private data
 
@@ -52,4 +70,3 @@ redaction and deletion controls before it is considered usable.
 
 Do not include secrets or exploit details in a public issue. Contact the project
 maintainer privately, then coordinate a disclosure and credential rotation plan.
-

@@ -48,10 +48,10 @@ async def test_run_chain_persists_conversation_id():
     chat_service = ChatService()
     
     # We patch Agent and the config managers
-    with patch("rai.services.chat.Agent", side_effect=MockAgent) as mock_agent_class, \
-         patch("rai.services.chat.load_config", return_value={"active_agent": "default"}), \
-         patch("rai.services.chat.load_agents", return_value={"default": {}}), \
-         patch("rai.services.chat.set_conversation_id_for_session") as mock_set_conv_id:
+    with patch("rai.backends.antigravity.Agent", side_effect=MockAgent) as mock_agent_class, \
+         patch("rai.backends.antigravity.load_config", return_value={"active_agent": "default"}), \
+         patch("rai.backends.antigravity.load_agents", return_value={"default": {}}), \
+         patch("rai.backends.antigravity.set_conversation_id_for_session") as mock_set_conv_id:
          
         result = await chat_service.run_chain(
             chain_input="Hello",
@@ -70,12 +70,12 @@ async def test_run_chain_loads_existing_conversation_id():
     chat_service = ChatService()
     existing_conv_id = "existing-conv-id-5678"
     
-    with patch("rai.services.chat.Agent", side_effect=MockAgent) as mock_agent_class, \
-         patch("rai.services.chat.load_config", return_value={"active_agent": "default"}), \
-         patch("rai.services.chat.load_agents", return_value={"default": {}}), \
-         patch("rai.services.chat.get_conversation_id_for_session", return_value=existing_conv_id), \
+    with patch("rai.backends.antigravity.Agent", side_effect=MockAgent) as mock_agent_class, \
+         patch("rai.backends.antigravity.load_config", return_value={"active_agent": "default"}), \
+         patch("rai.backends.antigravity.load_agents", return_value={"default": {}}), \
+         patch("rai.backends.antigravity.get_conversation_id_for_session", return_value=existing_conv_id), \
          patch("os.path.exists", return_value=True), \
-         patch("rai.services.chat.set_conversation_id_for_session"):
+         patch("rai.backends.antigravity.set_conversation_id_for_session"):
          
         result = await chat_service.run_chain(
             chain_input="Hello again",
@@ -97,10 +97,10 @@ async def test_history_deduplication():
     chat_service = ChatService()
     
     try:
-        with patch("rai.services.chat.Agent", side_effect=MockAgent), \
-             patch("rai.services.chat.load_config", return_value={"active_agent": "default"}), \
-             patch("rai.services.chat.load_agents", return_value={"default": {}}), \
-             patch("rai.services.chat.set_conversation_id_for_session"):
+        with patch("rai.backends.antigravity.Agent", side_effect=MockAgent), \
+             patch("rai.backends.antigravity.load_config", return_value={"active_agent": "default"}), \
+             patch("rai.backends.antigravity.load_agents", return_value={"default": {}}), \
+             patch("rai.backends.antigravity.set_conversation_id_for_session"):
              
             # Call run_chain
             result = await chat_service.run_chain(

@@ -23,103 +23,15 @@ class ResponseDict(TypedDict, total=False):
     tool_calls: List[object]
 
 from rai.tools.desktop import get_desktop_adapter
-from rai.tools.shell import run_secure_shell_command
-from rai.tools.python import run_secure_python_code
+from rai.kernel.capabilities import CapabilityRegistry
+from rai.kernel.defaults import create_default_capability_registry
+from rai.kernel.compatibility import policy_wrapped_handlers
+from rai.kernel.service import CapabilityService
 
 # --- Globals ---
 console = Console(record=True)
 error_console = Console(stderr=True)
 active_status = None
-
-# --- Standard Tool Implementations (Decoupled from Agno) ---
-
-def calculate(expression: str) -> str:
-    """
-    Evaluates a mathematical expression safely.
-
-    Args:
-        expression (str): The mathematical expression to evaluate (e.g. "2 * 3 + 4").
-    """
-    try:
-        import math
-        allowed = {k: getattr(math, k) for k in dir(math) if not k.startswith("_")}
-        allowed.update({"abs": abs, "round": round, "min": min, "max": max, "sum": sum})
-        return str(eval(expression, {"__builtins__": None}, allowed))  # pylint: disable=eval-used
-    except Exception as e:
-        return f"Error: {e}"
-
-def wikipedia_search(query: str) -> str:
-    """
-    Searches Wikipedia for the given query.
-
-    Args:
-        query (str): The search query.
-    """
-    try:
-        import wikipedia
-        return wikipedia.summary(query, sentences=3)
-    except Exception as e:
-        return f"Error: {e}"
-
-def web_search(query: str) -> str:
-    """
-    Searches the web using DuckDuckGo for the given query.
-
-    Args:
-        query (str): The search query.
-    """
-    try:
-        from duckduckgo_search import DDGS
-        results = DDGS().text(query, max_results=5)
-        return "\n\n".join([f"Title: {r['title']}\nLink: {r['href']}\nSnippet: {r['body']}" for r in results])
-    except Exception as e:
-        return f"Error: {e}"
-
-def arxiv_search(query: str) -> str:
-    """
-    Searches arXiv for scientific papers.
-
-    Args:
-        query (str): The scientific search query.
-    """
-    try:
-        import arxiv
-        client = arxiv.Client()
-        search = arxiv.Search(query=query, max_results=3)
-        results = []
-        for r in client.results(search):
-            results.append(f"Title: {r.title}\nAuthors: {', '.join(a.name for a in r.authors)}\nSummary: {r.summary}\nURL: {r.entry_id}")
-        return "\n\n".join(results)
-    except Exception as e:
-        return f"Error: {e}"
-
-def get_stock_price(ticker: str) -> str:
-    """
-    Gets stock market information for a ticker using yfinance.
-
-    Args:
-        ticker (str): The stock ticker symbol (e.g. "GOOG", "AAPL").
-    """
-    try:
-        import yfinance as yf
-        stock = yf.Ticker(ticker)
-        info = stock.info
-        return f"Ticker: {ticker}\nPrice: {info.get('regularMarketPrice') or info.get('currentPrice')}\nCurrency: {info.get('currency')}\nSummary: {info.get('longBusinessSummary', 'N/A')}"
-    except Exception as e:
-        return f"Error: {e}"
-
-
-# --- Tool Registry ---
-TOOL_REGISTRY = {
-    "CalculatorTools": [calculate],
-    "ArxivTools": [arxiv_search],
-    "WikipediaTools": [wikipedia_search],
-    "DuckDuckGoTools": [web_search],
-    "YFinanceTools": [get_stock_price],
-    "ShellTools": [run_secure_shell_command],
-    "PythonTools": [run_secure_python_code],
-}
-
 
 # --- Tool and Model Setup ---
 def setup_tools(  # noqa: PLR0912 # pylint: disable=too-many-branches, too-many-locals
@@ -127,6 +39,8 @@ def setup_tools(  # noqa: PLR0912 # pylint: disable=too-many-branches, too-many-
     quiet: bool,
     enabled_tool_names: Optional[List[str]] = None,
     has_prompt: bool = False,
+    capability_service: CapabilityService | None = None,
+    capability_registry: CapabilityRegistry | None = None,
 ) -> Tuple[List[Any], List[str]]:
     """Sets up the tools for the agent."""
     messages = []
@@ -135,13 +49,24 @@ def setup_tools(  # noqa: PLR0912 # pylint: disable=too-many-branches, too-many-
     if not enable_tools:
         return agent_tools, messages
 
+    active_registry = (
+        capability_service.registry
+        if capability_service is not None
+        else capability_registry or create_default_capability_registry()
+    )
     tools_to_enable = (
         enabled_tool_names
         if enabled_tool_names is not None
-        else list(TOOL_REGISTRY.keys()) + ["ClientTools", "GitlabTools"]
+        else list(active_registry.compatibility_groups())
+        + ["ClientTools", "GitlabTools"]
     )
 
     for tool_name in tools_to_enable:
+        if capability_service is not None:
+            secured_handlers = policy_wrapped_handlers(capability_service, tool_name)
+            if secured_handlers:
+                agent_tools.extend(secured_handlers)
+                continue
         # Handle Desktop tools
         if tool_name in [
             "DesktopNotificationTool", "DesktopScreenshotTool", "DesktopWeatherTool"
@@ -193,7 +118,8 @@ def setup_tools(  # noqa: PLR0912 # pylint: disable=too-many-branches, too-many-
                 logger.debug("Could not enable GitlabTools: %s", e)
             continue
 
-        if tool_name not in TOOL_REGISTRY:
+        handlers = active_registry.compatibility_handlers(tool_name)
+        if not handlers:
             if not quiet:
                 messages.append(
                     f"[bold yellow]WARNING: Unknown tool '{tool_name}' "
@@ -202,7 +128,7 @@ def setup_tools(  # noqa: PLR0912 # pylint: disable=too-many-branches, too-many-
             continue
 
         # Enable mapped standalone functions
-        for func in TOOL_REGISTRY[tool_name]:
+        for func in handlers:
             agent_tools.append(func)
             logger.debug("%s successfully enabled.", tool_name)
 

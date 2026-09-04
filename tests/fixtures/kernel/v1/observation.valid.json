@@ -1,0 +1,19 @@
+{
+  "record_type": "observation",
+  "schema_version": "1.0.0",
+  "record_id": "obs-fixture-1",
+  "timestamp": "2026-01-02T03:04:05Z",
+  "producer": {
+    "producer_id": "synthetic-collector",
+    "kind": "collector",
+    "version": "1.0.0",
+    "device_id": "device-fixture-1"
+  },
+  "correlation_id": "correlation-fixture-1",
+  "kind": "person_present",
+  "payload": {"present": true},
+  "data_class": "LOCAL",
+  "device_id": "device-fixture-1",
+  "media": [],
+  "provenance": []
+}

@@ -1,41 +1,36 @@
-"""
-FastAPI dependencies for the RAI application.
-"""
-from typing import Dict, Any, Optional
-from fastapi import Depends
+"""FastAPI dependency adapters backed by the application container."""
 
-from . import config_manager
-from .services.model_registry import ModelRegistry
+from typing import Any
+
+from fastapi import Request
+
+from .container import ApplicationContainer
+from .kernel.service import CapabilityService
 from .services.history import HistoryService
-
-_MODEL_REGISTRY: Optional[ModelRegistry] = None
-_HISTORY_SERVICE: Optional[HistoryService] = None
-
-def get_config() -> Dict[str, Any]:
-    """Dependency to load and provide the application configuration."""
-    return config_manager.load_config()
-
-def get_model_registry(
-    config: Dict[str, Any] = Depends(get_config)
-) -> ModelRegistry:
-    """Dependency to provide the ModelRegistry service as a singleton."""
-    global _MODEL_REGISTRY
-    if _MODEL_REGISTRY is None:
-        _MODEL_REGISTRY = ModelRegistry(config)
-    return _MODEL_REGISTRY
+from .services.model_registry import ModelRegistry
 
 
-def get_history_service() -> HistoryService:
-    """Provide the history repository lazily, without import-time filesystem I/O."""
-    global _HISTORY_SERVICE
-    if _HISTORY_SERVICE is None:
-        _HISTORY_SERVICE = HistoryService()
-    return _HISTORY_SERVICE
+def get_container(request: Request) -> ApplicationContainer:
+    """Resolve the container owned by the current FastAPI application."""
+    return request.app.state.container
 
-async def close_dependencies() -> None:
-    """Closes and cleans up resource connections in dependencies."""
-    global _MODEL_REGISTRY, _HISTORY_SERVICE
-    if _MODEL_REGISTRY is not None:
-        await _MODEL_REGISTRY.close()
-        _MODEL_REGISTRY = None
-    _HISTORY_SERVICE = None
+
+def get_config(request: Request) -> dict[str, Any]:
+    return get_container(request).config
+
+
+def get_model_registry(request: Request) -> ModelRegistry:
+    return get_container(request).model_registry
+
+
+def get_history_service(request: Request) -> HistoryService:
+    return get_container(request).history_service
+
+
+async def get_capability_service(request: Request) -> CapabilityService:
+    return get_container(request).capability_service
+
+
+async def close_dependencies(container: ApplicationContainer) -> None:
+    """Close application-scoped resources without touching module globals."""
+    await container.close()

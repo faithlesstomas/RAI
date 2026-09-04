@@ -1,0 +1,35 @@
+[
+  {
+    "case": "unsupported-major",
+    "record": {
+      "record_type": "observation",
+      "schema_version": "2.0.0",
+      "record_id": "obs-invalid-major",
+      "timestamp": "2026-01-02T03:04:05Z",
+      "producer": {"producer_id": "fixture", "kind": "collector", "version": "1.0.0"},
+      "kind": "person_present",
+      "payload": {},
+      "data_class": "LOCAL"
+    }
+  },
+  {
+    "case": "malformed-data-class",
+    "record": {
+      "record_type": "observation",
+      "schema_version": "1.0.0",
+      "record_id": "obs-invalid-class",
+      "timestamp": "2026-01-02T03:04:05Z",
+      "producer": {"producer_id": "fixture", "kind": "collector", "version": "1.0.0"},
+      "kind": "person_present",
+      "payload": {},
+      "data_class": "EVERYWHERE"
+    }
+  },
+  {
+    "case": "unknown-record-type",
+    "record": {
+      "record_type": "backend_private_message",
+      "schema_version": "1.0.0"
+    }
+  }
+]

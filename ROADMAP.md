@@ -304,54 +304,54 @@ Prerequisite: Stage 0.
 
 #### 1.1 Domain records and schemas
 
-- [ ] Define immutable `DeviceDescriptor`, `Observation`, `MediaReference`,
+- [x] Define immutable `DeviceDescriptor`, `Observation`, `MediaReference`,
   `Episode`, `Claim`, `Task`, `ContextPackage`, `ContextManifest`,
   `CapabilityRequest`, `ActionResult`, `ActionFailure`, `PolicyDecision`,
   `InferenceBudget` and `UsageRecord` records.
-- [ ] Give every record a version, stable ID, timestamp, producer identity and
+- [x] Give every record a version, stable ID, timestamp, producer identity and
   correlation ID where applicable.
-- [ ] Represent provenance as structured source references rather than free-form
+- [x] Represent provenance as structured source references rather than free-form
   text.
-- [ ] Publish language-neutral JSON schemas and positive/negative conformance
+- [x] Publish language-neutral JSON schemas and positive/negative conformance
   fixtures.
-- [ ] Define forward-compatible schema evolution and reject unsupported major
+- [x] Define forward-compatible schema evolution and reject unsupported major
   versions explicitly.
-- [ ] Document GCAS/GAIA mappings without importing GAIA implementation modules
+- [x] Document GCAS/GAIA mappings without importing GAIA implementation modules
   into the RAI kernel.
 
 #### 1.2 Runtime ports
 
-- [ ] Introduce `Capability`, `Collector`, `Actuator`, `LocalProcessor`,
+- [x] Introduce `Capability`, `Collector`, `Actuator`, `LocalProcessor`,
   `DeviceAgent`, `AgentBackend`, `ObservationStore`, `EpisodeStore`,
   `UsageLedger` and `ApprovalBroker` protocols.
-- [ ] Return explicit `Result` values at I/O and backend boundaries.
-- [ ] Define lifecycle states and cancellation for collectors, processors and
+- [x] Return explicit `Result` values at I/O and backend boundaries.
+- [x] Define lifecycle states and cancellation for collectors, processors and
   backends.
-- [ ] Add synthetic reference implementations for every port.
+- [x] Add synthetic reference implementations for every port.
 
 #### 1.3 Capability and policy path
 
-- [ ] Replace `TOOL_REGISTRY` and MCP's duplicate dispatcher with a typed
+- [x] Replace `TOOL_REGISTRY` and MCP's duplicate dispatcher with a typed
   `CapabilityRegistry`.
-- [ ] Make CLI, REST, MCP and internal invocations resolve the same capability
+- [x] Make CLI, REST, MCP and internal invocations resolve the same capability
   descriptor and validator.
-- [ ] Introduce an explicit `PolicyEngine` with `ALLOW`, `ASK`, `DENY` and
+- [x] Introduce an explicit `PolicyEngine` with `ALLOW`, `ASK`, `DENY` and
   `ESCALATE` results and machine-readable reasons.
-- [ ] Define capability risk classes: `LOW`, `MODERATE`, `HIGH` and `CRITICAL`.
-- [ ] Include actor, data class, target resource, requested side effects,
+- [x] Define capability risk classes: `LOW`, `MODERATE`, `HIGH` and `CRITICAL`.
+- [x] Include actor, data class, target resource, requested side effects,
   isolation, budget and verification plan in every decision.
-- [ ] Persist policy version, decision, approval and final result in the audit
+- [x] Persist policy version, decision, approval and final result in the audit
   ledger.
 
 #### 1.4 Composition and compatibility
 
-- [ ] Replace module-level services with an application container and app
+- [x] Replace module-level services with an application container and app
   factory.
-- [ ] Split the CLI into commands, transport, rendering and compatibility
+- [x] Split the CLI into commands, transport, rendering and compatibility
   modules.
-- [ ] Quarantine Antigravity behind `AntigravityBackend`; private SDK fields must
+- [x] Quarantine Antigravity behind `AntigravityBackend`; private SDK fields must
   not enter runtime contracts.
-- [ ] Preserve current user-visible behavior through compatibility adapters until
+- [x] Preserve current user-visible behavior through compatibility adapters until
   replacement slices pass.
 
 Acceptance slice:
@@ -1103,11 +1103,12 @@ than a big-bang rewrite.
 8. Compatibility code that does not pass the common backend and security
    contracts is removed before 1.0.
 
-## Technical debt carried into Stage 1
+## Technical debt carried beyond Stage 1
 
-- `cli.py` and `config_manager.py` are oversized and mix policy, I/O and UI.
-- MCP and `TOOL_REGISTRY` describe overlapping tool catalogs.
-- Antigravity compatibility still owns the current chat execution path.
+- `cli_compatibility.py` and `config_manager.py` remain oversized compatibility
+  modules and still mix some I/O and UI concerns.
+- Antigravity compatibility still owns the legacy chat execution path, although
+  it is isolated behind the provider-neutral `AgentBackend` contract.
 - Conversation history still has more implementation weight than normalized
   observation and action-result state.
 - Local inference protocols are disconnected from the daemon and lack tests.

@@ -9,12 +9,12 @@ from starlette.datastructures import Headers
 from starlette.types import ASGIApp, Receive, Scope, Send
 from dotenv import load_dotenv
 
-from .routers import agents, execution, history, mcp
+from .routers import agents, capabilities, execution, history, mcp
 from . import __version__
+from . import config_manager
+from .container import ApplicationContainer
 from .dependencies import close_dependencies
 from .tools.security.auth import is_authorized
-
-load_dotenv()
 
 
 class AuthenticationMiddleware:
@@ -31,47 +31,54 @@ class AuthenticationMiddleware:
                 return
         await self.app(scope, receive, send)
 
-@asynccontextmanager
-async def lifespan(app: FastAPI) -> AsyncIterator[None]:
-    # Startup logic
-    yield
-    # Shutdown logic
-    await close_dependencies()
-
-app = FastAPI(
-    title="RAI - Rich AI Runtime",
-    description="Local-first agent runtime and secure Linux capability gateway.",
-    version=__version__,
-    lifespan=lifespan,
-)
-
-
-
-cors_origins = [
-    origin.strip()
-    for origin in os.environ.get("RAI_CORS_ORIGINS", "").split(",")
-    if origin.strip()
-]
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=cors_origins,
-    allow_credentials=bool(cors_origins),
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
-app.add_middleware(AuthenticationMiddleware)
-
-# --- Include Routers ---
-app.include_router(agents.router)
-app.include_router(history.router)
-app.include_router(execution.router)
-app.include_router(mcp.router)
-
-# --- Global Endpoints ---
-
-@app.get("/health", tags=["Server"])
 async def health_check() -> JSONResponse:
     """
     Simple health check endpoint to confirm the server is running.
     """
     return JSONResponse(content={"status": "ok"})
+
+
+def create_app(container: ApplicationContainer | None = None) -> FastAPI:
+    """Create one fully composed RAI ASGI application."""
+    load_dotenv()
+    application_container = container or ApplicationContainer(config_manager.load_config())
+
+    @asynccontextmanager
+    async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
+        yield
+        await close_dependencies(application_container)
+
+    application = FastAPI(
+        title="RAI - Rich AI Runtime",
+        description="Local-first agent runtime and secure Linux capability gateway.",
+        version=__version__,
+        lifespan=lifespan,
+    )
+    application.state.container = application_container
+    application.state.mcp_runtime = mcp.create_mcp_runtime(
+        application_container.capability_service
+    )
+    cors_origins = [
+        origin.strip()
+        for origin in os.environ.get("RAI_CORS_ORIGINS", "").split(",")
+        if origin.strip()
+    ]
+    application.add_middleware(
+        CORSMiddleware,
+        allow_origins=cors_origins,
+        allow_credentials=bool(cors_origins),
+        allow_methods=["*"],
+        allow_headers=["*"],
+    )
+    application.add_middleware(AuthenticationMiddleware)
+    application.include_router(agents.router)
+    application.include_router(history.router)
+    application.include_router(execution.router)
+    application.include_router(capabilities.router)
+    application.include_router(mcp.router)
+    application.add_api_route("/health", health_check, methods=["GET"], tags=["Server"])
+    return application
+
+
+# Compatibility ASGI target; services are owned by its explicit container.
+app = create_app()

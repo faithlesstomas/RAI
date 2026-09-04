@@ -23,7 +23,7 @@ def test_resolve_agent_config_merging() -> None:
         "system": "override system instructions"
     }]
 
-    with patch("rai.services.chat.load_agents", return_value=base_agents):
+    with patch("rai.backends.antigravity.load_agents", return_value=base_agents):
         # Resolve config with agent_id and overrides
         resolved = chat_service._resolve_agent_config(
             chain_configs=chain_configs,
@@ -61,7 +61,7 @@ def test_resolve_agent_config_no_agent_id_merging() -> None:
         "backend": "gemini"
     }]
 
-    with patch("rai.services.chat.load_config", return_value=app_config):
+    with patch("rai.backends.antigravity.load_config", return_value=app_config):
         resolved = chat_service._resolve_agent_config(
             chain_configs=chain_configs,
             agent_id=None

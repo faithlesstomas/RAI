@@ -13,10 +13,10 @@ models and agent harnesses are replaceable processors.
 
 The project is in an architectural transition. The daemon, CLI, MCP gateway,
 desktop adapters, history store, sandbox and HITL foundations exist today.
-Perception collectors, episode building, model routing and the provider-neutral
-runtime contracts described below are roadmap work. Google Antigravity remains
-a compatibility backend while those contracts are introduced; it is no longer
-the architectural core.
+Provider-neutral kernel records, runtime ports, capability policy and audit
+contracts are implemented. Perception collectors, episode building and model
+routing remain roadmap work. Google Antigravity is quarantined as a
+compatibility `AgentBackend`; it is not the architectural core.
 
 ## Design principles
 
@@ -67,6 +67,10 @@ See [docs/architecture.md](docs/architecture.md) for component boundaries and
 
 - FastAPI daemon and interactive/local CLI.
 - MCP, REST and WebSocket interfaces.
+- immutable versioned kernel records and a published JSON Schema.
+- one typed capability registry shared by CLI, REST, MCP and internal backends.
+- deterministic `ALLOW`, `ASK`, `DENY` and `ESCALATE` policy decisions with an
+  append-only local audit ledger.
 - agent template and conversation-session separation.
 - SQLite conversation history independent of the active backend.
 - GNOME and COSMIC adapters for the currently implemented desktop operations.
@@ -107,6 +111,12 @@ control.
 ```bash
 # Standalone compatibility CLI
 uv run rai
+
+# List policy-controlled kernel capabilities
+uv run rai capability list
+
+# Invoke a complete versioned CapabilityRequest record
+uv run rai capability invoke '{...}'
 
 # Local daemon (loopback by default)
 uv run rai serve

@@ -21,6 +21,13 @@
 - Added ignore rules for loose credential files and local model weights.
 
 ### Added
+- Added the Stage 1 embodiment kernel: immutable versioned domain records,
+  structured provenance, language-neutral JSON Schema and conformance fixtures.
+- Added provider-neutral runtime ports, cancellation/lifecycle contracts and
+  deterministic synthetic reference implementations.
+- Added a typed capability registry, four-outcome policy engine, shared
+  CLI/REST/MCP invocation envelope and durable capability audit ledger.
+- Added an application container and FastAPI app factory.
 - `--debug` flag to enable debug logging for the application and the `python-gitlab` library.
 - `GitlabTools` to interact with the GitLab API.
 - Debug logging to `GitlabTools` methods.
