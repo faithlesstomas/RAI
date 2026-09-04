@@ -148,8 +148,8 @@ $XDG_RUNTIME_DIR/rai   socket/token runtime state
 ## Documentation
 
 The versioned documentation is published with GitLab Pages at
-[tk-lab1.gitlab.io/rai](https://tk-lab1.gitlab.io/rai/). GitLab authentication
-may be required. The source documentation lives in [`docs/`](docs/), including
+[tk-lab1.gitlab.io/ai/rai/](https://tk-lab1.gitlab.io/ai/rai/).
+The source documentation lives in [`docs/`](docs/), including
 the [architecture](docs/architecture.md) and [embodiment kernel
 contracts](docs/kernel-contracts.md). The language-neutral Stage 1 contract is
 also available as a [JSON Schema](schemas/rai.kernel.v1.schema.json).
