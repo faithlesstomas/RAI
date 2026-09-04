@@ -14,8 +14,12 @@ Use `uv` and the project virtual environment:
 ```bash
 git clone https://gitlab.com/tk-lab1/ai/rai.git
 cd rai
-uv sync --extra test --extra lint
+uv sync --extra dev
 ```
+
+The `dev` extra includes the test, lint and optional general-purpose tool
+dependencies needed for the documented Pylint command to resolve lazy tool
+imports consistently with CI.
 
 Install optional platform or inference dependencies only when needed:
 

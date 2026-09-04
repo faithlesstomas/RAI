@@ -184,8 +184,10 @@ Workspace, Control, goal-verification or open-ended planning responsibilities.
   dependencies out of the default RAI installation. RAI provides the neural
   runtime; GAIA retains Workspace, Control, epistemic, and verification
   semantics. The read-only server, Transformers engine, artifact fitter/loader,
-  shared fixtures and unit tests exist; live acceptance, terminal request-ID
-  replay protection, unique lens selection and GAIA transport remain open.
+  shared fixtures and unit tests exist. Duplicate lens IDs are rejected and
+  terminal request IDs cannot be reused during one sidecar process lifetime.
+  Live acceptance, bounded or restart-persistent replay protection and GAIA
+  transport remain open.
   Detailed milestone status is tracked only in the
   [canonical cross-project integration plan](https://gitlab.com/tk-lab1/ai/gaia/-/blob/main/docs/ncsi-jlens-integration.md).
 - Add schema-constrained classification, extraction, summarization, salience
@@ -234,14 +236,21 @@ GAIA-requested capability with a verified action-result chain.
 
 ## Stage 6 — user experience and ecosystem
 
-- Activity/history review and deletion UI.
-- Device, permission, connectivity and local-model status UI.
-- Native GNOME approval and status surface.
-- Emacs client.
-- COSMIC parity based on actual platform APIs.
-- Guile dashboard and experimental web UI.
-- TTS, audio-duplex and accessibility improvements beyond the minimal Stage 2
-  actuator.
+- [/] Activity/history review and deletion UI — an experimental NiceGUI history
+  view exists, but it is not connected to the planned observation/episode store
+  or its retention and deletion policy.
+- [ ] Device, permission, connectivity and local-model status UI.
+- [/] Native GNOME approval and status surface — desktop operations and HITL
+  dialogs exist, but a coherent runtime status and permission surface does not.
+- [/] Emacs client — an example client exists; Stage 1 capability-contract and
+  conformance integration remain open.
+- [/] COSMIC parity based on actual platform APIs — a partial desktop adapter
+  exists, without parity or acceptance coverage for the target runtime.
+- [/] Guile dashboard and experimental web UI — both prototypes exist, but do
+  not yet consume the Stage 1–3 runtime contracts.
+- [/] TTS, audio-duplex and accessibility improvements beyond the minimal Stage
+  2 actuator — a standalone TTS implementation exists, but it is not yet a typed
+  actuator in the common capability path.
 
 These features remain intentionally behind the runtime kernel and the first
 vertical slice.

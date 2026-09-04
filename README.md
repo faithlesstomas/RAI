@@ -87,7 +87,7 @@ Python 3.10 or newer and `uv` are required for development:
 ```bash
 git clone https://gitlab.com/tk-lab1/ai/rai.git
 cd rai
-uv sync --extra test --extra lint
+uv sync --extra dev
 ```
 
 Optional integrations are installed explicitly:
