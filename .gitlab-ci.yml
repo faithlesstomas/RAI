@@ -9,8 +9,7 @@ stages:
 pages:
   stage: deploy
   script:
-    - pip install .[docs]
-    - sphinx-build -W --keep-going -b html docs/ public/
+    - uv run sphinx-build -W --keep-going -b html docs/ public/
   artifacts:
     paths:
       - public
@@ -21,7 +20,7 @@ before_script:
   - apt-get update -y
   - apt-get install -y libgirepository1.0-dev libcairo2-dev pkg-config python3-dev gir1.2-gtk-3.0
   - pip install uv
-  - uv pip install --system .[dev,test,lint]
+  - uv sync --frozen --extra dev --extra docs
 
 publish_release:
   stage: release
@@ -45,26 +44,26 @@ publish_release:
 critical_lint:
   stage: lint
   script:
-    - pylint -E src/rai
+    - uv run pylint -E src/rai
 
 ruff_critical:
   stage: lint
   script:
-    - ruff check src tests --select E9,F63,F7,F82
+    - uv run ruff check src tests --select E9,F63,F7,F82
 
 ruff:
   stage: lint
   script:
-    - ruff check .
+    - uv run ruff check .
   allow_failure: true
 
 pylint:
   stage: lint
   script:
-    - pylint src
+    - uv run pylint src
   allow_failure: true
 
 test:
   stage: test
   script:
-    - pytest --timeout=30 --cov=src/rai --cov-report=term
+    - uv run pytest --timeout=30 --cov=src/rai --cov-report=term

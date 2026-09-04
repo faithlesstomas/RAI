@@ -7,6 +7,9 @@ from returns.result import Success
 from rai.services.chat import ChatService
 from rai.services.history import HistoryService
 
+MOCK_CONVERSATION_ID = "00000000-0000-4000-8000-000000000001"
+EXISTING_CONVERSATION_ID = "00000000-0000-4000-8000-000000000002"
+
 class MockResponse:
     def __init__(self, content):
         self._content = content
@@ -30,7 +33,7 @@ class MockResponse:
 class MockAgent:
     def __init__(self, config):
         self.config = config
-        self.conversation_id = "test-conv-id-1234"
+        self.conversation_id = MOCK_CONVERSATION_ID
 
     async def __aenter__(self):
         return self
@@ -61,14 +64,14 @@ async def test_run_chain_persists_conversation_id():
         
         assert isinstance(result, Success)
         # Verify the new conversation ID got set
-        mock_set_conv_id.assert_called_once_with(session_id, "test-conv-id-1234")
+        mock_set_conv_id.assert_called_once_with(session_id, MOCK_CONVERSATION_ID)
 
 @pytest.mark.asyncio
 async def test_run_chain_loads_existing_conversation_id():
     """Test that run_chain loads the existing conversation ID from state and passes it to LocalAgentConfig."""
     session_id = f"test-session-{uuid.uuid4()}"
     chat_service = ChatService()
-    existing_conv_id = "existing-conv-id-5678"
+    existing_conv_id = EXISTING_CONVERSATION_ID
     
     with patch("rai.backends.antigravity.Agent", side_effect=MockAgent) as mock_agent_class, \
          patch("rai.backends.antigravity.load_config", return_value={"active_agent": "default"}), \
