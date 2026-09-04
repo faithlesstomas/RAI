@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-09-04
+
 ### Changed
 - Reframed RAI as a local-first agent runtime for Linux and made Antigravity a
   transitional compatibility backend.
