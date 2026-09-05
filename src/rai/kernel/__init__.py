@@ -23,6 +23,7 @@ from .records import (
     UsageRecord,
     parse_record,
 )
+from .events import EventBatch, EventCursor, EventEnvelope, JournalFailure
 
 __all__ = [
     "ActionFailure",
@@ -45,5 +46,9 @@ __all__ = [
     "RiskClass",
     "Task",
     "UsageRecord",
+    "EventBatch",
+    "EventCursor",
+    "EventEnvelope",
+    "JournalFailure",
     "parse_record",
 ]

@@ -1,0 +1,852 @@
+{
+  "$defs": {
+    "ActionFailure": {
+      "additionalProperties": false,
+      "properties": {
+        "capability": {
+          "minLength": 1,
+          "title": "Capability",
+          "type": "string"
+        },
+        "code": {
+          "minLength": 1,
+          "title": "Code",
+          "type": "string"
+        },
+        "correlation_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Correlation Id"
+        },
+        "message": {
+          "minLength": 1,
+          "title": "Message",
+          "type": "string"
+        },
+        "producer": {
+          "$ref": "#/$defs/ProducerIdentity"
+        },
+        "provenance": {
+          "default": [],
+          "items": {
+            "$ref": "#/$defs/ProvenanceReference"
+          },
+          "title": "Provenance",
+          "type": "array"
+        },
+        "record_id": {
+          "minLength": 1,
+          "title": "Record Id",
+          "type": "string"
+        },
+        "record_type": {
+          "const": "action_failure",
+          "default": "action_failure",
+          "title": "Record Type",
+          "type": "string"
+        },
+        "request_id": {
+          "minLength": 1,
+          "title": "Request Id",
+          "type": "string"
+        },
+        "retryable": {
+          "default": false,
+          "title": "Retryable",
+          "type": "boolean"
+        },
+        "schema_version": {
+          "default": "1.0.0",
+          "pattern": "^1\\.(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)(?:[-+][0-9A-Za-z.-]+)?$",
+          "title": "Schema Version",
+          "type": "string"
+        },
+        "terminal": {
+          "const": true,
+          "default": true,
+          "title": "Terminal",
+          "type": "boolean"
+        },
+        "timestamp": {
+          "format": "date-time",
+          "title": "Timestamp",
+          "type": "string"
+        }
+      },
+      "required": [
+        "producer",
+        "request_id",
+        "capability",
+        "code",
+        "message"
+      ],
+      "title": "ActionFailure",
+      "type": "object"
+    },
+    "ActionResult": {
+      "additionalProperties": false,
+      "properties": {
+        "capability": {
+          "minLength": 1,
+          "title": "Capability",
+          "type": "string"
+        },
+        "correlation_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Correlation Id"
+        },
+        "output": {
+          "additionalProperties": true,
+          "title": "Output",
+          "type": "object"
+        },
+        "producer": {
+          "$ref": "#/$defs/ProducerIdentity"
+        },
+        "provenance": {
+          "default": [],
+          "items": {
+            "$ref": "#/$defs/ProvenanceReference"
+          },
+          "title": "Provenance",
+          "type": "array"
+        },
+        "record_id": {
+          "minLength": 1,
+          "title": "Record Id",
+          "type": "string"
+        },
+        "record_type": {
+          "const": "action_result",
+          "default": "action_result",
+          "title": "Record Type",
+          "type": "string"
+        },
+        "request_id": {
+          "minLength": 1,
+          "title": "Request Id",
+          "type": "string"
+        },
+        "schema_version": {
+          "default": "1.0.0",
+          "pattern": "^1\\.(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)(?:[-+][0-9A-Za-z.-]+)?$",
+          "title": "Schema Version",
+          "type": "string"
+        },
+        "terminal": {
+          "const": true,
+          "default": true,
+          "title": "Terminal",
+          "type": "boolean"
+        },
+        "timestamp": {
+          "format": "date-time",
+          "title": "Timestamp",
+          "type": "string"
+        },
+        "verification": {
+          "additionalProperties": true,
+          "title": "Verification",
+          "type": "object"
+        }
+      },
+      "required": [
+        "producer",
+        "request_id",
+        "capability",
+        "output",
+        "verification"
+      ],
+      "title": "ActionResult",
+      "type": "object"
+    },
+    "DataClass": {
+      "description": "Policy classification attached to persisted and outbound data.",
+      "enum": [
+        "PUBLIC",
+        "LOCAL",
+        "PRIVATE",
+        "SECRET",
+        "BLOCKED"
+      ],
+      "title": "DataClass",
+      "type": "string"
+    },
+    "EventBatch": {
+      "additionalProperties": false,
+      "description": "A bounded ordered replay page and its next durable cursor.",
+      "properties": {
+        "events": {
+          "items": {
+            "$ref": "#/$defs/EventEnvelope"
+          },
+          "title": "Events",
+          "type": "array"
+        },
+        "next_cursor": {
+          "$ref": "#/$defs/EventCursor"
+        }
+      },
+      "required": [
+        "events",
+        "next_cursor"
+      ],
+      "title": "EventBatch",
+      "type": "object"
+    },
+    "EventCursor": {
+      "additionalProperties": false,
+      "description": "Opaque, versioned position immediately after a journal sequence.",
+      "properties": {
+        "value": {
+          "title": "Value",
+          "type": "string"
+        }
+      },
+      "required": [
+        "value"
+      ],
+      "title": "EventCursor",
+      "type": "object"
+    },
+    "EventEnvelope": {
+      "additionalProperties": false,
+      "description": "Journal metadata around an unchanged, schema-validated kernel record.",
+      "properties": {
+        "accepted_at": {
+          "format": "date-time",
+          "title": "Accepted At",
+          "type": "string"
+        },
+        "clock_source": {
+          "minLength": 1,
+          "title": "Clock Source",
+          "type": "string"
+        },
+        "clock_uncertainty_ms": {
+          "minimum": 0,
+          "title": "Clock Uncertainty Ms",
+          "type": "integer"
+        },
+        "content_sha256": {
+          "pattern": "^[0-9a-f]{64}$",
+          "title": "Content Sha256",
+          "type": "string"
+        },
+        "cursor": {
+          "$ref": "#/$defs/EventCursor"
+        },
+        "data_class": {
+          "$ref": "#/$defs/DataClass"
+        },
+        "envelope_version": {
+          "const": "1.0.0",
+          "default": "1.0.0",
+          "title": "Envelope Version",
+          "type": "string"
+        },
+        "record": {
+          "discriminator": {
+            "mapping": {
+              "action_failure": "#/$defs/ActionFailure",
+              "action_result": "#/$defs/ActionResult",
+              "observation": "#/$defs/Observation",
+              "policy_decision": "#/$defs/PolicyDecision",
+              "usage_record": "#/$defs/UsageRecord"
+            },
+            "propertyName": "record_type"
+          },
+          "oneOf": [
+            {
+              "$ref": "#/$defs/Observation"
+            },
+            {
+              "$ref": "#/$defs/ActionResult"
+            },
+            {
+              "$ref": "#/$defs/ActionFailure"
+            },
+            {
+              "$ref": "#/$defs/PolicyDecision"
+            },
+            {
+              "$ref": "#/$defs/UsageRecord"
+            }
+          ],
+          "title": "Record"
+        },
+        "sequence": {
+          "exclusiveMinimum": 0,
+          "title": "Sequence",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "sequence",
+        "cursor",
+        "accepted_at",
+        "clock_source",
+        "clock_uncertainty_ms",
+        "content_sha256",
+        "data_class",
+        "record"
+      ],
+      "title": "EventEnvelope",
+      "type": "object"
+    },
+    "MediaReference": {
+      "additionalProperties": false,
+      "properties": {
+        "correlation_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Correlation Id"
+        },
+        "data_class": {
+          "$ref": "#/$defs/DataClass"
+        },
+        "media_type": {
+          "minLength": 1,
+          "title": "Media Type",
+          "type": "string"
+        },
+        "producer": {
+          "$ref": "#/$defs/ProducerIdentity"
+        },
+        "record_id": {
+          "minLength": 1,
+          "title": "Record Id",
+          "type": "string"
+        },
+        "record_type": {
+          "const": "media_reference",
+          "default": "media_reference",
+          "title": "Record Type",
+          "type": "string"
+        },
+        "schema_version": {
+          "default": "1.0.0",
+          "pattern": "^1\\.(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)(?:[-+][0-9A-Za-z.-]+)?$",
+          "title": "Schema Version",
+          "type": "string"
+        },
+        "sha256": {
+          "pattern": "^[0-9a-f]{64}$",
+          "title": "Sha256",
+          "type": "string"
+        },
+        "size_bytes": {
+          "minimum": 0,
+          "title": "Size Bytes",
+          "type": "integer"
+        },
+        "timestamp": {
+          "format": "date-time",
+          "title": "Timestamp",
+          "type": "string"
+        },
+        "uri": {
+          "minLength": 1,
+          "title": "Uri",
+          "type": "string"
+        }
+      },
+      "required": [
+        "producer",
+        "uri",
+        "media_type",
+        "sha256",
+        "size_bytes",
+        "data_class"
+      ],
+      "title": "MediaReference",
+      "type": "object"
+    },
+    "Observation": {
+      "additionalProperties": false,
+      "properties": {
+        "correlation_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Correlation Id"
+        },
+        "data_class": {
+          "$ref": "#/$defs/DataClass"
+        },
+        "device_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Device Id"
+        },
+        "kind": {
+          "minLength": 1,
+          "title": "Kind",
+          "type": "string"
+        },
+        "media": {
+          "default": [],
+          "items": {
+            "$ref": "#/$defs/MediaReference"
+          },
+          "title": "Media",
+          "type": "array"
+        },
+        "payload": {
+          "additionalProperties": true,
+          "title": "Payload",
+          "type": "object"
+        },
+        "producer": {
+          "$ref": "#/$defs/ProducerIdentity"
+        },
+        "provenance": {
+          "default": [],
+          "items": {
+            "$ref": "#/$defs/ProvenanceReference"
+          },
+          "title": "Provenance",
+          "type": "array"
+        },
+        "record_id": {
+          "minLength": 1,
+          "title": "Record Id",
+          "type": "string"
+        },
+        "record_type": {
+          "const": "observation",
+          "default": "observation",
+          "title": "Record Type",
+          "type": "string"
+        },
+        "schema_version": {
+          "default": "1.0.0",
+          "pattern": "^1\\.(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)(?:[-+][0-9A-Za-z.-]+)?$",
+          "title": "Schema Version",
+          "type": "string"
+        },
+        "timestamp": {
+          "format": "date-time",
+          "title": "Timestamp",
+          "type": "string"
+        }
+      },
+      "required": [
+        "producer",
+        "kind",
+        "payload",
+        "data_class"
+      ],
+      "title": "Observation",
+      "type": "object"
+    },
+    "PolicyDecision": {
+      "additionalProperties": false,
+      "properties": {
+        "actor": {
+          "$ref": "#/$defs/ProducerIdentity"
+        },
+        "approval_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Approval Id"
+        },
+        "budget_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Budget Id"
+        },
+        "correlation_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Correlation Id"
+        },
+        "data_class": {
+          "$ref": "#/$defs/DataClass"
+        },
+        "isolation": {
+          "minLength": 1,
+          "title": "Isolation",
+          "type": "string"
+        },
+        "outcome": {
+          "$ref": "#/$defs/PolicyOutcome"
+        },
+        "policy_version": {
+          "minLength": 1,
+          "title": "Policy Version",
+          "type": "string"
+        },
+        "producer": {
+          "$ref": "#/$defs/ProducerIdentity"
+        },
+        "reason_codes": {
+          "items": {
+            "type": "string"
+          },
+          "minItems": 1,
+          "title": "Reason Codes",
+          "type": "array"
+        },
+        "record_id": {
+          "minLength": 1,
+          "title": "Record Id",
+          "type": "string"
+        },
+        "record_type": {
+          "const": "policy_decision",
+          "default": "policy_decision",
+          "title": "Record Type",
+          "type": "string"
+        },
+        "request_id": {
+          "minLength": 1,
+          "title": "Request Id",
+          "type": "string"
+        },
+        "requested_side_effects": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Requested Side Effects",
+          "type": "array"
+        },
+        "risk_class": {
+          "$ref": "#/$defs/RiskClass"
+        },
+        "schema_version": {
+          "default": "1.0.0",
+          "pattern": "^1\\.(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)(?:[-+][0-9A-Za-z.-]+)?$",
+          "title": "Schema Version",
+          "type": "string"
+        },
+        "target_resource": {
+          "minLength": 1,
+          "title": "Target Resource",
+          "type": "string"
+        },
+        "timestamp": {
+          "format": "date-time",
+          "title": "Timestamp",
+          "type": "string"
+        },
+        "verification_plan": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Verification Plan",
+          "type": "array"
+        }
+      },
+      "required": [
+        "producer",
+        "request_id",
+        "outcome",
+        "risk_class",
+        "policy_version",
+        "reason_codes",
+        "actor",
+        "data_class",
+        "target_resource",
+        "requested_side_effects",
+        "isolation",
+        "verification_plan"
+      ],
+      "title": "PolicyDecision",
+      "type": "object"
+    },
+    "PolicyOutcome": {
+      "description": "Machine-readable policy outcomes.",
+      "enum": [
+        "ALLOW",
+        "ASK",
+        "DENY",
+        "ESCALATE"
+      ],
+      "title": "PolicyOutcome",
+      "type": "string"
+    },
+    "ProducerIdentity": {
+      "additionalProperties": false,
+      "description": "Identity of the component which produced a record.",
+      "properties": {
+        "device_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Device Id"
+        },
+        "kind": {
+          "minLength": 1,
+          "title": "Kind",
+          "type": "string"
+        },
+        "producer_id": {
+          "minLength": 1,
+          "title": "Producer Id",
+          "type": "string"
+        },
+        "version": {
+          "minLength": 1,
+          "title": "Version",
+          "type": "string"
+        }
+      },
+      "required": [
+        "producer_id",
+        "kind",
+        "version"
+      ],
+      "title": "ProducerIdentity",
+      "type": "object"
+    },
+    "ProvenanceReference": {
+      "additionalProperties": false,
+      "description": "Typed edge from a derived record to one of its sources.",
+      "properties": {
+        "producer": {
+          "$ref": "#/$defs/ProducerIdentity"
+        },
+        "relation": {
+          "minLength": 1,
+          "title": "Relation",
+          "type": "string"
+        },
+        "source_id": {
+          "minLength": 1,
+          "title": "Source Id",
+          "type": "string"
+        },
+        "source_type": {
+          "minLength": 1,
+          "title": "Source Type",
+          "type": "string"
+        },
+        "source_version": {
+          "minLength": 1,
+          "title": "Source Version",
+          "type": "string"
+        }
+      },
+      "required": [
+        "source_id",
+        "source_type",
+        "source_version",
+        "relation",
+        "producer"
+      ],
+      "title": "ProvenanceReference",
+      "type": "object"
+    },
+    "RiskClass": {
+      "description": "Risk associated with invoking a capability.",
+      "enum": [
+        "LOW",
+        "MODERATE",
+        "HIGH",
+        "CRITICAL"
+      ],
+      "title": "RiskClass",
+      "type": "string"
+    },
+    "UsageRecord": {
+      "additionalProperties": false,
+      "properties": {
+        "audio_seconds": {
+          "minimum": 0,
+          "title": "Audio Seconds",
+          "type": "number"
+        },
+        "backend": {
+          "minLength": 1,
+          "title": "Backend",
+          "type": "string"
+        },
+        "correlation_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Correlation Id"
+        },
+        "images": {
+          "minimum": 0,
+          "title": "Images",
+          "type": "integer"
+        },
+        "input_tokens": {
+          "minimum": 0,
+          "title": "Input Tokens",
+          "type": "integer"
+        },
+        "latency_seconds": {
+          "minimum": 0,
+          "title": "Latency Seconds",
+          "type": "number"
+        },
+        "model": {
+          "minLength": 1,
+          "title": "Model",
+          "type": "string"
+        },
+        "output_tokens": {
+          "minimum": 0,
+          "title": "Output Tokens",
+          "type": "integer"
+        },
+        "processor": {
+          "minLength": 1,
+          "title": "Processor",
+          "type": "string"
+        },
+        "producer": {
+          "$ref": "#/$defs/ProducerIdentity"
+        },
+        "provider": {
+          "minLength": 1,
+          "title": "Provider",
+          "type": "string"
+        },
+        "provider_cost": {
+          "anyOf": [
+            {
+              "minimum": 0,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Provider Cost"
+        },
+        "record_id": {
+          "minLength": 1,
+          "title": "Record Id",
+          "type": "string"
+        },
+        "record_type": {
+          "const": "usage_record",
+          "default": "usage_record",
+          "title": "Record Type",
+          "type": "string"
+        },
+        "schema_version": {
+          "default": "1.0.0",
+          "pattern": "^1\\.(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)(?:[-+][0-9A-Za-z.-]+)?$",
+          "title": "Schema Version",
+          "type": "string"
+        },
+        "task_id": {
+          "minLength": 1,
+          "title": "Task Id",
+          "type": "string"
+        },
+        "timestamp": {
+          "format": "date-time",
+          "title": "Timestamp",
+          "type": "string"
+        },
+        "tool_calls": {
+          "minimum": 0,
+          "title": "Tool Calls",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "producer",
+        "task_id",
+        "processor",
+        "backend",
+        "model",
+        "provider",
+        "input_tokens",
+        "output_tokens",
+        "tool_calls",
+        "images",
+        "audio_seconds",
+        "latency_seconds"
+      ],
+      "title": "UsageRecord",
+      "type": "object"
+    }
+  },
+  "$id": "https://tk-lab1.gitlab.io/ai/rai/schemas/rai.events.v1.schema.json",
+  "anyOf": [
+    {
+      "$ref": "#/$defs/EventEnvelope"
+    },
+    {
+      "$ref": "#/$defs/EventBatch"
+    }
+  ],
+  "title": "RAI Event Plane v1",
+  "x-rai-schema-version": "1.0.0"
+}

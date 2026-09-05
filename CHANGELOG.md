@@ -3,6 +3,10 @@
 ## [Unreleased]
 
 ### Added
+- Added the Stage 2 durable local event plane with transactional ordering,
+  idempotent ingest, replay cursors, consumer acknowledgements, bounded
+  subscriptions, authenticated HTTP/Unix-socket transports and the
+  provider-neutral deterministic acceptance subscriber.
 - Added reproducible wheel and source-distribution validation, a clean-wheel
   smoke test, Python 3.10-3.12 CI coverage, an explicit alpha-preview release
   job, and GitLab OIDC trusted-publishing jobs for TestPyPI and PyPI.

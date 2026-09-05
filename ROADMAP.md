@@ -387,19 +387,19 @@ Prerequisite: Stage 1 contracts.
 
 #### 2.1 Ordered event journal
 
-- [ ] Define one versioned `EventJournal` port and envelope for `Observation`,
+- [x] Define one versioned `EventJournal` port and envelope for `Observation`,
   `ActionResult`, `ActionFailure`, audit and usage events without weakening the
   schemas of the enclosed records.
-- [ ] Assign a durable monotonic sequence to every accepted event and expose
+- [x] Assign a durable monotonic sequence to every accepted event and expose
   bounded ordered reads from an opaque replay cursor.
-- [ ] Make `record_id` idempotent: an identical retry returns the original
+- [x] Make `record_id` idempotent: an identical retry returns the original
   sequence, while reuse with different content fails as a typed conflict.
-- [ ] Make accepted appends transactional and durable before returning success;
+- [x] Make accepted appends transactional and durable before returning success;
   document recovery after interruption at every commit boundary.
-- [ ] Persist independent consumer positions and acknowledgements so processing
+- [x] Persist independent consumer positions and acknowledgements so processing
   can resume without silently losing an accepted event.
-- [ ] Add retention hooks without allowing a backend to delete evidence.
-- [ ] Record clock source and uncertainty for multi-device timestamps.
+- [x] Add retention hooks without allowing a backend to delete evidence.
+- [x] Record clock source and uncertainty for multi-device timestamps.
 
 The existing one-record-per-file observation store may be used as migration
 input or a simple projection, but it does not satisfy this journal contract
@@ -407,31 +407,31 @@ until ordering, conflict detection, replay and acknowledgements are present.
 
 #### 2.2 Local ingest, replay and subscriptions
 
-- [ ] Add authenticated, schema-validated event ingest over loopback HTTP and a
+- [x] Add authenticated, schema-validated event ingest over loopback HTTP and a
   protected Unix-domain socket.
-- [ ] Add bounded replay and subscription APIs that start from an explicit
+- [x] Add bounded replay and subscription APIs that start from an explicit
   cursor and return the next durable cursor with every batch.
-- [ ] Validate record type, version, producer, size and data class before the
+- [x] Validate record type, version, producer, size and data class before the
   journal accepts an event.
-- [ ] Persist consumer acknowledgements only after their processing result is
+- [x] Persist consumer acknowledgements only after their processing result is
   durable.
-- [ ] Implement bounded queues, backpressure and clear overload failures.
-- [ ] Ensure slow subscribers cannot block collectors or the core event loop.
-- [ ] Keep trusted-LAN authentication, offline device spooling and cross-device
+- [x] Implement bounded queues, backpressure and clear overload failures.
+- [x] Ensure slow subscribers cannot block collectors or the core event loop.
+- [x] Keep trusted-LAN authentication, offline device spooling and cross-device
   reconnect behavior in Stage 7; Stage 2 exposes no unauthenticated network
   listener.
 
 #### 2.3 Provider-neutral dispatch and return path
 
-- [ ] Add a local deterministic subscriber that maps one accepted synthetic
+- [x] Add a local deterministic subscriber that maps one accepted synthetic
   observation to a bounded `CapabilityRequest` without model reasoning.
-- [ ] Dispatch the request exclusively through the common capability registry,
+- [x] Dispatch the request exclusively through the common capability registry,
   `PolicyEngine`, cancellation and audit path.
-- [ ] Use a deterministic test actuator and persist its typed `ActionResult` or
+- [x] Use a deterministic test actuator and persist its typed `ActionResult` or
   `ActionFailure` before acknowledging the source event.
-- [ ] Guarantee one durable terminal result for a request across retries,
+- [x] Guarantee one durable terminal result for a request across retries,
   cancellation and process restart.
-- [ ] Keep real speech synthesis in Stage 4 and production desktop/system
+- [x] Keep real speech synthesis in Stage 4 and production desktop/system
   actuators in Stage 5; the Stage 2 actuator is a conformance fixture, not a
   user-facing integration.
 
@@ -475,7 +475,7 @@ failure tests pass in CI.
   and smoke-test the wheel in a clean virtual environment.
 - [x] Add isolated GitLab OIDC jobs for TestPyPI and PyPI; publishing credentials
   must not be stored as long-lived CI variables.
-- [ ] Complete the Stage 2 provider-neutral acceptance slice before running a
+- [x] Complete the Stage 2 provider-neutral acceptance slice before running a
   version-producing `publish_preview` job.
 - [ ] Configure `rich-ai` pending trusted publishers on TestPyPI and PyPI for
   this GitLab project, `.gitlab-ci.yml`, and the `testpypi`/`pypi` environments;

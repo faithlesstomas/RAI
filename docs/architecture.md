@@ -53,6 +53,12 @@ capability and writes exactly one terminal result to the audit ledger.
 independent FastAPI application and app-scoped MCP runtime; importing dependency
 modules no longer creates history or model-registry singletons.
 
+The Stage 2 event plane adds a transactional `EventJournal` between collectors
+and processors. Authenticated loopback HTTP and a protected Unix socket share
+one validation service. Independent cursors and acknowledgements make replay
+explicit, while a deterministic subscriber demonstrates the complete path from
+synthetic observation through policy to a durable terminal capability result.
+
 ## Data flow
 
 ```text

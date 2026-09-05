@@ -21,6 +21,15 @@ from .records import (
     PolicyDecision,
     Task,
     UsageRecord,
+    DataClass,
+)
+from .events import (
+    EventBatch,
+    EventCursor,
+    EventEnvelope,
+    EventRecord,
+    JournalFailure,
+    TerminalEvent,
 )
 
 
@@ -161,3 +170,37 @@ class ApprovalBroker(Protocol):
     async def request(
         self, decision: PolicyDecision, cancellation: CancellationToken
     ) -> Result[str, ActionFailure]: ...
+
+
+@runtime_checkable
+class EventJournal(Protocol):
+    """Versioned durable ordered event storage boundary."""
+
+    async def append(
+        self,
+        record: EventRecord,
+        *,
+        data_class: DataClass | None = None,
+        clock_source: str = "system-utc",
+        clock_uncertainty_ms: int = 0,
+    ) -> Result[EventEnvelope, JournalFailure]: ...
+
+    async def read(
+        self, cursor: EventCursor, limit: int
+    ) -> Result[EventBatch, JournalFailure]: ...
+
+    async def acknowledge(
+        self, consumer_id: str, cursor: EventCursor
+    ) -> Result[EventCursor, JournalFailure]: ...
+
+    async def position(
+        self, consumer_id: str
+    ) -> Result[EventCursor, JournalFailure]: ...
+
+    async def request_retention(
+        self, cursor: EventCursor, reason: str
+    ) -> Result[EventCursor, JournalFailure]: ...
+
+    async def terminal_for(
+        self, request_id: str
+    ) -> Result[TerminalEvent | None, JournalFailure]: ...

@@ -30,6 +30,7 @@ in the roadmap are not assumed to exist until their acceptance gate is complete.
 
 architecture
 kernel-contracts
+event-plane
 neural-sidecar
 reference/modules
 ```

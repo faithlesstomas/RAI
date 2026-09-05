@@ -25,6 +25,12 @@ scope.
 CORS is disabled by default. Set a comma-separated `RAI_CORS_ORIGINS` only for
 trusted local frontends.
 
+Stage 2 event ingest, replay and acknowledgements use the same token boundary.
+The additional Unix-domain socket is created inside the protected XDG runtime
+directory with mode `0600`; it is not a network listener. Event size, replay
+batch and subscriber queue bounds fail closed with typed errors. `SECRET` and
+`BLOCKED` observations are rejected before the durable journal.
+
 ## Command execution
 
 - Bubblewrap is preferred, Guix is the fallback.

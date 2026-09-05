@@ -6,6 +6,8 @@ from fastapi import Request
 
 from .container import ApplicationContainer
 from .kernel.service import CapabilityService
+from .kernel.event_service import EventService
+from .kernel.ports import EventJournal
 from .services.history import HistoryService
 from .services.model_registry import ModelRegistry
 
@@ -29,6 +31,16 @@ def get_history_service(request: Request) -> HistoryService:
 
 async def get_capability_service(request: Request) -> CapabilityService:
     return get_container(request).capability_service
+
+
+async def get_event_service(request: Request) -> EventService:
+    return get_container(request).event_service
+
+
+async def get_event_journal(request: Request) -> EventJournal:
+    journal = get_container(request).event_journal
+    assert journal is not None
+    return journal
 
 
 async def close_dependencies(container: ApplicationContainer) -> None:
