@@ -73,7 +73,7 @@ class TransformersEngine:
             except ImportError as exc:
                 raise NcsiRuntimeError(
                     NcsiErrorCode.MODEL_LOAD_FAILED,
-                    "install rai[inference-transformers] to use the neural sidecar",
+                    "install rich-ai[inference-transformers] to use the neural sidecar",
                 ) from exc
             except Exception as exc:
                 if _is_out_of_memory(exc):

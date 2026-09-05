@@ -20,7 +20,7 @@ try:
     from piper.voice import PiperVoice
 except ImportError:
     logger.error(
-        "TTS Error: dependencies are not installed. Please run 'pip install rai-cli[tts]'"
+        "TTS Error: dependencies are not installed. Please run 'pip install rich-ai[tts]'"
     )
     sys.exit(1)
 
@@ -123,7 +123,7 @@ class TTS:
         except ImportError:
             logger.error(
                 "TTS Error: playback dependencies are not installed. "
-                "Please run 'pip install rai-cli[tts]'"
+                "Please run 'pip install rich-ai[tts]'"
             )
         except Exception as e:  # pylint: disable=broad-except
             logger.error("TTS Error playing audio: %s", e)

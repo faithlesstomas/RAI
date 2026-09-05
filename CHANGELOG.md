@@ -2,6 +2,21 @@
 
 ## [Unreleased]
 
+### Added
+- Added reproducible wheel and source-distribution validation, a clean-wheel
+  smoke test, Python 3.10-3.12 CI coverage, an explicit alpha-preview release
+  job, and GitLab OIDC trusted-publishing jobs for TestPyPI and PyPI.
+
+### Changed
+- Selected `rich-ai` as the PyPI distribution name while retaining `rai` for
+  the repository, Python namespace, CLI, configuration and protocol identity.
+- Repositioned RAI as the secure, local-first integration layer between AI
+  assistants and Linux, with GAIA, GCAS compatibility, Antigravity and J-lens
+  explicitly outside the standalone product's required core.
+- Moved Google Antigravity and GitLab tooling out of the base installation and
+  corrected optional extras so they cannot resolve to the unrelated PyPI
+  project named `rai`.
+
 ## [0.3.1] - 2026-09-04
 
 ### Fixed

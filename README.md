@@ -3,20 +3,30 @@
 > **Pronunciation:** /raɪ/ — like *rye* or *sky*; in Polish it sounds close to
 > *raj* (English: *paradise*).
 
-> **A Local-First Agent Runtime for Linux**
+> **The secure, local-first integration layer between AI assistants and Linux.**
 
-Rich AI is a persistent local runtime that connects Linux perception, state,
-memory, policy-controlled capabilities, small local models, and external agent
-harnesses. RAI is not intended to become another monolithic LLM orchestration
-framework. It owns the durable state and the boundary to the operating system;
-models and agent harnesses are replaceable processors.
+Rich AI lets AI assistants and agents work with a Linux system without giving
+them ambient, unrestricted access to it. Models can propose what should happen;
+RAI owns what they may observe, which typed capabilities they may invoke, when
+the user must approve an action, how it is isolated, and how its result is
+verified and audited.
+
+RAI is neither another agent framework nor a model server. It is the durable
+system boundary underneath replaceable local models, cloud assistants and agent
+harnesses: one place for Linux perception, private state and memory, capability
+policy, human approval and action provenance.
 
 The project is in an architectural transition. The daemon, CLI, MCP gateway,
 desktop adapters, history store, sandbox and HITL foundations exist today.
 Provider-neutral kernel records, runtime ports, capability policy and audit
 contracts are implemented. Perception collectors, episode building and model
-routing remain roadmap work. Google Antigravity is quarantined as a
-compatibility `AgentBackend`; it is not the architectural core.
+routing remain roadmap work. GAIA, GCAS compatibility, Google Antigravity and
+J-lens are optional integrations or research paths; none is required by the
+core product.
+
+The repository and import namespace remain `rai`. The Python distribution will
+be published on PyPI as `rich-ai`, so installation and imports intentionally
+use different names: `pip install rich-ai`, then `import rai` or run `rai`.
 
 ## Design principles
 
@@ -31,14 +41,15 @@ compatibility `AgentBackend`; it is not the architectural core.
 - **Fail closed:** unavailable isolation or missing authorization disables a
   privileged action; it never silently falls back to host execution.
 - **Provider independence:** local inference, GAIA, Codex, Claude, Gemini and
-  Antigravity should integrate through explicit backend contracts.
+  other harnesses integrate through optional backend contracts; disabling all
+  of them must not break the local runtime.
 - **Vertical slices:** new architecture must be demonstrated end-to-end before
   broad refactors or additional user interfaces are added.
 
 ## Target architecture
 
 ```text
- CLI · GNOME · Emacs · GAIA · external agent harnesses
+ CLI · GNOME · Emacs · optional agent backends
                          │
               MCP / HTTP / Unix socket
                          │
@@ -57,7 +68,7 @@ compatibility `AgentBackend`; it is not the architectural core.
 │              Task & Escalation Router           │
 └────────────────────────┬─────────────────────────┘
                          │ AgentBackend
-               local · GAIA · harnesses
+               local · GAIA · external harnesses
 ```
 
 See [docs/architecture.md](docs/architecture.md) for component boundaries and
@@ -86,7 +97,15 @@ hybrid model router.
 
 ## Installation
 
-Python 3.10 or newer and `uv` are required for development:
+The first `rich-ai` PyPI developer preview is planned but not published yet.
+Once it is available, the base installation will be:
+
+```bash
+python -m pip install --pre rich-ai
+```
+
+Until then, install from source. Python 3.10 or newer and `uv` are required for
+development:
 
 ```bash
 git clone https://gitlab.com/tk-lab1/ai/rai.git
@@ -98,9 +117,15 @@ Optional integrations are installed explicitly:
 
 ```bash
 uv sync --extra gnome-tools
+uv sync --extra antigravity
 uv sync --extra inference-llama
 uv sync --extra inference-onnx
+uv sync --extra inference-jlens --group jlens-reference
 ```
+
+The `jlens-reference` group is development-only because the pinned upstream
+reference implementation is not published on PyPI. It is deliberately absent
+from `rich-ai` package metadata.
 
 Model weights do not belong in the repository. Store them under an XDG data or
 cache directory and keep only a reproducible manifest/checksum in version

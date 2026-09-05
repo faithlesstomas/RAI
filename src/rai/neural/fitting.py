@@ -64,7 +64,8 @@ def _load_model(config: FitConfig) -> tuple[Any, Any]:
     except ImportError as exc:
         raise NcsiRuntimeError(
             NcsiErrorCode.MODEL_LOAD_FAILED,
-            "install rai[inference-jlens] to fit an artifact",
+            "install rich-ai[inference-jlens] and the upstream jlens reference "
+            "implementation to fit an artifact",
         ) from exc
     dtype: str | Any = config.dtype
     if config.dtype != "auto":

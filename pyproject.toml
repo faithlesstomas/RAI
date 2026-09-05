@@ -1,19 +1,35 @@
 [build-system]
-requires = ["setuptools>=61.0"]
+requires = ["setuptools>=77.0.3"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "rai"
+name = "rich-ai"
 version = "0.3.1"
-description = "Rich AI - A Local-First Agent Runtime for Linux"
+description = "A secure, local-first integration layer between AI assistants and Linux"
 readme = "README.md"
 requires-python = ">=3.10"
-license = {text = "MIT"}
+license = "MIT"
+license-files = ["LICENSE"]
+authors = [
+    {name = "RAI contributors"},
+]
+keywords = ["ai-agents", "linux", "local-ai", "mcp", "privacy", "runtime", "security"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Environment :: Console",
+    "Intended Audience :: Developers",
+    "Operating System :: POSIX :: Linux",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+    "Topic :: Security",
+    "Typing :: Typed",
+]
 
 dependencies = [
     "python-dotenv",
-    "google-antigravity>=0.1.16,<0.2",
-    "protobuf>=5.30.0",
     "rich",
     "click>=8.1,<8.3",
     "ollama",
@@ -21,7 +37,6 @@ dependencies = [
     "textual",
     "prompt_toolkit",
     "sqlalchemy",
-    "python-gitlab",
     "fastapi",
     "uvicorn[standard]",
     "httpx",
@@ -29,18 +44,34 @@ dependencies = [
     "returns",
 ]
 
+[project.urls]
+Homepage = "https://tk-lab1.gitlab.io/ai/rai/"
+Documentation = "https://tk-lab1.gitlab.io/ai/rai/"
+Repository = "https://gitlab.com/tk-lab1/ai/rai"
+Issues = "https://gitlab.com/tk-lab1/ai/rai/-/issues"
+Changelog = "https://gitlab.com/tk-lab1/ai/rai/-/blob/main/CHANGELOG.md"
+
 [project.optional-dependencies]
 anthropic = ["anthropic"]
 gemini = ["google-genai"]
 openai = ["openai"]
 groq = ["groq"]
+antigravity = ["google-antigravity>=0.1.16,<0.2", "protobuf>=5.30.0"]
 test = ["pytest", "pytest-asyncio", "pytest-cov", "pytest-timeout"]
 lint = ["ruff", "pylint"]
-dev = ["rai[test]", "rai[lint]", "rai[tools]"]
+dev = [
+    "rich-ai[antigravity]",
+    "rich-ai[test]",
+    "rich-ai[lint]",
+    "rich-ai[release]",
+    "rich-ai[tools]",
+]
 gnome-tools = ["pydbus", "pygobject"]
 tts = ["piper-tts", "sounddevice", "requests"]
 docs = ["sphinx", "myst-parser", "furo", "sphinx-autobuild"]
+release = ["build", "twine>=6,<7"]
 tools = [
+    "python-gitlab",
     "duckduckgo-search",
     "wikipedia",
     "arxiv",
@@ -59,23 +90,32 @@ inference-transformers = [
     "safetensors>=0.6.2",
 ]
 inference-jlens = [
+    "rich-ai[inference-transformers]",
     "accelerate>=1.12.0",
     "safetensors>=0.6.2",
-    "jlens @ git+https://github.com/anthropics/jacobian-lens.git@581d398613e5602a5af361e1c34d3a92ea82ba8e",
 ]
 all = [
-    "rai[anthropic]",
-    "rai[gemini]",
-    "rai[openai]",
-    "rai[groq]",
-    "rai[gnome-tools]",
-    "rai[tts]",
-    "rai[tools]",
-    "rai[inference-llama]",
-    "rai[inference-iree]",
-    "rai[inference-onnx]",
-    "rai[inference-transformers]",
-    "rai[inference-jlens]",
+    "rich-ai[anthropic]",
+    "rich-ai[antigravity]",
+    "rich-ai[gemini]",
+    "rich-ai[openai]",
+    "rich-ai[groq]",
+    "rich-ai[gnome-tools]",
+    "rich-ai[tts]",
+    "rich-ai[tools]",
+    "rich-ai[inference-llama]",
+    "rich-ai[inference-iree]",
+    "rich-ai[inference-onnx]",
+    "rich-ai[inference-transformers]",
+    "rich-ai[inference-jlens]",
+]
+
+[dependency-groups]
+# PyPI distributions should not declare direct URL dependencies. This
+# development-only group pins the upstream reference implementation used by
+# fitting and conformance work until jlens has an index release.
+jlens-reference = [
+    "jlens @ git+https://github.com/anthropics/jacobian-lens.git@581d398613e5602a5af361e1c34d3a92ea82ba8e",
 ]
 
 [project.scripts]

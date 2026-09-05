@@ -4,11 +4,12 @@ This document is the source of truth for the evolution of **Rich AI (RAI) — an
 intelligent and secure GNU/Linux desktop powered by local, hybrid or external
 AI**.
 
-RAI is a Linux-first, local-first agent and operating-system runtime. It observes
-explicitly allowed activity, maintains durable state and memory, exposes
-policy-controlled capabilities, and connects replaceable local models and agent
-harnesses to the desktop. The desktop is the primary interaction surface; RAI
-does not require a chat window to own the user experience.
+RAI is the secure, Linux-first integration layer between AI assistants and the
+operating system. It observes explicitly allowed activity, maintains durable
+local state and memory, exposes policy-controlled capabilities, and connects
+replaceable local models and agent harnesses to the desktop. The desktop is the
+primary interaction surface; RAI does not require a chat window to own the user
+experience.
 
 RAI is not a second cognitive kernel and not another monolithic chat
 orchestrator. It owns the boundary to the operating system and treats every
@@ -62,17 +63,19 @@ RAI owns:
   and emergency stop.
 
 RAI does not own a universal reasoning loop, Global Workspace, Cognitive
-Control, goal verification or open-ended deliberation. GAIA is the reference
-GCAS cognitive runtime and owns those semantics. RAI may perform bounded,
+Control, goal verification or open-ended deliberation. An external cognitive
+runtime such as GAIA may own those semantics. RAI may perform bounded,
 schema-constrained inference and deterministic local safety reactions, but it
-must not silently become a second cognitive process controller.
+must not silently become an open-ended cognitive process controller.
 
-GCAS defines portable cognitive and provenance contracts. RAI provides their
-Linux and edge embodiment: it produces observations, mediates actions and
-returns typed results. Codex, Claude, Gemini, Antigravity and future harnesses
-remain replaceable `AgentBackend` implementations. A remote Android, VR or
-wearable client is a thin `DeviceAgent`, not necessarily a full RAI
-installation.
+RAI owns its versioned embodiment, capability, policy and provenance contracts.
+Those contracts must support a useful standalone product and must not import or
+require GAIA. GCAS compatibility is an optional semantic mapping, not the source
+of RAI's runtime types. GAIA, Codex, Claude, Gemini, Antigravity and future
+harnesses remain replaceable `AgentBackend` implementations. J-lens is an
+optional neural-inspection sidecar, not a core dependency or release gate. A
+remote Android, VR or wearable client is a thin `DeviceAgent`, not necessarily
+a full RAI installation.
 
 RAI must not depend on private ChatGPT Computer History, Chronicle or Skysight
 interfaces. Those systems are architectural references only. Linux collectors
@@ -374,12 +377,64 @@ Required failure tests:
 - unavailable approval or isolation fails closed;
 - cancellation has one terminal result.
 
+### Release gate A — `rich-ai` developer preview
+
+Purpose: make the implemented kernel installable and testable by early users
+without presenting unfinished roadmap capabilities as a finished product. This
+gate is independent of GAIA, GCAS and J-lens.
+
+- [x] Select `rich-ai` as the Python distribution identity while retaining the
+  `rai` repository, import namespace, CLI command, configuration and protocol
+  names.
+- [x] Add PyPI metadata, project links, classifiers and explicit optional
+  dependency groups.
+- [x] Keep Antigravity and J-lens outside the base dependency set, and make a
+  base `import rai` work without their SDKs.
+- [x] Build both wheel and source distribution in CI, validate them with Twine,
+  and smoke-test the wheel in a clean virtual environment.
+- [x] Add isolated GitLab OIDC jobs for TestPyPI and PyPI; publishing credentials
+  must not be stored as long-lived CI variables.
+- [ ] Configure `rich-ai` pending trusted publishers on TestPyPI and PyPI for
+  this GitLab project, `.gitlab-ci.yml`, and the `testpypi`/`pypi` environments;
+  protect the production environment and release tags in GitLab.
+- [ ] Publish a TestPyPI candidate and verify installation, `import rai`,
+  `rai --version`, capability listing and package links from a clean machine.
+- [ ] Publish the first immutable PyPI developer preview. The planned version is
+  `0.4.0a1` (or the next unique pre-release selected by semantic-release); do
+  not rebuild or reuse the already released `0.3.1` version.
+
+Acceptance gate:
+
+```text
+python -m pip install --pre rich-ai succeeds in a clean environment
+import rai and rai --version report the same version as PyPI metadata
+rai capability list works without GAIA, Antigravity or J-lens installed
+wheel and sdist pass twine check and contain no dependency on PyPI project rai
+or direct VCS/URL dependency
+the tag, GitLab release and PyPI artifacts identify the same immutable commit
+```
+
 ### Stage 2 — durable event plane and first RAI ↔ GAIA slice
 
 Purpose: prove durable delivery and the cross-project ownership boundary before
 adding production desktop observation.
 
 Prerequisite: Stage 1 contracts.
+
+Status: pending product-boundary review. Packages 2.1, 2.2 and a provider-neutral
+local return path are candidates for the core. Package 2.3 is optional
+integration work and may move to Stage 6; it is not a prerequisite for the
+PyPI developer preview or for standalone Rich History.
+
+Before implementation begins:
+
+- [ ] Separate the durable event plane required by RAI from every GAIA adapter.
+- [ ] Decide whether package 2.3 and its GAIA-specific acceptance path belong in
+  Stage 6 instead.
+- [ ] Rewrite the acceptance slice so a local synthetic processor proves the
+  core path and a GAIA round-trip is an additional integration test.
+- [ ] Confirm that Stage 3 depends only on the provider-neutral journal and
+  subscriptions, not on GAIA or GCAS compatibility.
 
 #### 2.1 Observation and result journal
 
@@ -399,7 +454,7 @@ Prerequisite: Stage 1 contracts.
 - [ ] Implement bounded queues, backpressure and clear overload failures.
 - [ ] Ensure slow subscribers cannot block collectors or the core event loop.
 
-#### 2.3 GAIA embodiment contract
+#### 2.3 Optional GAIA embodiment adapter
 
 - [ ] Convert a validated RAI `Observation` into an unverified GAIA Observation
   Cognitive Object with complete provenance.
@@ -419,7 +474,7 @@ Prerequisite: Stage 1 contracts.
 - [ ] Propagate cancellation and device-unavailable failures without converting
   them into success.
 
-Acceptance slice:
+Current cross-project acceptance slice (subject to the review above):
 
 ```text
 synthetic person_present Observation
@@ -1002,7 +1057,11 @@ recoverable and secure enough for non-development use.
 - [ ] Provide graceful degradation from visual to semantic to deterministic
   operation as resources disappear.
 
-#### 9.4 Packaging and operations
+#### 9.4 System packaging and operations
+
+Python developer previews are delivered by Release gate A. This package covers
+operating-system integration and production operations rather than postponing
+all distribution work until Stage 9.
 
 - [ ] Ship systemd user units, XDG integration and least-privilege packaging.
 - [ ] Document portal, AT-SPI, browser and desktop-specific permission setup.

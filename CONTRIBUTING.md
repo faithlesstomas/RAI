@@ -4,6 +4,11 @@ RAI is evolving into a local-first agent runtime for Linux. Contributions should
 strengthen a complete runtime boundary or vertical slice instead of introducing
 another provider-specific orchestration layer.
 
+The repository, Python import namespace and CLI are named `rai`; the Python
+distribution is named `rich-ai`. Never add a dependency on the unrelated `rai`
+project from PyPI. Optional self-references therefore use forms such as
+`rich-ai[tools]`, while application code continues to use `import rai`.
+
 Read [ROADMAP.md](ROADMAP.md), [docs/architecture.md](docs/architecture.md) and
 [SECURITY.md](SECURITY.md) before changing runtime or execution code.
 
@@ -26,7 +31,12 @@ Install optional platform or inference dependencies only when needed:
 ```bash
 uv sync --extra gnome-tools
 uv sync --extra inference-llama
+uv sync --extra inference-jlens --group jlens-reference
 ```
+
+The `jlens-reference` dependency group is development-only. Direct VCS
+requirements must not enter the metadata uploaded to a public Python package
+index.
 
 Do not commit model weights, API keys, access tokens, local databases or local
 harness state. If a credential reaches a workspace file, rotate it; adding the
@@ -197,8 +207,9 @@ from the corresponding immutable Git tag.
 
 ## Release process
 
-Releases are created from a clean, reviewed `main` branch by the manual
-`publish_release` GitLab CI job. The normal process is:
+Releases are created from a clean, reviewed `main` branch by a manual GitLab CI
+job. Use `publish_preview` for alpha previews and `publish_release` only for a
+stable release. The normal process is:
 
 1. Confirm all intended merge requests are merged and their Conventional Commit
    messages express the correct SemVer impact.
@@ -215,23 +226,40 @@ Releases are created from a clean, reviewed `main` branch by the manual
 5. Review the proposed version and release notes. Correct commit metadata or the
    changelog before releasing; do not compensate for a wrong classification by
    manually choosing an arbitrary version.
-6. Run the manual `publish_release` job for the exact green commit on `main`.
-   The job updates `pyproject.toml` and `src/rai/__init__.py`, builds the
-   changelog and package, creates the release commit and `vX.Y.Z` tag, pushes
-   them and publishes the GitLab release.
-7. Verify the tag points at the release commit and that the following agree:
+6. Run `publish_preview` (or, once the relevant stability gate is met,
+   `publish_release`) for the exact green commit on `main`. The job updates
+   `pyproject.toml` and `src/rai/__init__.py`, builds the changelog and package,
+   creates the release commit and SemVer tag, pushes them and publishes the
+   GitLab release.
+7. In the resulting tag pipeline, run `publish_testpypi`. Install that exact
+   candidate in a clean environment and verify imports, CLI behavior and
+   project links. The job uses GitLab OIDC trusted publishing; do not add a
+   long-lived PyPI API token.
+8. After the TestPyPI job and smoke test succeed, run the protected
+   `publish_pypi` job from the same tag pipeline. PyPI artifacts must be the
+   unchanged artifacts produced by the tag's `package` job.
+9. Verify the tag points at the release commit and that the following agree:
 
    ```bash
    git describe --tags --exact-match
    uv run rai --version
    uv build
+   python -m pip index versions rich-ai
    ```
 
-   Also verify the built package metadata, FastAPI version, release artifacts,
-   release notes and documentation site.
+   Also verify the built package metadata, clean installation with
+   `python -m pip install --pre rich-ai`, FastAPI version, GitLab release, PyPI
+   links, release notes and documentation site.
 
-8. Start the next development cycle with an empty or updated `Unreleased`
+10. Start the next development cycle with an empty or updated `Unreleased`
    section as produced by the release tooling.
+
+Before the first publication, create pending trusted publishers for `rich-ai`
+on TestPyPI and PyPI. Restrict them to the GitLab namespace `tk-lab1/ai`, project
+`rai`, workflow `.gitlab-ci.yml`, and environments `testpypi` and `pypi`.
+Protect production release tags and the `pypi` environment in GitLab. This is
+one-time registry/project configuration and cannot be completed by repository
+code alone.
 
 Never move, replace or reuse a published tag, and never modify artifacts for an
 existing version. A release error is corrected by a new SemVer release.

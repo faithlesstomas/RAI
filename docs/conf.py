@@ -34,4 +34,4 @@ exclude_patterns = ['_build', 'Thumbs.db', '.DS_Store']
 
 # -- Options for HTML output -------------------------------------------------
 html_theme = 'furo'
-html_title = "Rich AI - A Local-First Agent Runtime for Linux"
+html_title = "Rich AI - Secure AI Integration for Linux"

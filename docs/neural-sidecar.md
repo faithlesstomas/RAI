@@ -103,7 +103,7 @@ the sidecar API. RAI pins the Apache-2.0 reference implementation to commit
 sidecar installations do not need the fitting code:
 
 ```bash
-uv sync --extra inference-jlens
+uv sync --extra inference-jlens --group jlens-reference
 uv run rai neural fit-lens \
   --model org/model \
   --revision MODEL_COMMIT_SHA \
@@ -114,6 +114,10 @@ uv run rai neural fit-lens \
   --corpus-license corpus-license \
   --output "$XDG_DATA_HOME/rai/neural/lenses/model-jlens-v1"
 ```
+
+The pinned `jlens` reference implementation lives in a development dependency
+group because it is not available from PyPI; it is not part of the published
+`rich-ai` distribution metadata.
 
 The prompts file is a non-empty JSON array of strings. Options such as
 `--layer`, `--dim-batch`, `--max-seq-len`, and `--skip-first` control the
