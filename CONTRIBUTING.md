@@ -230,7 +230,9 @@ stable release. The normal process is:
    `publish_release`) for the exact green commit on `main`. The job updates
    `pyproject.toml` and `src/rai/__init__.py`, builds the changelog and package,
    creates the release commit and SemVer tag, pushes them and publishes the
-   GitLab release.
+   GitLab release. Release artifacts are built in `build/pypi/`; only the wheel
+   and source archive are attached, so system packages under `dist/` remain
+   outside the Python release flow.
 7. In the resulting tag pipeline, run `publish_testpypi`. Install that exact
    candidate in a clean environment and verify imports, CLI behavior and
    project links. The job uses GitLab OIDC trusted publishing; do not add a

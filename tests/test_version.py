@@ -1,6 +1,12 @@
 """Distribution identity and version consistency tests."""
 
 from importlib.metadata import requires, version
+from pathlib import Path
+
+try:
+    import tomllib
+except ModuleNotFoundError:  # pragma: no cover - Python 3.10 compatibility
+    import tomli as tomllib
 
 from packaging.requirements import Requirement
 from packaging.utils import canonicalize_name
@@ -31,6 +37,18 @@ def test_distribution_has_no_direct_url_dependencies() -> None:
     dependencies = [Requirement(requirement) for requirement in requires("rich-ai") or []]
 
     assert all(dependency.url is None for dependency in dependencies)
+
+
+def test_semantic_release_only_publishes_python_distributions() -> None:
+    """Release assets must not include the system packaging tree under dist/."""
+    with Path("pyproject.toml").open("rb") as stream:
+        release_config = tomllib.load(stream)["tool"]["semantic_release"]
+
+    assert "--outdir build/pypi" in release_config["build_command"]
+    assert release_config["publish"]["dist_glob_patterns"] == [
+        "build/pypi/*.whl",
+        "build/pypi/*.tar.gz",
+    ]
 
 
 def test_cli_reports_runtime_version() -> None:

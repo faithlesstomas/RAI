@@ -144,7 +144,7 @@ version_variables = ["src/rai/__init__.py:__version__"]
 version_toml = ["pyproject.toml:project.version"]
 allow_zero_version = true
 major_on_zero = false
-build_command = "pip install build && python -m build"
+build_command = "python -m pip install 'build>=1,<2' && python -m build --sdist --wheel --outdir build/pypi ."
 
 [tool.semantic_release.changelog]
 template_dir = "templates"
@@ -157,4 +157,5 @@ match = "main"
 type = "gitlab"
 
 [tool.semantic_release.publish]
+dist_glob_patterns = ["build/pypi/*.whl", "build/pypi/*.tar.gz"]
 upload_to_vcs_release = true
