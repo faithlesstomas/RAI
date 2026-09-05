@@ -377,11 +377,92 @@ Required failure tests:
 - unavailable approval or isolation fails closed;
 - cancellation has one terminal result.
 
+### Stage 2 — durable local event plane
+
+Purpose: give RAI a provider-neutral, replayable event backbone before adding
+production desktop observation. This stage connects the Stage 1 records,
+policy and capability path without requiring an external cognitive runtime.
+
+Prerequisite: Stage 1 contracts.
+
+#### 2.1 Ordered event journal
+
+- [ ] Define one versioned `EventJournal` port and envelope for `Observation`,
+  `ActionResult`, `ActionFailure`, audit and usage events without weakening the
+  schemas of the enclosed records.
+- [ ] Assign a durable monotonic sequence to every accepted event and expose
+  bounded ordered reads from an opaque replay cursor.
+- [ ] Make `record_id` idempotent: an identical retry returns the original
+  sequence, while reuse with different content fails as a typed conflict.
+- [ ] Make accepted appends transactional and durable before returning success;
+  document recovery after interruption at every commit boundary.
+- [ ] Persist independent consumer positions and acknowledgements so processing
+  can resume without silently losing an accepted event.
+- [ ] Add retention hooks without allowing a backend to delete evidence.
+- [ ] Record clock source and uncertainty for multi-device timestamps.
+
+The existing one-record-per-file observation store may be used as migration
+input or a simple projection, but it does not satisfy this journal contract
+until ordering, conflict detection, replay and acknowledgements are present.
+
+#### 2.2 Local ingest, replay and subscriptions
+
+- [ ] Add authenticated, schema-validated event ingest over loopback HTTP and a
+  protected Unix-domain socket.
+- [ ] Add bounded replay and subscription APIs that start from an explicit
+  cursor and return the next durable cursor with every batch.
+- [ ] Validate record type, version, producer, size and data class before the
+  journal accepts an event.
+- [ ] Persist consumer acknowledgements only after their processing result is
+  durable.
+- [ ] Implement bounded queues, backpressure and clear overload failures.
+- [ ] Ensure slow subscribers cannot block collectors or the core event loop.
+- [ ] Keep trusted-LAN authentication, offline device spooling and cross-device
+  reconnect behavior in Stage 7; Stage 2 exposes no unauthenticated network
+  listener.
+
+#### 2.3 Provider-neutral dispatch and return path
+
+- [ ] Add a local deterministic subscriber that maps one accepted synthetic
+  observation to a bounded `CapabilityRequest` without model reasoning.
+- [ ] Dispatch the request exclusively through the common capability registry,
+  `PolicyEngine`, cancellation and audit path.
+- [ ] Use a deterministic test actuator and persist its typed `ActionResult` or
+  `ActionFailure` before acknowledging the source event.
+- [ ] Guarantee one durable terminal result for a request across retries,
+  cancellation and process restart.
+- [ ] Keep real speech synthesis in Stage 4 and production desktop/system
+  actuators in Stage 5; the Stage 2 actuator is a conformance fixture, not a
+  user-facing integration.
+
+Acceptance slice:
+
+```text
+synthetic person_present Observation
+  -> authenticated local ingest
+  -> ordered durable EventJournal
+  -> replay from an explicit cursor
+  -> deterministic local subscriber
+  -> CapabilityRequest through the common PolicyEngine
+  -> deterministic test actuator
+  -> durable ActionResult
+  -> consumer acknowledgement
+```
+
+Required failure tests cover identical duplicate delivery, conflicting ID reuse,
+out-of-order source timestamps, restart/replay before and after acknowledgement,
+malformed and oversized events, unauthorized ingest, slow-consumer backpressure,
+unavailable actuator, policy denial and cancellation. The slice must pass with
+GAIA, GCAS compatibility, Antigravity, J-lens and every external model disabled.
+
 ### Release gate A — `rich-ai` developer preview
 
-Purpose: make the implemented kernel installable and testable by early users
-without presenting unfinished roadmap capabilities as a finished product. This
-gate is independent of GAIA, GCAS and J-lens.
+Purpose: publish an installable preview containing both the Stage 1 kernel and a
+working Stage 2 event plane without presenting later desktop capabilities as a
+finished product. GAIA, GCAS and J-lens remain outside this release gate.
+
+Prerequisite: the Stage 2 provider-neutral acceptance slice and its required
+failure tests pass in CI.
 
 - [x] Select `rich-ai` as the Python distribution identity while retaining the
   `rai` repository, import namespace, CLI command, configuration and protocol
@@ -394,11 +475,14 @@ gate is independent of GAIA, GCAS and J-lens.
   and smoke-test the wheel in a clean virtual environment.
 - [x] Add isolated GitLab OIDC jobs for TestPyPI and PyPI; publishing credentials
   must not be stored as long-lived CI variables.
+- [ ] Complete the Stage 2 provider-neutral acceptance slice before running a
+  version-producing `publish_preview` job.
 - [ ] Configure `rich-ai` pending trusted publishers on TestPyPI and PyPI for
   this GitLab project, `.gitlab-ci.yml`, and the `testpypi`/`pypi` environments;
   protect the production environment and release tags in GitLab.
 - [ ] Publish a TestPyPI candidate and verify installation, `import rai`,
-  `rai --version`, capability listing and package links from a clean machine.
+  `rai --version`, capability listing, local event ingest/replay and package
+  links from a clean machine.
 - [ ] Publish the first immutable PyPI developer preview. The planned version is
   `0.4.0a1` (or the next unique pre-release selected by semantic-release); do
   not rebuild or reuse the already released `0.3.1` version.
@@ -408,85 +492,12 @@ Acceptance gate:
 ```text
 python -m pip install --pre rich-ai succeeds in a clean environment
 import rai and rai --version report the same version as PyPI metadata
-rai capability list works without GAIA, Antigravity or J-lens installed
+rai capability list and the Stage 2 local event slice work without GAIA,
+Antigravity or J-lens installed
 wheel and sdist pass twine check and contain no dependency on PyPI project rai
 or direct VCS/URL dependency
 the tag, GitLab release and PyPI artifacts identify the same immutable commit
 ```
-
-### Stage 2 — durable event plane and first RAI ↔ GAIA slice
-
-Purpose: prove durable delivery and the cross-project ownership boundary before
-adding production desktop observation.
-
-Prerequisite: Stage 1 contracts.
-
-Status: pending product-boundary review. Packages 2.1, 2.2 and a provider-neutral
-local return path are candidates for the core. Package 2.3 is optional
-integration work and may move to Stage 6; it is not a prerequisite for the
-PyPI developer preview or for standalone Rich History.
-
-Before implementation begins:
-
-- [ ] Separate the durable event plane required by RAI from every GAIA adapter.
-- [ ] Decide whether package 2.3 and its GAIA-specific acceptance path belong in
-  Stage 6 instead.
-- [ ] Rewrite the acceptance slice so a local synthetic processor proves the
-  core path and a GAIA round-trip is an additional integration test.
-- [ ] Confirm that Stage 3 depends only on the provider-neutral journal and
-  subscriptions, not on GAIA or GCAS compatibility.
-
-#### 2.1 Observation and result journal
-
-- [ ] Add append-only observation, action-result, audit and usage storage.
-- [ ] Add event-ID deduplication, ordering metadata, replay cursors and consumer
-  acknowledgements.
-- [ ] Make accepted writes transactional and define crash-recovery behavior.
-- [ ] Add retention hooks without allowing a backend to delete evidence.
-- [ ] Record clock source and uncertainty for multi-device timestamps.
-
-#### 2.2 Ingest and subscriptions
-
-- [ ] Add authenticated observation ingest and subscription APIs over HTTP and
-  Unix sockets.
-- [ ] Use a network-capable transport with explicit authentication between
-  physical devices.
-- [ ] Implement bounded queues, backpressure and clear overload failures.
-- [ ] Ensure slow subscribers cannot block collectors or the core event loop.
-
-#### 2.3 Optional GAIA embodiment adapter
-
-- [ ] Convert a validated RAI `Observation` into an unverified GAIA Observation
-  Cognitive Object with complete provenance.
-- [ ] Accept bounded GAIA `Action` requests through the common capability
-  registry.
-- [ ] Return typed `ActionResult` or `ActionFailure` records to GAIA.
-- [ ] Preserve exactly-once cognitive terminal semantics over idempotent,
-  at-least-once transport delivery.
-- [ ] Keep the generic sensor protocol separate from the NCSI/J-lens neural-state
-  protocol.
-
-#### 2.4 Minimal return path
-
-- [ ] Add one local actuator, preferably Piper TTS or a deterministic substitute.
-- [ ] Apply policy before synthesis and persist the result after playback or a
-  verifiable test substitute completes.
-- [ ] Propagate cancellation and device-unavailable failures without converting
-  them into success.
-
-Current cross-project acceptance slice (subject to the review above):
-
-```text
-synthetic person_present Observation
-  -> RAI durable store
-  -> GAIA unverified Observation CO
-  -> policy-approved speech.synthesize Action
-  -> local actuator
-  -> durable ActionResult returned to GAIA
-```
-
-Required failure tests cover duplicate delivery, reconnect/replay, out-of-order
-events, unavailable actuator, policy denial and cancellation.
 
 ### Stage 3 — Rich History: private desktop observation
 
@@ -494,8 +505,9 @@ Purpose: deliver a useful read-only desktop-awareness product before autonomous
 or model-driven action. Start with metadata and semantic events, not continuous
 screenshots or key logging.
 
-Prerequisites: Stage 1 records and Stage 2 observation journal. GAIA is not
-required for the local Rich History acceptance slice.
+Prerequisites: Stage 1 records and the Stage 2 event journal and local
+subscriptions. GAIA is not required for the local Rich History acceptance
+slice.
 
 #### 3.1 Collector supervisor
 
@@ -623,7 +635,8 @@ recoverable activity content.
 Purpose: add bounded local understanding while keeping collection, memory,
 policy and execution deterministic and independent of model availability.
 
-Prerequisite: Stage 3 local episodes. Stage 2 provides the actuator path.
+Prerequisite: Stage 3 local episodes. Stage 1 provides the policy-controlled
+actuator boundary and Stage 2 provides durable input and result delivery.
 
 #### 4.1 Processor supervisor
 
@@ -650,7 +663,10 @@ Prerequisite: Stage 3 local episodes. Stage 2 provides the actuator path.
 
 - [ ] Start with push-to-talk and local VAD/STT; add an optional local wake word
   only after false-activation evaluation.
-- [ ] Reuse `speech.synthesize` for local TTS responses.
+- [ ] Implement `speech.synthesize` as a policy-controlled local `Actuator`,
+  backed initially by Piper TTS and a deterministic substitute for tests.
+- [ ] Persist the typed result only after playback or its verifiable test
+  substitute completes; device-unavailable and cancellation remain failures.
 - [ ] Do not persist raw audio by default; retain transcript only under the active
   history policy.
 - [ ] Include transcript confidence, language and timing provenance.
@@ -864,7 +880,26 @@ prices change independently of RAI releases.
   process-wide patching or private runtime coupling.
 - [ ] Make backend removal or outage preserve local history and capability state.
 
-#### 6.4 ACP and MCP roles
+#### 6.4 Optional GAIA embodiment adapter
+
+- [ ] Implement GAIA strictly as an adapter over the public Stage 2 event and
+  Stage 1 capability contracts; do not import GAIA implementation modules into
+  the RAI kernel.
+- [ ] Convert a validated RAI `Observation` into an unverified GAIA Observation
+  Cognitive Object with complete provenance and data-class metadata.
+- [ ] Accept bounded GAIA `Action` requests only through the common capability
+  registry, policy, approval and audit path.
+- [ ] Return typed `ActionResult` or `ActionFailure` events through the durable
+  journal and preserve one cognitive terminal result over retryable delivery.
+- [ ] Keep GAIA/GCAS identifiers and session state inside the adapter rather than
+  adding them to provider-neutral RAI records.
+- [ ] Keep the generic observation channel separate from the optional
+  NCSI/J-lens neural-state protocol.
+
+The GAIA round-trip is an additional cross-project conformance test, not a
+prerequisite for the Stage 2 event plane, Rich History or local-only operation.
+
+#### 6.5 ACP and MCP roles
 
 - [ ] Add an optional ACP client adapter after the base `AgentBackend` contract is
   stable.
@@ -877,7 +912,7 @@ prices change independently of RAI releases.
 - [ ] Add conformance fixtures that prove an ACP agent cannot bypass RAI policy or
   obtain ambient desktop context.
 
-#### 6.5 Hybrid routing
+#### 6.6 Hybrid routing
 
 - [ ] Route deterministic tasks directly to capabilities without spending model
   tokens.
@@ -951,7 +986,7 @@ Raspberry Pi or simulated DeviceAgent
   -> records allowed observations while disconnected
   -> reconnects without loss or duplication
   -> advertises current capabilities
-  -> receives one policy-approved GAIA action
+  -> receives one policy-approved RAI capability request
   -> returns a verified result
 ```
 
@@ -1149,8 +1184,8 @@ than a big-bang rewrite.
 
 1. The application container and typed registry become the only capability
    invocation path.
-2. The Stage 2 Observation → GAIA → Action → Result slice passes cross-project
-   acceptance tests.
+2. The Stage 2 provider-neutral Observation → CapabilityRequest → ActionResult
+   slice passes restart, replay and policy acceptance tests.
 3. CLI, REST and MCP use the same runtime services and policy decisions.
 4. Rich History stores normalized observations and episodes independently of
    conversation history.
