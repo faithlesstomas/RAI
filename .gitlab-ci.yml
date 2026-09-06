@@ -112,7 +112,7 @@ publish_testpypi:
   environment:
     name: testpypi
   id_tokens:
-    PYPI_ID_TOKEN:
+    TESTPYPI_ID_TOKEN:
       aud: testpypi
   script:
     - python -m pip install "twine>=6,<7"
