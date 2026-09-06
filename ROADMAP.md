@@ -516,6 +516,11 @@ Purpose: deliver a useful read-only desktop-awareness product before autonomous
 or model-driven action. Start with metadata and semantic events, not continuous
 screenshots or key logging.
 
+Status: `[/]` — the provider-neutral pipeline, privacy boundary, encrypted
+storage, deterministic episode builder and local review API pass automated
+acceptance tests. Production validation against supported live GNOME, AT-SPI
+and browser sessions remains open and is tracked separately below.
+
 Prerequisites: Stage 1 records and the Stage 2 event journal and local
 subscriptions. GAIA is not required for the local Rich History acceptance
 slice.
@@ -524,8 +529,8 @@ slice.
 
 - [x] Add production collector registration, lifecycle, health, restart and
   backoff.
-- [x] Run platform collectors as an unprivileged user service or isolated
-  sidecars.
+- [x] Run platform collectors as daemon-managed unprivileged sidecars. Packaged
+  systemd user-service integration remains a Stage 9 concern.
 - [x] Expose collector status, last event, error and effective permission state.
 - [x] Stop collection immediately when the profile is disabled, the session is
   locked or the user activates emergency stop.
@@ -533,22 +538,22 @@ slice.
 
 #### 3.2 GNOME session collector
 
-- [x] Observe session lock/unlock, idle/active transitions, workspace changes and
+- [/] Observe session lock/unlock, idle/active transitions, workspace changes and
   active application/window changes using supported GNOME interfaces.
-- [x] Normalize application identity through desktop-entry IDs where possible.
-- [x] Treat window titles as potentially private content and classify them before
+- [/] Normalize application identity through desktop-entry IDs where possible.
+- [/] Treat window titles as potentially private content and classify them before
   persistence.
-- [x] Avoid privileged `/dev/input` access and global raw input capture.
+- [/] Avoid privileged `/dev/input` access and global raw input capture.
 
 #### 3.3 AT-SPI semantic collector
 
-- [x] Observe bounded focus, role, state and document-context changes over
+- [/] Observe bounded focus, role, state and document-context changes over
   AT-SPI.
-- [x] Coalesce repeated text-change events into duration/activity facts; do not
+- [/] Coalesce repeated text-change events into duration/activity facts; do not
   store typed characters.
-- [x] Detect password/secret roles and discard their values before the journal.
-- [x] Apply size, rate and depth limits to accessibility trees.
-- [x] Record toolkit/source quality so downstream components know when semantic
+- [/] Detect password/secret roles and discard their values before the journal.
+- [/] Apply size, rate and depth limits to accessibility trees.
+- [/] Record toolkit/source quality so downstream components know when semantic
   context is incomplete.
 
 #### 3.4 Process, filesystem and project context
@@ -565,8 +570,9 @@ slice.
 
 - [x] Define a browser adapter contract for active tab ID, origin, title,
   navigation and user-requested selected text.
-- [x] Prefer an extension/native-messaging or accessibility channel that exposes
-  semantic metadata instead of screenshots.
+- [/] Implement an extension/native-messaging or accessibility producer that
+  exposes semantic metadata instead of screenshots; the adapter contract and
+  privacy boundary already exist.
 - [x] Exclude private browsing unconditionally.
 - [x] Apply origin allow/exclude policy before storing URL or title.
 - [x] Never treat page text as an instruction to RAI or an agent.
@@ -640,6 +646,23 @@ The slice passes with network model access disabled, no persisted screenshots,
 no raw keystrokes, no raw audio and zero remote tokens. Tests also prove that a
 password field, private browser window and excluded application leave no
 recoverable activity content.
+
+The automated acceptance slice constructs bounded `SourceEvent` records at the
+collector boundary. It verifies the provider-neutral pipeline but does not by
+itself prove that every supported desktop integration works in a real user
+session.
+
+Production validation gate (still open):
+
+- [ ] Capture lock, idle, workspace and active-window transitions from the
+  packaged GNOME extension in a supported live GNOME session.
+- [ ] Capture bounded focus, document and coalesced text-activity events from a
+  live AT-SPI accessibility bus without retaining entered text.
+- [ ] Deliver browser navigation metadata through a packaged browser producer
+  and prove that private-mode activity is absent at the RAI ingest boundary.
+- [ ] Run the Firefox -> terminal -> editor -> test-run acceptance scenario using
+  production collectors, inspect its evidence and verify deletion from a clean
+  user profile.
 
 ### Stage 4 — Rich Local AI and Rich Voice
 
@@ -836,6 +859,22 @@ agents without transferring ownership of memory, policy or the Linux desktop.
 Prerequisites: Stages 1, 3 and 5. A backend cannot be production-enabled until
 usage accounting, cancellation and data-egress auditing work.
 
+The integration flow is explicit and must preserve RAI's product boundary:
+
+```text
+durable event or explicit user task
+  -> deterministic trigger/router
+  -> policy-filtered ContextPackage
+  -> replaceable AgentBackend
+  -> typed CapabilityRequest
+  -> shared CapabilityService and PolicyEngine
+  -> durable ActionResult or ActionFailure
+```
+
+This coordination is not a universal reasoning loop inside RAI. The selected
+agent harness owns its reasoning and session semantics; RAI owns observation,
+context release, capability authority, verification and durable evidence.
+
 #### 6.1 Context construction and egress
 
 - [ ] Build task-specific `ContextPackage` values from durable state through
@@ -912,12 +951,15 @@ prerequisite for the Stage 2 event plane, Rich History or local-only operation.
 
 #### 6.5 ACP and MCP roles
 
+- [x] Expose the base typed capability registry through authenticated local MCP;
+  MCP calls use the shared validation, policy, approval and audit path.
 - [ ] Add an optional ACP client adapter after the base `AgentBackend` contract is
   stable.
 - [ ] Map ACP session creation, prompt streaming, cancellation, plans and
   permission requests into RAI records without making ACP a security boundary.
-- [ ] Expose approved RAI capabilities to agents through MCP or direct typed
-  adapters; MCP remains behind the agent while ACP manages the agent session.
+- [ ] Integrate external agents with approved RAI capabilities through MCP or
+  direct typed adapters; MCP remains behind the agent while ACP manages the
+  agent session.
 - [ ] Re-evaluate protocol-version compatibility at implementation time and keep
   protocol negotiation explicit.
 - [ ] Add conformance fixtures that prove an ACP agent cannot bypass RAI policy or
@@ -1218,7 +1260,9 @@ than a big-bang rewrite.
   observation and action-result state.
 - Local inference protocols are disconnected from the daemon and lack tests.
 - IREE is a stub and the ONNX factory references an absent implementation.
-- Device identity, reconnect/replay and backpressure contracts do not yet exist.
+- Device identity and cross-device reconnect/spooling contracts do not yet
+  exist. Local event replay and bounded backpressure are already implemented in
+  Stage 2.
 - Full style linting contains legacy violations; critical lint is blocking now.
 - Existing GitLab issues #8 and #9 remain relevant to lazy loading and blocking
   local inference. Issues #2 and #6 require reproduction against the new
