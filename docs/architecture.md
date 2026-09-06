@@ -59,6 +59,15 @@ one validation service. Independent cursors and acknowledgements make replay
 explicit, while a deterministic subscriber demonstrates the complete path from
 synthetic observation through policy to a durable terminal capability result.
 
+The Stage 3 Rich History slice places a deterministic privacy firewall in front
+of that journal. Bounded platform adapter records are dropped, reduced,
+redacted or allowed before they become kernel observations. A failure-isolating
+collector supervisor owns opt-in state, lock/emergency cancellation and health.
+Deterministic fusion and episode construction retain source provenance in an
+AES-GCM-encrypted local store; review, local questions and verified cascading
+deletion share the authenticated control API. No model participates in this
+path.
+
 ## Data flow
 
 ```text

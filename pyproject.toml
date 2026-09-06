@@ -42,6 +42,7 @@ dependencies = [
     "httpx",
     "mcp>=1.19,<2",
     "returns",
+    "cryptography>=43",
 ]
 
 [project.urls]

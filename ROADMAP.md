@@ -522,33 +522,33 @@ slice.
 
 #### 3.1 Collector supervisor
 
-- [ ] Add production collector registration, lifecycle, health, restart and
+- [x] Add production collector registration, lifecycle, health, restart and
   backoff.
-- [ ] Run platform collectors as an unprivileged user service or isolated
+- [x] Run platform collectors as an unprivileged user service or isolated
   sidecars.
-- [ ] Expose collector status, last event, error and effective permission state.
-- [ ] Stop collection immediately when the profile is disabled, the session is
+- [x] Expose collector status, last event, error and effective permission state.
+- [x] Stop collection immediately when the profile is disabled, the session is
   locked or the user activates emergency stop.
-- [ ] Ensure collector failure cannot terminate the core daemon.
+- [x] Ensure collector failure cannot terminate the core daemon.
 
 #### 3.2 GNOME session collector
 
 - [ ] Observe session lock/unlock, idle/active transitions, workspace changes and
   active application/window changes using supported GNOME interfaces.
-- [ ] Normalize application identity through desktop-entry IDs where possible.
-- [ ] Treat window titles as potentially private content and classify them before
+- [x] Normalize application identity through desktop-entry IDs where possible.
+- [x] Treat window titles as potentially private content and classify them before
   persistence.
-- [ ] Avoid privileged `/dev/input` access and global raw input capture.
+- [x] Avoid privileged `/dev/input` access and global raw input capture.
 
 #### 3.3 AT-SPI semantic collector
 
 - [ ] Observe bounded focus, role, state and document-context changes over
   AT-SPI.
-- [ ] Coalesce repeated text-change events into duration/activity facts; do not
+- [x] Coalesce repeated text-change events into duration/activity facts; do not
   store typed characters.
-- [ ] Detect password/secret roles and discard their values before the journal.
-- [ ] Apply size, rate and depth limits to accessibility trees.
-- [ ] Record toolkit/source quality so downstream components know when semantic
+- [x] Detect password/secret roles and discard their values before the journal.
+- [x] Apply size, rate and depth limits to accessibility trees.
+- [x] Record toolkit/source quality so downstream components know when semantic
   context is incomplete.
 
 #### 3.4 Process, filesystem and project context
@@ -556,73 +556,73 @@ slice.
 - [ ] Observe foreground process identity without collecting unrelated process
   arguments or environment variables.
 - [ ] Add opt-in filesystem events for configured roots only.
-- [ ] Detect project and Git identity from approved roots while excluding file
+- [x] Detect project and Git identity from approved roots while excluding file
   content by default.
-- [ ] Correlate save/build/test events using stable resource references rather
+- [x] Correlate save/build/test events using stable resource references rather
   than copying documents into history.
 
 #### 3.5 Browser semantics
 
-- [ ] Define a browser adapter contract for active tab ID, origin, title,
+- [x] Define a browser adapter contract for active tab ID, origin, title,
   navigation and user-requested selected text.
-- [ ] Prefer an extension/native-messaging or accessibility channel that exposes
+- [x] Prefer an extension/native-messaging or accessibility channel that exposes
   semantic metadata instead of screenshots.
-- [ ] Exclude private browsing unconditionally.
-- [ ] Apply origin allow/exclude policy before storing URL or title.
-- [ ] Never treat page text as an instruction to RAI or an agent.
+- [x] Exclude private browsing unconditionally.
+- [x] Apply origin allow/exclude policy before storing URL or title.
+- [x] Never treat page text as an instruction to RAI or an agent.
 
 #### 3.6 Privacy firewall
 
-- [ ] Implement deterministic source, application, origin, path, field-role and
+- [x] Implement deterministic source, application, origin, path, field-role and
   session-state policies before persistence.
-- [ ] Support `DROP`, `METADATA_ONLY`, `REDACT` and `ALLOW` outcomes with policy
+- [x] Support `DROP`, `METADATA_ONLY`, `REDACT` and `ALLOW` outcomes with policy
   provenance.
-- [ ] Provide built-in protections for password managers, authentication dialogs,
+- [x] Provide built-in protections for password managers, authentication dialogs,
   banking/health profiles and communication applications.
-- [ ] Keep dropped content out of logs, metrics, exception messages and dead
+- [x] Keep dropped content out of logs, metrics, exception messages and dead
   letters.
-- [ ] Add a local redaction test corpus containing credentials, personal data and
+- [x] Add a local redaction test corpus containing credentials, personal data and
   prompt-injection fixtures.
 
 #### 3.7 Event normalization and fusion
 
-- [ ] Debounce and deduplicate high-frequency events before durable storage.
-- [ ] Fuse simultaneous GNOME, AT-SPI, process and filesystem evidence into one
+- [x] Debounce and deduplicate high-frequency events before durable storage.
+- [x] Fuse simultaneous GNOME, AT-SPI, process and filesystem evidence into one
   activity fact without losing source references.
-- [ ] Represent uncertainty and conflicting evidence explicitly.
-- [ ] Make fusion deterministic for the same ordered input and configuration.
+- [x] Represent uncertainty and conflicting evidence explicitly.
+- [x] Make fusion deterministic for the same ordered input and configuration.
 
 #### 3.8 Deterministic episode builder
 
-- [ ] Segment observations using time, idle, application, resource and project
+- [x] Segment observations using time, idle, application, resource and project
   boundaries.
-- [ ] Keep episode construction deterministic and independent of an LLM.
-- [ ] Store applications, resources, duration, outcome signals and provenance;
+- [x] Keep episode construction deterministic and independent of an LLM.
+- [x] Store applications, resources, duration, outcome signals and provenance;
   inferred goals remain optional derived claims.
-- [ ] Rebuild episodes reproducibly from retained observations and a versioned
+- [x] Rebuild episodes reproducibly from retained observations and a versioned
   builder configuration.
-- [ ] Update or invalidate derived memories when source observations are deleted.
+- [x] Update or invalidate derived memories when source observations are deleted.
 
 #### 3.9 Local storage, retention and deletion
 
-- [ ] Implement independent TTLs for raw buffers, observations, episodes and
+- [x] Implement independent TTLs for raw buffers, observations, episodes and
   memories.
-- [ ] Integrate per-user encryption keys through Secret Service or another
+- [x] Integrate per-user encryption keys through Secret Service or another
   documented Linux credential store, with explicit unavailable-key behavior.
-- [ ] Use restrictive file permissions and exclude databases from backup by
+- [x] Use restrictive file permissions and exclude databases from backup by
   default unless the user opts in.
-- [ ] Implement pause/resume, allow-only/exclude lists and time-range deletion.
-- [ ] Verify deletion across source events, derived memories, indexes, caches and
+- [x] Implement pause/resume, allow-only/exclude lists and time-range deletion.
+- [x] Verify deletion across source events, derived memories, indexes, caches and
   outbound-context references.
 
 #### 3.10 History query and review API
 
-- [ ] Provide local queries by time, application, project, resource and activity
+- [x] Provide local queries by time, application, project, resource and activity
   type.
-- [ ] Answer deterministic questions such as "which applications were active?"
+- [x] Answer deterministic questions such as "which applications were active?"
   without an LLM.
-- [ ] Return provenance links and confidence for every derived activity claim.
-- [ ] Expose review and deletion through the same local API used later by the
+- [x] Return provenance links and confidence for every derived activity claim.
+- [x] Expose review and deletion through the same local API used later by the
   status UI.
 
 Acceptance slice:

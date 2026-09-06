@@ -204,3 +204,7 @@ class EventJournal(Protocol):
     async def terminal_for(
         self, request_id: str
     ) -> Result[TerminalEvent | None, JournalFailure]: ...
+
+    async def delete_observations(
+        self, record_ids: tuple[str, ...]
+    ) -> Result[int, JournalFailure]: ...

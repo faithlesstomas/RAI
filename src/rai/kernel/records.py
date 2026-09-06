@@ -184,6 +184,14 @@ class Episode(KernelRecord):
     ended_at: datetime
     observation_ids: tuple[str, ...] = Field(min_length=1)
     provenance: tuple[ProvenanceReference, ...] = Field(min_length=1)
+    applications: tuple[str, ...] = ()
+    resources: tuple[str, ...] = ()
+    projects: tuple[str, ...] = ()
+    activity_types: tuple[str, ...] = ()
+    outcome_signals: tuple[str, ...] = ()
+    confidence: float = Field(default=1.0, ge=0.0, le=1.0)
+    data_class: DataClass = DataClass.LOCAL
+    builder_version: str = Field(default="1.0.0", min_length=1)
 
     @model_validator(mode="after")
     def validate_interval(self) -> Episode:

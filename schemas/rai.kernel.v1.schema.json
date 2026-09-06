@@ -626,6 +626,35 @@
     "Episode": {
       "additionalProperties": false,
       "properties": {
+        "activity_types": {
+          "default": [],
+          "items": {
+            "type": "string"
+          },
+          "title": "Activity Types",
+          "type": "array"
+        },
+        "applications": {
+          "default": [],
+          "items": {
+            "type": "string"
+          },
+          "title": "Applications",
+          "type": "array"
+        },
+        "builder_version": {
+          "default": "1.0.0",
+          "minLength": 1,
+          "title": "Builder Version",
+          "type": "string"
+        },
+        "confidence": {
+          "default": 1.0,
+          "maximum": 1.0,
+          "minimum": 0.0,
+          "title": "Confidence",
+          "type": "number"
+        },
         "correlation_id": {
           "anyOf": [
             {
@@ -637,6 +666,10 @@
           ],
           "default": null,
           "title": "Correlation Id"
+        },
+        "data_class": {
+          "$ref": "#/$defs/DataClass",
+          "default": "LOCAL"
         },
         "ended_at": {
           "format": "date-time",
@@ -651,8 +684,24 @@
           "title": "Observation Ids",
           "type": "array"
         },
+        "outcome_signals": {
+          "default": [],
+          "items": {
+            "type": "string"
+          },
+          "title": "Outcome Signals",
+          "type": "array"
+        },
         "producer": {
           "$ref": "#/$defs/ProducerIdentity"
+        },
+        "projects": {
+          "default": [],
+          "items": {
+            "type": "string"
+          },
+          "title": "Projects",
+          "type": "array"
         },
         "provenance": {
           "items": {
@@ -672,6 +721,14 @@
           "default": "episode",
           "title": "Record Type",
           "type": "string"
+        },
+        "resources": {
+          "default": [],
+          "items": {
+            "type": "string"
+          },
+          "title": "Resources",
+          "type": "array"
         },
         "schema_version": {
           "default": "1.0.0",

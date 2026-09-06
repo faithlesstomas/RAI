@@ -10,6 +10,7 @@ from .kernel.event_service import EventService
 from .kernel.ports import EventJournal
 from .services.history import HistoryService
 from .services.model_registry import ModelRegistry
+from .history.service import RichHistoryService
 
 
 def get_container(request: Request) -> ApplicationContainer:
@@ -27,6 +28,10 @@ def get_model_registry(request: Request) -> ModelRegistry:
 
 def get_history_service(request: Request) -> HistoryService:
     return get_container(request).history_service
+
+
+async def get_rich_history_service(request: Request) -> RichHistoryService:
+    return get_container(request).rich_history_service
 
 
 async def get_capability_service(request: Request) -> CapabilityService:

@@ -3,6 +3,10 @@
 ## [Unreleased]
 
 ### Added
+- Added the Stage 3 Rich History acceptance slice: opt-in supervised semantic
+  collectors, a deterministic pre-persistence privacy firewall, event fusion,
+  reproducible episodes, AES-GCM local storage, provenance queries and verified
+  cascading deletion through an authenticated local API.
 - Added the Stage 2 durable local event plane with transactional ordering,
   idempotent ingest, replay cursors, consumer acknowledgements, bounded
   subscriptions, authenticated HTTP/Unix-socket transports and the

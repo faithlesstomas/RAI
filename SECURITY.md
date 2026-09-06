@@ -69,8 +69,20 @@ variables, a protected `.env`, desktop keyring integration, or another secret
 store. If a real credential is ever written to a loose workspace file, rotate it
 even if Git reports that the file was untracked.
 
-The planned activity collector must provide pause, exclusion, retention,
-redaction and deletion controls before it is considered usable.
+Rich History collection is opt-in. Its pre-persistence firewall drops password
+and secret roles, private browser sessions, excluded applications, origins and
+paths; sensitive profiles become metadata-only and configured patterns are
+redacted. Dropped values are not logged. Raw input, typed characters,
+screenshots, audio, process arguments and document content are not collected.
+
+Complete history records are authenticated-encrypted with a per-user AES-256-GCM
+key obtained through Secret Service. If the key is unavailable, history fails
+closed. Time-range deletion covers the event journal, observations, episodes,
+derived-memory links and outbound-context references and reports whether any
+reference remains. Database metadata needed for local filtering (timestamps,
+application, project, resource and activity type) is not field-encrypted; it is
+protected by the local Unix account, mode-`0600` files and the isolated user
+service. This leakage is a documented residual risk.
 
 ## Reporting vulnerabilities
 

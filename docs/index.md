@@ -31,6 +31,7 @@ in the roadmap are not assumed to exist until their acceptance gate is complete.
 architecture
 kernel-contracts
 event-plane
+rich-history
 neural-sidecar
 reference/modules
 ```
