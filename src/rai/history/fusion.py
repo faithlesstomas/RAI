@@ -13,6 +13,7 @@ from .models import ActivityFact
 
 FUSION_PRODUCER = ProducerIdentity(producer_id="rai.history-fusion", kind="processor", version="1.0.0")
 EPISODE_PRODUCER = ProducerIdentity(producer_id="rai.episode-builder", kind="processor", version="1.0.0")
+EPISODE_SCHEMA_VERSION = "1.1.0"
 
 
 @dataclass(frozen=True)
@@ -142,6 +143,7 @@ class DeterministicEpisodeBuilder:
         classification = DataClass.PRIVATE if any(fact.data_class == DataClass.PRIVATE for fact in group) else DataClass.LOCAL
         return Episode(
             record_id=f"episode:{digest}", producer=EPISODE_PRODUCER,
+            schema_version=EPISODE_SCHEMA_VERSION,
             started_at=group[0].started_at, ended_at=group[-1].ended_at,
             observation_ids=observation_ids,
             provenance=tuple(ProvenanceReference(

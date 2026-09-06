@@ -55,6 +55,7 @@ class SQLiteEventJournal:
         connection.execute("PRAGMA foreign_keys = ON")
         connection.execute("PRAGMA journal_mode = WAL")
         connection.execute("PRAGMA synchronous = FULL")
+        connection.execute("PRAGMA secure_delete = ON")
         return connection
 
     def _initialize(self) -> None:
@@ -353,6 +354,8 @@ class SQLiteEventJournal:
                         f"AND record_id IN ({placeholders})",  # noqa: S608
                         record_ids,
                     ).rowcount
+                with self._connect() as connection:
+                    connection.execute("PRAGMA wal_checkpoint(TRUNCATE)")
             return Success(deleted)
         except sqlite3.Error as exc:
             return Failure(

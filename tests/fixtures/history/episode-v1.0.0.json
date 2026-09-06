@@ -1,0 +1,27 @@
+{
+  "record_type": "episode",
+  "schema_version": "1.0.0",
+  "record_id": "episode:v1-compatibility",
+  "timestamp": "2026-09-06T09:00:00Z",
+  "producer": {
+    "producer_id": "rai.episode-builder",
+    "kind": "processor",
+    "version": "1.0.0"
+  },
+  "started_at": "2026-09-06T09:00:00Z",
+  "ended_at": "2026-09-06T09:01:00Z",
+  "observation_ids": ["observation:v1"],
+  "provenance": [
+    {
+      "source_id": "observation:v1",
+      "source_type": "observation",
+      "source_version": "1.0.0",
+      "relation": "derived-from",
+      "producer": {
+        "producer_id": "rai.history-fusion",
+        "kind": "processor",
+        "version": "1.0.0"
+      }
+    }
+  ]
+}

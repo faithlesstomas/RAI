@@ -135,6 +135,7 @@ class JsonLinesSidecarSource:
             process = await asyncio.create_subprocess_exec(
                 *self.command, stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.DEVNULL, env=environment,
+                limit=MAX_SIDECAR_EVENT_BYTES + 1,
             )
         except FileNotFoundError:
             self.permission = "UNAVAILABLE"
@@ -329,7 +330,10 @@ class CollectorSupervisor:
 
     def __init__(
         self,
-        sink: Callable[[SourceEvent], Awaitable[None]],
+        sink: Callable[
+            [SourceEvent],
+            Awaitable[Result[Observation | None, ActionFailure] | None],
+        ],
         *,
         base_backoff: float = 0.1,
         max_backoff: float = 30.0,
@@ -426,7 +430,9 @@ class CollectorSupervisor:
                         and event.kind in {"session_locked", "session_unlocked"}
                     ):
                         continue
-                    await self._sink(event)
+                    delivered = await self._sink(event)
+                    if isinstance(delivered, Failure):
+                        raise RuntimeError(delivered.failure().code)
                     runtime.last_event_at = event.timestamp
                     runtime.last_error = None
                 return

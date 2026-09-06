@@ -6,7 +6,7 @@ import re
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
-from urllib.parse import urlsplit
+from urllib.parse import unquote, urlsplit
 
 from rai.kernel.records import DataClass
 
@@ -21,6 +21,7 @@ _COMMUNICATION_MARKERS = ("signal", "telegram", "slack", "discord", "teams", "ma
 _SENSITIVE_ORIGIN_MARKERS = ("bank", "health", "medical", "patient", "login", "auth")
 _REDACTIONS = (
     (re.compile(r"(?i)\b(?:api[_-]?key|token|password|secret)\s*[:=]\s*\S+"), "[REDACTED_CREDENTIAL]"),
+    (re.compile(r"(?i)(?<=://)[^/@\s:]+:[^/@\s]+@"), "[REDACTED_CREDENTIAL]@"),
     (re.compile(r"\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b"), "[REDACTED_EMAIL]"),
     (re.compile(r"\b(?:\d[ -]*?){13,19}\b"), "[REDACTED_NUMBER]"),
 )
@@ -61,12 +62,16 @@ class PrivacyFirewall:
         elif decision.action == PrivacyAction.REDACT:
             event = event.model_copy(update={
                 "title": self._redact(event.title),
+                "origin": self._redact(event.origin),
+                "url": self._redact(event.url),
+                "path": self._redact(event.path),
+                "resource_id": self._redact(event.resource_id),
                 "selected_text": self._redact(event.selected_text),
                 "payload": self._redact_value(event.payload),
             })
         return FilteredEvent(event=event, decision=decision)
 
-    def decide(self, event: SourceEvent) -> PrivacyDecision:
+    def decide(self, event: SourceEvent) -> PrivacyDecision:  # noqa: PLR0912
         reasons: list[str] = []
         if event.source in self.policy.excluded_sources or (
             self.policy.allowed_sources and event.source not in self.policy.allowed_sources
@@ -96,15 +101,30 @@ class PrivacyFirewall:
             item.casefold() for item in self.policy.allowed_applications
         }:
             reasons.append("APPLICATION_NOT_ALLOWED")
-        origin = self._origin(event.origin or event.url)
-        if origin and origin in {item.casefold() for item in self.policy.excluded_origins}:
+        declared_origin = self._origin(event.origin)
+        url_origin = self._origin(event.url)
+        if declared_origin and url_origin and declared_origin != url_origin:
+            reasons.append("ORIGIN_MISMATCH")
+        origin = declared_origin or url_origin
+        if origin and self._origin_matches(origin, self.policy.excluded_origins):
             reasons.append("EXCLUDED_ORIGIN")
-        if event.source == "browser" and self.policy.allowed_origins and origin not in {
-            item.casefold() for item in self.policy.allowed_origins
-        }:
+        if (
+            event.source == "browser"
+            and self.policy.allowed_origins
+            and not self._origin_matches(origin, self.policy.allowed_origins)
+        ):
             reasons.append("ORIGIN_NOT_ALLOWED")
         if event.path and not self._path_allowed(Path(event.path)):
             reasons.append("PATH_NOT_ALLOWED")
+        resource_uri = urlsplit(event.resource_id or "")
+        if resource_uri.scheme == "file" and resource_uri.netloc not in {
+            "",
+            "localhost",
+        }:
+            reasons.append("REMOTE_FILE_RESOURCE")
+        resource_path = self._resource_path(event.resource_id)
+        if resource_path is not None and not self._path_allowed(resource_path):
+            reasons.append("RESOURCE_PATH_NOT_ALLOWED")
         if reasons:
             return self._decision(PrivacyAction.DROP, DataClass.BLOCKED, reasons)
         if any(marker in app for marker in _COMMUNICATION_MARKERS) or any(
@@ -115,7 +135,21 @@ class PrivacyFirewall:
             )
         if self.policy.redact_private_text and self._contains_sensitive(event):
             return self._decision(PrivacyAction.REDACT, DataClass.PRIVATE, ["SENSITIVE_PATTERN"])
-        classification = DataClass.PRIVATE if event.title or event.selected_text else DataClass.LOCAL
+        classification = (
+            DataClass.PRIVATE
+            if any(
+                (
+                    event.title,
+                    event.selected_text,
+                    event.url,
+                    event.path,
+                    resource_path,
+                    event.project,
+                    event.origin if event.source == "browser" else None,
+                )
+            )
+            else DataClass.LOCAL
+        )
         return self._decision(PrivacyAction.ALLOW, classification, ["POLICY_ALLOWED"])
 
     def _decision(
@@ -130,7 +164,7 @@ class PrivacyFirewall:
         resolved = path.expanduser().resolve(strict=False)
         if any(resolved.is_relative_to(root.expanduser().resolve(strict=False)) for root in self.policy.excluded_paths):
             return False
-        return not self.policy.allowed_paths or any(
+        return bool(self.policy.allowed_paths) and any(
             resolved.is_relative_to(root.expanduser().resolve(strict=False))
             for root in self.policy.allowed_paths
         )
@@ -141,6 +175,26 @@ class PrivacyFirewall:
             return ""
         parsed = urlsplit(value if "://" in value else f"https://{value}")
         return (parsed.hostname or "").casefold()
+
+    @classmethod
+    def _origin_matches(cls, origin: str, configured: frozenset[str]) -> bool:
+        """Match a host or its subdomains against normalized policy entries."""
+        return any(
+            origin == candidate or origin.endswith(f".{candidate}")
+            for item in configured
+            if (candidate := cls._origin(item))
+        )
+
+    @staticmethod
+    def _resource_path(resource_id: str | None) -> Path | None:
+        if not resource_id:
+            return None
+        parsed = urlsplit(resource_id)
+        if parsed.scheme != "file":
+            return None
+        if parsed.netloc not in {"", "localhost"}:
+            return None
+        return Path(unquote(parsed.path))
 
     @staticmethod
     def _redact(value: str | None) -> str | None:
@@ -162,7 +216,17 @@ class PrivacyFirewall:
     @staticmethod
     def _contains_sensitive(event: SourceEvent) -> bool:
         content = " ".join(
-            item for item in (event.title, event.selected_text, str(event.payload)) if item
+            item
+            for item in (
+                event.title,
+                event.origin,
+                event.url,
+                event.path,
+                event.resource_id,
+                event.selected_text,
+                str(event.payload),
+            )
+            if item
         )
         return any(pattern.search(content) for pattern, _replacement in _REDACTIONS)
 
@@ -184,6 +248,18 @@ def policy_from_config(config: dict[str, Any]) -> PrivacyPolicy:
         return tuple(value)
 
     allowed_sources = strings("allowed_sources")
+    allowed_paths = tuple(Path(item).expanduser() for item in strings("allowed_paths"))
+    if any(not path.is_absolute() or path == Path(path.anchor) for path in allowed_paths):
+        raise ValueError(
+            "rich_history.privacy.allowed_paths must contain absolute non-root paths"
+        )
+    excluded_paths = tuple(
+        Path(item).expanduser() for item in strings("excluded_paths")
+    )
+    if any(not path.is_absolute() for path in excluded_paths):
+        raise ValueError(
+            "rich_history.privacy.excluded_paths must contain absolute paths"
+        )
     return PrivacyPolicy(
         allowed_sources=(
             frozenset(allowed_sources)
@@ -195,8 +271,8 @@ def policy_from_config(config: dict[str, Any]) -> PrivacyPolicy:
         excluded_applications=frozenset(strings("excluded_applications")),
         allowed_origins=frozenset(strings("allowed_origins")),
         excluded_origins=frozenset(strings("excluded_origins")),
-        allowed_paths=tuple(Path(item) for item in strings("allowed_paths")),
-        excluded_paths=tuple(Path(item) for item in strings("excluded_paths")),
+        allowed_paths=allowed_paths,
+        excluded_paths=excluded_paths,
         redact_private_text=bool(privacy.get("redact_private_text", True)),
         version=str(privacy.get("version", "1.0.0")),
     )

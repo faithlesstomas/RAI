@@ -65,7 +65,9 @@ class SourceEvent(BaseModel):
     @model_validator(mode="after")
     def bounded_payload(self) -> "SourceEvent":
         try:
-            encoded = json.dumps(self.payload, separators=(",", ":")).encode()
+            encoded = json.dumps(
+                self.payload, separators=(",", ":"), allow_nan=False
+            ).encode()
         except (TypeError, ValueError) as exc:
             raise ValueError("payload must be JSON-compatible") from exc
         if len(encoded) > 64 * 1024:

@@ -16,11 +16,15 @@ versioned decision is one of `DROP`, `METADATA_ONLY`, `REDACT` or `ALLOW` and is
 included with persisted evidence.
 
 Password/secret fields, private browser windows, excluded applications,
-disallowed origins and paths are dropped. Communication applications and
-banking, health or authentication origins are metadata-only. Credential,
-email-address and payment-number patterns are redacted. Dropped values are not
-included in errors or logs. Web and accessibility text remains untrusted data;
-the history pipeline cannot invoke a capability.
+disallowed origins and paths are dropped. Browser-declared origins must agree
+with URL hosts, origin policy covers subdomains, and local `file://` resources
+from accessibility adapters pass through the same path policy as filesystem
+events. Communication applications and banking, health or authentication
+origins are metadata-only. Credential, email-address and payment-number
+patterns are redacted across titles, URLs, paths, resource IDs and semantic
+payloads. Dropped values are not included in errors or logs. Web and
+accessibility text remains untrusted data; the history pipeline cannot invoke a
+capability.
 
 The complete records are encrypted with AES-256-GCM. The default key provider
 obtains a per-user key through Secret Service (`secret-tool`). If Secret Service
@@ -28,6 +32,12 @@ is absent, locked or refuses the key, Rich History fails closed and persists
 nothing. The database and its parent directory use restrictive permissions and
 a `CACHEDIR.TAG` excludes the history directory from backup by default. An
 explicit embedded deployment can inject another `KeyProvider`.
+
+The shared event journal receives only a metadata projection for `PRIVATE`
+observations; private titles, URLs, paths, selected text and semantic payloads
+remain exclusively in the encrypted history store. A bounded in-memory raw
+event buffer supports short-term processing and is cleared on pause, lock and
+emergency stop.
 
 ## Deterministic processing
 
@@ -38,6 +48,11 @@ It requires no model and consumes zero remote tokens. Deleting a time range
 removes source observations from both history storage and the event journal,
 cascades through episodes, derived memories and outbound-context references,
 then reproducibly rebuilds remaining episodes.
+Retention is enforced immediately when collection starts and periodically
+thereafter. Observation expiry is coordinated with journal deletion and episode
+rebuilding; raw-buffer, episode and memory TTLs are then applied independently.
+Explicit and retention-driven deletion use SQLite secure-delete behavior and
+truncate WAL data after rebuilding to remove stale plaintext metadata pages.
 
 ## Local API
 
@@ -46,17 +61,19 @@ All routes use the same authentication boundary as other `/api/*` endpoints:
 - `POST /api/v1/activity/collection` — `pause`, `resume`, `lock`, `unlock`,
   `emergency_stop` or `clear_emergency_stop`;
 - `GET /api/v1/activity/collectors` — lifecycle, permission, last-event, error
-  and restart status;
+  and restart status, plus global collection and retention health;
 - `POST /api/v1/activity/observations` — validated semantic adapter input;
 - `GET /api/v1/activity/episodes` — time/application/project/resource/activity
   filters and reviewable provenance;
 - `GET /api/v1/activity/answer?question=what_was_i_working_on` — deterministic
   summary without an LLM;
-- `DELETE /api/v1/activity/episodes` — time-range deletion with residual-link
-  verification.
+- `DELETE /api/v1/activity/episodes` — time-range deletion or
+  `current_application_session`, `last_10_minutes`, `last_hour`, `last_day` and
+  `all` presets, with residual-link verification.
 
 Install and enable the bundled GNOME Shell extension before enabling the GNOME
-and foreground-process collectors:
+and foreground-process collectors. The packaged extension declares GNOME Shell
+45 through 50 compatibility:
 
 ```bash
 uv sync --extra gnome-tools
@@ -81,6 +98,7 @@ credential variables:
 {
   "rich_history": {
     "enabled": true,
+    "retention_interval_seconds": 300,
     "retention_days": {
       "raw": 0.006944,
       "observations": 30,

@@ -6,7 +6,7 @@ from datetime import datetime
 from typing import Any, Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Query
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, model_validator
 from returns.result import Failure
 
 from rai.dependencies import get_rich_history_service
@@ -26,8 +26,24 @@ class CollectionControl(BaseModel):
 class DeleteRange(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid")
 
-    since: datetime
-    until: datetime
+    since: datetime | None = None
+    until: datetime | None = None
+    preset: Literal[
+        "current_application_session",
+        "last_10_minutes",
+        "last_hour",
+        "last_day",
+        "all",
+    ] | None = None
+
+    @model_validator(mode="after")
+    def exactly_one_range_form(self) -> "DeleteRange":
+        has_interval = self.since is not None or self.until is not None
+        if self.preset is not None and has_interval:
+            raise ValueError("use either preset or since/until")
+        if self.preset is None and (self.since is None or self.until is None):
+            raise ValueError("provide a preset or both since and until")
+        return self
 
 
 @router.post("/observations", response_model=Observation | None)
@@ -74,7 +90,15 @@ async def answer_activity_question(
 async def collector_status(
     service: RichHistoryService = Depends(get_rich_history_service),
 ) -> dict[str, Any]:
-    return {"collectors": service.supervisor.status()}
+    return {
+        "collectors": service.supervisor.status(),
+        "retention_error": service.last_retention_error,
+        "collection": {
+            "enabled": service.supervisor.enabled,
+            "session_locked": service.supervisor.session_locked,
+            "emergency_stopped": service.supervisor.emergency_stopped,
+        },
+    }
 
 
 @router.post("/collection")
@@ -102,6 +126,11 @@ async def delete_activity(
     service: RichHistoryService = Depends(get_rich_history_service),
 ) -> dict[str, Any]:
     try:
+        if interval.preset is not None:
+            return await service.delete_preset(interval.preset)
+        assert interval.since is not None and interval.until is not None
         return await service.delete_range(interval.since, interval.until)
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except RuntimeError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc

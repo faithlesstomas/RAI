@@ -91,6 +91,13 @@ reference remains. Database metadata needed for local filtering (timestamps,
 application, project, resource and activity type) is not field-encrypted; it is
 protected by the local Unix account, mode-`0600` files and the isolated user
 service. This leakage is a documented residual risk.
+Private observation bodies are not duplicated into the plaintext event journal;
+the journal retains only their source, kind, record identifier and privacy
+decision. Browser origin/URL disagreement and remote or policy-excluded
+`file://` resources fail closed. Sidecar stdout buffering is capped before JSON
+parsing, and timestamps beyond the permitted local future skew are rejected.
+Privacy deletion enables SQLite secure-delete semantics and truncates WAL data
+after the encrypted store and event journal commit their removals.
 
 ## Reporting vulnerabilities
 

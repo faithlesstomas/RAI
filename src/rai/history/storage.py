@@ -135,6 +135,7 @@ class EncryptedHistoryStore:
         connection.execute("PRAGMA foreign_keys = ON")
         connection.execute("PRAGMA journal_mode = WAL")
         connection.execute("PRAGMA synchronous = FULL")
+        connection.execute("PRAGMA secure_delete = ON")
         return connection
 
     def _initialize(self) -> None:
@@ -257,8 +258,10 @@ class EncryptedHistoryStore:
             values.append(until.isoformat())
         for column, value in (("applications", application), ("projects", project), ("resources", resource), ("activity_types", activity_type)):
             if value:
-                clauses.append(f"{column} LIKE ?")
-                values.append(f'%"{value}"%')
+                clauses.append(
+                    f"EXISTS (SELECT 1 FROM json_each({column}) WHERE value = ?)"
+                )
+                values.append(value)
         where = f" WHERE {' AND '.join(clauses)}" if clauses else ""
         with self._connect() as connection:
             rows = connection.execute(
@@ -273,13 +276,41 @@ class EncryptedHistoryStore:
     def delete_range(self, since: datetime, until: datetime) -> dict[str, int]:
         if until < since:
             raise ValueError("until must not precede since")
+        return self.delete_observation_ids(
+            self.observation_ids_between(since, until)
+        )
+
+    def observation_ids_between(
+        self, since: datetime, until: datetime
+    ) -> tuple[str, ...]:
+        """Return observation IDs in a closed absolute time interval."""
+        if until < since:
+            raise ValueError("until must not precede since")
         with self._connect() as connection:
-            ids = tuple(
+            return tuple(
                 row[0] for row in connection.execute(
                     "SELECT record_id FROM observations WHERE timestamp BETWEEN ? AND ?",
                     (since.isoformat(), until.isoformat()),
                 )
             )
+
+    def expired_observation_ids(self, now: datetime) -> tuple[str, ...]:
+        """Return observations whose configured TTL elapsed."""
+        cutoff = now - self.retention.observation_ttl
+        with self._connect() as connection:
+            return tuple(
+                row[0]
+                for row in connection.execute(
+                    "SELECT record_id FROM observations WHERE timestamp < ?",
+                    (cutoff.isoformat(),),
+                )
+            )
+
+    def delete_observation_ids(
+        self, ids: tuple[str, ...]
+    ) -> dict[str, int]:
+        """Delete sources and every derived row that still refers to them."""
+        with self._connect() as connection:
             affected = tuple(
                 row[0] for row in connection.execute(
                     "SELECT DISTINCT episode_id FROM episode_observations WHERE observation_id IN "
@@ -302,20 +333,41 @@ class EncryptedHistoryStore:
                         f"DELETE FROM {table} WHERE {column} IN ({','.join('?' for _ in targets)})",  # noqa: S608
                         targets,
                     )
+        if ids:
+            self.secure_checkpoint()
         return {"observations": len(ids), "episodes": len(affected), "memories": len(memory_ids)}
 
-    def enforce_retention(self, now: datetime | None = None) -> dict[str, int]:
-        now = now or datetime.now(timezone.utc)
-        deleted = self.delete_range(datetime.min.replace(tzinfo=timezone.utc), now - self.retention.observation_ttl)
+    def delete_expired_derived(self, now: datetime) -> dict[str, int]:
+        """Apply episode and memory TTLs independently of source expiry."""
         with self._connect() as connection:
             old_episodes = connection.execute(
-                "DELETE FROM episodes WHERE ended_at < ?", ((now - self.retention.episode_ttl).isoformat(),)
+                "DELETE FROM episodes WHERE ended_at < ?",
+                ((now - self.retention.episode_ttl).isoformat(),),
             ).rowcount
             old_memories = connection.execute(
-                "DELETE FROM memories WHERE created_at < ?", ((now - self.retention.memory_ttl).isoformat(),)
+                "DELETE FROM memories WHERE created_at < ?",
+                ((now - self.retention.memory_ttl).isoformat(),),
             ).rowcount
-        deleted["episodes"] += old_episodes
-        deleted["memories"] += old_memories
+        if old_episodes or old_memories:
+            self.secure_checkpoint()
+        return {"episodes": old_episodes, "memories": old_memories}
+
+    def secure_checkpoint(self) -> None:
+        """Commit and truncate WAL content after a privacy deletion."""
+        with self._connect() as connection:
+            connection.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+
+    def enforce_retention(self, now: datetime | None = None) -> dict[str, int]:
+        """Apply store-local retention.
+
+        Runtime callers should use ``RichHistoryService.enforce_retention`` so
+        the event journal and rebuilt episodes participate in the operation.
+        """
+        now = now or datetime.now(timezone.utc)
+        deleted = self.delete_observation_ids(self.expired_observation_ids(now))
+        derived = self.delete_expired_derived(now)
+        deleted["episodes"] += derived["episodes"]
+        deleted["memories"] += derived["memories"]
         return deleted
 
     def residual_references(self, observation_ids: tuple[str, ...]) -> int:

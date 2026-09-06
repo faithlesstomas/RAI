@@ -95,8 +95,10 @@ package:
     - python -m venv /tmp/rich-ai-wheel-smoke
     - /tmp/rich-ai-wheel-smoke/bin/python -m pip install build/pypi/rich_ai-*.whl
     - /tmp/rich-ai-wheel-smoke/bin/python -c "from importlib.metadata import version; from packaging.version import Version; import rai; assert Version(version('rich-ai')) == Version(rai.__version__)"
+    - /tmp/rich-ai-wheel-smoke/bin/python -c "from importlib.metadata import entry_points; from importlib.resources import files; names = {item.name for item in entry_points(group='console_scripts')}; expected = {'rai-history-gnome', 'rai-history-atspi', 'rai-history-process', 'rai-history-filesystem', 'rai-history-install-gnome-extension'}; assert expected <= names; assets = files('rai.history').joinpath('gnome_extension'); assert assets.joinpath('extension.js').is_file() and assets.joinpath('metadata.json').is_file()"
     - /tmp/rich-ai-wheel-smoke/bin/rai --version
     - /tmp/rich-ai-wheel-smoke/bin/rai capability list
+    - /tmp/rich-ai-wheel-smoke/bin/rai-history-filesystem --help
   artifacts:
     paths:
       - build/pypi/

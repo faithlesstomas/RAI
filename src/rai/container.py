@@ -83,7 +83,8 @@ class ApplicationContainer:
         history_config = self.config.get("rich_history", {})
         if isinstance(history_config, dict) and history_config.get("enabled"):
             try:
-                await self.rich_history_service.set_controls(enabled=True)
+                service = self.rich_history_service
+                await service.set_controls(enabled=True)
             except KeyUnavailableError:
                 # History fails closed without taking down the core daemon.
                 self._rich_history_error = "KEY_UNAVAILABLE"
@@ -138,6 +139,11 @@ class ApplicationContainer:
                 firewall=PrivacyFirewall(policy_from_config(config)),
                 collection_enabled=bool(config.get("enabled", False)),
                 filesystem_roots=filesystem_roots,
+                retention_interval_seconds=(
+                    None
+                    if self.testing
+                    else config.get("retention_interval_seconds", 300)
+                ),
             )
             register_configured_collectors(
                 self._rich_history_service.supervisor, config
@@ -157,5 +163,5 @@ class ApplicationContainer:
             self._model_registry = None
         self._history_service = None
         if self._rich_history_service is not None:
-            await self._rich_history_service.supervisor.stop()
+            await self._rich_history_service.close()
             self._rich_history_service = None
