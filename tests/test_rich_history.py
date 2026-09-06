@@ -1,4 +1,4 @@
-"""Acceptance and privacy tests for the Stage 3 Rich History slice."""
+"""Acceptance and privacy tests for Rich History."""
 
 from __future__ import annotations
 
