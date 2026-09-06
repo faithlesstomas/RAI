@@ -326,7 +326,11 @@ def test_filesystem_sidecar_reads_metadata_only_and_rejects_broad_root(
     tracked.write_text(secret_content, encoding="utf-8")
     roots = approved_roots([str(project)])
     first = metadata_snapshot(roots)
-    tracked.touch()
+    initial_stat = tracked.stat()
+    os.utime(
+        tracked,
+        ns=(initial_stat.st_atime_ns, first[tracked] + 1_000_000_000),
+    )
     second = metadata_snapshot(roots)
     assert list(changed_paths(first, second)) == [("save", tracked)]
     assert secret_content not in repr(second)
