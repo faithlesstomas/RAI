@@ -131,16 +131,25 @@ class JsonLinesSidecarSource:
                 "XDG_CURRENT_DESKTOP", "XDG_RUNTIME_DIR", "DBUS_SESSION_BUS_ADDRESS",
             ) if (value := os.environ.get(name)) is not None
         }
-        process = await asyncio.create_subprocess_exec(
-            *self.command, stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.DEVNULL, env=environment,
-        )
+        try:
+            process = await asyncio.create_subprocess_exec(
+                *self.command, stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.DEVNULL, env=environment,
+            )
+        except FileNotFoundError:
+            self.permission = "UNAVAILABLE"
+            raise
+        except PermissionError:
+            self.permission = "DENIED"
+            raise
+        self.permission = "GRANTED"
         assert process.stdout is not None
         try:
             while not cancellation.cancelled:
                 line = await process.stdout.readline()
                 if not line:
                     if process.returncode not in (None, 0):
+                        self.permission = "UNAVAILABLE"
                         raise RuntimeError("collector sidecar failed")
                     return
                 if len(line) > MAX_SIDECAR_EVENT_BYTES:
@@ -175,7 +184,8 @@ class GnomeSessionCollector(SemanticCollector):
             payload={key: payload[key] for key in ("workspace", "idle") if key in payload},
         )
 
-    def sanitize(self, event: SourceEvent) -> SourceEvent:
+    @staticmethod
+    def sanitize(event: SourceEvent) -> SourceEvent:
         return SourceEvent(
             source="gnome", kind=event.kind, timestamp=event.timestamp,
             application_id=event.application_id.casefold() if event.application_id else None,
@@ -212,13 +222,16 @@ class AtspiSemanticCollector(SemanticCollector):
             payload=semantic_payload,
         )
 
-    def sanitize(self, event: SourceEvent) -> SourceEvent:
+    @staticmethod
+    def sanitize(event: SourceEvent) -> SourceEvent:
         semantic = event.payload
         return SourceEvent(
             source="atspi", kind=event.kind, timestamp=event.timestamp,
             application_id=event.application_id, field_role=event.field_role,
             resource_id=event.resource_id, toolkit=event.toolkit, quality=event.quality,
-            depth=min(event.depth, 32), selected_text=event.selected_text,
+            depth=min(event.depth, 32),
+            selected_text=event.selected_text if event.selection_requested else None,
+            selection_requested=event.selection_requested,
             payload={
                 "role": event.field_role or semantic.get("role", "unknown"),
                 "states": tuple(semantic.get("states", ()))[:32],
@@ -239,7 +252,8 @@ class ProcessContextCollector(SemanticCollector):
             resource_id=f"process:{pid}", payload={"executable": Path(executable).name},
         )
 
-    def sanitize(self, event: SourceEvent) -> SourceEvent:
+    @staticmethod
+    def sanitize(event: SourceEvent) -> SourceEvent:
         executable = Path(str(event.payload.get("executable", "unknown"))).name
         return SourceEvent(
             source="process", kind=event.kind, timestamp=event.timestamp,
@@ -284,15 +298,19 @@ class BrowserSemanticCollector(SemanticCollector):
             resource_id=f"tab:{payload['tab_id']}", origin=payload.get("origin"),
             url=payload.get("url"), title=payload.get("title"),
             selected_text=payload.get("selected_text") if payload.get("user_requested") else None,
+            selection_requested=bool(payload.get("user_requested", False)),
             private_browsing=bool(payload.get("private", False)),
         )
 
-    def sanitize(self, event: SourceEvent) -> SourceEvent:
+    @staticmethod
+    def sanitize(event: SourceEvent) -> SourceEvent:
         return SourceEvent(
             source="browser", kind=event.kind, timestamp=event.timestamp,
             application_id=event.application_id, resource_id=event.resource_id,
             origin=event.origin, url=event.url, title=event.title,
-            selected_text=event.selected_text, private_browsing=event.private_browsing,
+            selected_text=event.selected_text if event.selection_requested else None,
+            selection_requested=event.selection_requested,
+            private_browsing=event.private_browsing,
         )
 
 
@@ -364,6 +382,26 @@ class CollectorSupervisor:
         else:
             await self.stop()
 
+    async def observe_session_state(self, locked: bool) -> None:
+        """Keep only the minimal GNOME lock monitor alive while locked."""
+        self.session_locked = locked
+        if not locked:
+            await self.start()
+            return
+        current = asyncio.current_task()
+        tasks: list[asyncio.Task[None]] = []
+        for name, runtime in self._runtimes.items():
+            if name == "gnome":
+                continue
+            runtime.cancellation.cancel()
+            if runtime.task is not None and runtime.task is not current:
+                runtime.task.cancel()
+                tasks.append(runtime.task)
+                runtime.task = None
+            await runtime.collector.stop()
+        if tasks:
+            await asyncio.gather(*tasks, return_exceptions=True)
+
     def status(self) -> tuple[CollectorHealth, ...]:
         return tuple(
             CollectorHealth(
@@ -381,8 +419,13 @@ class CollectorSupervisor:
                 if isinstance(started, Failure):
                     raise RuntimeError(started.failure().code)
                 async for event in runtime.collector.source_events(runtime.cancellation):
-                    if not self._may_collect():
+                    if not self.enabled or self.emergency_stopped:
                         return
+                    if self.session_locked and not (
+                        runtime.collector.name == "gnome"
+                        and event.kind in {"session_locked", "session_unlocked"}
+                    ):
+                        continue
                     await self._sink(event)
                     runtime.last_event_at = event.timestamp
                     runtime.last_error = None

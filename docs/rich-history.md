@@ -55,25 +55,64 @@ All routes use the same authentication boundary as other `/api/*` endpoints:
 - `DELETE /api/v1/activity/episodes` — time-range deletion with residual-link
   verification.
 
-GNOME shell, AT-SPI and browser integrations connect to the bounded adapter
-contracts in `rai.history.collectors`. They should run unprivileged in the user
-session and emit only the normalized fields described by `SourceEvent`.
-Production bridges are registered explicitly as command arrays and run as
-separate processes without a shell or inherited credential variables:
+Install and enable the bundled GNOME Shell extension before enabling the GNOME
+and foreground-process collectors:
 
-```yaml
-rich_history:
-  enabled: true
-  collectors:
-    gnome:
-      command: ["rai-gnome-history-sidecar"]
-      permission: GRANTED
-    atspi:
-      command: ["rai-atspi-history-sidecar"]
-      permission: GRANTED
-    filesystem:
-      command: ["rai-filesystem-history-sidecar", "/home/me/projects"]
-      roots: ["/home/me/projects"]
+```bash
+uv sync --extra gnome-tools
+rai-history-install-gnome-extension
+gnome-extensions enable rai-history@tk-lab1
+```
+
+Log out and back in when GNOME requests it. The extension uses supported Shell
+APIs and exports active-window, process ID and workspace changes over the user
+session bus. `rai-history-gnome` combines those events with the supported GNOME
+ScreenSaver and Mutter IdleMonitor interfaces. `rai-history-atspi` subscribes to
+bounded focus/state/document events and coalesces text changes without reading
+their values. `rai-history-process` resolves only the focused PID's executable
+basename. `rai-history-filesystem` polls names and mtimes below explicit roots
+without opening file content.
+
+Production bridges are registered in `$XDG_CONFIG_HOME/rai/config.json` as
+command arrays and run as separate processes without a shell or inherited
+credential variables:
+
+```json
+{
+  "rich_history": {
+    "enabled": true,
+    "retention_days": {
+      "raw": 0.006944,
+      "observations": 30,
+      "episodes": 90,
+      "memories": 365
+    },
+    "privacy": {
+      "allowed_applications": ["firefox.desktop", "code.desktop", "org.gnome.terminal.desktop"],
+      "excluded_origins": ["private.example"],
+      "allowed_paths": ["/home/me/projects"]
+    },
+    "collectors": {
+      "gnome": {
+        "command": ["rai-history-gnome"],
+        "permission": "GRANTED"
+      },
+      "atspi": {
+        "command": ["rai-history-atspi"],
+        "permission": "GRANTED"
+      },
+      "process": {
+        "command": ["rai-history-process"],
+        "permission": "GRANTED"
+      },
+      "filesystem": {
+        "command": ["rai-history-filesystem", "/home/me/projects"],
+        "roots": ["/home/me/projects"],
+        "permission": "GRANTED"
+      }
+    }
+  }
+}
 ```
 
 Each sidecar writes one bounded `SourceEvent` JSON object per stdout line.

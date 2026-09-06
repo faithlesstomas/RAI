@@ -7,6 +7,9 @@
   collectors, a deterministic pre-persistence privacy firewall, event fusion,
   reproducible episodes, AES-GCM local storage, provenance queries and verified
   cascading deletion through an authenticated local API.
+- Added bundled GNOME Shell/D-Bus, AT-SPI, foreground-process and approved-root
+  filesystem sidecars, including persistent opt-in configuration and an
+  installer for the GNOME extension.
 - Added the Stage 2 durable local event plane with transactional ordering,
   idempotent ingest, replay cursors, consumer acknowledgements, bounded
   subscriptions, authenticated HTTP/Unix-socket transports and the

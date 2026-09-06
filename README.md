@@ -19,10 +19,11 @@ policy, human approval and action provenance.
 The project is in an architectural transition. The daemon, CLI, MCP gateway,
 desktop adapters, history store, sandbox and HITL foundations exist today.
 Provider-neutral kernel records, runtime ports, capability policy and audit
-contracts are implemented. Perception collectors, episode building and model
-routing remain roadmap work. GAIA, GCAS compatibility, Google Antigravity and
-J-lens are optional integrations or research paths; none is required by the
-core product.
+contracts are implemented. Perception collection and deterministic episode
+building are implemented by the
+opt-in Rich History slice; local-model and hybrid routing remain roadmap work.
+GAIA, GCAS compatibility, Google Antigravity and J-lens are optional
+integrations or research paths; none is required by the core product.
 
 The repository and import namespace remain `rai`. The Python distribution will
 be published on PyPI as `rich-ai`, so installation and imports intentionally
@@ -88,12 +89,14 @@ See [docs/architecture.md](docs/architecture.md) for component boundaries and
 - Bubblewrap or Guix command isolation with fail-closed fallback.
 - HITL approval broker.
 - per-user token authentication for `/api/*` and WebSocket control interfaces.
+- opt-in Rich History with isolated GNOME/AT-SPI/process/filesystem collectors,
+  pre-persistence privacy filtering, encrypted episodes, provenance queries and
+  verified deletion.
 - experimental Antigravity chat compatibility.
 - experimental local inference protocols and llama.cpp implementation.
 
 This list is deliberately narrower than the target architecture. In particular,
-RAI does not yet provide a production-ready activity collector or autonomous
-hybrid model router.
+RAI does not yet provide an autonomous hybrid model router.
 
 ## Installation
 
@@ -175,7 +178,8 @@ $XDG_RUNTIME_DIR/rai   socket/token runtime state
 The versioned documentation is published with GitLab Pages at
 [tk-lab1.gitlab.io/ai/rai/](https://tk-lab1.gitlab.io/ai/rai/).
 The source documentation lives in [`docs/`](docs/), including
-the [architecture](docs/architecture.md) and [embodiment kernel
+the [architecture](docs/architecture.md), [Rich History](docs/rich-history.md)
+and [embodiment kernel
 contracts](docs/kernel-contracts.md). The language-neutral Stage 1 contract is
 also available as a [JSON Schema](schemas/rai.kernel.v1.schema.json).
 

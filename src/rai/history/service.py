@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
 from typing import Any
 
 from returns.result import Failure, Result, Success
@@ -11,7 +12,15 @@ from returns.result import Failure, Result, Success
 from rai.kernel.ports import EventJournal
 from rai.kernel.records import ActionFailure, DataClass, Observation, ProducerIdentity
 
-from .collectors import CollectorSupervisor
+from .collectors import (
+    AtspiSemanticCollector,
+    BrowserSemanticCollector,
+    CollectorSupervisor,
+    FilesystemProjectCollector,
+    GnomeSessionCollector,
+    ProcessContextCollector,
+    QueueEventSource,
+)
 from .fusion import DeterministicEpisodeBuilder, DeterministicFusion
 from .models import SourceEvent
 from .privacy import PrivacyFirewall
@@ -34,6 +43,7 @@ class RichHistoryService:
         fusion: DeterministicFusion | None = None,
         episode_builder: DeterministicEpisodeBuilder | None = None,
         collection_enabled: bool | None = None,
+        filesystem_roots: tuple[Path, ...] = (),
     ) -> None:
         self.journal = journal
         self.store = store
@@ -49,11 +59,26 @@ class RichHistoryService:
             "emergency_stopped", False
         )
         self._recent_events: dict[str, datetime] = {}
+        source = QueueEventSource()
+        self._source_collectors = {
+            "gnome": GnomeSessionCollector(source),
+            "atspi": AtspiSemanticCollector(source),
+            "process": ProcessContextCollector(source),
+            "browser": BrowserSemanticCollector(source),
+            "filesystem": FilesystemProjectCollector(source, filesystem_roots),
+        }
 
     async def _collect(self, event: SourceEvent) -> None:
+        if event.source == "gnome" and event.kind in {
+            "session_locked", "session_unlocked"
+        }:
+            await self.supervisor.observe_session_state(
+                event.kind == "session_locked"
+            )
+            return
         await self.ingest(event)
 
-    async def ingest(
+    async def ingest(  # noqa: PLR0911
         self, event: SourceEvent
     ) -> Result[Observation | None, ActionFailure]:
         if (
@@ -61,6 +86,9 @@ class RichHistoryService:
             or self.supervisor.session_locked
             or self.supervisor.emergency_stopped
         ):
+            return Success(None)
+        event = self._source_collectors[event.source].sanitize(event)
+        if event is None:
             return Success(None)
         filtered = self.firewall.apply(event)
         if filtered is None:
@@ -158,10 +186,10 @@ class RichHistoryService:
             item.record_id for item in self.store.observations()
             if since <= item.timestamp <= until
         )
-        result = self.store.delete_range(since, until)
         journal_deleted = await self.journal.delete_observations(ids)
         if isinstance(journal_deleted, Failure):
             raise RuntimeError("source journal deletion could not be verified")
+        result = self.store.delete_range(since, until)
         result["journal_observations"] = journal_deleted.unwrap()
         result["residual_references"] = self.store.residual_references(ids)
         result["verified"] = result["residual_references"] == 0

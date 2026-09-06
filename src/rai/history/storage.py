@@ -87,6 +87,25 @@ class RetentionPolicy:
     memory_ttl: timedelta = timedelta(days=365)
 
 
+def retention_from_config(config: dict[str, object]) -> RetentionPolicy:
+    value = config.get("retention_days", {})
+    if not isinstance(value, dict):
+        raise ValueError("rich_history.retention_days must be a mapping")
+
+    def days(name: str, default: float) -> timedelta:
+        setting = value.get(name, default)
+        if not isinstance(setting, (int, float)) or isinstance(setting, bool) or setting <= 0:
+            raise ValueError(f"rich_history.retention_days.{name} must be positive")
+        return timedelta(days=setting)
+
+    return RetentionPolicy(
+        raw_ttl=days("raw", 10 / (24 * 60)),
+        observation_ttl=days("observations", 30),
+        episode_ttl=days("episodes", 90),
+        memory_ttl=days("memories", 365),
+    )
+
+
 class EncryptedHistoryStore:
     """Searchable metadata with authenticated encryption for complete records."""
 

@@ -68,6 +68,14 @@ AES-GCM-encrypted local store; review, local questions and verified cascading
 deletion share the authenticated control API. No model participates in this
 path.
 
+Native collection remains outside the daemon process. A bundled GNOME Shell
+extension exports focus and workspace changes over a user-session D-Bus name;
+the GNOME sidecar adds ScreenSaver lock and Mutter idle transitions. Separate
+AT-SPI, focused-process and approved-root filesystem sidecars emit bounded JSON
+lines. The supervisor launches these commands without a shell or credential
+environment and the in-process collectors sanitize the records again before the
+privacy firewall.
+
 ## Data flow
 
 ```text

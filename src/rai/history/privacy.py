@@ -76,10 +76,21 @@ class PrivacyFirewall:
             reasons.append("SESSION_LOCKED")
         if event.private_browsing:
             reasons.append("PRIVATE_BROWSING")
-        if (event.field_role or "").casefold() in _SECRET_ROLES:
+        role_words = set(
+            re.split(r"[^a-z0-9]+", (event.field_role or "").casefold())
+        )
+        if role_words & _SECRET_ROLES:
             reasons.append("SECRET_FIELD_ROLE")
         app = (event.application_id or "").casefold()
-        if app in _SENSITIVE_APPS or app in {item.casefold() for item in self.policy.excluded_applications}:
+        if (
+            app in _SENSITIVE_APPS
+            or any(
+                marker in app
+                for marker in ("1password", "bitwarden", "keepass", "seahorse", "polkit")
+            )
+            or app
+            in {item.casefold() for item in self.policy.excluded_applications}
+        ):
             reasons.append("EXCLUDED_APPLICATION")
         if self.policy.allowed_applications and app not in {
             item.casefold() for item in self.policy.allowed_applications
@@ -154,3 +165,38 @@ class PrivacyFirewall:
             item for item in (event.title, event.selected_text, str(event.payload)) if item
         )
         return any(pattern.search(content) for pattern, _replacement in _REDACTIONS)
+
+
+def policy_from_config(config: dict[str, Any]) -> PrivacyPolicy:
+    """Build a strict policy from persisted JSON configuration."""
+    privacy = config.get("privacy", {})
+    if not isinstance(privacy, dict):
+        raise ValueError("rich_history.privacy must be a mapping")
+
+    def strings(name: str) -> tuple[str, ...]:
+        value = privacy.get(name, ())
+        if not isinstance(value, list) or not all(
+            isinstance(item, str) and item for item in value
+        ):
+            if value == ():
+                return ()
+            raise ValueError(f"rich_history.privacy.{name} must be a string array")
+        return tuple(value)
+
+    allowed_sources = strings("allowed_sources")
+    return PrivacyPolicy(
+        allowed_sources=(
+            frozenset(allowed_sources)
+            if allowed_sources
+            else PrivacyPolicy.allowed_sources
+        ),
+        excluded_sources=frozenset(strings("excluded_sources")),
+        allowed_applications=frozenset(strings("allowed_applications")),
+        excluded_applications=frozenset(strings("excluded_applications")),
+        allowed_origins=frozenset(strings("allowed_origins")),
+        excluded_origins=frozenset(strings("excluded_origins")),
+        allowed_paths=tuple(Path(item) for item in strings("allowed_paths")),
+        excluded_paths=tuple(Path(item) for item in strings("excluded_paths")),
+        redact_private_text=bool(privacy.get("redact_private_text", True)),
+        version=str(privacy.get("version", "1.0.0")),
+    )

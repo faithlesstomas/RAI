@@ -22,7 +22,13 @@ from .services.history import HistoryService
 from .services.model_registry import ModelRegistry
 from .history.service import RichHistoryService
 from .history.collectors import register_configured_collectors
-from .history.storage import EncryptedHistoryStore, KeyProvider, KeyUnavailableError
+from .history.privacy import PrivacyFirewall, policy_from_config
+from .history.storage import (
+    EncryptedHistoryStore,
+    KeyProvider,
+    KeyUnavailableError,
+    retention_from_config,
+)
 
 
 @dataclass
@@ -107,12 +113,31 @@ class ApplicationContainer:
             assert self.event_journal is not None
             history_config = self.config.get("rich_history", {})
             config = history_config if isinstance(history_config, dict) else {}
+            collector_config = config.get("collectors", {})
+            filesystem_config = (
+                collector_config.get("filesystem", {})
+                if isinstance(collector_config, dict)
+                else {}
+            )
+            filesystem_roots = tuple(
+                Path(root)
+                for root in (
+                    filesystem_config.get("roots", ())
+                    if isinstance(filesystem_config, dict)
+                    else ()
+                )
+            )
             self._rich_history_service = RichHistoryService(
                 self.event_journal,
                 EncryptedHistoryStore(
-                    self.rich_history_path, key_provider=self.history_key_provider
+                    self.rich_history_path,
+                    key_provider=self.history_key_provider,
+                    retention=retention_from_config(config),
+                    backup_enabled=bool(config.get("backup_enabled", False)),
                 ),
+                firewall=PrivacyFirewall(policy_from_config(config)),
                 collection_enabled=bool(config.get("enabled", False)),
+                filesystem_roots=filesystem_roots,
             )
             register_configured_collectors(
                 self._rich_history_service.supervisor, config

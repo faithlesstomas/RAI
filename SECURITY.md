@@ -74,6 +74,14 @@ and secret roles, private browser sessions, excluded applications, origins and
 paths; sensitive profiles become metadata-only and configured patterns are
 redacted. Dropped values are not logged. Raw input, typed characters,
 screenshots, audio, process arguments and document content are not collected.
+GNOME, AT-SPI, foreground-process and filesystem producers run as separate
+unprivileged sidecars launched without a shell. Their environment allowlist
+omits RAI, API and model credentials, stderr is discarded, and the daemon
+validates and sanitizes every bounded JSON record again. The filesystem
+producer requires explicit non-root paths, does not follow symlinks and reads
+names and mtimes without opening file contents. The process producer reads only
+the focused PID's `/proc/<pid>/exe` basename; it never reads `cmdline` or
+`environ`.
 
 Complete history records are authenticated-encrypted with a per-user AES-256-GCM
 key obtained through Secret Service. If the key is unavailable, history fails

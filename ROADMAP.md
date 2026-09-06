@@ -533,7 +533,7 @@ slice.
 
 #### 3.2 GNOME session collector
 
-- [ ] Observe session lock/unlock, idle/active transitions, workspace changes and
+- [x] Observe session lock/unlock, idle/active transitions, workspace changes and
   active application/window changes using supported GNOME interfaces.
 - [x] Normalize application identity through desktop-entry IDs where possible.
 - [x] Treat window titles as potentially private content and classify them before
@@ -542,7 +542,7 @@ slice.
 
 #### 3.3 AT-SPI semantic collector
 
-- [ ] Observe bounded focus, role, state and document-context changes over
+- [x] Observe bounded focus, role, state and document-context changes over
   AT-SPI.
 - [x] Coalesce repeated text-change events into duration/activity facts; do not
   store typed characters.
@@ -553,9 +553,9 @@ slice.
 
 #### 3.4 Process, filesystem and project context
 
-- [ ] Observe foreground process identity without collecting unrelated process
+- [x] Observe foreground process identity without collecting unrelated process
   arguments or environment variables.
-- [ ] Add opt-in filesystem events for configured roots only.
+- [x] Add opt-in filesystem events for configured roots only.
 - [x] Detect project and Git identity from approved roots while excluding file
   content by default.
 - [x] Correlate save/build/test events using stable resource references rather

@@ -100,6 +100,7 @@ class DeterministicFusion:
 @dataclass(frozen=True)
 class EpisodeConfig:
     idle_gap_seconds: int = 300
+    context_switch_gap_seconds: int = 60
     version: str = "1.0.0"
 
 
@@ -118,10 +119,17 @@ class DeterministicEpisodeBuilder:
         return tuple(self._episode(group) for group in groups)
 
     def _boundary(self, previous: ActivityFact, current: ActivityFact) -> bool:
+        gap = current.started_at - previous.ended_at
+        context_changed = any((
+            bool(previous.application_id and current.application_id and previous.application_id != current.application_id),
+            bool(previous.resource_id and current.resource_id and previous.resource_id != current.resource_id),
+        ))
         return any((
-            current.started_at - previous.ended_at > timedelta(seconds=self.config.idle_gap_seconds),
+            gap > timedelta(seconds=self.config.idle_gap_seconds),
             current.kind in {"session_locked", "idle"},
             bool(previous.project and current.project and previous.project != current.project),
+            context_changed
+            and gap > timedelta(seconds=self.config.context_switch_gap_seconds),
         ))
 
     def _episode(self, group: list[ActivityFact]) -> Episode:

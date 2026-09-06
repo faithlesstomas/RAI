@@ -178,7 +178,8 @@ def load_config(path: Optional[str] = None) -> Dict[str, Any]:
         "tts": state.get("tts", {
             "data_dir": DEFAULT_TTS_DATA_DIR,
             "default_voice": "pl_PL-gosia-medium",
-        })
+        }),
+        "rich_history": state.get("rich_history", {}),
     }
 
 
@@ -194,7 +195,8 @@ def save_config(config_data: Dict[str, Any], path: Optional[str] = None) -> None
         "tts": config_data.get("tts", {
             "data_dir": DEFAULT_TTS_DATA_DIR,
             "default_voice": "pl_PL-gosia-medium",
-        })
+        }),
+        "rich_history": config_data.get("rich_history", {}),
     }
     save_state(state, path)
 
@@ -467,5 +469,4 @@ def clear_conversation_id_for_session(session_name: str) -> None:
                 os.remove(traj_file)
             except Exception as e:
                 logging.getLogger(__name__).warning(f"Failed to remove trajectory file {traj_file}: {e}")
-
 

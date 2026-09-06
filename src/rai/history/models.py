@@ -4,12 +4,15 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 from enum import Enum
+import json
 from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from rai.kernel.ports import LifecycleState
 from rai.kernel.records import DataClass
+
+MAX_PAYLOAD_DEPTH = 8
 
 
 def utc_now() -> datetime:
@@ -46,6 +49,7 @@ class SourceEvent(BaseModel):
     toolkit: str | None = Field(default=None, max_length=128)
     quality: float = Field(default=1.0, ge=0.0, le=1.0)
     selected_text: str | None = Field(default=None, max_length=8192)
+    selection_requested: bool = False
     payload: dict[str, Any] = Field(default_factory=dict)
     private_browsing: bool = False
     session_locked: bool = False
@@ -57,6 +61,31 @@ class SourceEvent(BaseModel):
         if value.tzinfo is None or value.utcoffset() is None:
             raise ValueError("timestamp must include a timezone")
         return value
+
+    @model_validator(mode="after")
+    def bounded_payload(self) -> "SourceEvent":
+        try:
+            encoded = json.dumps(self.payload, separators=(",", ":")).encode()
+        except (TypeError, ValueError) as exc:
+            raise ValueError("payload must be JSON-compatible") from exc
+        if len(encoded) > 64 * 1024:
+            raise ValueError("payload exceeds size limit")
+
+        def depth(value: Any, level: int = 0) -> int:  # noqa: ANN401
+            if isinstance(value, dict):
+                return max(
+                    (depth(item, level + 1) for item in value.values()),
+                    default=level,
+                )
+            if isinstance(value, (list, tuple)):
+                return max(
+                    (depth(item, level + 1) for item in value), default=level
+                )
+            return level
+
+        if depth(self.payload) > MAX_PAYLOAD_DEPTH:
+            raise ValueError("payload exceeds nesting limit")
+        return self
 
 
 class PrivacyDecision(BaseModel):
