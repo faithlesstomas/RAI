@@ -499,6 +499,17 @@ or direct VCS/URL dependency
 the tag, GitLab release and PyPI artifacts identify the same immutable commit
 ```
 
+Post-preview documentation follow-up (not blocking Release gate A):
+
+- [ ] Split warning-as-error documentation validation from GitLab Pages
+  deployment so merge requests and `main` verify docs without replacing the
+  public release site.
+- [ ] Deploy the public Pages site from an immutable release tag only after the
+  corresponding `publish_pypi` job succeeds.
+- [ ] Add browsable documentation versions (for example `/latest/`,
+  `/0.4.0a3/` and `/0.4.0/`) with an explicit version selector, using either a
+  Sphinx multi-version build or GitLab Pages versioned deployments.
+
 ### Stage 3 — Rich History: private desktop observation
 
 Purpose: deliver a useful read-only desktop-awareness product before autonomous
