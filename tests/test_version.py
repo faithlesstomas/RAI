@@ -10,6 +10,7 @@ except ModuleNotFoundError:  # pragma: no cover - Python 3.10 compatibility
 
 from packaging.requirements import Requirement
 from packaging.utils import canonicalize_name
+from packaging.version import Version
 
 from click.testing import CliRunner
 
@@ -19,7 +20,8 @@ from rai.cli import cli
 
 def test_distribution_and_runtime_versions_match() -> None:
     """Installed metadata and the importable package expose one version."""
-    assert version("rich-ai") == __version__
+    # Build frontends normalize SemVer's ``-alpha.1`` to PEP 440's ``a1``.
+    assert Version(version("rich-ai")) == Version(__version__)
 
 
 def test_distribution_does_not_depend_on_foreign_rai_package() -> None:

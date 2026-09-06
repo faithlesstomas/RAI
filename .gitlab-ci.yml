@@ -28,7 +28,6 @@ before_script:
   stage: release
   image: python:3.11
   variables:
-    GITLAB_TOKEN: $GITLAB_TOKEN
     GIT_STRATEGY: clone
     GIT_DEPTH: 0
     GIT_COMMIT_AUTHOR: "semantic-release-bot <semantic-release@rai-project.com>"
@@ -95,7 +94,7 @@ package:
     - uv run twine check build/pypi/*.whl build/pypi/*.tar.gz
     - python -m venv /tmp/rich-ai-wheel-smoke
     - /tmp/rich-ai-wheel-smoke/bin/python -m pip install build/pypi/rich_ai-*.whl
-    - /tmp/rich-ai-wheel-smoke/bin/python -c "from importlib.metadata import version; import rai; assert version('rich-ai') == rai.__version__"
+    - /tmp/rich-ai-wheel-smoke/bin/python -c "from importlib.metadata import version; from packaging.version import Version; import rai; assert Version(version('rich-ai')) == Version(rai.__version__)"
     - /tmp/rich-ai-wheel-smoke/bin/rai --version
     - /tmp/rich-ai-wheel-smoke/bin/rai capability list
   artifacts:
