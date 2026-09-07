@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-09-07
+
 ### Added
 - Added the Stage 3 Rich History acceptance slice: opt-in supervised semantic
   collectors, a deterministic pre-persistence privacy firewall, event fusion,
@@ -36,8 +38,10 @@
   stream buffering and made collector health reflect persistence failures.
 - Made GitLab tooling initialize without network access and handle authentication
   timeouts without making the test suite depend on GitLab availability.
-- Distinguished starting a new minor preview line from advancing an existing
-  alpha or promoting it to a stable release in GitLab CI.
+- Simplified GitLab releases to one calculated preview job and one stable job,
+  with a preflight guard that rejects version regressions and releases outside
+  the active pre-release line.
+- Removed timing sensitivity from the Rich History retention acceptance test.
 
 ## [0.3.1] - 2026-09-04
 

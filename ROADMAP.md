@@ -477,15 +477,15 @@ failure tests pass in CI.
   must not be stored as long-lived CI variables.
 - [x] Complete the Stage 2 provider-neutral acceptance slice before running a
   version-producing `publish_preview` job.
-- [ ] Configure `rich-ai` pending trusted publishers on TestPyPI and PyPI for
-  this GitLab project, `.gitlab-ci.yml`, and the `testpypi`/`pypi` environments;
-  protect the production environment and release tags in GitLab.
-- [ ] Publish a TestPyPI candidate and verify installation, `import rai`,
+- [/] Configure `rich-ai` trusted publishers on TestPyPI and PyPI for this
+  GitLab project, `.gitlab-ci.yml`, and the `testpypi`/`pypi` environments.
+  OIDC publishing is verified; protection of the production environment and
+  release tags in GitLab remains open.
+- [x] Publish a TestPyPI candidate and verify installation, `import rai`,
   `rai --version`, capability listing, local event ingest/replay and package
   links from a clean machine.
-- [ ] Publish the first immutable PyPI developer preview. The planned version is
-  `0.4.0a1` (or the next unique pre-release selected by semantic-release); do
-  not rebuild or reuse the already released `0.3.1` version.
+- [x] Publish the first immutable PyPI developer preview, `0.5.0a1`; do not
+  rebuild or reuse that version or the already released `0.3.1` version.
 
 Acceptance gate:
 

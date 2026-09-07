@@ -44,17 +44,10 @@ publish_preview:
     - git config --global user.name "semantic-release-bot"
     - git config --global user.email "semantic-release@rai-project.com"
     - git checkout -B "$CI_COMMIT_REF_NAME" "$CI_COMMIT_SHA"
+    - semantic-release --noop version --as-prerelease --prerelease-token alpha --print > /tmp/release-candidate
+    - git tag --list > /tmp/release-tags
+    - python ci/release_guard.py preview /tmp/release-candidate /tmp/release-tags
     - semantic-release version --as-prerelease --prerelease-token alpha
-    - semantic-release publish
-
-publish_minor_preview:
-  extends: .release_job
-  script:
-    - pip install "python-semantic-release>=10,<11"
-    - git config --global user.name "semantic-release-bot"
-    - git config --global user.email "semantic-release@rai-project.com"
-    - git checkout -B "$CI_COMMIT_REF_NAME" "$CI_COMMIT_SHA"
-    - semantic-release version --minor --as-prerelease --prerelease-token alpha
     - semantic-release publish
 
 publish_release:
@@ -64,6 +57,9 @@ publish_release:
     - git config --global user.name "semantic-release-bot"
     - git config --global user.email "semantic-release@rai-project.com"
     - git checkout -B "$CI_COMMIT_REF_NAME" "$CI_COMMIT_SHA"
+    - semantic-release --noop version --print > /tmp/release-candidate
+    - git tag --list > /tmp/release-tags
+    - python ci/release_guard.py stable /tmp/release-candidate /tmp/release-tags
     - semantic-release version
     - semantic-release publish
 critical_lint:
