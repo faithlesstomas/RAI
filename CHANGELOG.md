@@ -34,6 +34,10 @@
 - Closed browser origin/URL and AT-SPI `file://` policy bypasses, removed
   private observation bodies from the plaintext event journal, bounded sidecar
   stream buffering and made collector health reflect persistence failures.
+- Made GitLab tooling initialize without network access and handle authentication
+  timeouts without making the test suite depend on GitLab availability.
+- Distinguished starting a new minor preview line from advancing an existing
+  alpha or promoting it to a stable release in GitLab CI.
 
 ## [0.3.1] - 2026-09-04
 

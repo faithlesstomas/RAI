@@ -208,8 +208,9 @@ from the corresponding immutable Git tag.
 ## Release process
 
 Releases are created from a clean, reviewed `main` branch by a manual GitLab CI
-job. Use `publish_preview` for alpha previews and `publish_release` only for a
-stable release. The normal process is:
+job. Use `publish_minor_preview` to start a new minor alpha line,
+`publish_preview` to advance its alpha number, and `publish_release` only to
+promote the current line to a stable release. The normal process is:
 
 1. Confirm all intended merge requests are merged and their Conventional Commit
    messages express the correct SemVer impact.
@@ -226,13 +227,20 @@ stable release. The normal process is:
 5. Review the proposed version and release notes. Correct commit metadata or the
    changelog before releasing; do not compensate for a wrong classification by
    manually choosing an arbitrary version.
-6. Run `publish_preview` (or, once the relevant stability gate is met,
-   `publish_release`) for the exact green commit on `main`. The job updates
-   `pyproject.toml` and `src/rai/__init__.py`, builds the changelog and package,
-   creates the release commit and SemVer tag, pushes them and publishes the
-   GitLab release. Release artifacts are built in `build/pypi/`; only the wheel
-   and source archive are attached, so system packages under `dist/` remain
-   outside the Python release flow.
+6. Run the appropriate job for the exact green commit on `main`:
+
+   - `publish_minor_preview` starts the next minor line, for example
+     `0.4.0-alpha.4` → `0.5.0-alpha.1`;
+   - `publish_preview` advances the current line, for example
+     `0.5.0-alpha.1` → `0.5.0-alpha.2`;
+   - `publish_release` promotes it to stable, for example
+     `0.5.0-alpha.2` → `0.5.0`.
+
+   The selected job updates `pyproject.toml` and `src/rai/__init__.py`, builds
+   the changelog and package, creates the release commit and SemVer tag, pushes
+   them and publishes the GitLab release. Release artifacts are built in
+   `build/pypi/`; only the wheel and source archive are attached, so system
+   packages under `dist/` remain outside the Python release flow.
 7. In the resulting tag pipeline, run `publish_testpypi`. Install that exact
    candidate in a clean environment and verify imports, CLI behavior and
    project links. The job uses GitLab OIDC trusted publishing; do not add a

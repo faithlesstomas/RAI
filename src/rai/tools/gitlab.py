@@ -10,6 +10,7 @@ import logging
 from requests import exceptions as requests_exceptions
 
 logger = logging.getLogger(__name__)
+GITLAB_TIMEOUT_SECONDS = 10.0
 
 
 class GitlabTools:
@@ -23,11 +24,12 @@ class GitlabTools:
 
     def __init__(self, **kwargs: Any) -> None:  # noqa: ANN401
         self.gitlab_token = os.getenv("GITLAB_ACCESS_TOKEN")
+        if not self.gitlab_token:
+            raise ValueError("GITLAB_ACCESS_TOKEN environment variable is not set")
         gitlab_url = os.getenv("GITLAB_BASE_URL", "https://gitlab.com")
         self.gitlab_url = gitlab_url.strip('"\'').rstrip("/")
         self.gl: Optional[gitlab.Gitlab] = None
         self._disabled = False
-        self._get_gitlab_client()  # Initial attempt
 
     def _get_gitlab_client(self) -> Optional[gitlab.Gitlab]:
         if self._disabled:
@@ -42,11 +44,15 @@ class GitlabTools:
             logger.debug(
                 f"Attempting to initialize GitLab client with URL: {self.gitlab_url}"
             )
-            self.gl = gitlab.Gitlab(self.gitlab_url, private_token=self.gitlab_token)
+            self.gl = gitlab.Gitlab(
+                self.gitlab_url,
+                private_token=self.gitlab_token,
+                timeout=GITLAB_TIMEOUT_SECONDS,
+            )
             self.gl.auth()
             logger.debug("GitLab client successfully initialized and authenticated.")
             return self.gl
-        except (gitlab.exceptions.GitlabError, requests_exceptions.ConnectionError) as e:
+        except (gitlab.exceptions.GitlabError, requests_exceptions.RequestException) as e:
             logger.warning(
                 f"Disabling GitlabTools. Failed to connect or authenticate with GitLab: {e}"
             )
