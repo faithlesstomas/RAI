@@ -1,6 +1,7 @@
 """Distribution identity and version consistency tests."""
 
-from importlib.metadata import requires, version
+from importlib.metadata import entry_points, requires, version
+from importlib.resources import files
 from pathlib import Path
 
 try:
@@ -59,3 +60,17 @@ def test_cli_reports_runtime_version() -> None:
 
     assert result.exit_code == 0
     assert __version__ in result.output
+
+
+def test_rich_history_entry_points_and_extension_assets_are_packaged() -> None:
+    scripts = {item.name for item in entry_points(group="console_scripts")}
+    assert {
+        "rai-history-gnome",
+        "rai-history-atspi",
+        "rai-history-process",
+        "rai-history-filesystem",
+        "rai-history-install-gnome-extension",
+    } <= scripts
+    assets = files("rai.history").joinpath("gnome_extension")
+    assert assets.joinpath("extension.js").is_file()
+    assert assets.joinpath("metadata.json").is_file()

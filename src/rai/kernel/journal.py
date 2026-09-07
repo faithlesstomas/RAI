@@ -55,6 +55,7 @@ class SQLiteEventJournal:
         connection.execute("PRAGMA foreign_keys = ON")
         connection.execute("PRAGMA journal_mode = WAL")
         connection.execute("PRAGMA synchronous = FULL")
+        connection.execute("PRAGMA secure_delete = ON")
         return connection
 
     def _initialize(self) -> None:
@@ -331,6 +332,32 @@ class SQLiteEventJournal:
                 raise ValueError("terminal index references a non-terminal record")
             return Success(record)
         except (sqlite3.Error, ValueError) as exc:
+            return Failure(
+                JournalFailure(
+                    code="JOURNAL_UNAVAILABLE", message=str(exc), retryable=True
+                )
+            )
+
+    async def delete_observations(
+        self, record_ids: tuple[str, ...]
+    ) -> Result[int, JournalFailure]:
+        """Physically erase selected source observations for privacy requests."""
+        if not record_ids:
+            return Success(0)
+        try:
+            async with self._lock:
+                self._ensure_initialized()
+                with self._connect() as connection:
+                    placeholders = ",".join("?" for _ in record_ids)
+                    deleted = connection.execute(
+                        "DELETE FROM events WHERE record_type = 'observation' "
+                        f"AND record_id IN ({placeholders})",  # noqa: S608
+                        record_ids,
+                    ).rowcount
+                with self._connect() as connection:
+                    connection.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+            return Success(deleted)
+        except sqlite3.Error as exc:
             return Failure(
                 JournalFailure(
                     code="JOURNAL_UNAVAILABLE", message=str(exc), retryable=True

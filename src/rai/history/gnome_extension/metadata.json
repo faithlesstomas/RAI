@@ -1,0 +1,7 @@
+{
+  "uuid": "rai-history@tk-lab1",
+  "name": "RAI Rich History",
+  "description": "Exports bounded active-window and workspace metadata to the local RAI user service.",
+  "shell-version": ["45", "46", "47", "48", "49", "50"],
+  "version": 1
+}

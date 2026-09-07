@@ -499,11 +499,27 @@ or direct VCS/URL dependency
 the tag, GitLab release and PyPI artifacts identify the same immutable commit
 ```
 
+Post-preview documentation follow-up (not blocking Release gate A):
+
+- [ ] Split warning-as-error documentation validation from GitLab Pages
+  deployment so merge requests and `main` verify docs without replacing the
+  public release site.
+- [ ] Deploy the public Pages site from an immutable release tag only after the
+  corresponding `publish_pypi` job succeeds.
+- [ ] Add browsable documentation versions (for example `/latest/`,
+  `/0.4.0a3/` and `/0.4.0/`) with an explicit version selector, using either a
+  Sphinx multi-version build or GitLab Pages versioned deployments.
+
 ### Stage 3 — Rich History: private desktop observation
 
 Purpose: deliver a useful read-only desktop-awareness product before autonomous
 or model-driven action. Start with metadata and semantic events, not continuous
 screenshots or key logging.
+
+Status: `[/]` — the provider-neutral pipeline, privacy boundary, encrypted
+storage, deterministic episode builder and local review API pass automated
+acceptance tests. Production validation against supported live GNOME, AT-SPI
+and browser sessions remains open and is tracked separately below.
 
 Prerequisites: Stage 1 records and the Stage 2 event journal and local
 subscriptions. GAIA is not required for the local Rich History acceptance
@@ -511,107 +527,108 @@ slice.
 
 #### 3.1 Collector supervisor
 
-- [ ] Add production collector registration, lifecycle, health, restart and
+- [x] Add production collector registration, lifecycle, health, restart and
   backoff.
-- [ ] Run platform collectors as an unprivileged user service or isolated
-  sidecars.
-- [ ] Expose collector status, last event, error and effective permission state.
-- [ ] Stop collection immediately when the profile is disabled, the session is
+- [x] Run platform collectors as daemon-managed unprivileged sidecars. Packaged
+  systemd user-service integration remains a Stage 9 concern.
+- [x] Expose collector status, last event, error and effective permission state.
+- [x] Stop collection immediately when the profile is disabled, the session is
   locked or the user activates emergency stop.
-- [ ] Ensure collector failure cannot terminate the core daemon.
+- [x] Ensure collector failure cannot terminate the core daemon.
 
 #### 3.2 GNOME session collector
 
-- [ ] Observe session lock/unlock, idle/active transitions, workspace changes and
+- [/] Observe session lock/unlock, idle/active transitions, workspace changes and
   active application/window changes using supported GNOME interfaces.
-- [ ] Normalize application identity through desktop-entry IDs where possible.
-- [ ] Treat window titles as potentially private content and classify them before
+- [/] Normalize application identity through desktop-entry IDs where possible.
+- [/] Treat window titles as potentially private content and classify them before
   persistence.
-- [ ] Avoid privileged `/dev/input` access and global raw input capture.
+- [/] Avoid privileged `/dev/input` access and global raw input capture.
 
 #### 3.3 AT-SPI semantic collector
 
-- [ ] Observe bounded focus, role, state and document-context changes over
+- [/] Observe bounded focus, role, state and document-context changes over
   AT-SPI.
-- [ ] Coalesce repeated text-change events into duration/activity facts; do not
+- [/] Coalesce repeated text-change events into duration/activity facts; do not
   store typed characters.
-- [ ] Detect password/secret roles and discard their values before the journal.
-- [ ] Apply size, rate and depth limits to accessibility trees.
-- [ ] Record toolkit/source quality so downstream components know when semantic
+- [/] Detect password/secret roles and discard their values before the journal.
+- [/] Apply size, rate and depth limits to accessibility trees.
+- [/] Record toolkit/source quality so downstream components know when semantic
   context is incomplete.
 
 #### 3.4 Process, filesystem and project context
 
-- [ ] Observe foreground process identity without collecting unrelated process
+- [x] Observe foreground process identity without collecting unrelated process
   arguments or environment variables.
-- [ ] Add opt-in filesystem events for configured roots only.
-- [ ] Detect project and Git identity from approved roots while excluding file
+- [x] Add opt-in filesystem events for configured roots only.
+- [x] Detect project and Git identity from approved roots while excluding file
   content by default.
-- [ ] Correlate save/build/test events using stable resource references rather
+- [x] Correlate save/build/test events using stable resource references rather
   than copying documents into history.
 
 #### 3.5 Browser semantics
 
-- [ ] Define a browser adapter contract for active tab ID, origin, title,
+- [x] Define a browser adapter contract for active tab ID, origin, title,
   navigation and user-requested selected text.
-- [ ] Prefer an extension/native-messaging or accessibility channel that exposes
-  semantic metadata instead of screenshots.
-- [ ] Exclude private browsing unconditionally.
-- [ ] Apply origin allow/exclude policy before storing URL or title.
-- [ ] Never treat page text as an instruction to RAI or an agent.
+- [/] Implement an extension/native-messaging or accessibility producer that
+  exposes semantic metadata instead of screenshots; the adapter contract and
+  privacy boundary already exist.
+- [x] Exclude private browsing unconditionally.
+- [x] Apply origin allow/exclude policy before storing URL or title.
+- [x] Never treat page text as an instruction to RAI or an agent.
 
 #### 3.6 Privacy firewall
 
-- [ ] Implement deterministic source, application, origin, path, field-role and
+- [x] Implement deterministic source, application, origin, path, field-role and
   session-state policies before persistence.
-- [ ] Support `DROP`, `METADATA_ONLY`, `REDACT` and `ALLOW` outcomes with policy
+- [x] Support `DROP`, `METADATA_ONLY`, `REDACT` and `ALLOW` outcomes with policy
   provenance.
-- [ ] Provide built-in protections for password managers, authentication dialogs,
+- [x] Provide built-in protections for password managers, authentication dialogs,
   banking/health profiles and communication applications.
-- [ ] Keep dropped content out of logs, metrics, exception messages and dead
+- [x] Keep dropped content out of logs, metrics, exception messages and dead
   letters.
-- [ ] Add a local redaction test corpus containing credentials, personal data and
+- [x] Add a local redaction test corpus containing credentials, personal data and
   prompt-injection fixtures.
 
 #### 3.7 Event normalization and fusion
 
-- [ ] Debounce and deduplicate high-frequency events before durable storage.
-- [ ] Fuse simultaneous GNOME, AT-SPI, process and filesystem evidence into one
+- [x] Debounce and deduplicate high-frequency events before durable storage.
+- [x] Fuse simultaneous GNOME, AT-SPI, process and filesystem evidence into one
   activity fact without losing source references.
-- [ ] Represent uncertainty and conflicting evidence explicitly.
-- [ ] Make fusion deterministic for the same ordered input and configuration.
+- [x] Represent uncertainty and conflicting evidence explicitly.
+- [x] Make fusion deterministic for the same ordered input and configuration.
 
 #### 3.8 Deterministic episode builder
 
-- [ ] Segment observations using time, idle, application, resource and project
+- [x] Segment observations using time, idle, application, resource and project
   boundaries.
-- [ ] Keep episode construction deterministic and independent of an LLM.
-- [ ] Store applications, resources, duration, outcome signals and provenance;
+- [x] Keep episode construction deterministic and independent of an LLM.
+- [x] Store applications, resources, duration, outcome signals and provenance;
   inferred goals remain optional derived claims.
-- [ ] Rebuild episodes reproducibly from retained observations and a versioned
+- [x] Rebuild episodes reproducibly from retained observations and a versioned
   builder configuration.
-- [ ] Update or invalidate derived memories when source observations are deleted.
+- [x] Update or invalidate derived memories when source observations are deleted.
 
 #### 3.9 Local storage, retention and deletion
 
-- [ ] Implement independent TTLs for raw buffers, observations, episodes and
+- [x] Implement independent TTLs for raw buffers, observations, episodes and
   memories.
-- [ ] Integrate per-user encryption keys through Secret Service or another
+- [x] Integrate per-user encryption keys through Secret Service or another
   documented Linux credential store, with explicit unavailable-key behavior.
-- [ ] Use restrictive file permissions and exclude databases from backup by
+- [x] Use restrictive file permissions and exclude databases from backup by
   default unless the user opts in.
-- [ ] Implement pause/resume, allow-only/exclude lists and time-range deletion.
-- [ ] Verify deletion across source events, derived memories, indexes, caches and
+- [x] Implement pause/resume, allow-only/exclude lists and time-range deletion.
+- [x] Verify deletion across source events, derived memories, indexes, caches and
   outbound-context references.
 
 #### 3.10 History query and review API
 
-- [ ] Provide local queries by time, application, project, resource and activity
+- [x] Provide local queries by time, application, project, resource and activity
   type.
-- [ ] Answer deterministic questions such as "which applications were active?"
+- [x] Answer deterministic questions such as "which applications were active?"
   without an LLM.
-- [ ] Return provenance links and confidence for every derived activity claim.
-- [ ] Expose review and deletion through the same local API used later by the
+- [x] Return provenance links and confidence for every derived activity claim.
+- [x] Expose review and deletion through the same local API used later by the
   status UI.
 
 Acceptance slice:
@@ -629,6 +646,23 @@ The slice passes with network model access disabled, no persisted screenshots,
 no raw keystrokes, no raw audio and zero remote tokens. Tests also prove that a
 password field, private browser window and excluded application leave no
 recoverable activity content.
+
+The automated acceptance slice constructs bounded `SourceEvent` records at the
+collector boundary. It verifies the provider-neutral pipeline but does not by
+itself prove that every supported desktop integration works in a real user
+session.
+
+Production validation gate (still open):
+
+- [ ] Capture lock, idle, workspace and active-window transitions from the
+  packaged GNOME extension in a supported live GNOME session.
+- [ ] Capture bounded focus, document and coalesced text-activity events from a
+  live AT-SPI accessibility bus without retaining entered text.
+- [ ] Deliver browser navigation metadata through a packaged browser producer
+  and prove that private-mode activity is absent at the RAI ingest boundary.
+- [ ] Run the Firefox -> terminal -> editor -> test-run acceptance scenario using
+  production collectors, inspect its evidence and verify deletion from a clean
+  user profile.
 
 ### Stage 4 — Rich Local AI and Rich Voice
 
@@ -825,6 +859,22 @@ agents without transferring ownership of memory, policy or the Linux desktop.
 Prerequisites: Stages 1, 3 and 5. A backend cannot be production-enabled until
 usage accounting, cancellation and data-egress auditing work.
 
+The integration flow is explicit and must preserve RAI's product boundary:
+
+```text
+durable event or explicit user task
+  -> deterministic trigger/router
+  -> policy-filtered ContextPackage
+  -> replaceable AgentBackend
+  -> typed CapabilityRequest
+  -> shared CapabilityService and PolicyEngine
+  -> durable ActionResult or ActionFailure
+```
+
+This coordination is not a universal reasoning loop inside RAI. The selected
+agent harness owns its reasoning and session semantics; RAI owns observation,
+context release, capability authority, verification and durable evidence.
+
 #### 6.1 Context construction and egress
 
 - [ ] Build task-specific `ContextPackage` values from durable state through
@@ -901,12 +951,15 @@ prerequisite for the Stage 2 event plane, Rich History or local-only operation.
 
 #### 6.5 ACP and MCP roles
 
+- [x] Expose the base typed capability registry through authenticated local MCP;
+  MCP calls use the shared validation, policy, approval and audit path.
 - [ ] Add an optional ACP client adapter after the base `AgentBackend` contract is
   stable.
 - [ ] Map ACP session creation, prompt streaming, cancellation, plans and
   permission requests into RAI records without making ACP a security boundary.
-- [ ] Expose approved RAI capabilities to agents through MCP or direct typed
-  adapters; MCP remains behind the agent while ACP manages the agent session.
+- [ ] Integrate external agents with approved RAI capabilities through MCP or
+  direct typed adapters; MCP remains behind the agent while ACP manages the
+  agent session.
 - [ ] Re-evaluate protocol-version compatibility at implementation time and keep
   protocol negotiation explicit.
 - [ ] Add conformance fixtures that prove an ACP agent cannot bypass RAI policy or
@@ -1207,7 +1260,9 @@ than a big-bang rewrite.
   observation and action-result state.
 - Local inference protocols are disconnected from the daemon and lack tests.
 - IREE is a stub and the ONNX factory references an absent implementation.
-- Device identity, reconnect/replay and backpressure contracts do not yet exist.
+- Device identity and cross-device reconnect/spooling contracts do not yet
+  exist. Local event replay and bounded backpressure are already implemented in
+  Stage 2.
 - Full style linting contains legacy violations; critical lint is blocking now.
 - Existing GitLab issues #8 and #9 remain relevant to lazy loading and blocking
   local inference. Issues #2 and #6 require reproduction against the new

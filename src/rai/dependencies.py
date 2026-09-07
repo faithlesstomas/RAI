@@ -2,7 +2,7 @@
 
 from typing import Any
 
-from fastapi import Request
+from fastapi import HTTPException, Request
 
 from .container import ApplicationContainer
 from .kernel.service import CapabilityService
@@ -10,6 +10,8 @@ from .kernel.event_service import EventService
 from .kernel.ports import EventJournal
 from .services.history import HistoryService
 from .services.model_registry import ModelRegistry
+from .history.service import RichHistoryService
+from .history.storage import KeyUnavailableError
 
 
 def get_container(request: Request) -> ApplicationContainer:
@@ -27,6 +29,16 @@ def get_model_registry(request: Request) -> ModelRegistry:
 
 def get_history_service(request: Request) -> HistoryService:
     return get_container(request).history_service
+
+
+async def get_rich_history_service(request: Request) -> RichHistoryService:
+    try:
+        return get_container(request).rich_history_service
+    except KeyUnavailableError as exc:
+        raise HTTPException(
+            status_code=503,
+            detail={"code": "KEY_UNAVAILABLE", "message": str(exc)},
+        ) from exc
 
 
 async def get_capability_service(request: Request) -> CapabilityService:

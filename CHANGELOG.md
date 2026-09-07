@@ -3,6 +3,15 @@
 ## [Unreleased]
 
 ### Added
+- Added the Stage 3 Rich History acceptance slice: opt-in supervised semantic
+  collectors, a deterministic pre-persistence privacy firewall, event fusion,
+  reproducible episodes, AES-GCM local storage, provenance queries and verified
+  cascading deletion through an authenticated local API.
+- Added bundled GNOME Shell/D-Bus, AT-SPI, foreground-process and approved-root
+  filesystem sidecars, including persistent opt-in configuration and an
+  installer for the GNOME extension.
+- Added coordinated periodic retention, bounded ephemeral raw-event buffering,
+  deletion presets and Episode schema `1.1.0` compatibility coverage.
 - Added the Stage 2 durable local event plane with transactional ordering,
   idempotent ingest, replay cursors, consumer acknowledgements, bounded
   subscriptions, authenticated HTTP/Unix-socket transports and the
@@ -20,6 +29,11 @@
 - Moved Google Antigravity and GitLab tooling out of the base installation and
   corrected optional extras so they cannot resolve to the unrelated PyPI
   project named `rai`.
+
+### Fixed
+- Closed browser origin/URL and AT-SPI `file://` policy bypasses, removed
+  private observation bodies from the plaintext event journal, bounded sidecar
+  stream buffering and made collector health reflect persistence failures.
 
 ## [0.3.1] - 2026-09-04
 

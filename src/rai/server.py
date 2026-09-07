@@ -9,7 +9,7 @@ from starlette.datastructures import Headers
 from starlette.types import ASGIApp, Receive, Scope, Send
 from dotenv import load_dotenv
 
-from .routers import agents, capabilities, events, execution, history, mcp
+from .routers import activity, agents, capabilities, events, execution, history, mcp
 from . import __version__
 from . import config_manager
 from .container import ApplicationContainer
@@ -74,6 +74,7 @@ def create_app(container: ApplicationContainer | None = None) -> FastAPI:
     application.add_middleware(AuthenticationMiddleware)
     application.include_router(agents.router)
     application.include_router(history.router)
+    application.include_router(activity.router)
     application.include_router(execution.router)
     application.include_router(capabilities.router)
     application.include_router(events.router)

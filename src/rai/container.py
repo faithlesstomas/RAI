@@ -20,6 +20,15 @@ from .kernel.socket_transport import EventSocketServer
 from .kernel.service import AuditLedger, CapabilityService
 from .services.history import HistoryService
 from .services.model_registry import ModelRegistry
+from .history.service import RichHistoryService
+from .history.collectors import register_configured_collectors
+from .history.privacy import PrivacyFirewall, policy_from_config
+from .history.storage import (
+    EncryptedHistoryStore,
+    KeyProvider,
+    KeyUnavailableError,
+    retention_from_config,
+)
 
 
 @dataclass
@@ -34,10 +43,14 @@ class ApplicationContainer:
     history_path: Path | None = None
     event_journal: EventJournal | None = None
     event_journal_path: Path | None = None
+    rich_history_path: Path | None = None
+    history_key_provider: KeyProvider | None = None
     _history_service: HistoryService | None = field(default=None, init=False)
     _model_registry: ModelRegistry | None = field(default=None, init=False)
     _dispatcher_task: asyncio.Task[None] | None = field(default=None, init=False)
     _event_socket: EventSocketServer | None = field(default=None, init=False)
+    _rich_history_service: RichHistoryService | None = field(default=None, init=False)
+    _rich_history_error: str | None = field(default=None, init=False)
 
     def __post_init__(self) -> None:
         if self.audit_ledger is None:
@@ -67,6 +80,14 @@ class ApplicationContainer:
         self._event_socket = EventSocketServer(self.event_service, self.event_journal)
         await self._event_socket.start()
         self._dispatcher_task = asyncio.create_task(self._dispatch_events())
+        history_config = self.config.get("rich_history", {})
+        if isinstance(history_config, dict) and history_config.get("enabled"):
+            try:
+                service = self.rich_history_service
+                await service.set_controls(enabled=True)
+            except KeyUnavailableError:
+                # History fails closed without taking down the core daemon.
+                self._rich_history_error = "KEY_UNAVAILABLE"
 
     async def _dispatch_events(self) -> None:
         while True:
@@ -87,6 +108,48 @@ class ApplicationContainer:
             self._model_registry = ModelRegistry(self.config)
         return self._model_registry
 
+    @property
+    def rich_history_service(self) -> RichHistoryService:
+        if self._rich_history_service is None:
+            assert self.event_journal is not None
+            history_config = self.config.get("rich_history", {})
+            config = history_config if isinstance(history_config, dict) else {}
+            collector_config = config.get("collectors", {})
+            filesystem_config = (
+                collector_config.get("filesystem", {})
+                if isinstance(collector_config, dict)
+                else {}
+            )
+            filesystem_roots = tuple(
+                Path(root)
+                for root in (
+                    filesystem_config.get("roots", ())
+                    if isinstance(filesystem_config, dict)
+                    else ()
+                )
+            )
+            self._rich_history_service = RichHistoryService(
+                self.event_journal,
+                EncryptedHistoryStore(
+                    self.rich_history_path,
+                    key_provider=self.history_key_provider,
+                    retention=retention_from_config(config),
+                    backup_enabled=bool(config.get("backup_enabled", False)),
+                ),
+                firewall=PrivacyFirewall(policy_from_config(config)),
+                collection_enabled=bool(config.get("enabled", False)),
+                filesystem_roots=filesystem_roots,
+                retention_interval_seconds=(
+                    None
+                    if self.testing
+                    else config.get("retention_interval_seconds", 300)
+                ),
+            )
+            register_configured_collectors(
+                self._rich_history_service.supervisor, config
+            )
+        return self._rich_history_service
+
     async def close(self) -> None:
         if self._dispatcher_task is not None:
             self._dispatcher_task.cancel()
@@ -99,3 +162,6 @@ class ApplicationContainer:
             await self._model_registry.close()
             self._model_registry = None
         self._history_service = None
+        if self._rich_history_service is not None:
+            await self._rich_history_service.close()
+            self._rich_history_service = None
