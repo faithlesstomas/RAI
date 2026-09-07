@@ -233,7 +233,8 @@ class SQLiteEventJournal:
             sequence = cursor.lastrowid
             connection.commit()
             row = connection.execute("SELECT * FROM events WHERE sequence = ?", (sequence,)).fetchone()
-            assert row is not None
+            if row is None:
+                raise sqlite3.DatabaseError("inserted event row could not be read back")
             return row
         except _JournalConflict:
             connection.rollback()
@@ -350,7 +351,8 @@ class SQLiteEventJournal:
                 with self._connect() as connection:
                     placeholders = ",".join("?" for _ in record_ids)
                     deleted = connection.execute(
-                        "DELETE FROM events WHERE record_type = 'observation' "
+                        # Only placeholders are interpolated; record IDs remain parameters.
+                        "DELETE FROM events WHERE record_type = 'observation' "  # noqa: S608
                         f"AND record_id IN ({placeholders})",  # noqa: S608
                         record_ids,
                     ).rowcount

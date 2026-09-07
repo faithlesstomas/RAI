@@ -26,7 +26,7 @@ async def test_client_processor_connect_success(run_config: dict) -> None:
         result = await processor.connect()
         
         assert isinstance(result, Success)
-        mock_get.assert_awaited_once_with("/api/v1/models")
+        mock_get.assert_awaited_once_with("/api/v1/models", timeout=10.0)
 
 @pytest.mark.asyncio
 async def test_client_processor_connect_failure(run_config: dict) -> None:

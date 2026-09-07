@@ -6,6 +6,13 @@
 - Added the first Stage 4.2 bounded local-task contracts for validated episode
   summarization and non-authoritative intent classification.
 
+### Security
+- Replaced the compatibility calculator's Python evaluator with a bounded
+  arithmetic parser and made Ruff security checks blocking in CI.
+- Removed shell-based screenshot delays, secured temporary screenshot paths,
+  bounded compatibility-client connection timeouts and documented narrowly
+  reviewed security-rule exceptions at trusted process and SQL boundaries.
+
 ## [0.5.0] - 2026-09-07
 
 ### Added

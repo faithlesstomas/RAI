@@ -181,8 +181,9 @@ def parse_function_gemma_tool_calls(text: str) -> List[Dict[str, Any]]:
                         }
                      })
                 continue
-            except:
-                pass
+            except (json.JSONDecodeError, TypeError, ValueError):
+                # Expected format mismatch; continue with the next supported parser.
+                pass  # noqa: S110
                 
         # 2. Try 'call:name{args}' format (FunctionGemma specific)
         # e.g. call:get_current_temperature{location:<escape>London<escape>}
@@ -218,9 +219,9 @@ def parse_function_gemma_tool_calls(text: str) -> List[Dict[str, Any]]:
                     }
                 })
                 continue
-            except:
+            except (json.JSONDecodeError, TypeError, ValueError):
                 # Fallback: empty args or partial parsing
-                pass
+                pass  # noqa: S110
 
         # 3. Python style fallback: name(k=v) or name(arg), optionally prefixed with call:
         match = re.match(r"^(?:call:\s*)?([a-zA-Z0-9_.]+)\((.*)\)$", content, re.DOTALL)
@@ -249,8 +250,9 @@ def parse_function_gemma_tool_calls(text: str) -> List[Dict[str, Any]]:
                         "arguments": json.dumps(val)
                     }
                 })
-            except Exception:
-                pass
+            except (SyntaxError, TypeError, ValueError):
+                # Expected format mismatch; no supported representation was found.
+                pass  # noqa: S110
     
     return parsed_calls
 

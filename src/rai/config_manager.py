@@ -15,6 +15,7 @@ CONFIG_DIR = str(config_dir())
 DEFAULT_CONFIG_FILE = os.path.join(CONFIG_DIR, "config.json")
 DEFAULT_AGENTS_FILE = os.path.join(CONFIG_DIR, "agents.yaml")
 DEFAULT_TTS_DATA_DIR = str(data_dir() / "piper_voices")
+logger = logging.getLogger(__name__)
 
 # --- Core Helper Functions ---
 
@@ -75,8 +76,8 @@ def load_agents(path: Optional[str] = None) -> Dict[str, Any]:
                     with open(config_file, "w", encoding="utf-8") as f:
                         json.dump(data, f, indent=2)
                     loaded_from_yaml = True
-            except Exception:
-                pass
+            except (OSError, TypeError, ValueError, yaml.YAMLError) as exc:
+                logger.warning("Legacy agent configuration migration failed: %s", exc)
 
     if not agents and not loaded_from_yaml:
         # Default fallback agent template (utilizes Antigravity native capabilities)
@@ -469,4 +470,3 @@ def clear_conversation_id_for_session(session_name: str) -> None:
                 os.remove(traj_file)
             except Exception as e:
                 logging.getLogger(__name__).warning(f"Failed to remove trajectory file {traj_file}: {e}")
-

@@ -51,7 +51,8 @@ async def get_event_service(request: Request) -> EventService:
 
 async def get_event_journal(request: Request) -> EventJournal:
     journal = get_container(request).event_journal
-    assert journal is not None
+    if journal is None:
+        raise HTTPException(status_code=503, detail="event journal is unavailable")
     return journal
 
 

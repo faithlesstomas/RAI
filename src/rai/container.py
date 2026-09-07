@@ -112,7 +112,8 @@ class ApplicationContainer:
     @property
     def rich_history_service(self) -> RichHistoryService:
         if self._rich_history_service is None:
-            assert self.event_journal is not None
+            if self.event_journal is None:
+                raise RuntimeError("event journal is unavailable")
             history_config = self.config.get("rich_history", {})
             config = history_config if isinstance(history_config, dict) else {}
             collector_config = config.get("collectors", {})
@@ -187,4 +188,3 @@ class ApplicationContainer:
         if self._processor_supervisor is not None:
             await self._processor_supervisor.stop()
             self._processor_supervisor = None
-

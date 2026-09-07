@@ -69,39 +69,48 @@ class TestGnomeDesktopAdapter:
         adapter = GnomeDesktopAdapter()
         summary = "Test Summary"
         body = "Test Body"
-        result = adapter.send_notification(summary=summary, body=body)
+        with patch(
+            "rai.tools.desktop.gnome.shutil.which",
+            return_value="/usr/bin/notify-send",
+        ):
+            result = adapter.send_notification(summary=summary, body=body)
 
         mock_run.assert_called_once_with(
-            ["notify-send", "-a", "AI Assistant", summary, body], check=True
+            ["/usr/bin/notify-send", "-a", "AI Assistant", summary, body], check=True
         )
         assert "Notification sent via notify-send" in result
 
-    @patch("rai.tools.desktop.gnome.os.remove")
     @patch("builtins.open", new_callable=MagicMock)
     @patch("rai.tools.desktop.gnome.base64.b64encode")
     @patch("rai.tools.desktop.gnome.os.path.exists", return_value=True)
     @patch("rai.tools.desktop.gnome.subprocess.run")
-    @patch("rai.tools.desktop.gnome.datetime")
     def test_take_screenshot_success(
-        self, mock_dt: MagicMock, mock_run: MagicMock, _mock_exists: MagicMock,
-        mock_b64: MagicMock, mock_open: MagicMock, mock_remove: MagicMock
+        self, mock_run: MagicMock, _mock_exists: MagicMock,
+        mock_b64: MagicMock, mock_open: MagicMock
     ) -> None:
         """Test taking a screenshot on GNOME."""
-        mock_dt.datetime.now.strftime.return_value = "20230101_120000"
         mock_b64.return_value.decode.return_value = "fake_base64_string"
+        temporary_dir = MagicMock()
+        temporary_dir.name = "/tmp/rai-test"
 
         adapter = GnomeDesktopAdapter()
-        with patch("rai.tools.desktop.gnome.os.path.join", return_value="/tmp/s.png"):
+        with patch(
+            "rai.tools.desktop.gnome.tempfile.TemporaryDirectory",
+            return_value=temporary_dir,
+        ), patch(
+            "rai.tools.desktop.gnome.shutil.which",
+            return_value="/usr/bin/gnome-screenshot",
+        ):
             result = adapter.take_screenshot(delay=0)
             result_json = json.loads(result)
 
             mock_run.assert_called_once_with(
-                ["/usr/bin/gnome-screenshot", "--file", "/tmp/s.png"],
+                ["/usr/bin/gnome-screenshot", "--file", "/tmp/rai-test/screenshot.png"],
                 capture_output=True, text=True, check=True
             )
-            mock_open.assert_called_once_with("/tmp/s.png", "rb")
+            mock_open.assert_called_once_with("/tmp/rai-test/screenshot.png", "rb")
             mock_b64.assert_called_once()
-            mock_remove.assert_called_once_with("/tmp/s.png")
+            temporary_dir.cleanup.assert_called_once_with()
             assert result_json["type"] == "image_data"
             assert result_json["base64"] == "fake_base64_string"
 
@@ -128,13 +137,15 @@ class TestCosmicDesktopAdapter:
         with patch("rai.tools.desktop.cosmic.os.path.exists", return_value=True), \
              patch("builtins.open", MagicMock()), \
              patch("rai.tools.desktop.cosmic.base64.b64encode") as mock_b64, \
-             patch("rai.tools.desktop.cosmic.os.remove") as mock_remove:
+             patch("rai.tools.desktop.cosmic.shutil.which", return_value="/usr/bin/cosmic-screenshot"), \
+             patch("rai.tools.desktop.cosmic.tempfile.TemporaryDirectory") as mock_temp:
             
+            mock_temp.return_value.name = "/tmp/rai-test"
             mock_b64.return_value.decode.return_value = "cosmic_b64"
             result = adapter.take_screenshot(delay=0)
             result_json = json.loads(result)
 
-            assert mock_run.call_args[0][0][0] == "cosmic-screenshot"
+            assert mock_run.call_args[0][0][0] == "/usr/bin/cosmic-screenshot"
             assert result_json["type"] == "image_data"
             assert result_json["base64"] == "cosmic_b64"
 

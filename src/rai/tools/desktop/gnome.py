@@ -1,9 +1,10 @@
 """GNOME-specific desktop adapter implementing the DesktopAdapter interface."""
 import base64
-import datetime
 import json
 import os
+import shutil
 import subprocess
+import tempfile
 from typing import Optional
 
 try:
@@ -32,7 +33,13 @@ class GnomeDesktopAdapter(DesktopAdapter):
         if not _HAS_DBUS:
             # Command fallback using notify-send if pydbus/GLib is missing
             try:
-                subprocess.run(["notify-send", "-a", app_name, summary, body], check=True)
+                command = shutil.which("notify-send")
+                if command is None:
+                    raise FileNotFoundError("notify-send is unavailable")
+                # The executable is resolved to an absolute path; arguments are not shell-evaluated.
+                subprocess.run(  # noqa: S603
+                    [command, "-a", app_name, summary, body], check=True
+                )
                 return f"Notification sent via notify-send: Summary='{summary}', Body='{body}'"
             except Exception as e:  # pylint: disable=broad-except
                 return f"Failed to send notification: {e}. No D-Bus or notify-send available."
@@ -62,14 +69,21 @@ class GnomeDesktopAdapter(DesktopAdapter):
     def take_screenshot(self, delay: int = 0) -> str:
         """Takes a full-screen screenshot using gnome-screenshot command utility."""
         filename = ""
+        temporary_dir: tempfile.TemporaryDirectory[str] | None = None
         try:
-            timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
-            filename = os.path.join("/tmp", f"screenshot_{timestamp}.png")
-            command = ["/usr/bin/gnome-screenshot", "--file", filename]
+            temporary_dir = tempfile.TemporaryDirectory(prefix="rai-screenshot-")
+            filename = os.path.join(temporary_dir.name, "screenshot.png")
+            executable = shutil.which("gnome-screenshot")
+            if executable is None:
+                raise FileNotFoundError("gnome-screenshot is unavailable")
+            command = [executable, "--file", filename]
             if delay > 0:
                 command.extend(["-d", str(delay)])
 
-            subprocess.run(command, capture_output=True, text=True, check=True)
+            # The executable is resolved to an absolute path; arguments are not shell-evaluated.
+            subprocess.run(  # noqa: S603
+                command, capture_output=True, text=True, check=True
+            )
 
             if not os.path.exists(filename):
                 return json.dumps({
@@ -80,8 +94,6 @@ class GnomeDesktopAdapter(DesktopAdapter):
             with open(filename, "rb") as image_file:
                 encoded_string = base64.b64encode(image_file.read()).decode('utf-8')
 
-            os.remove(filename)
-
             return json.dumps({
                 "type": "image_data",
                 "format": "png",
@@ -89,13 +101,14 @@ class GnomeDesktopAdapter(DesktopAdapter):
             })
 
         except Exception as e:  # pylint: disable=broad-except
-            if filename and os.path.exists(filename):
-                os.remove(filename)
             return json.dumps({
                 "status": "error",
                 "message": f"Failed to take screenshot: {e}. "
                            "Ensure gnome-screenshot is installed and available in PATH."
             })
+        finally:
+            if temporary_dir is not None:
+                temporary_dir.cleanup()
 
     def weather(self, location: Optional[str] = "current_location") -> str:
         """Retrieves weather information from the GNOME Shell Weather DBus service."""

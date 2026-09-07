@@ -54,7 +54,8 @@ class SecretServiceKeyProvider:
             raise KeyUnavailableError(
                 "Secret Service client is unavailable; Rich History remains disabled"
             )
-        lookup = subprocess.run(
+        # ``command`` is an absolute path returned by shutil.which; no shell is used.
+        lookup = subprocess.run(  # noqa: S603
             [command, "lookup", "application", "rai", "purpose", "rich-history-v1"],
             check=False, capture_output=True, text=True, timeout=5,
         )
@@ -68,7 +69,8 @@ class SecretServiceKeyProvider:
             return key
         key = secrets.token_bytes(KEY_BYTES)
         encoded = base64.b64encode(key).decode()
-        stored = subprocess.run(
+        # ``command`` is an absolute path returned by shutil.which; no shell is used.
+        stored = subprocess.run(  # noqa: S603
             [command, "store", "--label=RAI Rich History", "application", "rai", "purpose", "rich-history-v1"],
             input=encoded, check=False, capture_output=True, text=True, timeout=5,
         )
@@ -259,7 +261,8 @@ class EncryptedHistoryStore:
         for column, value in (("applications", application), ("projects", project), ("resources", resource), ("activity_types", activity_type)):
             if value:
                 clauses.append(
-                    f"EXISTS (SELECT 1 FROM json_each({column}) WHERE value = ?)"
+                    # ``column`` comes exclusively from the fixed allowlist above.
+                    f"EXISTS (SELECT 1 FROM json_each({column}) WHERE value = ?)"  # noqa: S608
                 )
                 values.append(value)
         where = f" WHERE {' AND '.join(clauses)}" if clauses else ""
@@ -313,14 +316,16 @@ class EncryptedHistoryStore:
         with self._connect() as connection:
             affected = tuple(
                 row[0] for row in connection.execute(
-                    "SELECT DISTINCT episode_id FROM episode_observations WHERE observation_id IN "
-                    f"({','.join('?' for _ in ids)})", ids,
+                    "SELECT DISTINCT episode_id FROM episode_observations WHERE observation_id IN "  # noqa: S608
+                    # Only placeholder count is interpolated; IDs remain bound parameters.
+                    f"({','.join('?' for _ in ids)})", ids,  # noqa: S608
                 )
             ) if ids else ()
             memory_ids = tuple(
                 row[0] for row in connection.execute(
-                    "SELECT DISTINCT memory_id FROM memory_sources WHERE observation_id IN "
-                    f"({','.join('?' for _ in ids)})", ids,
+                    "SELECT DISTINCT memory_id FROM memory_sources WHERE observation_id IN "  # noqa: S608
+                    # Only placeholder count is interpolated; IDs remain bound parameters.
+                    f"({','.join('?' for _ in ids)})", ids,  # noqa: S608
                 )
             ) if ids else ()
             for table, column, targets in (

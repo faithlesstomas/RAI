@@ -72,6 +72,11 @@ ruff_critical:
   script:
     - uv run ruff check src tests --select E9,F63,F7,F82
 
+ruff_security:
+  stage: lint
+  script:
+    - uv run ruff check src --select S
+
 ruff:
   stage: lint
   script:

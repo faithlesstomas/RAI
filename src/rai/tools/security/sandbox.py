@@ -88,7 +88,8 @@ class BubblewrapRunner(SandboxRunner):
             return False
         if self._usable is None:
             try:
-                probe = subprocess.run(
+                # The configured bubblewrap executable is resolved during initialization.
+                probe = subprocess.run(  # noqa: S603
                     [
                         self.bwrap_path,
                         "--unshare-user",
@@ -139,7 +140,8 @@ class BubblewrapRunner(SandboxRunner):
                 bwrap_cmd.extend(["--ro-bind", m, m])
 
         # 4. Mount isolated volatile storage for /tmp and /run
-        bwrap_cmd.extend(["--tmpfs", "/tmp"])
+        # This is the guest mount point inside the isolated namespace, not a host temp path.
+        bwrap_cmd.extend(["--tmpfs", "/tmp"])  # noqa: S108
         bwrap_cmd.extend(["--tmpfs", "/run"])
 
         # 5. Bind workspace directory
@@ -165,7 +167,7 @@ class BubblewrapRunner(SandboxRunner):
         # 8. Setup basic environment variables
         bwrap_env = {
             "PATH": "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
-            "HOME": "/tmp",
+            "HOME": "/tmp",  # noqa: S108 -- isolated guest namespace
             "TERM": "xterm-256color"
         }
         if env:
@@ -178,7 +180,8 @@ class BubblewrapRunner(SandboxRunner):
 
         logger.debug("Executing bubblewrap command: %s", " ".join(bwrap_cmd))
         try:
-            res = subprocess.run(
+            # The command starts with the trusted bubblewrap executable configured above.
+            res = subprocess.run(  # noqa: S603
                 bwrap_cmd,
                 capture_output=True,
                 text=True,
@@ -235,7 +238,8 @@ class GuixContainerRunner(SandboxRunner):
 
         logger.debug("Executing Guix container command: %s", " ".join(guix_cmd))
         try:
-            res = subprocess.run(
+            # The command starts with the configured Guix executable and avoids a shell.
+            res = subprocess.run(  # noqa: S603
                 guix_cmd,
                 capture_output=True,
                 text=True,

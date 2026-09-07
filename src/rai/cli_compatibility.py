@@ -174,13 +174,15 @@ class ClientProcessor:
             transport=self.transport,
             base_url=self.base_url,
             headers=authorization_headers(),
-            timeout=None,
+            # Streaming responses may remain open, but connection, write, and
+            # pool acquisition must stay bounded.
+            timeout=httpx.Timeout(connect=10.0, read=None, write=30.0, pool=10.0),
         )
         self.stateful_session_id = None
 
     async def connect(self) -> Result[None, Exception]:
         try:
-            response = await self.client.get("/api/v1/models")
+            response = await self.client.get("/api/v1/models", timeout=10.0)
             response.raise_for_status()
             return Success(None)
         except Exception as e:

@@ -143,6 +143,7 @@ Before opening a merge request:
 ```bash
 uv run pytest --timeout=30 --cov=src/rai --cov-report=term
 uv run ruff check src tests --select E9,F63,F7,F82
+uv run ruff check src --select S
 uv run pylint -E src/rai
 ```
 

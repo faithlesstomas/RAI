@@ -144,7 +144,10 @@ class JsonLinesSidecarSource:
             self.permission = "DENIED"
             raise
         self.permission = "GRANTED"
-        assert process.stdout is not None
+        if process.stdout is None:
+            process.terminate()
+            await process.wait()
+            raise RuntimeError("collector sidecar stdout pipe is unavailable")
         try:
             while not cancellation.cancelled:
                 line = await process.stdout.readline()
