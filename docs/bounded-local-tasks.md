@@ -7,12 +7,16 @@ a validated derived `Claim` or a typed `ActionFailure`.
 
 ## Supported contracts
 
-The initial registry contains two version `1.0.0` contracts:
+The registry contains six version `1.0.0` contracts:
 
 | Kind | Output | Purpose |
 | --- | --- | --- |
 | `episode_summarization` | `EpisodeSummaryOutput` | Summarize observed episode facts without inventing actions or outcomes. |
 | `intent_classification` | `IntentClassificationOutput` | Produce a non-authoritative classification hint that cannot approve or execute an action. |
+| `entity_extraction` | `EntityExtractionOutput` | Extract at most 32 explicit entity mentions, each tied to an approved manifest source. |
+| `salience_estimation` | `SalienceEstimationOutput` | Produce a normalized score and a deterministic low, medium or high score band. |
+| `privacy_risk_elevation` | `PrivacyRiskElevationOutput` | Preserve or elevate the retained input classification; never downgrade it. |
+| `routing_hint` | `RoutingHintOutput` | Suggest `LOCAL`, `ASK`, `ESCALATE` or `DENY` without dispatching or authorizing work. |
 
 Each `BoundedTaskContract` fixes the output model, prompt instruction, token,
 latency, RAM and VRAM ceilings, minimum confidence, and failure behavior. The
@@ -31,6 +35,12 @@ confidence threshold fails with `ActionFailure(code="LOW_CONFIDENCE")`.
 
 The raw response is not copied into failure messages. A failed response never
 becomes a `Claim`.
+
+Task-specific validation also runs before claim creation. Entity source IDs must
+exist in the retained, approved context manifest, salience labels must match the
+documented score bands (`low` below `0.33`, `medium` below `0.67`, then `high`),
+and privacy-risk output cannot downgrade the highest retained input data class.
+An accepted privacy elevation becomes the derived claim's data class.
 
 The prompt labels context as untrusted data and forbids tool or capability
 requests. More importantly, this is an architectural boundary rather than a
@@ -58,10 +68,9 @@ records the task kind and contract version in `epistemic_status`.
 
 ## Extension rules
 
-Entity extraction, salience estimation, privacy-risk elevation and routing hints
-must be added as separate registry entries with dedicated strict output models.
-They must not reuse permissive tool-call parsers. Routing output remains a hint;
-deterministic policy makes the final `LOCAL`, `ASK`, `ESCALATE` or `DENY`
-decision in Stage 4.5. Persistent result caching is a separate follow-up because
-its key must include the task contract, model artifact, normalized input and
-policy versions.
+New bounded tasks require separate registry entries with dedicated strict output
+models and adversarial contract tests. They must not reuse permissive tool-call
+parsers. Routing output remains a hint; deterministic policy makes the final
+`LOCAL`, `ASK`, `ESCALATE` or `DENY` decision in Stage 4.5. Persistent result
+caching is a separate follow-up because its key must include the task contract,
+model artifact, normalized input and policy versions.

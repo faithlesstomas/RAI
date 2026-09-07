@@ -419,9 +419,27 @@ class ProcessorSupervisor(LocalProcessor):
                 )
             )
 
+        # Classification and source identity are fixed from the retained manifest
+        # before model output is validated. A task may elevate classification but
+        # cannot weaken this baseline.
+        out_data_class = DataClass.PUBLIC
+        if allowed_items:
+            classes = {item.data_class for item in allowed_items}
+            if DataClass.PRIVATE in classes or "PRIVATE" in classes:
+                out_data_class = DataClass.PRIVATE
+            elif DataClass.LOCAL in classes or "LOCAL" in classes:
+                out_data_class = DataClass.LOCAL
+        else:
+            out_data_class = DataClass.LOCAL
+        allowed_source_ids = frozenset(item.source_id for item in allowed_items)
+
         # 4. Construct bounded prompt and enforce input token budget
         prompt = (
-            contract.build_prompt(task.objective, sanitized_content)
+            contract.build_prompt(
+                task.objective,
+                sanitized_content,
+                allowed_source_ids=allowed_source_ids,
+            )
             if contract is not None
             else self._build_prompt(task, sanitized_content)
         )
@@ -598,7 +616,11 @@ class ProcessorSupervisor(LocalProcessor):
             confidence = 0.9
             epistemic_status = "inferred"
             if contract is not None:
-                validation_res = contract.validate_output(raw_statement)
+                validation_res = contract.validate_output(
+                    raw_statement,
+                    input_data_class=out_data_class,
+                    allowed_source_ids=allowed_source_ids,
+                )
                 if isinstance(validation_res, Failure):
                     validation_failure = validation_res.failure()
                     self._error_count += 1
@@ -613,6 +635,7 @@ class ProcessorSupervisor(LocalProcessor):
                 validated_output = validation_res.unwrap()
                 statement = validated_output.claim_statement()
                 confidence = validated_output.confidence
+                out_data_class = validated_output.result_data_class(out_data_class)
                 epistemic_status = (
                     f"inferred:{contract.kind.value}@{contract.version}"
                 )
@@ -627,17 +650,6 @@ class ProcessorSupervisor(LocalProcessor):
                 relation="derived-from",
                 producer=context.producer,
             )
-
-            # Determine output data class based strictly on allowed retained items
-            out_data_class = DataClass.PUBLIC
-            if allowed_items:
-                classes = {item.data_class for item in allowed_items}
-                if DataClass.PRIVATE in classes or "PRIVATE" in classes:
-                    out_data_class = DataClass.PRIVATE
-                elif DataClass.LOCAL in classes or "LOCAL" in classes:
-                    out_data_class = DataClass.LOCAL
-            else:
-                out_data_class = DataClass.LOCAL
 
             claim = Claim(
                 producer=SUPERVISOR_PRODUCER,

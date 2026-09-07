@@ -685,11 +685,11 @@ actuator boundary and Stage 2 provides durable input and result delivery.
 
 #### 4.2 Bounded local tasks
 
-- [/] Add schema-constrained intent classification, entity extraction, episode
+- [x] Add schema-constrained intent classification, entity extraction, episode
   summarization, salience estimation, privacy-risk elevation and routing hints.
-- [ ] Give each task a fixed schema, token/resource budget and failure policy.
-- [ ] Validate outputs before they may become derived claims.
-- [ ] Prevent local processors from writing state or invoking capabilities
+- [x] Give each task a fixed schema, token/resource budget and failure policy.
+- [x] Validate outputs before they may become derived claims.
+- [x] Prevent local processors from writing state or invoking capabilities
   directly.
 - [ ] Cache results by model/artifact version, normalized input and policy version.
 
