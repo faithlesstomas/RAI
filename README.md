@@ -25,8 +25,8 @@ opt-in Rich History slice; local-model and hybrid routing remain roadmap work.
 GAIA, GCAS compatibility, Google Antigravity and J-lens are optional
 integrations or research paths; none is required by the core product.
 
-The repository and import namespace remain `rai`. The Python distribution will
-be published on PyPI as `rich-ai`, so installation and imports intentionally
+The repository and import namespace remain `rai`. The Python distribution is
+published on PyPI as `rich-ai`, so installation and imports intentionally
 use different names: `pip install rich-ai`, then `import rai` or run `rai`.
 
 ## Design principles
@@ -100,15 +100,13 @@ RAI does not yet provide an autonomous hybrid model router.
 
 ## Installation
 
-The first `rich-ai` PyPI developer preview is planned but not published yet.
-Once it is available, the base installation will be:
+The base `rich-ai` package can be installed from PyPI (pre-releases included):
 
 ```bash
 python -m pip install --pre rich-ai
 ```
 
-Until then, install from source. Python 3.10 or newer and `uv` are required for
-development:
+To install from source for development (Python 3.10 or newer and `uv` are required):
 
 ```bash
 git clone https://gitlab.com/tk-lab1/ai/rai.git
