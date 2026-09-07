@@ -40,17 +40,19 @@ If you do not need to use a tool, just respond with natural text.
 def parse_tool_calls(text: str) -> List[Dict[str, Any]]:
     """
     Extracts tool calls from the generated text.
-    Returns a list of dicts compatible with OpenAI tool calls structure:
-    [
-        {
-            "id": "call_id",
-            "type": "function",
-            "function": {
-                "name": "tool_name",
-                "arguments": "json_string" 
+
+    Returns a list of dicts compatible with OpenAI tool calls structure::
+
+        [
+            {
+                "id": "call_id",
+                "type": "function",
+                "function": {
+                    "name": "tool_name",
+                    "arguments": "json_string"
+                }
             }
-        }
-    ]
+        ]
     """
     # Regex to find <tool_code>...</tool_code> (dotall)
     pattern = re.compile(r"<tool_code>(.*?)</tool_code>", re.DOTALL)
@@ -228,22 +230,16 @@ def parse_function_gemma_tool_calls(text: str) -> List[Dict[str, Any]]:
             
             import ast
             try:
-                # Construct call: dict(args) -> gives dict.
-                # If args is positional, this fails.
-                try:
-                    val = ast.literal_eval(f"dict({args_str})")
-                except ValueError:
-                    # Try to evaluate as tuple/list for positional
-                    val_pos = ast.literal_eval(f"({args_str},)")
-                    if isinstance(val_pos, tuple) and len(val_pos) == 1:
-                         # Single positional argument
-                         # We need to map this to a named argument expected by the tool?
-                         # Or just pass it as "expression" if it looks like math?
-                         # Or better yet, pass it as a special key and let Adapter logic handle it?
-                         # For now, let's wrap it in 'default_arg' or try to guess.
-                         val = {"expression": val_pos[0]} 
-                    else:
-                         val = {}
+                val: Dict[str, Any] = {}
+                tree = ast.parse(f"f({args_str})", mode="eval")
+                call_node = tree.body
+                if isinstance(call_node, ast.Call):
+                    if call_node.keywords:
+                        for kw in call_node.keywords:
+                            if kw.arg:
+                                val[kw.arg] = ast.literal_eval(kw.value)
+                    elif len(call_node.args) == 1:
+                        val = {"expression": ast.literal_eval(call_node.args[0])}
 
                 parsed_calls.append({
                     "id": f"call_{i}",
@@ -253,7 +249,7 @@ def parse_function_gemma_tool_calls(text: str) -> List[Dict[str, Any]]:
                         "arguments": json.dumps(val)
                     }
                 })
-            except:
+            except Exception:
                 pass
     
     return parsed_calls

@@ -466,3 +466,52 @@ async def test_supervisor_health_reporting() -> None:
     await supervisor.stop()
     health_stopped = supervisor.health()
     assert health_stopped.state == LifecycleState.STOPPED
+
+
+# --- Factory Function Tests ---
+
+
+def test_factory_backend_availability() -> None:
+    assert not is_backend_available("onnx")
+    assert not is_backend_available("nonexistent_backend")
+    assert not is_iree_available()
+    backends = get_available_backends()
+    assert isinstance(backends, tuple)
+
+
+def test_factory_load_local_model_validation(tmp_path: Any) -> None:
+    # Non-existent file
+    missing = tmp_path / "missing.gguf"
+    res = load_local_model(str(missing))
+    assert isinstance(res, Failure)
+    assert isinstance(res.failure(), FileNotFoundError)
+
+    # Directory instead of file
+    res_dir = load_local_model(str(tmp_path))
+    assert isinstance(res_dir, Failure)
+    assert isinstance(res_dir.failure(), IsADirectoryError)
+
+    # Unsupported extension
+    dummy_txt = tmp_path / "model.txt"
+    dummy_txt.write_text("not a model")
+    res_ext = load_local_model(str(dummy_txt))
+    assert isinstance(res_ext, Failure)
+    assert isinstance(res_ext.failure(), ValueError)
+
+    # ONNX extension (frozen)
+    dummy_onnx = tmp_path / "model.onnx"
+    dummy_onnx.write_text("onnx")
+    res_onnx = load_local_model(str(dummy_onnx))
+    assert isinstance(res_onnx, Failure)
+    assert isinstance(res_onnx.failure(), NotImplementedError)
+
+    # IREE extension
+    dummy_vmfb = tmp_path / "model.vmfb"
+    dummy_vmfb.write_text("vmfb")
+    res_iree = load_local_model(str(dummy_vmfb))
+    assert isinstance(res_iree, Success)
+
+    # Ollama by explicit backend (no file check needed)
+    res_ollama = load_local_model("llama3.2", backend="ollama")
+    assert isinstance(res_ollama, Success)
+

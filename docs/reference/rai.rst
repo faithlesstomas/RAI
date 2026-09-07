@@ -7,6 +7,7 @@ Subpackages
 .. toctree::
    :maxdepth: 4
 
+   rai.inference
    rai.routers
    rai.tools
 
@@ -33,6 +34,14 @@ rai.config\_screen module
 -------------------------
 
 .. automodule:: rai.config_screen
+   :members:
+   :show-inheritance:
+   :undoc-members:
+
+rai.container module
+--------------------
+
+.. automodule:: rai.container
    :members:
    :show-inheritance:
    :undoc-members:
