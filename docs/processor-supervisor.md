@@ -66,20 +66,72 @@ Engines conform to the `LocalTextEngine` protocol, exposing uniform `load()`, `g
 The processor supervisor is exposed on `ApplicationContainer`:
 
 ```python
+from datetime import datetime, timedelta, timezone
+from returns.result import Success
 from rai.container import ApplicationContainer
+from rai.kernel.ports import CancellationToken
+from rai.kernel.records import (
+    ContextManifest,
+    ContextManifestItem,
+    ContextPackage,
+    DataClass,
+    InferenceBudget,
+    ProducerIdentity,
+    Task,
+)
 
-container = ApplicationContainer()
+container = ApplicationContainer(config={})
 supervisor = container.processor_supervisor
+await supervisor.start()
 
 # Check operational metrics
 health = supervisor.health()
 print(health.state, health.active_requests)
 
-# Process an episode within budget
-result = await supervisor.process(episode=episode, budget=budget)
+# Process a task with context package and budget
+producer = ProducerIdentity(producer_id="client", kind="user", version="1.0.0")
+task = Task(producer=producer, objective="Summarize episode")
+context = ContextPackage(
+    producer=producer,
+    task_id=task.record_id,
+    manifest=ContextManifest(
+        producer=producer,
+        destination="local-processor",
+        items=(
+            ContextManifestItem(
+                source_id="item-1",
+                source_type="episode",
+                data_class=DataClass.LOCAL,
+            ),
+        ),
+    ),
+    content={"episode": {"applications": ["gedit"], "activity_types": ["edit"]}},
+)
+budget = InferenceBudget(
+    producer=producer,
+    max_input_tokens=1000,
+    max_output_tokens=256,
+    max_agent_turns=1,
+    max_tool_calls=0,
+    max_images=0,
+    max_audio_seconds=0.0,
+    max_latency_seconds=15.0,
+    max_provider_cost=0.0,
+    max_ram_bytes=1024 * 1024 * 1024,
+    max_vram_bytes=0,
+    cancellation_deadline=datetime.now(timezone.utc) + timedelta(seconds=30),
+)
+cancellation = CancellationToken()
+
+result = await supervisor.process(
+    task=task,
+    context=context,
+    budget=budget,
+    cancellation=cancellation,
+)
 if isinstance(result, Success):
     claim = result.unwrap()
-    print("Synthesized claim:", claim.subject, claim.predicate)
+    print("Synthesized claim:", claim.statement, claim.data_class)
 ```
 
 Supervisor teardown and model unloads are coordinated automatically during `container.close()`.

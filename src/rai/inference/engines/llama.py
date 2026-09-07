@@ -46,8 +46,8 @@ class LlamaCppEngine:
     def is_loaded(self) -> bool:
         return self.llm is not None
 
-    async def load(self) -> Result[None, Exception]:
-        """Loads the model in a worker thread to avoid blocking the event loop."""
+    def load(self) -> Result[None, Exception]:
+        """Synchronously loads model weights."""
         if self.is_loaded:
             return Success(None)
 
@@ -58,44 +58,30 @@ class LlamaCppEngine:
                 )
             )
 
-        def _load_sync() -> Any:
-            from llama_cpp import Llama  # noqa: PLC0415
-            return Llama(
+        from llama_cpp import Llama  # noqa: PLC0415
+
+        try:
+            self.llm = Llama(
                 model_path=self.model_path,
                 n_ctx=self.n_ctx,
                 verbose=self.verbose,
             )
-
-        try:
-            self.llm = await asyncio.to_thread(_load_sync)
             return Success(None)
         except Exception as exc:
             return Failure(exc)
 
-    def generate_sync(
+    def generate(
         self,
         prompt: str,
         stop: Optional[List[str]] = None,
         max_tokens: int = 1024,
         temperature: float = 0.7,
     ) -> Result[InferenceResult, Exception]:
-        """Synchronous generation for low-level or test execution."""
+        """Synchronously generates text from a prompt satisfying InferenceEngine."""
         if not self.is_loaded:
-            if not is_llama_cpp_available():
-                return Failure(
-                    ImportError(
-                        "llama-cpp-python is not installed. Install with: uv sync --extra inference-llama"
-                    )
-                )
-            from llama_cpp import Llama  # noqa: PLC0415
-            try:
-                self.llm = Llama(
-                    model_path=self.model_path,
-                    n_ctx=self.n_ctx,
-                    verbose=self.verbose,
-                )
-            except Exception as exc:
-                return Failure(exc)
+            load_res = self.load()
+            if isinstance(load_res, Failure):
+                return load_res
 
         start_time = time.monotonic()
         try:
@@ -129,26 +115,6 @@ class LlamaCppEngine:
         except Exception as exc:
             return Failure(exc)
 
-    async def generate(
-        self,
-        prompt: str,
-        stop: Optional[List[str]] = None,
-        max_tokens: int = 1024,
-        temperature: float = 0.7,
-    ) -> Result[InferenceResult, Exception]:
-        """Asynchronously generates text offloaded to a worker thread (non-blocking)."""
-        load_res = await self.load()
-        if isinstance(load_res, Failure):
-            return load_res
-
-        return await asyncio.to_thread(
-            self.generate_sync,
-            prompt,
-            stop,
-            max_tokens,
-            temperature,
-        )
-
     async def stream(
         self,
         prompt: str,
@@ -157,10 +123,11 @@ class LlamaCppEngine:
         temperature: float = 0.7,
     ) -> AsyncIterator[Result[str, Exception]]:
         """Streams generated tokens without blocking the event loop between tokens."""
-        load_res = await self.load()
-        if isinstance(load_res, Failure):
-            yield Failure(load_res.failure())
-            return
+        if not self.is_loaded:
+            load_res = self.load()
+            if isinstance(load_res, Failure):
+                yield Failure(load_res.failure())
+                return
 
         def _create_stream() -> Any:
             return self.llm.create_completion(
@@ -182,10 +149,77 @@ class LlamaCppEngine:
         except Exception as exc:
             yield Failure(exc)
 
-    async def unload(self) -> Result[None, Exception]:
-        """Unload the model and free resources."""
+    def unload(self) -> None:
+        """Synchronously unloads model weights and frees resources."""
         if hasattr(self, "llm") and self.llm is not None:
             del self.llm
             self.llm = None
+
+
+class AsyncLlamaEngine(LocalTextEngine):
+    """
+    Asynchronous LocalTextEngine adapter for LlamaCppEngine.
+    Offloads synchronous model loading and generation to worker threads via asyncio.to_thread.
+    """
+
+    def __init__(
+        self,
+        engine_or_path: Any,
+        n_ctx: int = 0,
+        verbose: bool = False,
+    ) -> None:
+        if isinstance(engine_or_path, LlamaCppEngine):
+            self._engine = engine_or_path
+        else:
+            self._engine = LlamaCppEngine(
+                model_path=str(engine_or_path),
+                n_ctx=n_ctx,
+                verbose=verbose,
+            )
+
+    @property
+    def model_name(self) -> str:
+        return self._engine.model_name
+
+    @property
+    def is_loaded(self) -> bool:
+        return self._engine.is_loaded
+
+    async def load(self) -> Result[None, Exception]:
+        return await asyncio.to_thread(self._engine.load)
+
+    async def generate(
+        self,
+        prompt: str,
+        stop: Optional[List[str]] = None,
+        max_tokens: int = 1024,
+        temperature: float = 0.7,
+    ) -> Result[InferenceResult, Exception]:
+        if not self.is_loaded:
+            load_res = await self.load()
+            if isinstance(load_res, Failure):
+                return load_res
+
+        return await asyncio.to_thread(
+            self._engine.generate,
+            prompt,
+            stop,
+            max_tokens,
+            temperature,
+        )
+
+    async def stream(
+        self,
+        prompt: str,
+        stop: Optional[List[str]] = None,
+        max_tokens: int = 1024,
+        temperature: float = 0.7,
+    ) -> AsyncIterator[Result[str, Exception]]:
+        async for chunk in self._engine.stream(prompt, stop, max_tokens, temperature):
+            yield chunk
+
+    async def unload(self) -> Result[None, Exception]:
+        await asyncio.to_thread(self._engine.unload)
         return Success(None)
+
 

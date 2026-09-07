@@ -102,8 +102,11 @@ def _load_local_model_cached(
             return Success(OllamaEngine(model_name=model_path_str))
 
         elif backend == "iree":
-            from .engines.iree import IreeEngine  # noqa: PLC0415
-            return Success(IreeEngine(model_path_str))
+            return Failure(
+                NotImplementedError(
+                    "IREE backend is frozen in Stage 4 pending conformance tests and runtime availability"
+                )
+            )
 
         elif backend == "onnx":
             return Failure(NotImplementedError("ONNX backend is frozen pending conformance tests"))

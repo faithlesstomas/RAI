@@ -195,7 +195,7 @@ def test_issue_8_lazy_imports_and_guards() -> None:
     # If llama_cpp is not installed, calling load fails gracefully
     with patch("rai.inference.engines.llama.is_llama_cpp_available", return_value=False):
         assert not is_backend_available("llama")
-        res = engine.generate_sync("hello")
+        res = engine.generate("hello")
         assert isinstance(res, Failure)
         assert isinstance(res.failure(), ImportError)
 
@@ -298,7 +298,7 @@ async def test_concurrency_capacity_limit_rejected() -> None:
     context = _make_context_package(episode)
     task1 = Task(objective="Task 1", producer=TEST_PRODUCER)
     task2 = Task(objective="Task 2", producer=TEST_PRODUCER)
-    budget = _make_budget(50)
+    budget = _make_budget(150)
 
     t1 = asyncio.create_task(
         supervisor.process(task1, context, budget, CancellationToken())
@@ -505,13 +505,292 @@ def test_factory_load_local_model_validation(tmp_path: Any) -> None:
     assert isinstance(res_onnx, Failure)
     assert isinstance(res_onnx.failure(), NotImplementedError)
 
-    # IREE extension
+    # IREE extension (frozen in Stage 4)
     dummy_vmfb = tmp_path / "model.vmfb"
     dummy_vmfb.write_text("vmfb")
     res_iree = load_local_model(str(dummy_vmfb))
-    assert isinstance(res_iree, Success)
+    assert isinstance(res_iree, Failure)
+    assert isinstance(res_iree.failure(), NotImplementedError)
 
     # Ollama by explicit backend (no file check needed)
     res_ollama = load_local_model("llama3.2", backend="ollama")
     assert isinstance(res_ollama, Success)
+
+
+# --- Tests for Reviewer Comments (Privacy, Budget, API contract) ---
+
+
+@pytest.mark.asyncio
+async def test_privacy_firewall_drops_secret_and_blocked() -> None:
+    """[P1] SECRET/BLOCKED data must never be passed to engine and output cannot be downgraded."""
+    mock_engine = MockEngine()
+    supervisor = ProcessorSupervisor(engine=mock_engine, idle_unload_seconds=0)
+    await supervisor.start()
+
+    task = Task(objective="Summarize context", producer=TEST_PRODUCER)
+    budget = _make_budget(100)
+    cancellation = CancellationToken()
+
+    # Case 1: Mixed context (SECRET item + LOCAL item)
+    context_mixed = ContextPackage(
+        task_id="task:mix",
+        manifest=ContextManifest(
+            destination="local-processor",
+            items=(
+                ContextManifestItem(
+                    source_id="secret_credentials",
+                    source_type="secret",
+                    data_class=DataClass.SECRET,
+                ),
+                ContextManifestItem(
+                    source_id="local_episode",
+                    source_type="episode",
+                    data_class=DataClass.LOCAL,
+                ),
+            ),
+            approved=True,
+            producer=TEST_PRODUCER,
+        ),
+        content={
+            "secret_credentials": "password=supersecret123",
+            "local_episode": {"apps": ["browser"], "project": "rai"},
+        },
+        producer=TEST_PRODUCER,
+    )
+
+    res_mixed = await supervisor.process(task, context_mixed, budget, cancellation)
+    assert isinstance(res_mixed, Success)
+    claim = res_mixed.unwrap()
+    assert claim.data_class == DataClass.LOCAL
+    # Check that secret was never passed to the engine prompt
+    assert len(mock_engine.generate_calls) == 1
+    prompt_used = mock_engine.generate_calls[0]
+    assert "supersecret123" not in prompt_used
+    assert "password=" not in prompt_used
+    assert "local_episode" in prompt_used
+
+    # Case 2: Only SECRET items -> model must NOT be called at all
+    mock_engine.generate_calls.clear()
+    context_secret_only = ContextPackage(
+        task_id="task:sec",
+        manifest=ContextManifest(
+            destination="local-processor",
+            items=(
+                ContextManifestItem(
+                    source_id="secret_vault",
+                    source_type="secret",
+                    data_class=DataClass.SECRET,
+                ),
+            ),
+            approved=True,
+            producer=TEST_PRODUCER,
+        ),
+        content={"secret_vault": "token=topsecret"},
+        producer=TEST_PRODUCER,
+    )
+
+    res_sec = await supervisor.process(task, context_secret_only, budget, cancellation)
+    assert isinstance(res_sec, Failure)
+    assert res_sec.failure().code == "DATA_CLASS_REJECTED"
+    assert len(mock_engine.generate_calls) == 0
+
+    await supervisor.stop()
+
+
+@pytest.mark.asyncio
+async def test_budget_enforcement_and_limits() -> None:
+    """[P1] Budget limits (output tokens=0, input tokens, providers, deadlines) must be strictly enforced."""
+    mock_engine = MockEngine(delay=0.15)
+    supervisor = ProcessorSupervisor(engine=mock_engine, idle_unload_seconds=0)
+    await supervisor.start()
+
+    task = Task(objective="Summarize context", producer=TEST_PRODUCER)
+    episode = _make_episode()
+    context = _make_context_package(episode)
+    cancellation = CancellationToken()
+
+    # 1. max_output_tokens == 0 must be rejected (not defaulted to 512)
+    budget_zero_out = InferenceBudget(
+        producer=TEST_PRODUCER,
+        max_input_tokens=100,
+        max_output_tokens=0,
+        max_agent_turns=1,
+        max_tool_calls=0,
+        max_images=0,
+        max_audio_seconds=0.0,
+        max_latency_seconds=10.0,
+        max_provider_cost=0.0,
+        max_ram_bytes=1024,
+        max_vram_bytes=0,
+        cancellation_deadline=datetime.now(timezone.utc) + timedelta(seconds=60),
+    )
+    res_zero = await supervisor.process(task, context, budget_zero_out, cancellation)
+    assert isinstance(res_zero, Failure)
+    assert res_zero.failure().code == "BUDGET_EXCEEDED"
+
+    # 2. Input tokens budget exceeded
+    budget_small_in = InferenceBudget(
+        producer=TEST_PRODUCER,
+        max_input_tokens=2,  # Very small limit
+        max_output_tokens=50,
+        max_agent_turns=1,
+        max_tool_calls=0,
+        max_images=0,
+        max_audio_seconds=0.0,
+        max_latency_seconds=10.0,
+        max_provider_cost=0.0,
+        max_ram_bytes=1024,
+        max_vram_bytes=0,
+        cancellation_deadline=datetime.now(timezone.utc) + timedelta(seconds=60),
+    )
+    res_in = await supervisor.process(task, context, budget_small_in, cancellation)
+    assert isinstance(res_in, Failure)
+    assert res_in.failure().code == "BUDGET_EXCEEDED"
+
+    # 3. Provider disallowed
+    budget_disallowed = InferenceBudget(
+        producer=TEST_PRODUCER,
+        max_input_tokens=100,
+        max_output_tokens=50,
+        max_agent_turns=1,
+        max_tool_calls=0,
+        max_images=0,
+        max_audio_seconds=0.0,
+        max_latency_seconds=10.0,
+        max_provider_cost=0.0,
+        max_ram_bytes=1024,
+        max_vram_bytes=0,
+        cancellation_deadline=datetime.now(timezone.utc) + timedelta(seconds=60),
+        allowed_providers=("external-cloud-only",),
+    )
+    res_prov = await supervisor.process(task, context, budget_disallowed, cancellation)
+    assert isinstance(res_prov, Failure)
+    assert res_prov.failure().code == "PROVIDER_DISALLOWED"
+
+    # 4. Latency timeout exceeded
+    budget_timeout = InferenceBudget(
+        producer=TEST_PRODUCER,
+        max_input_tokens=100,
+        max_output_tokens=50,
+        max_agent_turns=1,
+        max_tool_calls=0,
+        max_images=0,
+        max_audio_seconds=0.0,
+        max_latency_seconds=0.05,  # Engine delay is 0.15s
+        max_provider_cost=0.0,
+        max_ram_bytes=1024,
+        max_vram_bytes=0,
+        cancellation_deadline=datetime.now(timezone.utc) + timedelta(seconds=60),
+    )
+    res_lat = await supervisor.process(task, context, budget_timeout, cancellation)
+    assert isinstance(res_lat, Failure)
+    assert res_lat.failure().code == "DEADLINE_EXCEEDED"
+
+    await supervisor.stop()
+
+
+@pytest.mark.asyncio
+async def test_live_cancellation_during_generation() -> None:
+    """[P1] Cancellation token must be observed while inference is in progress."""
+    mock_engine = MockEngine(delay=0.3)
+    supervisor = ProcessorSupervisor(engine=mock_engine, idle_unload_seconds=0)
+    await supervisor.start()
+
+    task = Task(objective="Test live cancel", producer=TEST_PRODUCER)
+    episode = _make_episode()
+    context = _make_context_package(episode)
+    budget = _make_budget(100)
+    cancellation = CancellationToken()
+
+    async def cancel_soon() -> None:
+        await asyncio.sleep(0.05)
+        cancellation.cancel()
+
+    cancel_task = asyncio.create_task(cancel_soon())
+    res = await supervisor.process(task, context, budget, cancellation)
+    await cancel_task
+
+    assert isinstance(res, Failure)
+    assert res.failure().code == "CANCELLED"
+
+    await supervisor.stop()
+
+
+@pytest.mark.asyncio
+async def test_iree_stream_conformance() -> None:
+    """[P2] IreeEngine.stream must be an async generator usable with async for."""
+    from rai.inference.engines.iree import IreeEngine
+
+    engine = IreeEngine(model_path="/tmp/test.vmfb")
+    chunks = []
+    async for chunk in engine.stream("hello"):
+        chunks.append(chunk)
+
+    assert len(chunks) == 1
+    assert isinstance(chunks[0], Failure)
+    assert isinstance(chunks[0].failure(), NotImplementedError)
+
+
+@pytest.mark.asyncio
+async def test_documentation_example_execution() -> None:
+    """[P2] Verify that the documentation snippet in docs/processor-supervisor.md executes cleanly."""
+    from rai.container import ApplicationContainer
+
+    container = ApplicationContainer(config={})
+    # Inject mock engine into supervisor
+    mock_engine = MockEngine(model_name="doc-mock")
+    container.processor_supervisor.engine = mock_engine
+    supervisor = container.processor_supervisor
+    await supervisor.start()
+
+    health = supervisor.health()
+    assert health.state == LifecycleState.RUNNING
+
+    producer = ProducerIdentity(producer_id="client", kind="user", version="1.0.0")
+    task = Task(producer=producer, objective="Summarize episode")
+    context = ContextPackage(
+        producer=producer,
+        task_id=task.record_id,
+        manifest=ContextManifest(
+            producer=producer,
+            destination="local-processor",
+            items=(
+                ContextManifestItem(
+                    source_id="item-1",
+                    source_type="episode",
+                    data_class=DataClass.LOCAL,
+                ),
+            ),
+        ),
+        content={"episode": {"applications": ["gedit"], "activity_types": ["edit"]}},
+    )
+    budget = InferenceBudget(
+        producer=producer,
+        max_input_tokens=1000,
+        max_output_tokens=256,
+        max_agent_turns=1,
+        max_tool_calls=0,
+        max_images=0,
+        max_audio_seconds=0.0,
+        max_latency_seconds=15.0,
+        max_provider_cost=0.0,
+        max_ram_bytes=1024 * 1024 * 1024,
+        max_vram_bytes=0,
+        cancellation_deadline=datetime.now(timezone.utc) + timedelta(seconds=30),
+    )
+    cancellation = CancellationToken()
+
+    result = await supervisor.process(
+        task=task,
+        context=context,
+        budget=budget,
+        cancellation=cancellation,
+    )
+    assert isinstance(result, Success)
+    claim = result.unwrap()
+    assert claim.statement
+    assert claim.data_class == DataClass.LOCAL
+
+    await container.close()
+
 

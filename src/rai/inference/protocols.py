@@ -5,10 +5,11 @@ This module defines the core abstractions for local model execution using
 structural subtyping (Protocols) and functional error handling (Returns).
 """
 
+import asyncio
 from dataclasses import dataclass
 from typing import Any, AsyncIterator, Dict, List, Optional, Protocol, runtime_checkable
 
-from returns.result import Result
+from returns.result import Failure, Result, Success
 
 from rai.kernel.ports import LifecycleState
 
@@ -124,3 +125,87 @@ class InferenceEngine(Protocol):
 
     def unload(self) -> None:
         ...
+
+
+class AsyncEngineAdapter(LocalTextEngine):
+    """
+    Adapts a synchronous InferenceEngine into an asynchronous LocalTextEngine.
+    Offloads blocking operations (load, generate, unload) to worker threads via asyncio.to_thread.
+    """
+
+    def __init__(self, engine: InferenceEngine, model_name: Optional[str] = None) -> None:
+        self._engine = engine
+        self._model_name = model_name or getattr(
+            engine, "model_name", getattr(engine, "model_path", "local-engine")
+        )
+        self._is_loaded = getattr(engine, "is_loaded", False)
+
+    @property
+    def model_name(self) -> str:
+        return self._model_name
+
+    @property
+    def is_loaded(self) -> bool:
+        return getattr(self._engine, "is_loaded", self._is_loaded)
+
+    async def load(self) -> Result[None, Exception]:
+        if hasattr(self._engine, "load"):
+            load_fn = getattr(self._engine, "load")
+            if asyncio.iscoroutinefunction(load_fn):
+                res = await load_fn()
+            else:
+                res = await asyncio.to_thread(load_fn)
+            if isinstance(res, Result):
+                if isinstance(res, Success):
+                    self._is_loaded = True
+                return res
+        self._is_loaded = True
+        return Success(None)
+
+    async def generate(
+        self,
+        prompt: str,
+        stop: Optional[List[str]] = None,
+        max_tokens: int = 1024,
+        temperature: float = 0.7,
+    ) -> Result[InferenceResult, Exception]:
+        if not self.is_loaded:
+            load_res = await self.load()
+            if isinstance(load_res, Failure):
+                return load_res
+
+        gen_fn = self._engine.generate
+        if asyncio.iscoroutinefunction(gen_fn):
+            return await gen_fn(prompt, stop, max_tokens, temperature)
+        return await asyncio.to_thread(
+            gen_fn,
+            prompt,
+            stop,
+            max_tokens,
+            temperature,
+        )
+
+    async def stream(
+        self,
+        prompt: str,
+        stop: Optional[List[str]] = None,
+        max_tokens: int = 1024,
+        temperature: float = 0.7,
+    ) -> AsyncIterator[Result[str, Exception]]:
+        stream_iter = self._engine.stream(prompt, stop, max_tokens, temperature)
+        if hasattr(stream_iter, "__aiter__"):
+            async for chunk in stream_iter:
+                yield chunk
+        else:
+            for chunk in stream_iter:
+                yield chunk
+
+    async def unload(self) -> Result[None, Exception]:
+        unload_fn = self._engine.unload
+        if asyncio.iscoroutinefunction(unload_fn):
+            await unload_fn()
+        else:
+            await asyncio.to_thread(unload_fn)
+        self._is_loaded = False
+        return Success(None)
+

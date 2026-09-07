@@ -61,10 +61,7 @@ class IreeEngine(InferenceEngine):
         max_tokens: int = 1024,
         temperature: float = 0.7,
     ) -> AsyncIterator[Result[str, Exception]]:
-        async def _fail() -> AsyncIterator[Result[str, Exception]]:
-            yield Failure(NotImplementedError("IREE runtime is frozen in Stage 4"))
-
-        return _fail()
+        yield Failure(NotImplementedError("IREE runtime is frozen in Stage 4"))
 
     def unload(self) -> None:
         pass

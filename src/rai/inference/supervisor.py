@@ -10,7 +10,7 @@ import asyncio
 from datetime import datetime, timezone
 import logging
 import time
-from typing import Any, Optional
+from typing import Any, Optional, Union
 
 from returns.result import Failure, Result, Success
 
@@ -27,7 +27,7 @@ from rai.kernel.records import (
 )
 
 from .factory import get_available_backends, is_backend_available, load_local_model
-from .protocols import LocalTextEngine, ProcessorHealth
+from .protocols import AsyncEngineAdapter, InferenceEngine, LocalTextEngine, ProcessorHealth
 
 logger = logging.getLogger(__name__)
 
@@ -51,7 +51,7 @@ class ProcessorSupervisor(LocalProcessor):
 
     def __init__(
         self,
-        engine: Optional[LocalTextEngine] = None,
+        engine: Optional[Union[LocalTextEngine, InferenceEngine]] = None,
         model_name: str = "default",
         backend: str = "ollama",
         max_concurrency: int = 2,
@@ -61,7 +61,10 @@ class ProcessorSupervisor(LocalProcessor):
         self.name = name
         self.model_name = model_name
         self.backend = backend.lower()
-        self.engine = engine
+        if engine is not None and not isinstance(engine, LocalTextEngine):
+            self.engine: Optional[LocalTextEngine] = AsyncEngineAdapter(engine)
+        else:
+            self.engine = engine
         self.max_concurrency = max_concurrency
         self.idle_unload_seconds = idle_unload_seconds
 
@@ -99,7 +102,11 @@ class ProcessorSupervisor(LocalProcessor):
                 )
             )
 
-        self.engine = load_res.unwrap()
+        raw_engine = load_res.unwrap()
+        if not isinstance(raw_engine, LocalTextEngine) and isinstance(raw_engine, InferenceEngine):
+            self.engine = AsyncEngineAdapter(raw_engine)
+        else:
+            self.engine = raw_engine
         return Success(self.engine)
 
     async def start(self) -> Result[LifecycleState, ActionFailure]:
@@ -203,14 +210,109 @@ class ProcessorSupervisor(LocalProcessor):
         if cancellation.cancelled:
             return Failure(self._cancelled(task.record_id))
 
-        # Check concurrency capacity
+        # 1. Budget enforcement: output tokens must be strictly positive
+        if budget.max_output_tokens <= 0:
+            return Failure(
+                self._failure(
+                    "BUDGET_EXCEEDED",
+                    "max_output_tokens is 0; generation forbidden by budget",
+                    request_id=task.record_id,
+                )
+            )
+
+        # 2. Budget latency & cancellation deadline
+        now = _utc_now()
+        deadline_rem = (budget.cancellation_deadline - now).total_seconds()
+        timeout = min(budget.max_latency_seconds, deadline_rem)
+        if timeout <= 0:
+            return Failure(
+                self._failure(
+                    "DEADLINE_EXCEEDED",
+                    f"Inference budget deadline exceeded before execution ({timeout:.2f}s remaining)",
+                    request_id=task.record_id,
+                )
+            )
+
+        # 3. Privacy firewall: reject / drop SECRET and BLOCKED data
+        forbidden_classes = {DataClass.SECRET, DataClass.BLOCKED, "SECRET", "BLOCKED"}
+        manifest_items = context.manifest.items
+
+        secret_or_blocked_sources = {
+            item.source_id for item in manifest_items
+            if item.data_class in forbidden_classes
+        }
+        secret_or_blocked_fields = {
+            field for item in manifest_items
+            if item.data_class in forbidden_classes
+            for field in item.fields
+        }
+        allowed_items = [
+            item for item in manifest_items
+            if item.data_class not in forbidden_classes
+        ]
+
+        if manifest_items and not allowed_items:
+            return Failure(
+                self._failure(
+                    "DATA_CLASS_REJECTED",
+                    "Context package contains only SECRET or BLOCKED data classes which cannot be sent to local model",
+                    request_id=task.record_id,
+                )
+            )
+
+        # Filter content strictly against manifest
+        sanitized_content: dict[str, Any] = {}
+        for k, v in context.content.items():
+            if k in secret_or_blocked_sources or k in secret_or_blocked_fields:
+                continue
+            if isinstance(v, dict):
+                if v.get("data_class") in forbidden_classes:
+                    continue
+                filtered_dict = {
+                    sub_k: sub_v for sub_k, sub_v in v.items()
+                    if sub_k not in secret_or_blocked_fields and sub_k not in secret_or_blocked_sources
+                }
+                if filtered_dict:
+                    sanitized_content[k] = filtered_dict
+            else:
+                sanitized_content[k] = v
+
+        if context.content and not sanitized_content:
+            return Failure(
+                self._failure(
+                    "DATA_CLASS_REJECTED",
+                    "All context package content was stripped due to SECRET/BLOCKED policy",
+                    request_id=task.record_id,
+                )
+            )
+
+        # 4. Construct bounded prompt and enforce input token budget
+        prompt = self._build_prompt(task, sanitized_content)
+        est_tokens = max(len(prompt.split()), len(prompt) // 4)
+        if budget.max_input_tokens > 0 and est_tokens > budget.max_input_tokens:
+            return Failure(
+                self._failure(
+                    "BUDGET_EXCEEDED",
+                    f"Input token count ({est_tokens}) exceeds max_input_tokens ({budget.max_input_tokens})",
+                    request_id=task.record_id,
+                )
+            )
+
+        # 5. Concurrency bounding: fail immediately when saturated
+        if self._semaphore.locked():
+            return Failure(
+                self._failure(
+                    "CAPACITY_EXCEEDED",
+                    f"Concurrency limit ({self.max_concurrency}) reached for local processor",
+                    request_id=task.record_id,
+                    retryable=True,
+                )
+            )
+
+        acquired = False
         try:
-            # Non-blocking or bounded check to report CAPACITY_EXCEEDED
-            acquired = False
             try:
-                # Wait up to budget limit or 0.1s for concurrency slot
-                wait_time = min(0.5, budget.max_input_tokens / 1000.0) if budget.max_input_tokens > 0 else 0.1
-                await asyncio.wait_for(self._semaphore.acquire(), timeout=wait_time)
+                await asyncio.wait_for(self._semaphore.acquire(), timeout=0.05)
                 acquired = True
             except asyncio.TimeoutError:
                 return Failure(
@@ -228,13 +330,24 @@ class ProcessorSupervisor(LocalProcessor):
             if cancellation.cancelled:
                 return Failure(self._cancelled(task.record_id))
 
-            # Resolve engine
+            # 6. Resolve engine and enforce allowed_providers
             engine_res = self._get_engine()
             if isinstance(engine_res, Failure):
                 self._error_count += 1
                 return engine_res
 
             engine = engine_res.unwrap()
+
+            if budget.allowed_providers:
+                allowed_set = set(budget.allowed_providers)
+                if engine.model_name not in allowed_set and self.backend not in allowed_set:
+                    return Failure(
+                        self._failure(
+                            "PROVIDER_DISALLOWED",
+                            f"Engine '{engine.model_name}' ({self.backend}) is not in allowed_providers: {budget.allowed_providers}",
+                            request_id=task.record_id,
+                        )
+                    )
 
             # Ensure model is loaded
             if not engine.is_loaded:
@@ -252,14 +365,46 @@ class ProcessorSupervisor(LocalProcessor):
             if cancellation.cancelled:
                 return Failure(self._cancelled(task.record_id))
 
-            # Construct bounded prompt from context
-            prompt = self._build_prompt(task, context)
-
-            # Generate with budget limits
-            gen_res = await engine.generate(
-                prompt=prompt,
-                max_tokens=budget.max_output_tokens if budget.max_output_tokens > 0 else 512,
+            # 7. Generate with live cancellation monitoring and timeout enforcement
+            start_time = time.monotonic()
+            gen_task = asyncio.create_task(
+                engine.generate(
+                    prompt=prompt,
+                    max_tokens=budget.max_output_tokens,
+                )
             )
+
+            try:
+                while not gen_task.done():
+                    if cancellation.cancelled:
+                        gen_task.cancel()
+                        try:
+                            await gen_task
+                        except (asyncio.CancelledError, Exception):
+                            pass
+                        return Failure(self._cancelled(task.record_id))
+
+                    elapsed = time.monotonic() - start_time
+                    rem = timeout - elapsed
+                    if rem <= 0:
+                        gen_task.cancel()
+                        try:
+                            await gen_task
+                        except (asyncio.CancelledError, Exception):
+                            pass
+                        return Failure(
+                            self._failure(
+                                "DEADLINE_EXCEEDED",
+                                f"Inference execution exceeded budget latency limit ({timeout:.2f}s)",
+                                request_id=task.record_id,
+                            )
+                        )
+
+                    await asyncio.sleep(min(0.05, max(0.005, rem)))
+
+                gen_res = await gen_task
+            except asyncio.CancelledError:
+                return Failure(self._cancelled(task.record_id))
 
             if isinstance(gen_res, Failure):
                 self._error_count += 1
@@ -286,13 +431,16 @@ class ProcessorSupervisor(LocalProcessor):
                 producer=context.producer,
             )
 
-            # Preserve data class from manifest items or default to LOCAL
-            out_data_class = DataClass.LOCAL
-            if context.manifest.items:
-                # If any input is PRIVATE, output remains PRIVATE
-                classes = {item.data_class for item in context.manifest.items}
-                if DataClass.PRIVATE in classes:
+            # Determine output data class based strictly on allowed retained items
+            out_data_class = DataClass.PUBLIC
+            if allowed_items:
+                classes = {item.data_class for item in allowed_items}
+                if DataClass.PRIVATE in classes or "PRIVATE" in classes:
                     out_data_class = DataClass.PRIVATE
+                elif DataClass.LOCAL in classes or "LOCAL" in classes:
+                    out_data_class = DataClass.LOCAL
+            else:
+                out_data_class = DataClass.LOCAL
 
             claim = Claim(
                 producer=SUPERVISOR_PRODUCER,
@@ -311,12 +459,12 @@ class ProcessorSupervisor(LocalProcessor):
                 self._active_requests -= 1
             self._last_active_timestamp = time.monotonic()
 
-    def _build_prompt(self, task: Task, context: ContextPackage) -> str:
-        """Constructs a deterministic schema-constrained prompt from task and context."""
+    def _build_prompt(self, task: Task, content: dict[str, Any]) -> str:
+        """Constructs a deterministic schema-constrained prompt from task and sanitized content."""
         objective = task.objective
         content_items: list[str] = []
 
-        episode = context.content.get("episode")
+        episode = content.get("episode")
         if isinstance(episode, dict):
             apps = episode.get("applications", ())
             resources = episode.get("resources", ())
@@ -327,7 +475,7 @@ class ProcessorSupervisor(LocalProcessor):
             content_items.append(f"Episode resources: {', '.join(resources) if resources else 'none'}")
             content_items.append(f"Episode activity: {', '.join(activity) if activity else 'none'}")
         else:
-            for k, v in context.content.items():
+            for k, v in content.items():
                 content_items.append(f"{k}: {v}")
 
         joined_context = "\n".join(content_items) if content_items else "No detailed context."
