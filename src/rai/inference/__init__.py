@@ -3,6 +3,7 @@ from .protocols import (
     GenerationStats,
     InferenceEngine,
     InferenceResult,
+    is_async_local_engine,
     LocalTextEngine,
     ModelMetadata,
     ProcessorHealth,
@@ -17,6 +18,7 @@ __all__ = [
     "GenerationStats",
     "InferenceEngine",
     "InferenceResult",
+    "is_async_local_engine",
     "LlamaCppEngine",
     "LocalTextEngine",
     "ModelMetadata",
@@ -26,4 +28,3 @@ __all__ = [
     "is_backend_available",
     "load_local_model",
 ]
-

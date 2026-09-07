@@ -7,7 +7,8 @@ structural subtyping (Protocols) and functional error handling (Returns).
 
 import asyncio
 from dataclasses import dataclass
-from typing import Any, AsyncIterator, Dict, List, Optional, Protocol, runtime_checkable
+import inspect
+from typing import Any, AsyncIterator, Dict, List, Optional, Protocol, TypeGuard, runtime_checkable
 
 from returns.result import Failure, Result, Success
 
@@ -58,6 +59,8 @@ class ProcessorHealth:
     error_count: int = 0
     last_active_timestamp: Optional[float] = None
     available_backends: tuple[str, ...] = ()
+    required_ram_bytes: Optional[int] = None
+    required_vram_bytes: Optional[int] = None
 
 
 @runtime_checkable
@@ -94,6 +97,18 @@ class LocalTextEngine(Protocol):
     async def unload(self) -> Result[None, Exception]:
         """Frees model weights and resources."""
         ...
+
+
+def is_async_local_engine(engine: object) -> TypeGuard[LocalTextEngine]:
+    """Return whether an engine implements the asynchronous lifecycle contract.
+
+    Runtime-checkable protocols only verify attribute presence, so a synchronous
+    ``InferenceEngine`` can otherwise be mistaken for ``LocalTextEngine``.
+    """
+    return all(
+        inspect.iscoroutinefunction(getattr(engine, method, None))
+        for method in ("load", "generate", "unload")
+    )
 
 
 @runtime_checkable
@@ -147,6 +162,16 @@ class AsyncEngineAdapter(LocalTextEngine):
     @property
     def is_loaded(self) -> bool:
         return getattr(self._engine, "is_loaded", self._is_loaded)
+
+    @property
+    def required_ram_bytes(self) -> Optional[int]:
+        """Best-known host-memory requirement reported by the wrapped engine."""
+        return getattr(self._engine, "required_ram_bytes", None)
+
+    @property
+    def required_vram_bytes(self) -> Optional[int]:
+        """Best-known accelerator-memory requirement reported by the wrapped engine."""
+        return getattr(self._engine, "required_vram_bytes", None)
 
     async def load(self) -> Result[None, Exception]:
         if hasattr(self._engine, "load"):
@@ -208,4 +233,3 @@ class AsyncEngineAdapter(LocalTextEngine):
             await asyncio.to_thread(unload_fn)
         self._is_loaded = False
         return Success(None)
-

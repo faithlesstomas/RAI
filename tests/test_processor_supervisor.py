@@ -11,14 +11,16 @@ from __future__ import annotations
 
 import asyncio
 from datetime import datetime, timedelta, timezone
+import threading
 import time
-from typing import Any, List, Optional
+from typing import Any, AsyncIterator, List, Optional
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from returns.result import Failure, Result, Success
 
 from rai.inference import (
+    AsyncEngineAdapter,
     GenerationStats,
     InferenceResult,
     LocalTextEngine,
@@ -71,17 +73,21 @@ def _make_budget(max_tokens: int = 100) -> InferenceBudget:
 class MockEngine(LocalTextEngine):
     """Deterministic mock text engine for non-blocking local inference tests."""
 
-    def __init__(
+    def __init__(  # noqa: PLR0913
         self,
         model_name: str = "mock-model",
         delay: float = 0.0,
         fail_load: bool = False,
         fail_generate: bool = False,
+        required_ram_bytes: int = 0,
+        required_vram_bytes: int = 0,
     ) -> None:
         self._model_name = model_name
         self.delay = delay
         self.fail_load = fail_load
         self.fail_generate = fail_generate
+        self.required_ram_bytes = required_ram_bytes
+        self.required_vram_bytes = required_vram_bytes
         self._is_loaded = False
         self.generate_calls: list[str] = []
         self.unload_calls = 0
@@ -130,6 +136,48 @@ class MockEngine(LocalTextEngine):
         self._is_loaded = False
         self.unload_calls += 1
         return Success(None)
+
+
+class SyncMockEngine:
+    """Synchronous engine used to verify automatic async adaptation."""
+
+    def __init__(self, delay: float = 0.0) -> None:
+        self.model_name = "sync-mock"
+        self.is_loaded = False
+        self.delay = delay
+        self.finished = threading.Event()
+        self.required_ram_bytes = 0
+        self.required_vram_bytes = 0
+
+    def load(self) -> Result[None, Exception]:
+        self.is_loaded = True
+        return Success(None)
+
+    def generate(
+        self,
+        prompt: str,
+        stop: Optional[List[str]] = None,
+        max_tokens: int = 1024,
+        temperature: float = 0.7,
+    ) -> Result[InferenceResult, Exception]:
+        del prompt, stop, max_tokens, temperature
+        time.sleep(self.delay)
+        self.finished.set()
+        return Success(InferenceResult(text="Synchronous result."))
+
+    async def stream(
+        self,
+        prompt: str,
+        stop: Optional[List[str]] = None,
+        max_tokens: int = 1024,
+        temperature: float = 0.7,
+    ) -> AsyncIterator[Result[str, Exception]]:
+        del prompt, stop, max_tokens, temperature
+        if False:
+            yield Success("")
+
+    def unload(self) -> None:
+        self.is_loaded = False
 
 
 def _make_episode() -> Episode:
@@ -794,3 +842,172 @@ async def test_documentation_example_execution() -> None:
     await container.close()
 
 
+@pytest.mark.asyncio
+async def test_sync_engine_is_wrapped_before_supervisor_awaits_it() -> None:
+    """A synchronous structural protocol match must still receive an async adapter."""
+    sync_engine = SyncMockEngine()
+    supervisor = ProcessorSupervisor(engine=sync_engine, idle_unload_seconds=0)
+    assert isinstance(supervisor.engine, AsyncEngineAdapter)
+    await supervisor.start()
+
+    result = await supervisor.process(
+        Task(objective="Use synchronous engine", producer=TEST_PRODUCER),
+        _make_context_package(_make_episode()),
+        _make_budget(),
+        CancellationToken(),
+    )
+
+    assert isinstance(result, Success)
+    assert result.unwrap().statement == "Synchronous result."
+    await supervisor.stop()
+
+
+@pytest.mark.asyncio
+async def test_mixed_unmapped_secret_source_fails_closed() -> None:
+    """Ambiguous mixed content must be rejected instead of leaking a secret."""
+    engine = MockEngine()
+    supervisor = ProcessorSupervisor(engine=engine, idle_unload_seconds=0)
+    await supervisor.start()
+    manifest = ContextManifest(
+        destination="local-processor",
+        producer=TEST_PRODUCER,
+        approved=True,
+        items=(
+            ContextManifestItem(
+                source_id="secret-source",
+                source_type="secret",
+                data_class=DataClass.SECRET,
+            ),
+            ContextManifestItem(
+                source_id="local-source",
+                source_type="note",
+                data_class=DataClass.LOCAL,
+            ),
+        ),
+    )
+    context = ContextPackage(
+        task_id="mixed-unmapped",
+        producer=TEST_PRODUCER,
+        manifest=manifest,
+        content={
+            "payload": {"password": "TOP-SECRET"},
+            "local-source": "safe",
+        },
+    )
+
+    result = await supervisor.process(
+        Task(objective="Summarize", producer=TEST_PRODUCER),
+        context,
+        _make_budget(),
+        CancellationToken(),
+    )
+
+    assert isinstance(result, Failure)
+    assert result.failure().code == "DATA_CLASS_REJECTED"
+    assert not engine.generate_calls
+    await supervisor.stop()
+
+
+@pytest.mark.asyncio
+async def test_zero_input_budget_and_known_resource_limits_fail_closed() -> None:
+    """Zero input allowance and known RAM/VRAM excesses must be typed failures."""
+    context = _make_context_package(_make_episode())
+    task = Task(objective="Budget checks", producer=TEST_PRODUCER)
+
+    engine = MockEngine()
+    supervisor = ProcessorSupervisor(engine=engine, idle_unload_seconds=0)
+    await supervisor.start()
+    zero_input = _make_budget().model_copy(update={"max_input_tokens": 0})
+    result = await supervisor.process(
+        task, context, zero_input, CancellationToken()
+    )
+    assert isinstance(result, Failure)
+    assert result.failure().code == "BUDGET_EXCEEDED"
+    await supervisor.stop()
+
+    oversized = MockEngine(required_ram_bytes=2048, required_vram_bytes=1024)
+    supervisor = ProcessorSupervisor(engine=oversized, idle_unload_seconds=0)
+    await supervisor.start()
+    constrained = _make_budget().model_copy(
+        update={"max_ram_bytes": 1024, "max_vram_bytes": 512}
+    )
+    result = await supervisor.process(
+        task, context, constrained, CancellationToken()
+    )
+    assert isinstance(result, Failure)
+    assert result.failure().code == "RESOURCE_CAPACITY_EXCEEDED"
+    await supervisor.stop()
+
+
+@pytest.mark.asyncio
+async def test_deadline_includes_model_loading() -> None:
+    """The wall-clock budget starts before loading model weights."""
+
+    class SlowLoadEngine(MockEngine):
+        async def load(self) -> Result[None, Exception]:
+            await asyncio.sleep(0.15)
+            return await super().load()
+
+    engine = SlowLoadEngine()
+    supervisor = ProcessorSupervisor(engine=engine, idle_unload_seconds=0)
+    await supervisor.start()
+    budget = _make_budget().model_copy(update={"max_latency_seconds": 0.05})
+    started = time.monotonic()
+    result = await supervisor.process(
+        Task(objective="Bound loading", producer=TEST_PRODUCER),
+        _make_context_package(_make_episode()),
+        budget,
+        CancellationToken(),
+    )
+
+    assert isinstance(result, Failure)
+    assert result.failure().code == "DEADLINE_EXCEEDED"
+    assert time.monotonic() - started < 0.12  # noqa: PLR2004
+    assert supervisor.health().active_requests == 1
+    await supervisor.stop()
+    assert supervisor.health().active_requests == 0
+
+
+@pytest.mark.asyncio
+async def test_thread_cancellation_keeps_capacity_until_worker_finishes() -> None:
+    """A cancelled to_thread operation must continue occupying its bounded slot."""
+    sync_engine = SyncMockEngine(delay=0.2)
+    sync_engine.load()
+    supervisor = ProcessorSupervisor(
+        engine=sync_engine,
+        max_concurrency=1,
+        idle_unload_seconds=0,
+    )
+    await supervisor.start()
+    context = _make_context_package(_make_episode())
+    token = CancellationToken()
+
+    async def cancel_soon() -> None:
+        await asyncio.sleep(0.03)
+        token.cancel()
+
+    asyncio.create_task(cancel_soon())
+    result = await supervisor.process(
+        Task(objective="Cancel worker", producer=TEST_PRODUCER),
+        context,
+        _make_budget(),
+        token,
+    )
+    assert isinstance(result, Failure)
+    assert result.failure().code == "CANCELLED"
+    assert not sync_engine.finished.is_set()
+    assert supervisor.health().active_requests == 1
+
+    competing = await supervisor.process(
+        Task(objective="Competing request", producer=TEST_PRODUCER),
+        context,
+        _make_budget(),
+        CancellationToken(),
+    )
+    assert isinstance(competing, Failure)
+    assert competing.failure().code == "CAPACITY_EXCEEDED"
+
+    assert await asyncio.to_thread(sync_engine.finished.wait, 1.0)
+    await asyncio.sleep(0.01)
+    assert supervisor.health().active_requests == 0
+    await supervisor.stop()

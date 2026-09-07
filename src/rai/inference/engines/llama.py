@@ -46,6 +46,19 @@ class LlamaCppEngine:
     def is_loaded(self) -> bool:
         return self.llm is not None
 
+    @property
+    def required_ram_bytes(self) -> Optional[int]:
+        """Return the GGUF size as a conservative lower bound for host RAM."""
+        try:
+            return Path(self.model_path).stat().st_size
+        except OSError:
+            return None
+
+    @property
+    def required_vram_bytes(self) -> int:
+        """The default adapter does not request GPU offload explicitly."""
+        return 0
+
     def load(self) -> Result[None, Exception]:
         """Synchronously loads model weights."""
         if self.is_loaded:
@@ -185,6 +198,14 @@ class AsyncLlamaEngine(LocalTextEngine):
     def is_loaded(self) -> bool:
         return self._engine.is_loaded
 
+    @property
+    def required_ram_bytes(self) -> Optional[int]:
+        return self._engine.required_ram_bytes
+
+    @property
+    def required_vram_bytes(self) -> int:
+        return self._engine.required_vram_bytes
+
     async def load(self) -> Result[None, Exception]:
         return await asyncio.to_thread(self._engine.load)
 
@@ -221,5 +242,4 @@ class AsyncLlamaEngine(LocalTextEngine):
     async def unload(self) -> Result[None, Exception]:
         await asyncio.to_thread(self._engine.unload)
         return Success(None)
-
 

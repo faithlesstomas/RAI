@@ -10,7 +10,7 @@ import asyncio
 from datetime import datetime, timezone
 import logging
 import time
-from typing import Any, Optional, Union
+from typing import Any, Optional, Union, cast
 
 from returns.result import Failure, Result, Success
 
@@ -27,7 +27,13 @@ from rai.kernel.records import (
 )
 
 from .factory import get_available_backends, is_backend_available, load_local_model
-from .protocols import AsyncEngineAdapter, InferenceEngine, LocalTextEngine, ProcessorHealth
+from .protocols import (
+    AsyncEngineAdapter,
+    InferenceEngine,
+    LocalTextEngine,
+    ProcessorHealth,
+    is_async_local_engine,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -61,10 +67,9 @@ class ProcessorSupervisor(LocalProcessor):
         self.name = name
         self.model_name = model_name
         self.backend = backend.lower()
-        if engine is not None and not isinstance(engine, LocalTextEngine):
-            self.engine: Optional[LocalTextEngine] = AsyncEngineAdapter(engine)
-        else:
-            self.engine = engine
+        self.engine: Optional[LocalTextEngine] = (
+            self._coerce_engine(engine) if engine is not None else None
+        )
         self.max_concurrency = max_concurrency
         self.idle_unload_seconds = idle_unload_seconds
 
@@ -75,6 +80,16 @@ class ProcessorSupervisor(LocalProcessor):
         self._error_count = 0
         self._last_active_timestamp: Optional[float] = None
         self._reaper_task: Optional[asyncio.Task[None]] = None
+        self._drain_tasks: set[asyncio.Task[None]] = set()
+
+    @staticmethod
+    def _coerce_engine(
+        engine: Union[LocalTextEngine, InferenceEngine],
+    ) -> LocalTextEngine:
+        """Normalize synchronous engines without relying on structural isinstance."""
+        if is_async_local_engine(engine):
+            return engine
+        return AsyncEngineAdapter(cast(InferenceEngine, engine))
 
     @property
     def state(self) -> LifecycleState:
@@ -103,10 +118,7 @@ class ProcessorSupervisor(LocalProcessor):
             )
 
         raw_engine = load_res.unwrap()
-        if not isinstance(raw_engine, LocalTextEngine) and isinstance(raw_engine, InferenceEngine):
-            self.engine = AsyncEngineAdapter(raw_engine)
-        else:
-            self.engine = raw_engine
+        self.engine = self._coerce_engine(raw_engine)
         return Success(self.engine)
 
     async def start(self) -> Result[LifecycleState, ActionFailure]:
@@ -135,6 +147,9 @@ class ProcessorSupervisor(LocalProcessor):
                 pass
             self._reaper_task = None
 
+        if self._drain_tasks:
+            await asyncio.gather(*tuple(self._drain_tasks), return_exceptions=True)
+
         if self.engine is not None and self.engine.is_loaded:
             try:
                 await self.engine.unload()
@@ -160,7 +175,99 @@ class ProcessorSupervisor(LocalProcessor):
             error_count=self._error_count,
             last_active_timestamp=self._last_active_timestamp,
             available_backends=get_available_backends(),
+            required_ram_bytes=(
+                getattr(self.engine, "required_ram_bytes", None)
+                if self.engine is not None
+                else None
+            ),
+            required_vram_bytes=(
+                getattr(self.engine, "required_vram_bytes", None)
+                if self.engine is not None
+                else None
+            ),
         )
+
+    def _release_capacity(self) -> None:
+        """Release one processor slot after its engine operation really finishes."""
+        self._semaphore.release()
+        self._active_requests -= 1
+        self._last_active_timestamp = time.monotonic()
+
+    def _defer_capacity_release(self, operation: asyncio.Task[Any]) -> None:
+        """Keep capacity reserved while an uninterruptible backend drains."""
+
+        async def drain() -> None:
+            try:
+                await operation
+            except (asyncio.CancelledError, Exception):
+                pass
+            finally:
+                self._release_capacity()
+
+        drain_task = asyncio.create_task(drain())
+        self._drain_tasks.add(drain_task)
+        drain_task.add_done_callback(self._drain_tasks.discard)
+
+    async def _await_operation(
+        self,
+        operation: asyncio.Task[Any],
+        *,
+        cancellation: CancellationToken,
+        deadline: float,
+        request_id: str,
+        operation_name: str,
+    ) -> tuple[Any | None, ActionFailure | None, bool]:
+        """Await an engine operation while preserving capacity on early return."""
+        try:
+            while not operation.done():
+                if cancellation.cancelled:
+                    self._defer_capacity_release(operation)
+                    return None, self._cancelled(request_id), True
+
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    self._defer_capacity_release(operation)
+                    return (
+                        None,
+                        self._failure(
+                            "DEADLINE_EXCEEDED",
+                            f"Inference {operation_name} exceeded the budget deadline",
+                            request_id=request_id,
+                        ),
+                        True,
+                    )
+                await asyncio.sleep(min(0.05, max(0.005, remaining)))
+
+            return await operation, None, False
+        except asyncio.CancelledError:
+            if not operation.done():
+                self._defer_capacity_release(operation)
+                return None, self._cancelled(request_id), True
+            return None, self._cancelled(request_id), False
+
+    @classmethod
+    def _contains_content_key(cls, value: object, target: str) -> bool:
+        """Return whether a nested JSON-like value contains a mapping key."""
+        if isinstance(value, dict):
+            return target in value or any(
+                cls._contains_content_key(item, target) for item in value.values()
+            )
+        if isinstance(value, (list, tuple)):
+            return any(cls._contains_content_key(item, target) for item in value)
+        return False
+
+    @classmethod
+    def _drop_forbidden_content(cls, value: object, forbidden_keys: set[str]) -> object:
+        """Recursively remove explicitly forbidden source and field keys."""
+        if isinstance(value, dict):
+            return {
+                key: cls._drop_forbidden_content(item, forbidden_keys)
+                for key, item in value.items()
+                if key not in forbidden_keys
+            }
+        if isinstance(value, (list, tuple)):
+            return tuple(cls._drop_forbidden_content(item, forbidden_keys) for item in value)
+        return value
 
     async def _idle_reaper_loop(self) -> None:
         """Periodically checks if the model has exceeded idle duration and unloads it."""
@@ -232,20 +339,15 @@ class ProcessorSupervisor(LocalProcessor):
                     request_id=task.record_id,
                 )
             )
+        operation_deadline = time.monotonic() + timeout
 
         # 3. Privacy firewall: reject / drop SECRET and BLOCKED data
         forbidden_classes = {DataClass.SECRET, DataClass.BLOCKED, "SECRET", "BLOCKED"}
         manifest_items = context.manifest.items
 
-        secret_or_blocked_sources = {
-            item.source_id for item in manifest_items
-            if item.data_class in forbidden_classes
-        }
-        secret_or_blocked_fields = {
-            field for item in manifest_items
-            if item.data_class in forbidden_classes
-            for field in item.fields
-        }
+        forbidden_items = [
+            item for item in manifest_items if item.data_class in forbidden_classes
+        ]
         allowed_items = [
             item for item in manifest_items
             if item.data_class not in forbidden_classes
@@ -260,22 +362,34 @@ class ProcessorSupervisor(LocalProcessor):
                 )
             )
 
-        # Filter content strictly against manifest
-        sanitized_content: dict[str, Any] = {}
-        for k, v in context.content.items():
-            if k in secret_or_blocked_sources or k in secret_or_blocked_fields:
-                continue
-            if isinstance(v, dict):
-                if v.get("data_class") in forbidden_classes:
-                    continue
-                filtered_dict = {
-                    sub_k: sub_v for sub_k, sub_v in v.items()
-                    if sub_k not in secret_or_blocked_fields and sub_k not in secret_or_blocked_sources
-                }
-                if filtered_dict:
-                    sanitized_content[k] = filtered_dict
-            else:
-                sanitized_content[k] = v
+        # A forbidden source without fields must map explicitly to content. If it
+        # does not, mixed content cannot be separated safely, so fail closed.
+        unmapped_forbidden = [
+            item.source_id
+            for item in forbidden_items
+            if not item.fields
+            and not self._contains_content_key(context.content, item.source_id)
+        ]
+        if unmapped_forbidden:
+            return Failure(
+                self._failure(
+                    "DATA_CLASS_REJECTED",
+                    "SECRET/BLOCKED manifest sources cannot be mapped safely to context content: "
+                    + ", ".join(unmapped_forbidden),
+                    request_id=task.record_id,
+                )
+            )
+
+        forbidden_keys = {item.source_id for item in forbidden_items}
+        forbidden_keys.update(
+            field.split(".")[-1]
+            for item in forbidden_items
+            for field in item.fields
+        )
+        sanitized_content = cast(
+            dict[str, Any],
+            self._drop_forbidden_content(context.content, forbidden_keys),
+        )
 
         if context.content and not sanitized_content:
             return Failure(
@@ -289,7 +403,15 @@ class ProcessorSupervisor(LocalProcessor):
         # 4. Construct bounded prompt and enforce input token budget
         prompt = self._build_prompt(task, sanitized_content)
         est_tokens = max(len(prompt.split()), len(prompt) // 4)
-        if budget.max_input_tokens > 0 and est_tokens > budget.max_input_tokens:
+        if budget.max_input_tokens <= 0:
+            return Failure(
+                self._failure(
+                    "BUDGET_EXCEEDED",
+                    "max_input_tokens is 0; model input is forbidden by budget",
+                    request_id=task.record_id,
+                )
+            )
+        if est_tokens > budget.max_input_tokens:
             return Failure(
                 self._failure(
                     "BUDGET_EXCEEDED",
@@ -312,9 +434,28 @@ class ProcessorSupervisor(LocalProcessor):
         acquired = False
         try:
             try:
-                await asyncio.wait_for(self._semaphore.acquire(), timeout=0.05)
+                remaining = operation_deadline - time.monotonic()
+                if remaining <= 0:
+                    return Failure(
+                        self._failure(
+                            "DEADLINE_EXCEEDED",
+                            "Inference budget deadline exceeded before capacity acquisition",
+                            request_id=task.record_id,
+                        )
+                    )
+                await asyncio.wait_for(
+                    self._semaphore.acquire(), timeout=min(0.05, remaining)
+                )
                 acquired = True
             except asyncio.TimeoutError:
+                if time.monotonic() >= operation_deadline:
+                    return Failure(
+                        self._failure(
+                            "DEADLINE_EXCEEDED",
+                            "Inference budget deadline exceeded during capacity acquisition",
+                            request_id=task.record_id,
+                        )
+                    )
                 return Failure(
                     self._failure(
                         "CAPACITY_EXCEEDED",
@@ -349,9 +490,41 @@ class ProcessorSupervisor(LocalProcessor):
                         )
                     )
 
+            for resource_name, required, limit in (
+                (
+                    "RAM",
+                    getattr(engine, "required_ram_bytes", None),
+                    budget.max_ram_bytes,
+                ),
+                (
+                    "VRAM",
+                    getattr(engine, "required_vram_bytes", None),
+                    budget.max_vram_bytes,
+                ),
+            ):
+                if required is not None and required > limit:
+                    return Failure(
+                        self._failure(
+                            "RESOURCE_CAPACITY_EXCEEDED",
+                            f"Engine requires {required} bytes of {resource_name}, budget allows {limit}",
+                            request_id=task.record_id,
+                        )
+                    )
+
             # Ensure model is loaded
             if not engine.is_loaded:
-                load_res = await engine.load()
+                load_task = asyncio.create_task(engine.load())
+                load_res, operation_failure, deferred = await self._await_operation(
+                    load_task,
+                    cancellation=cancellation,
+                    deadline=operation_deadline,
+                    request_id=task.record_id,
+                    operation_name="model loading",
+                )
+                if deferred:
+                    acquired = False
+                if operation_failure is not None:
+                    return Failure(operation_failure)
                 if isinstance(load_res, Failure):
                     self._error_count += 1
                     return Failure(
@@ -366,7 +539,6 @@ class ProcessorSupervisor(LocalProcessor):
                 return Failure(self._cancelled(task.record_id))
 
             # 7. Generate with live cancellation monitoring and timeout enforcement
-            start_time = time.monotonic()
             gen_task = asyncio.create_task(
                 engine.generate(
                     prompt=prompt,
@@ -374,37 +546,17 @@ class ProcessorSupervisor(LocalProcessor):
                 )
             )
 
-            try:
-                while not gen_task.done():
-                    if cancellation.cancelled:
-                        gen_task.cancel()
-                        try:
-                            await gen_task
-                        except (asyncio.CancelledError, Exception):
-                            pass
-                        return Failure(self._cancelled(task.record_id))
-
-                    elapsed = time.monotonic() - start_time
-                    rem = timeout - elapsed
-                    if rem <= 0:
-                        gen_task.cancel()
-                        try:
-                            await gen_task
-                        except (asyncio.CancelledError, Exception):
-                            pass
-                        return Failure(
-                            self._failure(
-                                "DEADLINE_EXCEEDED",
-                                f"Inference execution exceeded budget latency limit ({timeout:.2f}s)",
-                                request_id=task.record_id,
-                            )
-                        )
-
-                    await asyncio.sleep(min(0.05, max(0.005, rem)))
-
-                gen_res = await gen_task
-            except asyncio.CancelledError:
-                return Failure(self._cancelled(task.record_id))
+            gen_res, operation_failure, deferred = await self._await_operation(
+                gen_task,
+                cancellation=cancellation,
+                deadline=operation_deadline,
+                request_id=task.record_id,
+                operation_name="generation",
+            )
+            if deferred:
+                acquired = False
+            if operation_failure is not None:
+                return Failure(operation_failure)
 
             if isinstance(gen_res, Failure):
                 self._error_count += 1
@@ -455,9 +607,7 @@ class ProcessorSupervisor(LocalProcessor):
 
         finally:
             if acquired:
-                self._semaphore.release()
-                self._active_requests -= 1
-            self._last_active_timestamp = time.monotonic()
+                self._release_capacity()
 
     def _build_prompt(self, task: Task, content: dict[str, Any]) -> str:
         """Constructs a deterministic schema-constrained prompt from task and sanitized content."""

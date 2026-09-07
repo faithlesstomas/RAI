@@ -36,25 +36,27 @@ The `ProcessorSupervisor` implements the kernel's `LocalProcessor` protocol. It 
 3. **Automated Idle Memory Eviction:**
    Local weights occupy significant host RAM and VRAM. A background idle reaper monitors the last request timestamp and invokes `engine.unload()` once the engine remains inactive beyond `idle_unload_seconds`.
 4. **Cooperative Cancellation:**
-   If a task is cancelled or exceeds its `InferenceBudget` deadline, running generation is cleanly halted and returns `ActionFailure(code="CANCELLED")`.
-5. **Provenance & Claim Synthesis:**
+   If a task is cancelled, the caller receives `ActionFailure(code="CANCELLED")`. Backends that cannot interrupt native work immediately retain their concurrency slot until the worker actually finishes, preventing an apparently cancelled request from exceeding the configured capacity. A budget deadline covers capacity acquisition, model loading, and generation.
+5. **Resource Budget Enforcement:**
+   Engines with known RAM or VRAM requirements are rejected with `ActionFailure(code="RESOURCE_CAPACITY_EXCEEDED")` when the declared requirement exceeds the task budget. Unknown backend requirements remain visible as unavailable telemetry rather than being treated as measured zero usage.
+6. **Provenance & Claim Synthesis:**
    Transformations from Stage 3 `Episode` packages to `Claim` objects include cryptographic or identifier-based `ProvenanceReference` records linking claims directly to the evidence episodes.
 
 ---
 
 ## Supported Local Text Engines
 
-Engines conform to the `LocalTextEngine` protocol, exposing uniform `load()`, `generate()`, `stream()`, and `unload()` asynchronous lifecycles.
+Supervisor-facing engines conform to the `LocalTextEngine` protocol, exposing uniform asynchronous `load()`, `generate()`, and `unload()` lifecycles. Legacy synchronous `InferenceEngine` implementations are wrapped by `AsyncEngineAdapter`.
 
 ### Ollama (`OllamaEngine`)
 - Connects asynchronously via `ollama.AsyncClient`.
-- Pulls models on demand if missing from the local daemon.
+- Verifies that the configured model is already available; it does not pull models automatically.
 - Supports explicit eviction from GPU memory by issuing generation requests with `keep_alive=0` on unload.
 
-### Llama.cpp (`LlamaCppEngine`)
+### Llama.cpp (`LlamaCppEngine`, `AsyncLlamaEngine`)
 - Runs GGUF quantized models directly on Linux CPU/Vulkan/ROCm/CUDA.
 - Employs lazy importing to ensure that environments lacking C++ toolchains or `llama-cpp-python` can start the RAI kernel without dependency errors.
-- Dispatches model initialization and token generation loops onto thread-pool workers.
+- Preserves the public synchronous `InferenceEngine` contract in `LlamaCppEngine`; `AsyncLlamaEngine` and `AsyncEngineAdapter` dispatch model initialization and generation onto worker threads.
 
 ### IREE (`IreeEngine`)
 - Frozen stub for compiled MLIR/Vulkan neural workloads, guarded by `is_iree_available() -> False`.
