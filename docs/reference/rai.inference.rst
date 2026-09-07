@@ -20,6 +20,14 @@ rai.inference.supervisor module
    :show-inheritance:
    :undoc-members:
 
+rai.inference.tasks module
+--------------------------
+
+.. automodule:: rai.inference.tasks
+   :members:
+   :show-inheritance:
+   :undoc-members:
+
 rai.inference.factory module
 ----------------------------
 

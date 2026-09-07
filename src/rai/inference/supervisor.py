@@ -34,6 +34,7 @@ from .protocols import (
     ProcessorHealth,
     is_async_local_engine,
 )
+from .tasks import BoundedTaskContract, BoundedTaskKind, get_bounded_task_contract
 
 logger = logging.getLogger(__name__)
 
@@ -300,6 +301,8 @@ class ProcessorSupervisor(LocalProcessor):
         context: ContextPackage,
         budget: InferenceBudget,
         cancellation: CancellationToken,
+        *,
+        bounded_task: BoundedTaskKind | str | None = None,
     ) -> Result[Claim, ActionFailure]:
         """
         Executes bounded local inference over context packages.
@@ -316,6 +319,22 @@ class ProcessorSupervisor(LocalProcessor):
 
         if cancellation.cancelled:
             return Failure(self._cancelled(task.record_id))
+
+        contract: BoundedTaskContract | None = None
+        if bounded_task is not None:
+            contract_res = get_bounded_task_contract(bounded_task)
+            if isinstance(contract_res, Failure):
+                contract_failure = contract_res.failure()
+                return Failure(
+                    self._failure(
+                        contract_failure.code,
+                        contract_failure.message,
+                        request_id=task.record_id,
+                        retryable=contract_failure.retryable,
+                    )
+                )
+            contract = contract_res.unwrap()
+            budget = contract.limits.constrain(budget)
 
         # 1. Budget enforcement: output tokens must be strictly positive
         if budget.max_output_tokens <= 0:
@@ -401,7 +420,11 @@ class ProcessorSupervisor(LocalProcessor):
             )
 
         # 4. Construct bounded prompt and enforce input token budget
-        prompt = self._build_prompt(task, sanitized_content)
+        prompt = (
+            contract.build_prompt(task.objective, sanitized_content)
+            if contract is not None
+            else self._build_prompt(task, sanitized_content)
+        )
         est_tokens = max(len(prompt.split()), len(prompt) // 4)
         if budget.max_input_tokens <= 0:
             return Failure(
@@ -543,6 +566,7 @@ class ProcessorSupervisor(LocalProcessor):
                 engine.generate(
                     prompt=prompt,
                     max_tokens=budget.max_output_tokens,
+                    temperature=contract.temperature if contract is not None else 0.7,
                 )
             )
 
@@ -570,9 +594,30 @@ class ProcessorSupervisor(LocalProcessor):
                 )
 
             inference_result = gen_res.unwrap()
-            statement = inference_result.text.strip()
-            if not statement:
-                statement = "No summary or classification generated."
+            raw_statement = inference_result.text.strip()
+            confidence = 0.9
+            epistemic_status = "inferred"
+            if contract is not None:
+                validation_res = contract.validate_output(raw_statement)
+                if isinstance(validation_res, Failure):
+                    validation_failure = validation_res.failure()
+                    self._error_count += 1
+                    return Failure(
+                        self._failure(
+                            validation_failure.code,
+                            validation_failure.message,
+                            request_id=task.record_id,
+                            retryable=validation_failure.retryable,
+                        )
+                    )
+                validated_output = validation_res.unwrap()
+                statement = validated_output.claim_statement()
+                confidence = validated_output.confidence
+                epistemic_status = (
+                    f"inferred:{contract.kind.value}@{contract.version}"
+                )
+            else:
+                statement = raw_statement or "No summary or classification generated."
 
             # Construct provenance reference to context package
             source_ref = ProvenanceReference(
@@ -598,8 +643,8 @@ class ProcessorSupervisor(LocalProcessor):
                 producer=SUPERVISOR_PRODUCER,
                 correlation_id=task.correlation_id,
                 statement=statement,
-                confidence=0.9,
-                epistemic_status="inferred",
+                confidence=confidence,
+                epistemic_status=epistemic_status,
                 data_class=out_data_class,
                 provenance=(source_ref,),
             )
@@ -608,6 +653,23 @@ class ProcessorSupervisor(LocalProcessor):
         finally:
             if acquired:
                 self._release_capacity()
+
+    async def process_bounded(
+        self,
+        kind: BoundedTaskKind | str,
+        task: Task,
+        context: ContextPackage,
+        budget: InferenceBudget,
+        cancellation: CancellationToken,
+    ) -> Result[Claim, ActionFailure]:
+        """Run one registered bounded task through the standard supervisor guards."""
+        return await self.process(
+            task,
+            context,
+            budget,
+            cancellation,
+            bounded_task=kind,
+        )
 
     def _build_prompt(self, task: Task, content: dict[str, Any]) -> str:
         """Constructs a deterministic schema-constrained prompt from task and sanitized content."""

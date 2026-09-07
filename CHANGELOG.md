@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Added
+- Added the first Stage 4.2 bounded local-task contracts for validated episode
+  summarization and non-authoritative intent classification.
+
 ## [0.5.0] - 2026-09-07
 
 ### Added
