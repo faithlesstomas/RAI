@@ -51,6 +51,7 @@ class ApplicationContainer:
     _event_socket: EventSocketServer | None = field(default=None, init=False)
     _rich_history_service: RichHistoryService | None = field(default=None, init=False)
     _rich_history_error: str | None = field(default=None, init=False)
+    _processor_supervisor: Any | None = field(default=None, init=False)
 
     def __post_init__(self) -> None:
         if self.audit_ledger is None:
@@ -150,6 +151,24 @@ class ApplicationContainer:
             )
         return self._rich_history_service
 
+    @property
+    def processor_supervisor(self) -> Any:
+        if self._processor_supervisor is None:
+            from .inference.supervisor import ProcessorSupervisor  # noqa: PLC0415
+            local_ai_config = self.config.get("local_ai", {})
+            config = local_ai_config if isinstance(local_ai_config, dict) else {}
+            backend = config.get("backend", "ollama")
+            model = config.get("model", "default")
+            idle_unload = float(config.get("idle_unload_seconds", 300.0))
+            concurrency = int(config.get("max_concurrency", 2))
+            self._processor_supervisor = ProcessorSupervisor(
+                backend=backend,
+                model_name=model,
+                idle_unload_seconds=idle_unload,
+                max_concurrency=concurrency,
+            )
+        return self._processor_supervisor
+
     async def close(self) -> None:
         if self._dispatcher_task is not None:
             self._dispatcher_task.cancel()
@@ -165,3 +184,7 @@ class ApplicationContainer:
         if self._rich_history_service is not None:
             await self._rich_history_service.close()
             self._rich_history_service = None
+        if self._processor_supervisor is not None:
+            await self._processor_supervisor.stop()
+            self._processor_supervisor = None
+
