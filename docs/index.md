@@ -33,6 +33,7 @@ kernel-contracts
 event-plane
 rich-history
 processor-supervisor
+bounded-local-tasks
 neural-sidecar
 reference/modules
 ```

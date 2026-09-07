@@ -11,6 +11,18 @@ from .protocols import (
 from .engines.llama import AsyncLlamaEngine, LlamaCppEngine
 from .factory import get_available_backends, is_backend_available, load_local_model
 from .supervisor import ProcessorSupervisor
+from .tasks import (
+    BOUNDED_TASK_CONTRACTS,
+    BoundedTaskContract,
+    BoundedTaskFailurePolicy,
+    BoundedTaskKind,
+    BoundedTaskLimits,
+    BoundedTaskProcessor,
+    EpisodeSummaryOutput,
+    IntentClassificationOutput,
+    IntentLabel,
+    get_bounded_task_contract,
+)
 
 __all__ = [
     "AsyncEngineAdapter",
@@ -24,6 +36,16 @@ __all__ = [
     "ModelMetadata",
     "ProcessorHealth",
     "ProcessorSupervisor",
+    "BOUNDED_TASK_CONTRACTS",
+    "BoundedTaskContract",
+    "BoundedTaskFailurePolicy",
+    "BoundedTaskKind",
+    "BoundedTaskLimits",
+    "BoundedTaskProcessor",
+    "EpisodeSummaryOutput",
+    "IntentClassificationOutput",
+    "IntentLabel",
+    "get_bounded_task_contract",
     "get_available_backends",
     "is_backend_available",
     "load_local_model",
