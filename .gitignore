@@ -21,6 +21,7 @@ hf_token
 tmp/
 .aider*
 build/
+public/
 docs/_build/
 dist/
 

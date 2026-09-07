@@ -32,6 +32,7 @@ architecture
 kernel-contracts
 event-plane
 rich-history
+processor-supervisor
 neural-sidecar
 reference/modules
 ```
