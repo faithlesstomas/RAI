@@ -47,6 +47,16 @@ publish_preview:
     - semantic-release version --as-prerelease --prerelease-token alpha
     - semantic-release publish
 
+publish_minor_preview:
+  extends: .release_job
+  script:
+    - pip install "python-semantic-release>=10,<11"
+    - git config --global user.name "semantic-release-bot"
+    - git config --global user.email "semantic-release@rai-project.com"
+    - git checkout -B "$CI_COMMIT_REF_NAME" "$CI_COMMIT_SHA"
+    - semantic-release version --minor --as-prerelease --prerelease-token alpha
+    - semantic-release publish
+
 publish_release:
   extends: .release_job
   script:

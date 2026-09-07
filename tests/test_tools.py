@@ -185,10 +185,13 @@ def test_gitlab_tools_deepcopy() -> None:
     import copy
     from rai.tools.gitlab import GitlabTools
 
-    # Mock environment variable for GitlabTools initialization to prevent validation error
+    # Construction and deepcopy must remain local and must not authenticate.
     import os
     from unittest.mock import patch
 
-    with patch.dict(os.environ, {"GITLAB_ACCESS_TOKEN": "mock-token"}):
+    with patch.dict(os.environ, {"GITLAB_ACCESS_TOKEN": "mock-token"}), patch(
+        "rai.tools.gitlab.gitlab.Gitlab"
+    ) as mock_gitlab:
         gitlab_tools = GitlabTools()
         assert copy.deepcopy(gitlab_tools) is gitlab_tools
+        mock_gitlab.assert_not_called()

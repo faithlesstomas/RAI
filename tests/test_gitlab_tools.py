@@ -2,6 +2,7 @@ import os
 import pytest
 from unittest.mock import MagicMock, patch
 import gitlab
+from requests import exceptions as requests_exceptions
 from typing import Generator
 
 from rai.tools.gitlab import GitlabTools
@@ -25,7 +26,23 @@ def mock_gitlab_instance() -> Generator:
 def gitlab_tools(mock_gitlab_instance: MagicMock) -> GitlabTools:
     return GitlabTools()
 
-def test_authentication_success(gitlab_tools: GitlabTools, mock_gitlab_instance: MagicMock) -> None:
+def test_authentication_is_lazy(
+    gitlab_tools: GitlabTools, mock_gitlab_instance: MagicMock
+) -> None:
+    mock_gitlab_instance.auth.assert_not_called()
+
+    gitlab_tools.list_projects()
+
+    mock_gitlab_instance.auth.assert_called_once()
+
+
+def test_authentication_timeout_disables_client(
+    gitlab_tools: GitlabTools, mock_gitlab_instance: MagicMock
+) -> None:
+    mock_gitlab_instance.auth.side_effect = requests_exceptions.Timeout("timed out")
+
+    assert gitlab_tools.list_projects() == []
+    assert gitlab_tools.list_projects() == []
     mock_gitlab_instance.auth.assert_called_once()
 
 def test_authentication_failure_no_token() -> None:
