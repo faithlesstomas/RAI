@@ -208,9 +208,10 @@ from the corresponding immutable Git tag.
 ## Release process
 
 Releases are created from a clean, reviewed `main` branch by a manual GitLab CI
-job. Use `publish_minor_preview` to start a new minor alpha line,
-`publish_preview` to advance its alpha number, and `publish_release` only to
-promote the current line to a stable release. The normal process is:
+job. Use `publish_preview` for a calculated alpha candidate and
+`publish_release` for the corresponding calculated stable release. Neither job
+accepts a manually forced bump; Conventional Commits select the next version.
+The normal process is:
 
 1. Confirm all intended merge requests are merged and their Conventional Commit
    messages express the correct SemVer impact.
@@ -229,12 +230,15 @@ promote the current line to a stable release. The normal process is:
    manually choosing an arbitrary version.
 6. Run the appropriate job for the exact green commit on `main`:
 
-   - `publish_minor_preview` starts the next minor line, for example
-     `0.4.0-alpha.4` → `0.5.0-alpha.1`;
-   - `publish_preview` advances the current line, for example
-     `0.5.0-alpha.1` → `0.5.0-alpha.2`;
-   - `publish_release` promotes it to stable, for example
-     `0.5.0-alpha.2` → `0.5.0`.
+   - `publish_preview` starts the version line calculated from commits since
+     the last stable release, or advances that line's alpha number;
+   - `publish_release` creates the stable version calculated from the same
+     commits.
+
+   Both jobs calculate the candidate in no-operation mode first. The release
+   guard rejects a non-increasing version and refuses to leave an active alpha
+   line. For example, after `0.5.0-alpha.1` exists, the stable job must calculate
+   exactly `0.5.0`; it cannot silently create `0.4.0` or jump to `0.6.0`.
 
    The selected job updates `pyproject.toml` and `src/rai/__init__.py`, builds
    the changelog and package, creates the release commit and SemVer tag, pushes
@@ -273,6 +277,12 @@ code alone.
 
 Never move, replace or reuse a published tag, and never modify artifacts for an
 existing version. A release error is corrected by a new SemVer release.
+
+Do not force a preview to a version different from the one calculated from the
+last stable tag. Such a preview cannot later be promoted reliably by the normal
+stable algorithm. If an exceptional recovery requires an exact version, use the
+break-glass procedure below and return to the calculated workflow after that
+stable tag exists.
 
 If the automated release job is unavailable, use a maintainer-approved
 break-glass procedure: select the SemVer version, update both canonical version

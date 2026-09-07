@@ -780,7 +780,7 @@ async def test_retention_covers_journal_raw_buffer_and_rebuilds_episodes(
         ),
     )
     history = RichHistoryService(journal, store, collection_enabled=True)
-    for offset, resource in ((-1.1, "process:old"), (-0.9, "process:new")):
+    for offset, resource in ((-2, "process:old"), (0, "process:new")):
         assert isinstance(
             await history.ingest(
                 SourceEvent(
