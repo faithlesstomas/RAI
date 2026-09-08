@@ -1,8 +1,13 @@
 # Changelog
 
-## [Unreleased]
+<!-- version list -->
+
+## v0.6.0 (2026-09-08)
 
 ### Added
+- Added a lifecycle-managed local processor supervisor with bounded concurrency,
+  cancellation, non-blocking llama.cpp execution, Ollama support, idle model
+  unloading, typed failures and provenance-preserving episode processing.
 - Added the first Stage 4.2 bounded local-task contracts for validated episode
   summarization and non-authoritative intent classification.
 - Completed the Stage 4.2 bounded-task catalog with provenance-bound entity

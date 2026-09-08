@@ -30,38 +30,27 @@ before_script:
   variables:
     GIT_STRATEGY: clone
     GIT_DEPTH: 0
-    GIT_COMMIT_AUTHOR: "semantic-release-bot <semantic-release@rai-project.com>"
-  before_script: []
+    PYTHON_SEMANTIC_RELEASE_VERSION: "10.6.2"
+  before_script:
+    - pip install "python-semantic-release==$PYTHON_SEMANTIC_RELEASE_VERSION"
+    - git config --global user.name "semantic-release-bot"
+    - git config --global user.email "semantic-release@rai-project.com"
+    - git checkout -B "$CI_COMMIT_REF_NAME" "$CI_COMMIT_SHA"
   rules:
-    - if: $CI_COMMIT_BRANCH == "main"
+    - if: $CI_COMMIT_BRANCH == "main" || $CI_COMMIT_BRANCH == "alpha"
       when: manual
-      allow_failure: true
 
-publish_preview:
+release_plan:
   extends: .release_job
   script:
-    - pip install "python-semantic-release>=10,<11"
-    - git config --global user.name "semantic-release-bot"
-    - git config --global user.email "semantic-release@rai-project.com"
-    - git checkout -B "$CI_COMMIT_REF_NAME" "$CI_COMMIT_SHA"
-    - semantic-release --noop version --as-prerelease --prerelease-token alpha --print > /tmp/release-candidate
-    - git tag --list > /tmp/release-tags
-    - python ci/release_guard.py preview /tmp/release-candidate /tmp/release-tags
-    - semantic-release version --as-prerelease --prerelease-token alpha
-    - semantic-release publish
+    - semantic-release --noop --strict version --print
+  allow_failure: true
 
-publish_release:
+release:
   extends: .release_job
   script:
-    - pip install "python-semantic-release>=10,<11"
-    - git config --global user.name "semantic-release-bot"
-    - git config --global user.email "semantic-release@rai-project.com"
-    - git checkout -B "$CI_COMMIT_REF_NAME" "$CI_COMMIT_SHA"
-    - semantic-release --noop version --print > /tmp/release-candidate
-    - git tag --list > /tmp/release-tags
-    - python ci/release_guard.py stable /tmp/release-candidate /tmp/release-tags
-    - semantic-release version
-    - semantic-release publish
+    - semantic-release --strict version --skip-build
+
 critical_lint:
   stage: lint
   script:
@@ -114,6 +103,22 @@ package:
     paths:
       - build/pypi/
     expire_in: 30 days
+
+publish_gitlab:
+  stage: release
+  image: python:3.11
+  variables:
+    GIT_DEPTH: 0
+    PYTHON_SEMANTIC_RELEASE_VERSION: "10.6.2"
+  before_script:
+    - pip install "python-semantic-release==$PYTHON_SEMANTIC_RELEASE_VERSION"
+  needs:
+    - job: package
+      artifacts: true
+  script:
+    - semantic-release --strict publish --tag "$CI_COMMIT_TAG"
+  rules:
+    - if: $CI_COMMIT_TAG =~ /^v\d+\.\d+\.\d+((a|b|rc)\d+|-(alpha|beta|rc)\.\d+)?$/
 
 publish_testpypi:
   stage: test-publish

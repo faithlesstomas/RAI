@@ -476,7 +476,7 @@ failure tests pass in CI.
 - [x] Add isolated GitLab OIDC jobs for TestPyPI and PyPI; publishing credentials
   must not be stored as long-lived CI variables.
 - [x] Complete the Stage 2 provider-neutral acceptance slice before running a
-  version-producing `publish_preview` job.
+  version-producing `release` job.
 - [/] Configure `rich-ai` trusted publishers on TestPyPI and PyPI for this
   GitLab project, `.gitlab-ci.yml`, and the `testpypi`/`pypi` environments.
   OIDC publishing is verified; protection of the production environment and

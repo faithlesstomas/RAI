@@ -47,7 +47,7 @@ def test_semantic_release_only_publishes_python_distributions() -> None:
     with Path("pyproject.toml").open("rb") as stream:
         release_config = tomllib.load(stream)["tool"]["semantic_release"]
 
-    assert "--outdir build/pypi" in release_config["build_command"]
+    assert "build_command" not in release_config
     assert release_config["publish"]["dist_glob_patterns"] == [
         "build/pypi/*.whl",
         "build/pypi/*.tar.gz",

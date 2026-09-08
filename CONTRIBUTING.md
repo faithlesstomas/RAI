@@ -175,8 +175,8 @@ Documentation ownership is divided as follows:
 - `ROADMAP.md` — planned work, status and acceptance gates;
 - `CONTRIBUTING.md` — development, testing, documentation and release process;
 - `SECURITY.md` — trust model, supported controls and vulnerability reporting;
-- `CHANGELOG.md` — released user-visible changes and the current `Unreleased`
-  section;
+- `CHANGELOG.md` — released user-visible changes generated from Conventional
+  Commits by `python-semantic-release`;
 - `docs/` — publishable guides, architecture, protocols, operations and
   generated Python API reference;
 - FastAPI OpenAPI — generated HTTP endpoint and data-model reference.
@@ -208,52 +208,54 @@ from the corresponding immutable Git tag.
 
 ## Release process
 
-Releases are created from a clean, reviewed `main` branch by a manual GitLab CI
-job. Use `publish_preview` for a calculated alpha candidate and
-`publish_release` for the corresponding calculated stable release. Neither job
-accepts a manually forced bump; Conventional Commits select the next version.
+Releases are created from a clean, reviewed release branch by one manual GitLab
+CI job. `main` produces stable releases. The dedicated `alpha` branch produces
+alpha pre-releases. Conventional Commits select the next version; the release
+job never forces a bump or pre-release mode on the command line.
+
+`python-semantic-release` owns the version update, changelog generation, release
+commit, tag and GitLab release as one transaction. Do not maintain a parallel
+`Unreleased` section manually. The changelog uses the built-in update template
+and the committed `<!-- version list -->` insertion marker.
+
 The normal process is:
 
 1. Confirm all intended merge requests are merged and their Conventional Commit
    messages express the correct SemVer impact.
-2. Confirm `CHANGELOG.md` describes user-visible, compatibility, security and
-   migration changes.
+2. Confirm the commit subjects since the last release describe user-visible,
+   compatibility, security and migration changes. Correct or revert misleading
+   commit metadata before releasing; the generated changelog is only as good as
+   the Conventional Commits it consumes.
 3. Run the complete tests, critical lint and warning-as-error documentation
    build documented above.
-4. Preview the calculated release without modifying the repository:
+4. Run the manual `release_plan` job on the exact green commit. It executes the
+   non-mutating equivalent of:
 
    ```bash
-   semantic-release --noop version
+   semantic-release --noop --strict version --print
    ```
 
-5. Review the proposed version and release notes. Correct commit metadata or the
-   changelog before releasing; do not compensate for a wrong classification by
-   manually choosing an arbitrary version.
-6. Run the appropriate job for the exact green commit on `main`:
-
-   - `publish_preview` starts the version line calculated from commits since
-     the last stable release, or advances that line's alpha number;
-   - `publish_release` creates the stable version calculated from the same
-     commits.
-
-   Both jobs calculate the candidate in no-operation mode first. The release
-   guard rejects a non-increasing version and refuses to leave an active alpha
-   line. For example, after `0.5.0-alpha.1` exists, the stable job must calculate
-   exactly `0.5.0`; it cannot silently create `0.4.0` or jump to `0.6.0`.
-
-   The selected job updates `pyproject.toml` and `src/rai/__init__.py`, builds
-   the changelog and package, creates the release commit and SemVer tag, pushes
-   them and publishes the GitLab release. Release artifacts are built in
-   `build/pypi/`; only the wheel and source archive are attached, so system
-   packages under `dist/` remain outside the Python release flow.
-7. In the resulting tag pipeline, run `publish_testpypi`. Install that exact
-   candidate in a clean environment and verify imports, CLI behavior and
-   project links. The job uses GitLab OIDC trusted publishing; do not add a
-   long-lived PyPI API token.
-8. After the TestPyPI job and smoke test succeed, run the protected
+5. Review the proposed version. Do not compensate for incorrect commit metadata
+   by manually selecting an arbitrary version.
+6. Run the manual `release` job on that same commit. On `main` it creates a
+   stable release; on `alpha` it creates or advances an alpha release. The job
+   uses strict mode, so it fails instead of silently publishing when no
+   releasable Conventional Commit exists. It updates `pyproject.toml`,
+   `src/rai/__init__.py` and `CHANGELOG.md`, creates and pushes the release
+   commit and tag, and publishes the GitLab release notes. Package building is
+   deliberately skipped in this branch pipeline.
+7. The resulting tag pipeline builds the wheel and source archive exactly once
+   in `build/pypi/`. The automatic `publish_gitlab` job attaches those files to
+   the existing GitLab release; system packages under `dist/` remain outside
+   the Python release flow.
+8. Run `publish_testpypi` in that tag pipeline. It consumes the unchanged
+   `package` job artifacts. Install that exact candidate in a clean environment
+   and verify imports, CLI behavior and project links. The job uses GitLab OIDC
+   trusted publishing; do not add a long-lived PyPI API token.
+9. After the TestPyPI job and smoke test succeed, run the protected
    `publish_pypi` job from the same tag pipeline. PyPI artifacts must be the
    unchanged artifacts produced by the tag's `package` job.
-9. Verify the tag points at the release commit and that the following agree:
+10. Verify the tag points at the release commit and that the following agree:
 
    ```bash
    git describe --tags --exact-match
@@ -266,9 +268,6 @@ The normal process is:
    `python -m pip install --pre rich-ai`, FastAPI version, GitLab release, PyPI
    links, release notes and documentation site.
 
-10. Start the next development cycle with an empty or updated `Unreleased`
-   section as produced by the release tooling.
-
 Before the first publication, create pending trusted publishers for `rich-ai`
 on TestPyPI and PyPI. Restrict them to the GitLab namespace `tk-lab1/ai`, project
 `rai`, workflow `.gitlab-ci.yml`, and environments `testpypi` and `pypi`.
@@ -279,11 +278,9 @@ code alone.
 Never move, replace or reuse a published tag, and never modify artifacts for an
 existing version. A release error is corrected by a new SemVer release.
 
-Do not force a preview to a version different from the one calculated from the
-last stable tag. Such a preview cannot later be promoted reliably by the normal
-stable algorithm. If an exceptional recovery requires an exact version, use the
-break-glass procedure below and return to the calculated workflow after that
-stable tag exists.
+Keep one active branch per release channel. Merge `alpha` into `main` when its
+line is ready for stable promotion; do not create alpha and stable releases from
+the same branch using command-line overrides.
 
 If the automated release job is unavailable, use a maintainer-approved
 break-glass procedure: select the SemVer version, update both canonical version
