@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
+import json
 from typing import AsyncIterator, List, Optional
 
 import pytest
@@ -12,9 +13,11 @@ from rai.inference import (
     BOUNDED_TASK_CONTRACTS,
     BoundedTaskKind,
     BoundedTaskProcessor,
+    EntityType,
     InferenceResult,
     IntentLabel,
     ProcessorSupervisor,
+    RoutingDecision,
     get_bounded_task_contract,
 )
 from rai.kernel.ports import CancellationToken
@@ -195,6 +198,182 @@ async def test_intent_classification_uses_fixed_contract_and_caller_budget() -> 
 
 
 @pytest.mark.asyncio
+async def test_entity_extraction_preserves_source_and_cardinality_contract() -> None:
+    engine = ScriptedEngine(
+        '{"entities":[{"text":"RAI","entity_type":"project",'
+        '"source_id":"episode"}],"confidence":0.88}'
+    )
+    supervisor = ProcessorSupervisor(engine=engine, idle_unload_seconds=0)
+    await supervisor.start()
+
+    result = await supervisor.process_bounded(
+        BoundedTaskKind.ENTITY_EXTRACTION,
+        Task(objective="Extract explicit entities", producer=TEST_PRODUCER),
+        _context(),
+        _budget(),
+        CancellationToken(),
+    )
+
+    assert isinstance(result, Success)
+    claim = result.unwrap()
+    assert '"entity_type":"project"' in claim.statement
+    assert '"source_id":"episode"' in claim.statement
+    assert EntityType.PROJECT.value in claim.statement
+    assert claim.epistemic_status == "inferred:entity_extraction@1.0.0"
+    assert 'Approved source IDs JSON: ["episode"]' in engine.prompts[0]
+    assert engine.max_tokens == [512]
+    await supervisor.stop()
+
+
+@pytest.mark.asyncio
+async def test_entity_extraction_rejects_unknown_source_reference() -> None:
+    engine = ScriptedEngine(
+        '{"entities":[{"text":"RAI","entity_type":"project",'
+        '"source_id":"unapproved"}],"confidence":0.88}'
+    )
+    supervisor = ProcessorSupervisor(engine=engine, idle_unload_seconds=0)
+    await supervisor.start()
+
+    result = await supervisor.process_bounded(
+        BoundedTaskKind.ENTITY_EXTRACTION,
+        Task(objective="Extract explicit entities", producer=TEST_PRODUCER),
+        _context(),
+        _budget(),
+        CancellationToken(),
+    )
+
+    assert result.failure().code == "INVALID_MODEL_OUTPUT"
+    assert "unapproved" not in result.failure().message
+    await supervisor.stop()
+
+
+def test_entity_extraction_rejects_more_than_32_mentions() -> None:
+    contract = BOUNDED_TASK_CONTRACTS[BoundedTaskKind.ENTITY_EXTRACTION]
+    raw = json.dumps(
+        {
+            "entities": [
+                {
+                    "text": f"entity-{index}",
+                    "entity_type": "other",
+                    "source_id": "episode",
+                }
+                for index in range(33)
+            ],
+            "confidence": 0.9,
+        }
+    )
+
+    result = contract.validate_output(
+        raw, allowed_source_ids=frozenset({"episode"})
+    )
+
+    assert result.failure().code == "INVALID_MODEL_OUTPUT"
+
+
+@pytest.mark.asyncio
+async def test_salience_estimation_enforces_documented_score_band() -> None:
+    valid_engine = ScriptedEngine(
+        '{"score":0.8,"level":"high","rationale":"Repeated explicit focus.",'
+        '"confidence":0.82}'
+    )
+    valid_supervisor = ProcessorSupervisor(
+        engine=valid_engine, idle_unload_seconds=0
+    )
+    await valid_supervisor.start()
+
+    valid = await valid_supervisor.process_bounded(
+        BoundedTaskKind.SALIENCE_ESTIMATION,
+        Task(objective="Estimate salience", producer=TEST_PRODUCER),
+        _context(),
+        _budget(),
+        CancellationToken(),
+    )
+
+    assert isinstance(valid, Success)
+    assert valid.unwrap().statement.startswith("Salience: high (0.800).")
+    await valid_supervisor.stop()
+
+    invalid_contract = BOUNDED_TASK_CONTRACTS[
+        BoundedTaskKind.SALIENCE_ESTIMATION
+    ]
+    invalid = invalid_contract.validate_output(
+        '{"score":0.8,"level":"low","rationale":"Mismatch.",'
+        '"confidence":0.82}'
+    )
+    assert invalid.failure().code == "INVALID_MODEL_OUTPUT"
+
+
+@pytest.mark.asyncio
+async def test_privacy_risk_can_elevate_claim_class_but_cannot_downgrade() -> None:
+    elevate_engine = ScriptedEngine(
+        '{"data_class":"SECRET","risk_factors":["credential-like data"],'
+        '"rationale":"The content may contain a credential.","confidence":0.9}'
+    )
+    elevate_supervisor = ProcessorSupervisor(
+        engine=elevate_engine, idle_unload_seconds=0
+    )
+    await elevate_supervisor.start()
+
+    elevated = await elevate_supervisor.process_bounded(
+        BoundedTaskKind.PRIVACY_RISK_ELEVATION,
+        Task(objective="Assess privacy risk", producer=TEST_PRODUCER),
+        _context(DataClass.LOCAL),
+        _budget(),
+        CancellationToken(),
+    )
+
+    assert isinstance(elevated, Success)
+    assert elevated.unwrap().data_class == DataClass.SECRET
+    assert elevated.unwrap().statement.startswith("Privacy risk: SECRET.")
+    await elevate_supervisor.stop()
+
+    downgrade_engine = ScriptedEngine(
+        '{"data_class":"LOCAL","risk_factors":[],"rationale":"No risk.",'
+        '"confidence":0.9}'
+    )
+    downgrade_supervisor = ProcessorSupervisor(
+        engine=downgrade_engine, idle_unload_seconds=0
+    )
+    await downgrade_supervisor.start()
+    downgraded = await downgrade_supervisor.process_bounded(
+        BoundedTaskKind.PRIVACY_RISK_ELEVATION,
+        Task(objective="Assess privacy risk", producer=TEST_PRODUCER),
+        _context(DataClass.PRIVATE),
+        _budget(),
+        CancellationToken(),
+    )
+
+    assert downgraded.failure().code == "INVALID_MODEL_OUTPUT"
+    assert "downgrade" in downgraded.failure().message
+    await downgrade_supervisor.stop()
+
+
+@pytest.mark.asyncio
+async def test_routing_hint_is_advisory_typed_output_only() -> None:
+    engine = ScriptedEngine(
+        '{"decision":"ASK","rationale":"The objective is ambiguous.",'
+        '"confidence":0.78}'
+    )
+    supervisor = ProcessorSupervisor(engine=engine, idle_unload_seconds=0)
+    await supervisor.start()
+
+    result = await supervisor.process_bounded(
+        BoundedTaskKind.ROUTING_HINT,
+        Task(objective="Route this", producer=TEST_PRODUCER),
+        _context(),
+        _budget(),
+        CancellationToken(),
+    )
+
+    assert isinstance(result, Success)
+    claim = result.unwrap()
+    assert claim.statement.startswith(f"Routing hint: {RoutingDecision.ASK.value}.")
+    assert claim.epistemic_status == "inferred:routing_hint@1.0.0"
+    assert "Never dispatch work" in engine.prompts[0]
+    await supervisor.stop()
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize(
     "response",
     [
@@ -280,6 +459,10 @@ def test_registry_exposes_complete_versioned_contracts() -> None:
     assert set(BOUNDED_TASK_CONTRACTS) == {
         BoundedTaskKind.EPISODE_SUMMARIZATION,
         BoundedTaskKind.INTENT_CLASSIFICATION,
+        BoundedTaskKind.ENTITY_EXTRACTION,
+        BoundedTaskKind.SALIENCE_ESTIMATION,
+        BoundedTaskKind.PRIVACY_RISK_ELEVATION,
+        BoundedTaskKind.ROUTING_HINT,
     }
     for kind, contract in BOUNDED_TASK_CONTRACTS.items():
         assert contract.kind == kind

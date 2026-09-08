@@ -5,6 +5,9 @@
 ### Added
 - Added the first Stage 4.2 bounded local-task contracts for validated episode
   summarization and non-authoritative intent classification.
+- Completed the Stage 4.2 bounded-task catalog with provenance-bound entity
+  extraction, deterministic salience estimation, monotonic privacy-risk
+  elevation and non-authoritative routing hints.
 
 ## [0.5.0] - 2026-09-07
 
