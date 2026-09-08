@@ -47,6 +47,13 @@ work may retire them after equivalent negative coverage exists. The structured
 the actor, data class, target, declared side effects, isolation, budget and
 verification plan before returning `ALLOW`, `ASK`, `DENY` or `ESCALATE`.
 
+The compatibility calculator does not execute Python expressions. It parses a
+small allowlisted arithmetic syntax and bounds expression length, AST size,
+collection cardinality, numeric magnitude and exponent size. Attribute access,
+imports, comprehensions and calls outside the explicit function allowlist are
+rejected. The reviewed Ruff security profile is a blocking CI check for this
+and other Python security boundaries.
+
 `SECRET` and `BLOCKED` capability requests are denied. Critical-risk requests
 are denied by the Stage 1 policy, moderate/high-risk requests require approval,
 and unavailable approval or required isolation fails closed. A model-supplied

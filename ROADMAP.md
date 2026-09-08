@@ -279,6 +279,8 @@ layers were already complete.
 - [x] Replace thread-dependent SQLite access with deterministic backend-neutral
   history persistence.
 - [x] Add hard pytest timeouts and blocking critical lint jobs in CI.
+- [x] Replace the compatibility calculator's Python evaluator with a bounded
+  arithmetic parser and make the reviewed Ruff security profile blocking.
 - [x] Move heavyweight inference stacks to optional dependency groups.
 - [x] Ignore local credentials, model weights and local harness state.
 
@@ -674,16 +676,30 @@ actuator boundary and Stage 2 provides durable input and result delivery.
 
 #### 4.1 Processor supervisor
 
-- [ ] Select one supported local text execution path first: llama.cpp or Ollama.
-- [ ] Define processor discovery, model metadata, health, load/unload, concurrency,
-  cancellation and resource reporting.
-- [ ] Run blocking inference outside the daemon event loop.
-- [ ] Unload large models after configurable idle periods on constrained devices.
-- [ ] Report unavailable RAM/VRAM/accelerator capacity as a typed failure.
-- [ ] Remove or freeze non-functional IREE and ONNX entries until they have owners
+Status: `[/]` — the lifecycle-managed supervisor and its safety boundaries are
+implemented and tested, but live backend acceptance, operational discovery and
+host-capacity reporting remain open.
+
+- [/] Select one supported local text execution path first. Ollama is the
+  configured default and both Ollama and llama.cpp adapters have contract tests,
+  but neither has a repeatable live-model acceptance test in the current tree.
+- [/] Define processor discovery, model metadata, health, load/unload,
+  concurrency, cancellation and resource reporting. The protocols and lifecycle
+  are implemented; discovery currently reports importable adapters rather than
+  daemon/model readiness, and `ModelMetadata` is not populated by the engines.
+- [x] Run blocking inference outside the daemon event loop.
+- [x] Unload large models after configurable idle periods on constrained devices.
+- [/] Report unavailable RAM/VRAM/accelerator capacity as a typed failure. Known
+  engine requirements are checked against task budgets, but physical host and
+  accelerator availability is not probed yet.
+- [x] Remove or freeze non-functional IREE and ONNX entries until they have owners
   and conformance tests.
 
 #### 4.2 Bounded local tasks
+
+Status: `[/]` — all six versioned task contracts are implemented; policy-aware
+result caching remains open in GitLab issue #16 and follows the supervisor
+decomposition tracked by #17.
 
 - [x] Add schema-constrained intent classification, entity extraction, episode
   summarization, salience estimation, privacy-risk elevation and routing hints.
@@ -1258,15 +1274,18 @@ than a big-bang rewrite.
   it is isolated behind the provider-neutral `AgentBackend` contract.
 - Conversation history still has more implementation weight than normalized
   observation and action-result state.
-- Local inference protocols are disconnected from the daemon and lack tests.
-- IREE is a stub and the ONNX factory references an absent implementation.
+- The processor supervisor and bounded-task contracts are container-owned and
+  tested, but no daemon API or registered capability dispatches work to them and
+  neither production adapter has a repeatable live-model acceptance test.
+- IREE and ONNX are intentionally frozen behind typed failures until they have
+  owners, runtime availability and conformance tests.
 - Device identity and cross-device reconnect/spooling contracts do not yet
   exist. Local event replay and bounded backpressure are already implemented in
   Stage 2.
 - Full style linting contains legacy violations; critical lint is blocking now.
-- Existing GitLab issues #8 and #9 remain relevant to lazy loading and blocking
-  local inference. Issues #2 and #6 require reproduction against the new
-  contracts before implementation.
+- GitLab issues #8 and #9 were resolved by the Stage 4.1 supervisor work. Result
+  caching and supervisor decomposition remain tracked by #16 and #17. Issues #2
+  and #6 require reproduction against the new contracts before implementation.
 
 ## Issue and merge-request template for roadmap work
 

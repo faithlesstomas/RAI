@@ -2,6 +2,22 @@
 
 Stage 4 introduces bounded local intelligence to Rich AI (RAI). The processor supervisor coordinates local language models and lightweight neural engines to extract structured, verifiable claims from desktop activity episodes while enforcing strict resource, concurrency, and privacy limits.
 
+## Current maturity
+
+The supervisor lifecycle and safety boundaries are implemented and covered by
+deterministic tests. Ollama is the configured default backend, while llama.cpp
+is an optional adapter. Neither adapter yet has a repeatable live-model
+acceptance test in the repository, so Stage 4.1 remains partially complete.
+
+`get_available_backends()` currently reports whether an adapter dependency can
+be imported. It does not prove that an Ollama daemon, requested model or usable
+accelerator is available. Model loading still fails safely with a typed
+`ActionFailure`, but operational readiness discovery remains follow-up work.
+Similarly, the supervisor rejects known engine RAM/VRAM requirements that exceed
+the task budget; it does not yet measure free host RAM, VRAM or accelerator
+capacity. The public `ModelMetadata` type exists but is not populated by engine
+discovery yet.
+
 ## Processor Supervisor Architecture
 
 The `ProcessorSupervisor` implements the kernel's `LocalProcessor` protocol. It isolates the rest of the system from backend-specific inference quirks, memory leaks, and blocking operations.
@@ -44,7 +60,7 @@ The `ProcessorSupervisor` implements the kernel's `LocalProcessor` protocol. It 
 
 ---
 
-## Supported Local Text Engines
+## Implemented Local Text Adapters
 
 Supervisor-facing engines conform to the `LocalTextEngine` protocol, exposing uniform asynchronous `load()`, `generate()`, and `unload()` lifecycles. Legacy synchronous `InferenceEngine` implementations are wrapped by `AsyncEngineAdapter`.
 
@@ -54,7 +70,9 @@ Supervisor-facing engines conform to the `LocalTextEngine` protocol, exposing un
 - Supports explicit eviction from GPU memory by issuing generation requests with `keep_alive=0` on unload.
 
 ### Llama.cpp (`LlamaCppEngine`, `AsyncLlamaEngine`)
-- Runs GGUF quantized models directly on Linux CPU/Vulkan/ROCm/CUDA.
+- Runs GGUF quantized models through `llama-cpp-python`. The current adapter does
+  not request GPU offload explicitly; accelerator behavior depends on the
+  separately installed llama.cpp runtime and future configuration work.
 - Employs lazy importing to ensure that environments lacking C++ toolchains or `llama-cpp-python` can start the RAI kernel without dependency errors.
 - Preserves the public synchronous `InferenceEngine` contract in `LlamaCppEngine`; `AsyncLlamaEngine` and `AsyncEngineAdapter` dispatch model initialization and generation onto worker threads.
 
@@ -137,3 +155,5 @@ if isinstance(result, Success):
 ```
 
 Supervisor teardown and model unloads are coordinated automatically during `container.close()`.
+Container ownership currently provides composition and teardown only. No daemon
+route or registered capability dispatches production work to the supervisor yet.

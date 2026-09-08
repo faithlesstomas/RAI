@@ -5,6 +5,12 @@ supervisor. A bounded task is not an agent: it receives a task and an approved,
 sanitized context package, performs one inference operation, and may only return
 a validated derived `Claim` or a typed `ActionFailure`.
 
+All six version `1.0.0` contracts are implemented. Stage 4.2 remains partial
+because persistent, policy-aware result caching is still tracked in
+[issue #16](https://gitlab.com/tk-lab1/ai/rai/-/issues/16), after the supervisor
+decomposition tracked in
+[issue #17](https://gitlab.com/tk-lab1/ai/rai/-/issues/17).
+
 ## Supported contracts
 
 The registry contains six version `1.0.0` contracts:
