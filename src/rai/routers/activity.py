@@ -128,7 +128,8 @@ async def delete_activity(
     try:
         if interval.preset is not None:
             return await service.delete_preset(interval.preset)
-        assert interval.since is not None and interval.until is not None
+        if interval.since is None or interval.until is None:
+            raise ValueError("since and until are required without a preset")
         return await service.delete_range(interval.since, interval.until)
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc

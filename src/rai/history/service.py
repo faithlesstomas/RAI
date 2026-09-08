@@ -377,7 +377,8 @@ class RichHistoryService:
         self._retention_task = None
 
     async def _retention_loop(self) -> None:
-        assert self.retention_interval_seconds is not None
+        if self.retention_interval_seconds is None:
+            raise RuntimeError("retention loop started without an interval")
         while True:
             result = await self.enforce_retention()
             self.last_retention_error = (

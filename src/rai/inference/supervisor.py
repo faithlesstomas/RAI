@@ -200,8 +200,10 @@ class ProcessorSupervisor(LocalProcessor):
         async def drain() -> None:
             try:
                 await operation
-            except (asyncio.CancelledError, Exception):
+            except asyncio.CancelledError:
                 pass
+            except Exception as exc:  # pylint: disable=broad-except
+                logger.debug("Deferred inference operation failed while draining: %s", exc)
             finally:
                 self._release_capacity()
 

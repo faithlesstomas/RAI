@@ -10,8 +10,8 @@ from typing import Mapping, Optional
 
 from rai.paths import runtime_dir
 
-TOKEN_ENV = "RAI_API_TOKEN"
-TOKEN_HEADER = "X-RAI-Token"
+TOKEN_ENV = "RAI_API_TOKEN"  # noqa: S105 -- environment variable name
+TOKEN_HEADER = "X-RAI-Token"  # noqa: S105 -- HTTP header name
 
 
 def auth_disabled() -> bool:
@@ -74,4 +74,3 @@ def is_authorized(
             supplied = authorization[7:].strip()
     supplied = supplied or query_token
     return bool(supplied) and hmac.compare_digest(supplied, get_api_token())
-

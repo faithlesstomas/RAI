@@ -58,7 +58,7 @@ class DataClass(str, Enum):
     PUBLIC = "PUBLIC"
     LOCAL = "LOCAL"
     PRIVATE = "PRIVATE"
-    SECRET = "SECRET"
+    SECRET = "SECRET"  # noqa: S105 -- data-classification label, not a credential
     BLOCKED = "BLOCKED"
 
 

@@ -3,12 +3,15 @@ Ollama implementation of LocalTextEngine.
 """
 from __future__ import annotations
 
+import logging
 import time
 from typing import Any, List, Optional
 
 from returns.result import Failure, Result, Success
 
 from ..protocols import GenerationStats, InferenceResult, LocalTextEngine
+
+logger = logging.getLogger(__name__)
 
 
 class OllamaEngine:
@@ -121,6 +124,6 @@ class OllamaEngine:
         if self._client is not None and hasattr(self._client, "_client"):
             try:
                 await self._client._client.aclose()
-            except Exception:
-                pass
+            except Exception as exc:  # pylint: disable=broad-exception-caught
+                logger.debug("Failed to close Ollama HTTP client: %s", exc)
             self._client = None

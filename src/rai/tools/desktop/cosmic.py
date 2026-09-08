@@ -1,9 +1,11 @@
 """COSMIC desktop adapter implementing the DesktopAdapter interface."""
 import base64
-import datetime
 import json
 import os
+import shutil
 import subprocess
+import tempfile
+import time
 import urllib.request
 import urllib.parse
 from typing import Optional
@@ -23,7 +25,13 @@ class CosmicDesktopAdapter(DesktopAdapter):
         """Sends a desktop notification via standard Freedesktop D-Bus."""
         if not _HAS_DBUS:
             try:
-                subprocess.run(["notify-send", "-a", app_name, summary, body], check=True)
+                command = shutil.which("notify-send")
+                if command is None:
+                    raise FileNotFoundError("notify-send is unavailable")
+                # The executable is resolved to an absolute path; arguments are not shell-evaluated.
+                subprocess.run(  # noqa: S603
+                    [command, "-a", app_name, summary, body], check=True
+                )
                 return f"Notification sent via notify-send: Summary='{summary}', Body='{body}'"
             except Exception as e:  # pylint: disable=broad-except
                 return f"Failed to send notification: {e}. No D-Bus or notify-send available."
@@ -53,26 +61,31 @@ class CosmicDesktopAdapter(DesktopAdapter):
     def take_screenshot(self, delay: int = 0) -> str:
         """Takes a full-screen screenshot using cosmic-screenshot or grim on COSMIC Wayland."""
         filename = ""
+        temporary_dir: tempfile.TemporaryDirectory[str] | None = None
         try:
-            timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
-            filename = os.path.join("/tmp", f"screenshot_{timestamp}.png")
-            
+            temporary_dir = tempfile.TemporaryDirectory(prefix="rai-screenshot-")
+            filename = os.path.join(temporary_dir.name, "screenshot.png")
+            if delay > 0:
+                time.sleep(delay)
+
             # 1. Attempt using cosmic-screenshot
             try:
-                command = ["cosmic-screenshot", filename]
-                if delay > 0:
-                    command = ["sleep", str(delay), "&&", "cosmic-screenshot", filename]
-                    subprocess.run(" ".join(command), shell=True, check=True)
-                else:
-                    subprocess.run(command, capture_output=True, text=True, check=True)
+                executable = shutil.which("cosmic-screenshot")
+                if executable is None:
+                    raise FileNotFoundError("cosmic-screenshot is unavailable")
+                # The executable is resolved to an absolute path; arguments are not shell-evaluated.
+                subprocess.run(  # noqa: S603
+                    [executable, filename], capture_output=True, text=True, check=True
+                )
             except Exception:  # pylint: disable=broad-except
                 # 2. Attempt using grim (Wayland general)
-                command = ["grim", filename]
-                if delay > 0:
-                    command = ["sleep", str(delay), "&&", "grim", filename]
-                    subprocess.run(" ".join(command), shell=True, check=True)
-                else:
-                    subprocess.run(command, capture_output=True, text=True, check=True)
+                executable = shutil.which("grim")
+                if executable is None:
+                    raise FileNotFoundError("grim is unavailable")
+                # The executable is resolved to an absolute path; arguments are not shell-evaluated.
+                subprocess.run(  # noqa: S603
+                    [executable, filename], capture_output=True, text=True, check=True
+                )
 
             if not os.path.exists(filename):
                 return json.dumps({
@@ -83,8 +96,6 @@ class CosmicDesktopAdapter(DesktopAdapter):
             with open(filename, "rb") as image_file:
                 encoded_string = base64.b64encode(image_file.read()).decode('utf-8')
 
-            os.remove(filename)
-
             return json.dumps({
                 "type": "image_data",
                 "format": "png",
@@ -92,13 +103,14 @@ class CosmicDesktopAdapter(DesktopAdapter):
             })
 
         except Exception as e:  # pylint: disable=broad-except
-            if filename and os.path.exists(filename):
-                os.remove(filename)
             return json.dumps({
                 "status": "error",
                 "message": f"Failed to take screenshot: {e}. "
                            "Ensure cosmic-screenshot or grim is installed and available in PATH."
             })
+        finally:
+            if temporary_dir is not None:
+                temporary_dir.cleanup()
 
     def weather(self, location: Optional[str] = "current_location") -> str:
         """Retrieves weather info using online wttr.in fallback for COSMIC."""
@@ -106,8 +118,11 @@ class CosmicDesktopAdapter(DesktopAdapter):
         try:
             loc_encoded = urllib.parse.quote(loc)
             url = f"https://wttr.in/{loc_encoded}?format=j1"
-            req = urllib.request.Request(url, headers={'User-Agent': 'curl/7.81.0'})
-            with urllib.request.urlopen(req, timeout=5) as response:
+            # The URL is constructed locally with a fixed HTTPS origin.
+            req = urllib.request.Request(  # noqa: S310
+                url, headers={'User-Agent': 'curl/7.81.0'}
+            )
+            with urllib.request.urlopen(req, timeout=5) as response:  # noqa: S310
                 data = json.loads(response.read().decode('utf-8'))
                 current = data['current_condition'][0]
                 area = data['nearest_area'][0]

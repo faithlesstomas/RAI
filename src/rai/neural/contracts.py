@@ -230,7 +230,7 @@ class NeuralObservation:
 
 class EventType(str, Enum):
     GENERATION_STARTED = "GenerationStarted"
-    TOKEN_DELTA = "TokenDelta"
+    TOKEN_DELTA = "TokenDelta"  # noqa: S105 -- event name, not a credential
     NEURAL_STATE_OBSERVED = "NeuralStateObserved"
     GENERATION_COMPLETED = "GenerationCompleted"
     GENERATION_FAILED = "GenerationFailed"
