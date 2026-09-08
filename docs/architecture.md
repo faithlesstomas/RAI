@@ -76,6 +76,19 @@ lines. The supervisor launches these commands without a shell or credential
 environment and the in-process collectors sanitize the records again before the
 privacy firewall.
 
+The first Stage 4.3 voice slice lives in `rai.speech`. It separates immutable
+synthesis requests and backend metadata from a `SpeechSynthesizer` model port
+and an `AudioPlayer` device port. A profile supplies an ordered backend policy;
+selection intersects that policy with language, locality, latency, cost and
+RAM/VRAM limits. The actuator produces a terminal result only after the player
+returns a completion receipt and excludes both input text and PCM bytes from the
+result. The deterministic backend and player exercise this lifecycle without a
+model, network, microphone or speaker. A lazy Piper adapter and local
+sounddevice player implement the same ports without import-time optional
+dependency loading or implicit downloads. A registry adapter places the whole
+operation behind `CapabilityService`; default runtime configuration and STT are
+still planned.
+
 ## Data flow
 
 ```text

@@ -2,15 +2,14 @@
 This module handles Text-to-Speech (TTS) functionality using Piper TTS.
 """
 
+from __future__ import annotations
+
 import asyncio
-import os
-import sys
 import threading
 import wave
 from pathlib import Path
 from typing import Optional
 
-import requests
 import logging
 logger = logging.getLogger(__name__)
 
@@ -19,14 +18,9 @@ try:
     import sounddevice as sd
     from piper.voice import PiperVoice
 except ImportError:
-    logger.error(
-        "TTS Error: dependencies are not installed. Please run 'pip install rich-ai[tts]'"
-    )
-    sys.exit(1)
-
-
-VOICES_URL = "https://huggingface.co/rhasspy/piper-voices/raw/main/voices.json"
-HG_BASE_URL = "https://huggingface.co/rhasspy/piper-voices/resolve/main/"
+    np = None
+    sd = None
+    PiperVoice = None
 
 
 # pylint: disable=too-few-public-methods
@@ -39,6 +33,12 @@ class TTS:
 
     def _load_voice(self, model_path: str) -> Optional[PiperVoice]:
         """Loads the Piper voice model, handling potential ImportError."""
+        if PiperVoice is None:
+            logger.error(
+                "TTS Error: dependencies are not installed. "
+                "Please run 'pip install rich-ai[tts]'"
+            )
+            return None
         try:
             logger.debug("Loading model from: %s", model_path)
             config_path = f"{model_path}.json"
@@ -67,6 +67,12 @@ class TTS:
 
     async def _play_audio(self, text: str) -> None:
         """Synthesizes audio and plays it using sounddevice in a non-blocking way."""
+        if np is None or sd is None:
+            logger.error(
+                "TTS Error: playback dependencies are not installed. "
+                "Please run 'pip install rich-ai[tts]'"
+            )
+            return
         logger.debug("[dim][TTS Debug] TTS._play_audio() called.[/dim]")
 
         stop_event = threading.Event()
@@ -129,68 +135,28 @@ class TTS:
             logger.error("TTS Error playing audio: %s", e)
 
 
-def _download_file(url: str, destination: Path) -> None:
-    """Downloads a file from a URL to a destination path."""
-    logger.info("Downloading %s...", destination.name)
-    with requests.get(url, stream=True, timeout=30) as r:
-        r.raise_for_status()
-        with open(destination, "wb") as f:
-            for chunk in r.iter_content(chunk_size=8192):
-                f.write(chunk)
-
-
-def _download_and_find_onnx_path(voice_id: str, data_dir: Path) -> str | None:
-    """Downloads all files for a voice and returns the path to the .onnx file."""
-    try:
-        logger.debug("Fetching voice index from %s...", VOICES_URL)
-        voices_response = requests.get(VOICES_URL, timeout=10)
-        voices_response.raise_for_status()
-        voices_data = voices_response.json()
-
-        if voice_id not in voices_data:
-            logger.error("Voice '%s' not found in the official repository.", voice_id)
-            return None
-
-        voice_metadata = voices_data[voice_id]
-        voice_dest_dir = data_dir / voice_id
-        voice_dest_dir.mkdir(parents=True, exist_ok=True)
-        onnx_path = None
-
-        for remote_path, _ in voice_metadata.get("files", {}).items():
-            file_url = f"{HG_BASE_URL}{remote_path}"
-            local_filename = Path(remote_path).name
-            file_dest = voice_dest_dir / local_filename
-
-            if not file_dest.exists():
-                _download_file(file_url, file_dest)
-
-            if local_filename.endswith(".onnx"):
-                onnx_path = str(file_dest)
-
-        logger.debug("All files for voice '%s' are present.", voice_id)
-        return onnx_path
-
-    except (requests.exceptions.RequestException, IOError) as e:
-        logger.error("An error occurred during voice download: %s", e)
-        return None
-
-
 def resolve_voice_path(voice_input: str, data_dir_str: str) -> str | None:
     """
     Resolves the voice input to a valid .onnx model path.
     1. Checks if the input is a direct path to a file.
     2. If not, treats it as a voice ID and searches for an existing .onnx file.
-    3. If not found locally, attempts to download it.
+
+    Voice provisioning is deliberately separate; this function never downloads.
     """
     data_dir = Path(data_dir_str)
-    if os.path.isfile(voice_input):
-        return voice_input
+    direct = Path(voice_input)
+    if direct.is_file() and Path(f"{direct}.json").is_file():
+        return str(direct)
 
     voice_dir = data_dir / voice_input
     if voice_dir.is_dir():
-        onnx_files = list(voice_dir.glob("*.onnx"))
-        if onnx_files:
-            return str(onnx_files[0])
+        onnx_files = sorted(voice_dir.glob("*.onnx"))
+        for model_path in onnx_files:
+            if Path(f"{model_path}.json").is_file():
+                return str(model_path)
 
-    logger.debug("Voice '%s' not found locally. Attempting to download...", voice_input)
-    return _download_and_find_onnx_path(voice_input, data_dir)
+    logger.error(
+        "Voice '%s' is not provisioned locally; provide matching .onnx and .onnx.json files.",
+        voice_input,
+    )
+    return None

@@ -70,7 +70,7 @@ dev = [
     "rich-ai[tools]",
 ]
 gnome-tools = ["pydbus", "pygobject"]
-tts = ["piper-tts", "sounddevice", "requests"]
+tts = ["piper-tts", "sounddevice"]
 docs = ["sphinx", "myst-parser", "furo", "sphinx-autobuild"]
 release = ["build", "twine>=6,<7"]
 tools = [

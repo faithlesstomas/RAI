@@ -711,14 +711,24 @@ decomposition tracked by #17.
 
 #### 4.3 Local voice loop
 
+Status: `[/]` — provider-neutral synthesis contracts, configurable
+`realtime_local`, `quality_local` and `premium_remote` profiles, privacy-aware
+backend selection, a lazy local Piper adapter, sounddevice playback, capability
+service composition and deterministic substitutes are implemented. Default
+runtime/configuration integration and legacy text normalization remain in
+GitLab #22; PTT/STT, additional backends and voice enrollment are tracked by
+#23–#25 under umbrella #21.
+
 - [ ] Start with push-to-talk and local VAD/STT; add an optional local wake word
   only after false-activation evaluation.
-- [ ] Implement `speech.synthesize` as a policy-controlled local `Actuator`,
-  backed initially by Piper TTS and a deterministic substitute for tests.
-- [ ] Persist the typed result only after playback or its verifiable test
+- [/] Implement `speech.synthesize` as a policy-controlled local `Actuator`.
+  The Piper and deterministic implementations can use the shared capability
+  service; default runtime configuration and legacy-facade removal remain open.
+- [x] Persist the typed result only after playback or its verifiable test
   substitute completes; device-unavailable and cancellation remain failures.
-- [ ] Do not persist raw audio by default; retain transcript only under the active
-  history policy.
+- [/] Do not persist raw audio by default; retain transcript only under the active
+  history policy. Synthesized PCM is absent from terminal results, while STT and
+  transcript retention are not implemented yet.
 - [ ] Include transcript confidence, language and timing provenance.
 - [ ] Ask for clarification rather than acting on low-confidence or ambiguous
   transcriptions.

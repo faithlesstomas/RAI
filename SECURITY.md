@@ -69,6 +69,29 @@ Google Antigravity SDK access is confined to `rai.backends.antigravity`. Its
 private conversation fields are compatibility implementation details and never
 appear in public runtime records.
 
+## Voice data and synthesis
+
+Speech text and audio are data, not control authority. The Stage 4.3 synthesis
+boundary keeps generated PCM in memory and returns only backend/model identity,
+language and a playback receipt. Neither the input text nor PCM bytes are copied
+into its terminal result. Real player and backend implementations must preserve
+that rule and report sanitized typed failures.
+
+The local profiles do not contain remote fallbacks. Selecting a remote backend
+requires a profile that permits remote execution, an explicitly authorized
+request and trusted runtime composition with remote synthesis enabled. The
+default actuator composition keeps remote execution disabled, so an
+`allow_remote` argument supplied by an untrusted caller is insufficient.
+`SECRET` and `BLOCKED` text is never eligible for remote synthesis. Once the
+actuator is connected to the runtime, every invocation must additionally pass
+through `CapabilityService` so destination, disclosure, cost and side effects
+receive the normal policy decision and audit record.
+
+Microphone capture and STT are not implemented yet. Their planned boundary is
+push-to-talk, no raw-audio persistence by default and policy-controlled
+transcript retention. Voice input alone will not approve high- or critical-risk
+actions.
+
 ## Credentials and private data
 
 Never store tokens or model-provider keys in the repository. Use environment
