@@ -4,7 +4,6 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Self
 
 from returns.result import Failure, Success
 
@@ -52,7 +51,7 @@ class _FakeStream:
     def __init__(self) -> None:
         self.writes: list[bytes] = []
 
-    def __enter__(self) -> Self:
+    def __enter__(self) -> _FakeStream:
         return self
 
     def __exit__(self, *_exception: object) -> None:
