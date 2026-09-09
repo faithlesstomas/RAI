@@ -714,16 +714,17 @@ decomposition tracked by #17.
 Status: `[/]` — provider-neutral synthesis contracts, configurable
 `realtime_local`, `quality_local` and `premium_remote` profiles, privacy-aware
 backend selection, a lazy local Piper adapter, sounddevice playback, capability
-service composition and deterministic substitutes are implemented. Default
-runtime/configuration integration and legacy text normalization remain in
-GitLab #22; PTT/STT, additional backends and voice enrollment are tracked by
-#23–#25 under umbrella #21.
+service composition, default-registry/MCP exposure, Markdown normalization and
+deterministic substitutes are implemented. User-configurable profile/device
+loading and legacy-facade removal remain in GitLab #22; PTT/STT, additional
+backends and voice enrollment are tracked by #23–#25 under umbrella #21.
 
 - [ ] Start with push-to-talk and local VAD/STT; add an optional local wake word
   only after false-activation evaluation.
 - [/] Implement `speech.synthesize` as a policy-controlled local `Actuator`.
-  The Piper and deterministic implementations can use the shared capability
-  service; default runtime configuration and legacy-facade removal remain open.
+  The Piper implementation is registered in the default capability service and
+  exposed through MCP; user-configurable profile/device loading and
+  legacy-facade removal remain open.
 - [x] Persist the typed result only after playback or its verifiable test
   substitute completes; device-unavailable and cancellation remain failures.
 - [/] Do not persist raw audio by default; retain transcript only under the active

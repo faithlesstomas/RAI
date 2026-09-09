@@ -94,6 +94,8 @@ See [docs/architecture.md](docs/architecture.md) for component boundaries and
   verified deletion.
 - experimental Antigravity chat compatibility.
 - experimental local inference protocols and llama.cpp implementation.
+- policy-controlled local `speech.synthesize` playback through Piper, exposed by
+  the default capability registry and MCP when a local voice is provisioned.
 
 This list is deliberately narrower than the target architecture. In particular,
 RAI does not yet provide an autonomous hybrid model router.
@@ -122,6 +124,7 @@ uv sync --extra antigravity
 uv sync --extra inference-llama
 uv sync --extra inference-onnx
 uv sync --extra inference-jlens --group jlens-reference
+uv sync --extra tts
 ```
 
 The `jlens-reference` group is development-only because the pinned upstream
@@ -131,6 +134,13 @@ from `rich-ai` package metadata.
 Model weights do not belong in the repository. Store them under an XDG data or
 cache directory and keep only a reproducible manifest/checksum in version
 control.
+
+Piper voices are discovered under
+`$XDG_DATA_HOME/rai/piper_voices/<voice-id>/` (or the equivalent default XDG
+data directory). Each voice needs a matching `.onnx` and `.onnx.json` pair;
+synthesis never downloads models during an invocation. See
+[docs/local-voice.md](docs/local-voice.md) for profiles, defaults and current
+limitations.
 
 ## Running RAI
 
@@ -176,8 +186,8 @@ $XDG_RUNTIME_DIR/rai   socket/token runtime state
 The versioned documentation is published with GitLab Pages at
 [tk-lab1.gitlab.io/ai/rai/](https://tk-lab1.gitlab.io/ai/rai/).
 The source documentation lives in [`docs/`](docs/), including
-the [architecture](docs/architecture.md), [Rich History](docs/rich-history.md)
-and [embodiment kernel
+the [architecture](docs/architecture.md), [Rich History](docs/rich-history.md),
+[local voice](docs/local-voice.md) and [embodiment kernel
 contracts](docs/kernel-contracts.md). The language-neutral Stage 1 contract is
 also available as a [JSON Schema](schemas/rai.kernel.v1.schema.json).
 

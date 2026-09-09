@@ -2,8 +2,9 @@
 
 Stage 4.3 is in progress. The current slice defines synthesis contracts,
 selection profiles, an actuator, lazy Piper and sounddevice adapters, shared
-capability-service composition and deterministic test substitutes. It does not
-yet load profiles into the default runtime, replace the legacy facade, capture a
+capability-service composition, default-registry/MCP exposure, Markdown
+normalization and deterministic test substitutes. It does not yet load
+user-defined profile/device configuration, replace the legacy facade, capture a
 microphone or transcribe speech.
 
 ## Why profiles are separate from voices
@@ -29,8 +30,19 @@ Runtime configuration loading is part of GitLab #22. A deployment may replace
 the ordering and budgets, and unavailable optional backends are skipped without
 import-time process termination.
 
+The default registry constructs the built-in profiles at startup and registers
+`speech.synthesize`, so it appears in the MCP tool catalog even when no voice is
+installed. Without a complete local voice pair, invocation fails with the typed
+`BACKEND_UNAVAILABLE` result instead of downloading a model or reporting false
+playback success. User-defined profile, voice-directory and output-device
+configuration remains part of GitLab #22.
+
 The new Piper path resolves only an existing `.onnx`/`.onnx.json` pair. Model
 provisioning is an explicit operation and synthesis never downloads artifacts.
+Place each pair under
+`$XDG_DATA_HOME/rai/piper_voices/<voice-id>/` (or the platform's default XDG data
+directory when `XDG_DATA_HOME` is unset). Install the adapter dependencies with
+`uv sync --extra tts` when running from source.
 Both Piper model loading and sounddevice imports are lazy, so a base RAI install
 can import and test the speech package without either optional dependency. The
 old `rai.tts` facade is now import-safe but remains transitional and must not be
@@ -60,17 +72,15 @@ languages and exceeded budgets are terminal typed failures. Input text and raw
 audio are deliberately absent from success and failure records.
 
 `register_speech_synthesis()` attaches the actuator to a chosen
-`CapabilityRegistry`. This is intentionally explicit until configuration owns
-the selected profile, voice artifacts and output device. Calls through that
-registry receive the normal policy decision and two-stage decision/terminal
-audit. A remote target must also be visible as an HTTP(S) `target_resource`;
-private text is escalated before any backend is invoked.
+`CapabilityRegistry`; the default registry now calls it during composition.
+Calls through that registry receive the normal policy decision and two-stage
+decision/terminal audit. A remote target must also be visible as an HTTP(S)
+`target_resource`; private text is escalated before any backend is invoked.
 
 ## Remaining work
 
-GitLab #21 is the Stage 4.3 umbrella. #22 completes default runtime composition,
-legacy-facade migration, text normalization and configuration. #23 adds
-push-to-talk VAD/STT and transcript provenance. #24 adds quality-local and
-remote adapters without hidden cloud fallback. #25 covers an optional,
-consented Piper voice-enrollment workflow. Existing issue #1 remains the
-Markdown normalization acceptance case.
+GitLab #21 is the Stage 4.3 umbrella. #22 completes user-configurable
+profile/device loading and legacy-facade migration. #23 adds push-to-talk
+VAD/STT and transcript provenance. #24 adds quality-local and remote adapters
+without hidden cloud fallback. #25 covers an optional, consented Piper
+voice-enrollment workflow.

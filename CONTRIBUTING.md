@@ -218,6 +218,12 @@ commit, tag and GitLab release as one transaction. Do not maintain a parallel
 `Unreleased` section manually. The changelog uses the built-in update template
 and the committed `<!-- version list -->` insertion marker.
 
+GitLab Runner checks out the requested commit with a detached `HEAD`, including
+for tag pipelines. Before `python-semantic-release publish` uploads package
+artifacts to the GitLab release, the tag publishing job attaches the commit to
+the configured release channel: stable tags use `main`, while pre-release tags
+use `alpha`. Keep this mapping aligned with `[tool.semantic_release.branches]`.
+
 The normal process is:
 
 1. Confirm all intended merge requests are merged and their Conventional Commit

@@ -54,6 +54,15 @@ def test_ci_has_one_version_producing_release_job() -> None:
     assert "python-semantic-release==$PYTHON_SEMANTIC_RELEASE_VERSION" in pipeline
 
 
+def test_tag_publish_attaches_head_to_the_release_channel() -> None:
+    pipeline = Path(".gitlab-ci.yml").read_text(encoding="utf-8")
+
+    assert 'git checkout -B "$RELEASE_BRANCH" "$CI_COMMIT_SHA"' in pipeline
+    assert "RELEASE_BRANCH: main" in pipeline
+    assert "RELEASE_BRANCH: alpha" in pipeline
+    assert pipeline.count("GIT_STRATEGY: clone") == 2
+
+
 def test_release_artifacts_are_built_once_in_the_tag_pipeline() -> None:
     config = _release_config()
     pipeline = Path(".gitlab-ci.yml").read_text(encoding="utf-8")

@@ -86,8 +86,9 @@ result. The deterministic backend and player exercise this lifecycle without a
 model, network, microphone or speaker. A lazy Piper adapter and local
 sounddevice player implement the same ports without import-time optional
 dependency loading or implicit downloads. A registry adapter places the whole
-operation behind `CapabilityService`; default runtime configuration and STT are
-still planned.
+operation behind `CapabilityService`, and the default registry exposes it to
+the runtime and MCP. User-configurable profile/device loading and STT are still
+planned.
 
 ## Data flow
 

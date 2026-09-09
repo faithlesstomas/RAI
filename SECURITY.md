@@ -82,10 +82,10 @@ requires a profile that permits remote execution, an explicitly authorized
 request and trusted runtime composition with remote synthesis enabled. The
 default actuator composition keeps remote execution disabled, so an
 `allow_remote` argument supplied by an untrusted caller is insufficient.
-`SECRET` and `BLOCKED` text is never eligible for remote synthesis. Once the
-actuator is connected to the runtime, every invocation must additionally pass
-through `CapabilityService` so destination, disclosure, cost and side effects
-receive the normal policy decision and audit record.
+`SECRET` and `BLOCKED` text is never eligible for remote synthesis. The default
+runtime registers the actuator through `CapabilityService`, so every CLI, REST
+or MCP invocation receives the normal destination, disclosure, cost and side
+effect policy decision and audit record.
 
 Microphone capture and STT are not implemented yet. Their planned boundary is
 push-to-talk, no raw-audio persistence by default and policy-controlled
