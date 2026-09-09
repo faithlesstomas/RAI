@@ -90,6 +90,51 @@ their values. `rai-history-process` resolves only the focused PID's executable
 basename. `rai-history-filesystem` polls names and mtimes below explicit roots
 without opening file content.
 
+## Live GNOME validation
+
+Run the opt-in smoke test from a graphical GNOME terminal after installing the
+extension and logging in again:
+
+```bash
+RAI_REQUIRE_LIVE_GNOME=1 uv run pytest \
+  tests/test_rich_history.py -k live_gnome_sidecar -q
+```
+
+Without `RAI_REQUIRE_LIVE_GNOME`, the test skips when GNOME, the user-session
+D-Bus or the packaged extension is unavailable. With the variable set, a
+missing prerequisite fails the designated desktop-validation run. The test
+starts the packaged sidecar, validates its bounded initial lock, idle,
+workspace and active-window snapshot, rejects path-like application identities,
+and proves that a live private title reaches neither the plaintext event journal
+nor the encrypted database as plaintext.
+
+Capture manual transitions without printing window titles or process IDs:
+
+```bash
+timeout 120s rai-history-gnome \
+  | jq --unbuffered 'del(.title, .resource_id)'
+```
+
+While that command runs, focus another application, change workspace, remain
+idle for at least 60 seconds, then lock and unlock the session. A successful run
+contains `active_window`, `workspace_changed`, `idle`, `active`,
+`session_locked` and `session_unlocked`. Exit status 124 is expected when
+`timeout` ends a healthy long-running sidecar.
+
+Record the tested platform and inspect the daemon-managed collectors:
+
+```bash
+gnome-shell --version
+. /etc/os-release && printf '%s %s\n' "$NAME" "$VERSION_ID"
+gnome-extensions info rai-history@tk-lab1
+curl --fail --silent http://127.0.0.1:8228/api/v1/activity/collectors | jq
+```
+
+Add the normal API authorization header to `curl` unless authentication was
+explicitly disabled for a loopback-only development service. The acceptance
+record must contain versions and event kinds, never raw titles, command lines,
+environment variables, credentials or screenshots.
+
 Production bridges are registered in `$XDG_CONFIG_HOME/rai/config.json` as
 command arrays and run as separate processes without a shell or inherited
 credential variables:

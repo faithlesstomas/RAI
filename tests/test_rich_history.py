@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+import shutil
 import subprocess
 import sys
 from datetime import datetime, timedelta, timezone
@@ -21,10 +22,12 @@ from rai.history.collectors import (
     BrowserSemanticCollector,
     CollectorSupervisor,
     GnomeSessionCollector,
+    ProcessContextCollector,
     QueueEventSource,
     SemanticCollector,
     JsonLinesSidecarSource,
     register_configured_collectors,
+    normalize_application_id,
     MAX_SIDECAR_EVENT_BYTES,
 )
 from rai.history.fusion import DeterministicEpisodeBuilder, EPISODE_SCHEMA_VERSION
@@ -65,6 +68,7 @@ EXPECTED_CHANGE_COUNT = 3
 PRIVATE_FILE_MODE = 0o600
 EXPECTED_SPLIT_EPISODES = 2
 EXPECTED_OUT_OF_ORDER_OBSERVATIONS = 2
+EXPECTED_EXTENSION_VERSION = 2
 
 
 def service(tmp_path: Path, firewall: PrivacyFirewall | None = None) -> RichHistoryService:
@@ -253,6 +257,33 @@ def test_adapter_contracts_strip_raw_input_and_private_selected_text() -> None:
     assert gnome.application_id == "firefox.desktop"
 
 
+def test_gnome_application_identity_is_stable_and_does_not_leak_paths() -> None:
+    assert normalize_application_id("Firefox.desktop") == "firefox.desktop"
+    assert normalize_application_id("ChatGPT (/home/alice/.config/codex)") == "chatgpt"
+    assert normalize_application_id("/opt/vendor/App") == "app"
+    assert normalize_application_id("Visual Studio Code") == "visual-studio-code"
+    assert normalize_application_id(None) is None
+
+    gnome = GnomeSessionCollector.sanitize(
+        SourceEvent(
+            source="gnome",
+            kind="active_window",
+            application_id="ChatGPT (/home/alice/.config/codex)",
+            title="Private task title",
+        )
+    )
+    process = ProcessContextCollector.sanitize(
+        SourceEvent(
+            source="process",
+            kind="foreground_process",
+            application_id="ChatGPT (/home/alice/.config/codex)",
+            payload={"executable": "/usr/bin/chatgpt"},
+        )
+    )
+    assert gnome.application_id == "chatgpt"
+    assert process.application_id == "chatgpt"
+
+
 @pytest.mark.asyncio
 async def test_supervisor_stops_immediately_and_isolates_failures() -> None:
     received: list[SourceEvent] = []
@@ -420,6 +451,9 @@ def test_gnome_extension_exports_supported_focus_and_workspace_contract() -> Non
     assert "notify::focus-window" in extension
     assert "active-workspace-changed" in extension
     assert "get_core_idle_monitor" in extension
+    assert "Shell.WindowTracker.get_default()" in extension
+    assert "get_window_app(window)" in extension
+    assert "Main.sessionMode.isLocked" in extension
     assert "/dev/input" not in extension
 
 
@@ -427,6 +461,7 @@ def test_gnome_extension_installs_with_private_permissions(tmp_path: Path) -> No
     target = install(tmp_path / "rai-history@tk-lab1")
     metadata = json.loads((target / "metadata.json").read_text())
     assert metadata["uuid"] == "rai-history@tk-lab1"
+    assert metadata["version"] == EXPECTED_EXTENSION_VERSION
     assert "50" in metadata["shell-version"]
     assert (target / "extension.js").stat().st_mode & 0o777 == PRIVATE_FILE_MODE
 
@@ -541,18 +576,81 @@ def _atspi_bindings_available() -> bool:
     return Atspi is not None
 
 
-@pytest.mark.skipif(
-    "GNOME" not in os.environ.get("XDG_CURRENT_DESKTOP", "").upper()
-    or not _dbus_service_available(EXTENSION_BUS, EXTENSION_PATH),
-    reason="requires an active GNOME user session with the RAI History extension",
-)
-def test_live_gnome_sidecar_observes_current_session() -> None:
-    result = subprocess.run(
-        ["gdbus", "call", "--session", "--dest", EXTENSION_BUS,
-         "--object-path", EXTENSION_PATH, "--method", f"{EXTENSION_BUS}.GetSnapshot"],
-        check=True, capture_output=True, text=True, timeout=5,
+def _required_live_gnome_command() -> str:
+    required = os.environ.get("RAI_REQUIRE_LIVE_GNOME", "").casefold() in {
+        "1", "true", "yes",
+    }
+    reason = None
+    if "GNOME" not in os.environ.get("XDG_CURRENT_DESKTOP", "").upper():
+        reason = "GNOME is not the current desktop"
+    elif not _dbus_service_available(EXTENSION_BUS, EXTENSION_PATH):
+        reason = "the RAI History GNOME extension is unavailable"
+    command = shutil.which("rai-history-gnome")
+    if command is None:
+        reason = "the packaged rai-history-gnome command is unavailable"
+    if reason is not None:
+        if required:
+            pytest.fail(reason)
+        pytest.skip(reason)
+    if command is None:  # pragma: no cover - narrowed by the checks above
+        raise RuntimeError("live GNOME command resolution failed")
+    return command
+
+
+def _initial_live_gnome_events(command: str) -> tuple[SourceEvent, ...]:
+    process = subprocess.Popen(  # noqa: S603
+        [command], stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True,
     )
-    assert result.stdout.strip()
+    try:
+        try:
+            output, _stderr = process.communicate(timeout=3)
+        except subprocess.TimeoutExpired:
+            process.terminate()
+            try:
+                output, _stderr = process.communicate(timeout=2)
+            except subprocess.TimeoutExpired:
+                process.kill()
+                output, _stderr = process.communicate(timeout=2)
+    finally:
+        if process.poll() is None:
+            process.kill()
+            process.wait(timeout=2)
+    return tuple(
+        SourceEvent.model_validate_json(line)
+        for line in output.splitlines()
+        if line.strip()
+    )
+
+
+@pytest.mark.asyncio
+async def test_live_gnome_sidecar_observes_current_session(tmp_path: Path) -> None:
+    events = _initial_live_gnome_events(_required_live_gnome_command())
+    kinds = {event.kind for event in events}
+    expected = {"workspace_changed", "active_window"}
+    if (
+        not expected <= kinds
+        or not ({"active", "idle"} & kinds)
+        or not ({"session_locked", "session_unlocked"} & kinds)
+    ):
+        pytest.fail("the live GNOME sidecar did not emit its bounded initial snapshot")
+    window = next(event for event in events if event.kind == "active_window")
+    normalized = GnomeSessionCollector.sanitize(window)
+    if normalized.application_id and any(
+        separator in normalized.application_id for separator in ("/", "\\", " ")
+    ):
+        pytest.fail("the live GNOME application identity contains path-like metadata")
+
+    history = service(tmp_path)
+    ingested = await history.ingest(window)
+    assert isinstance(ingested, Success) and ingested.unwrap() is not None
+    assert ingested.unwrap().payload.get("application_id") == normalized.application_id
+    journal = await history.journal.read(EventCursor.from_sequence(0), 10)
+    assert isinstance(journal, Success)
+    serialized = json.dumps(journal.unwrap().model_dump(mode="json"))
+    if window.title and window.title in serialized:
+        pytest.fail("a live private window title reached the plaintext journal")
+    if window.title and window.title.encode() in (tmp_path / "activity.sqlite3").read_bytes():
+        pytest.fail("a live private window title reached the encrypted store as plaintext")
 
 
 @pytest.mark.skipif(
