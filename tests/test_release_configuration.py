@@ -48,19 +48,19 @@ def test_ci_has_one_version_producing_release_job() -> None:
     assert pipeline.count("semantic-release --strict version") == 1
     assert "semantic-release --strict version --skip-build" in pipeline
     assert "semantic-release --noop --strict version --print" in pipeline
-    assert "semantic-release --strict publish --tag \"$CI_COMMIT_TAG\"" in pipeline
+    assert 'glab release upload "$CI_COMMIT_TAG"' in pipeline
     assert "--as-prerelease" not in pipeline
     assert "release_guard.py" not in pipeline
     assert "python-semantic-release==$PYTHON_SEMANTIC_RELEASE_VERSION" in pipeline
 
 
-def test_tag_publish_attaches_head_to_the_release_channel() -> None:
+def test_tag_publish_uses_the_gitlab_package_registry() -> None:
     pipeline = Path(".gitlab-ci.yml").read_text(encoding="utf-8")
 
-    assert 'git checkout -B "$RELEASE_BRANCH" "$CI_COMMIT_SHA"' in pipeline
-    assert "RELEASE_BRANCH: main" in pipeline
-    assert "RELEASE_BRANCH: alpha" in pipeline
-    assert pipeline.count("GIT_STRATEGY: clone") == 2
+    assert "registry.gitlab.com/gitlab-org/cli:latest" in pipeline
+    assert "--use-package-registry --package-name rich-ai" in pipeline
+    assert "semantic-release --strict publish" not in pipeline
+    assert "RELEASE_BRANCH" not in pipeline
 
 
 def test_release_artifacts_are_built_once_in_the_tag_pipeline() -> None:

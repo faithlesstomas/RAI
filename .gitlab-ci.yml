@@ -106,26 +106,15 @@ package:
 
 publish_gitlab:
   stage: release
-  image: python:3.11
-  variables:
-    GIT_STRATEGY: clone
-    GIT_DEPTH: 0
-    PYTHON_SEMANTIC_RELEASE_VERSION: "10.6.2"
-  before_script:
-    - pip install "python-semantic-release==$PYTHON_SEMANTIC_RELEASE_VERSION"
-    - git checkout -B "$RELEASE_BRANCH" "$CI_COMMIT_SHA"
+  image: registry.gitlab.com/gitlab-org/cli:latest
+  before_script: []
   needs:
     - job: package
       artifacts: true
   script:
-    - semantic-release --strict publish --tag "$CI_COMMIT_TAG"
+    - glab release upload "$CI_COMMIT_TAG" build/pypi/*.whl build/pypi/*.tar.gz --use-package-registry --package-name rich-ai
   rules:
-    - if: $CI_COMMIT_TAG =~ /^v\d+\.\d+\.\d+$/
-      variables:
-        RELEASE_BRANCH: main
-    - if: $CI_COMMIT_TAG =~ /^v\d+\.\d+\.\d+((a|b|rc)\d+|-(alpha|beta|rc)\.\d+)$/
-      variables:
-        RELEASE_BRANCH: alpha
+    - if: $CI_COMMIT_TAG =~ /^v\d+\.\d+\.\d+((a|b|rc)\d+|-(alpha|beta|rc)\.\d+)?$/
 
 publish_testpypi:
   stage: test-publish

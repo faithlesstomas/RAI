@@ -219,10 +219,11 @@ commit, tag and GitLab release as one transaction. Do not maintain a parallel
 and the committed `<!-- version list -->` insertion marker.
 
 GitLab Runner checks out the requested commit with a detached `HEAD`, including
-for tag pipelines. Before `python-semantic-release publish` uploads package
-artifacts to the GitLab release, the tag publishing job attaches the commit to
-the configured release channel: stable tags use `main`, while pre-release tags
-use `alpha`. Keep this mapping aligned with `[tool.semantic_release.branches]`.
+for tag pipelines. The branch release job attaches that commit to its configured
+release channel before invoking `python-semantic-release`. The later tag
+pipeline publishes the prebuilt wheel and source distribution with `glab` via
+the GitLab generic package registry and links them to the existing release. It
+does not invoke branch-aware semantic-release commands from the detached tag.
 
 The normal process is:
 
