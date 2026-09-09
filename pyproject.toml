@@ -60,7 +60,13 @@ gemini = ["google-genai"]
 openai = ["openai"]
 groq = ["groq"]
 antigravity = ["google-antigravity>=0.1.16,<0.2", "protobuf>=5.30.0"]
-test = ["pytest", "pytest-asyncio", "pytest-cov", "pytest-timeout"]
+test = [
+    "pytest",
+    "pytest-asyncio",
+    "pytest-cov",
+    "pytest-timeout",
+    "tomli>=2; python_version < '3.11'",
+]
 lint = ["ruff", "pylint"]
 dev = [
     "rich-ai[antigravity]",
@@ -70,7 +76,7 @@ dev = [
     "rich-ai[tools]",
 ]
 gnome-tools = ["pydbus", "pygobject"]
-tts = ["piper-tts", "sounddevice", "requests"]
+tts = ["piper-tts", "sounddevice"]
 docs = ["sphinx", "myst-parser", "furo", "sphinx-autobuild"]
 release = ["build", "twine>=6,<7"]
 tools = [

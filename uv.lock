@@ -3099,7 +3099,6 @@ all = [
     { name = "pygobject" },
     { name = "pypdf" },
     { name = "python-gitlab" },
-    { name = "requests" },
     { name = "safetensors" },
     { name = "sounddevice" },
     { name = "tavily-python" },
@@ -3131,6 +3130,7 @@ dev = [
     { name = "python-gitlab" },
     { name = "ruff" },
     { name = "tavily-python" },
+    { name = "tomli", marker = "python_full_version < '3.11'" },
     { name = "twine" },
     { name = "wikipedia" },
     { name = "yfinance" },
@@ -3194,6 +3194,7 @@ test = [
     { name = "pytest-asyncio" },
     { name = "pytest-cov" },
     { name = "pytest-timeout" },
+    { name = "tomli", marker = "python_full_version < '3.11'" },
 ]
 tools = [
     { name = "arxiv" },
@@ -3206,7 +3207,6 @@ tools = [
 ]
 tts = [
     { name = "piper-tts" },
-    { name = "requests" },
     { name = "sounddevice" },
 ]
 
@@ -3254,7 +3254,6 @@ requires-dist = [
     { name = "pytest-timeout", marker = "extra == 'test'" },
     { name = "python-dotenv" },
     { name = "python-gitlab", marker = "extra == 'tools'" },
-    { name = "requests", marker = "extra == 'tts'" },
     { name = "returns" },
     { name = "rich" },
     { name = "rich-ai", extras = ["anthropic"], marker = "extra == 'all'" },
@@ -3286,6 +3285,7 @@ requires-dist = [
     { name = "tavily-python", marker = "extra == 'tools'" },
     { name = "textual" },
     { name = "tokenizers", marker = "extra == 'inference-transformers'", specifier = ">=0.22.1" },
+    { name = "tomli", marker = "python_full_version < '3.11' and extra == 'test'", specifier = ">=2" },
     { name = "torch", marker = "extra == 'inference-transformers'", specifier = ">=2.9.1" },
     { name = "transformers", marker = "extra == 'inference-transformers'", specifier = ">=5.5" },
     { name = "twine", marker = "extra == 'release'", specifier = ">=6,<7" },

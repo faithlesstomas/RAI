@@ -9,7 +9,7 @@ from typing import Any
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 from returns.result import Failure, Result, Success
 
-from .ports import CancellationToken
+from .ports import CancellationToken, Capability
 from .records import (
     ActionFailure,
     ActionResult,
@@ -49,11 +49,18 @@ class RegisteredCapability:
     def __init__(
         self,
         descriptor: CapabilityDescriptor,
-        handler: CapabilityHandler,
+        handler: CapabilityHandler | None = None,
         compatibility_handler: Callable[..., Any] | None = None,
+        *,
+        implementation: Capability | None = None,
     ) -> None:
+        if (handler is None) == (implementation is None):
+            raise ValueError("exactly one capability handler or implementation is required")
+        if implementation is not None and implementation.name != descriptor.name:
+            raise ValueError("capability implementation name does not match its descriptor")
         self.descriptor = descriptor
         self._handler = handler
+        self._implementation = implementation
         self.compatibility_handler = compatibility_handler
 
     @property
@@ -69,7 +76,12 @@ class RegisteredCapability:
         if invalid:
             return Failure(_failure(request, "INVALID_ARGUMENT", invalid))
         try:
-            output = self._handler(request.arguments)
+            if self._implementation is not None:
+                return await self._implementation.invoke(request, cancellation)
+            handler = self._handler
+            if handler is None:
+                raise RuntimeError("capability handler is unavailable")
+            output = handler(request.arguments)
             if inspect.isawaitable(output):
                 output = await output
             if cancellation.cancelled:
