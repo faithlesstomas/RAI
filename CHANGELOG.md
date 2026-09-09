@@ -2,6 +2,22 @@
 
 <!-- version list -->
 
+## v0.7.0 (2026-09-09)
+
+### Bug Fixes
+
+- **ci**: Restore Python 3.10 compatibility
+  ([`70b4a55`](https://gitlab.com/tk-lab1/ai/rai/-/commit/70b4a55b42579a9e77e13e695eb8b39b69ee8018))
+
+- **release**: Repair changelog generation and simplify pipeline
+  ([`1ae74ff`](https://gitlab.com/tk-lab1/ai/rai/-/commit/1ae74ffb65988767fe643a909e79a990e985b1ab))
+
+### Features
+
+- **voice**: Add profile-driven speech synthesis
+  ([`01ef1a9`](https://gitlab.com/tk-lab1/ai/rai/-/commit/01ef1a9b6efac9442a94b1852f95f621fc0619f2))
+
+
 ## v0.6.0 (2026-09-08)
 
 ### Added

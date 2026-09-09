@@ -4,4 +4,4 @@ Importing :mod:`rai` is intentionally side-effect free. Backend-specific
 compatibility code belongs in backend adapters, never in the package root.
 """
 
-__version__ = "0.6.0"
+__version__ = "0.7.0"
