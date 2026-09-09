@@ -242,4 +242,4 @@ slice: Linux activity event → local episode → local answer → policy-contro
 escalation to an external agent backend.
 
 See [CONTRIBUTING.md](CONTRIBUTING.md) before opening a GitLab issue or merge
-request. The project is licensed under the [MIT License](LICENSE).
+request. The project is licensed under the [Apache-2.0 License](LICENSE).
