@@ -42,6 +42,7 @@ async def test_mcp_list_tools_comes_from_capability_registry() -> None:
         "search.web",
         "search.wikipedia",
         "send_desktop_notification",
+        "speech.synthesize",
         "take_desktop_screenshot",
         "test.echo",
     }

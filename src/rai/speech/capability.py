@@ -54,12 +54,15 @@ def speech_synthesis_descriptor() -> CapabilityDescriptor:
 
 
 def register_speech_synthesis(
-    registry: CapabilityRegistry, actuator: SpeechSynthesisActuator
+    registry: CapabilityRegistry,
+    actuator: SpeechSynthesisActuator,
+    compatibility_groups: tuple[str, ...] = ("SpeechTools",),
 ) -> None:
     """Register speech without importing an optional backend or audio library."""
     registry.register(
         RegisteredCapability(
             speech_synthesis_descriptor(),
             implementation=SpeechSynthesisCapability(actuator),
-        )
+        ),
+        compatibility_groups=compatibility_groups,
     )

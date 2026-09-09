@@ -7,6 +7,7 @@ Remember to:
  *  check linters for critical errors, eg. with `ruff check src` and/or `pylint -E src`.
  *  to use `glab` to manage issues and MR's and CI/CD related tasks - the project is hosted at GitLab (origin is gitlab.com/tk-lab1/ai/rai)
  *  build new features and fixes with consistency to other parts of the code
+ *  po zakończeniu zadania poinformuj użytkownika krótkim komunikatem głosowym po polsku za pomocą narzędzia MCP `speech.synthesize` na serwerze `rai` (skill `voice-announcer`)
  
 Additional notes:
  * project is developed in functional paradigm (with usage of Protocols (from typing), returns (library) and other functional tricks).

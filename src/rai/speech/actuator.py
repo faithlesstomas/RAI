@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
+from pathlib import Path
 from urllib.parse import urlparse
 
 from pydantic import ValidationError
@@ -15,17 +16,27 @@ from rai.kernel.records import (
     CapabilityRequest,
     ProducerIdentity,
 )
+from rai.paths import data_dir
 
 from .contracts import (
     AudioPlayer,
     SpeechSynthesizer,
+    SynthesisBackendMetadata,
     SynthesisFailure,
     SynthesisFailureCode,
+    SynthesisLocation,
     SynthesisProfile,
     SynthesisRequest,
+    SynthesizedAudio,
+    VoiceBinding,
     VoiceProfile,
 )
+from .normalization import normalize_speech_text
+from .piper import PiperSpeechSynthesizer, resolve_local_piper_voice
+from .player import SoundDeviceAudioPlayer
+from .profiles import default_synthesis_profiles
 from .routing import SelectedSynthesizer, select_synthesizer
+from .synthetic import DeterministicAudioPlayer
 
 SPEECH_SYNTHESIS_CAPABILITY = "speech.synthesize"
 SPEECH_PRODUCER = ProducerIdentity(
@@ -87,8 +98,10 @@ class SpeechSynthesisActuator(Actuator):
         default_latency = (
             profile.max_first_audio_latency_seconds if profile is not None else 30
         )
+        raw_text = source.arguments.get("text")
+        clean_text = normalize_speech_text(raw_text) if isinstance(raw_text, str) else raw_text
         return SynthesisRequest(
-            text=source.arguments.get("text"),
+            text=clean_text,
             language=language,
             profile_id=profile_id,
             voice_profile_id=voice_id,
@@ -234,3 +247,118 @@ class SpeechSynthesisActuator(Actuator):
                 verification={"playback-completed": receipt.completed},
             )
         )
+
+
+def create_default_speech_actuator(  # noqa: PLR0912
+    voices_dir: Path | None = None,
+    device: str | None = None,
+) -> SpeechSynthesisActuator:
+    """Compose the default policy-bound speech actuator with local Piper voice models."""
+    effective_dir = Path(voices_dir) if voices_dir is not None else (data_dir() / "piper_voices")
+    profiles = default_synthesis_profiles()
+
+    preferred_default_voices = (
+        "pl_PL-gosia-medium",
+        "pl_PL-darkman-medium",
+        "en_GB-cori-medium",
+        "en_GB-cori-high",
+    )
+
+    discovered_voice_ids: list[str] = []
+    if effective_dir.is_dir():
+        for item in effective_dir.iterdir():
+            if item.is_dir() and any(item.glob("*.onnx")):
+                discovered_voice_ids.append(item.name)
+
+    default_voice_name: str | None = None
+    for preferred in preferred_default_voices:
+        if preferred in discovered_voice_ids:
+            default_voice_name = preferred
+            break
+    if default_voice_name is None and discovered_voice_ids:
+        default_voice_name = discovered_voice_ids[0]
+
+    if default_voice_name is not None:
+        default_files_res = resolve_local_piper_voice(default_voice_name, effective_dir)
+        if isinstance(default_files_res, Success):
+            default_files = default_files_res.unwrap()
+            langs = set()
+            for vid in discovered_voice_ids:
+                if vid.startswith("pl"):
+                    langs.update(("pl", "pl-PL"))
+                elif vid.startswith("en"):
+                    langs.update(("en", "en-GB", "en-US"))
+            if not langs:
+                langs = {"pl", "pl-PL"}
+
+            backend = PiperSpeechSynthesizer(
+                default_files,
+                language="pl-PL",
+                languages=tuple(sorted(langs)),
+                model_id=f"piper/{default_voice_name}",
+                model_version="medium",
+                voices_dir=effective_dir,
+            )
+
+            voice_profiles: list[VoiceProfile] = [
+                VoiceProfile(
+                    profile_id="default",
+                    display_name=f"Default ({default_voice_name})",
+                    bindings=(VoiceBinding(backend_id="piper", voice_id="default"),),
+                )
+            ]
+            for vid in discovered_voice_ids:
+                voice_profiles.append(
+                    VoiceProfile(
+                        profile_id=vid,
+                        display_name=vid,
+                        bindings=(VoiceBinding(backend_id="piper", voice_id=vid),),
+                    )
+                )
+
+            player = SoundDeviceAudioPlayer(device=device)
+            return SpeechSynthesisActuator(
+                profiles=profiles,
+                voices=tuple(voice_profiles),
+                backends=(backend,),
+                player=player,
+            )
+
+    class _UnavailableSynthesizer:
+        metadata = SynthesisBackendMetadata(
+            backend_id="piper",
+            backend_version="unknown",
+            model_id="none",
+            model_version="0",
+            location=SynthesisLocation.LOCAL,
+            languages=("pl", "en"),
+            available=False,
+            unavailable_reason=f"No Piper voices provisioned in {effective_dir}",
+            estimated_first_audio_latency_seconds=2,
+        )
+
+        async def synthesize(  # noqa: PLR6301
+            self,
+            _request: SynthesisRequest,
+            _voice: VoiceBinding,
+            _cancellation: CancellationToken,
+        ) -> Result[SynthesizedAudio, SynthesisFailure]:
+            return Failure(
+                SynthesisFailure(
+                    code=SynthesisFailureCode.BACKEND_UNAVAILABLE,
+                    message=f"No Piper voices provisioned in {effective_dir}",
+                    backend_id="piper",
+                )
+            )
+
+    fallback_voice = VoiceProfile(
+        profile_id="default",
+        display_name="Unavailable Voice",
+        bindings=(VoiceBinding(backend_id="piper", voice_id="default"),),
+    )
+    return SpeechSynthesisActuator(
+        profiles=profiles,
+        voices=(fallback_voice,),
+        backends=(_UnavailableSynthesizer(),),  # type: ignore[arg-type]
+        player=DeterministicAudioPlayer(),
+    )

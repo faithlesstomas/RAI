@@ -336,3 +336,37 @@ async def test_invalid_text_is_reported_without_echoing_it() -> None:
     assert isinstance(result, Failure)
     assert result.failure().code == "INVALID_REQUEST"
     assert "Dzień dobry" not in result.failure().message
+
+
+def test_normalize_speech_text() -> None:
+    from rai.speech.normalization import normalize_speech_text
+
+    markdown = """# Witaj!
+Oto **ważne** powiadomienie z [dokumentacji](https://example.com/docs).
+- Punkt 1: sprawdź `kod`
+- Punkt 2: wykonaj:
+```bash
+echo hello
+```
+> Cytat na koniec
+"""
+    cleaned = normalize_speech_text(markdown)
+    assert "#" not in cleaned
+    assert "**" not in cleaned
+    assert "https://" not in cleaned
+    assert "dokumentacji" in cleaned
+    assert "Witaj!" in cleaned
+    assert "ważne powiadomienie" in cleaned
+    assert "sprawdź kod" in cleaned
+    assert "echo hello" in cleaned
+
+
+@pytest.mark.asyncio
+async def test_create_default_speech_actuator_unavailable_when_empty(tmp_path: Path) -> None:
+    from rai.speech.actuator import create_default_speech_actuator
+
+    actuator = create_default_speech_actuator(voices_dir=tmp_path)
+    result = await actuator.act(_capability_request(text="Dzień dobry"), CancellationToken())
+    assert isinstance(result, Failure)
+    assert result.failure().code == "BACKEND_UNAVAILABLE"
+

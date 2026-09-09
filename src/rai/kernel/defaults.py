@@ -7,6 +7,7 @@ from typing import Any
 
 from returns.result import Failure, Result, Success
 
+from rai.speech import create_default_speech_actuator, register_speech_synthesis
 from rai.tools.desktop import get_desktop_adapter
 from rai.tools.information import (
     arxiv_search,
@@ -303,6 +304,7 @@ def create_default_capability_registry() -> CapabilityRegistry:
             RegisteredCapability(descriptor, handler, compatibility_handler),
             compatibility_groups=groups,
         )
+    register_speech_synthesis(registry, create_default_speech_actuator())
     return registry
 
 

@@ -134,10 +134,14 @@ class PiperSpeechSynthesizer:
         backend_version: str = "unknown",
         loader: PiperVoiceLoader | None = None,
         required_ram_bytes: int = 256 * 1024**2,
+        languages: tuple[str, ...] | None = None,
+        voices_dir: Path | None = None,
     ) -> None:
         self._files = files
         self._loader = loader or _default_loader
         self._voice: _PiperVoice | None = None
+        self._voices: dict[str, _PiperVoice] = {}
+        self._voices_dir = voices_dir
         self._load_lock = threading.Lock()
         self._metadata = SynthesisBackendMetadata(
             backend_id="piper",
@@ -145,7 +149,7 @@ class PiperSpeechSynthesizer:
             model_id=model_id,
             model_version=model_version,
             location=SynthesisLocation.LOCAL,
-            languages=(language,),
+            languages=languages or (language,),
             supports_streaming=False,
             supports_long_form=True,
             estimated_first_audio_latency_seconds=2,
@@ -156,8 +160,24 @@ class PiperSpeechSynthesizer:
     def metadata(self) -> SynthesisBackendMetadata:
         return self._metadata
 
-    def _loaded_voice(self) -> _PiperVoice:
+    def _loaded_voice(self, voice_id: str | None = None) -> _PiperVoice:
         with self._load_lock:
+            if voice_id and voice_id != "default" and self._voices_dir is not None:
+                if voice_id not in self._voices:
+                    resolved = resolve_local_piper_voice(voice_id, self._voices_dir)
+                    if isinstance(resolved, Success):
+                        voice_files = resolved.unwrap()
+                        self._voices[voice_id] = self._loader(
+                            voice_files.model_path, voice_files.config_path
+                        )
+                    else:
+                        if self._voice is None:
+                            self._voice = self._loader(
+                                self._files.model_path,
+                                self._files.config_path,
+                            )
+                        return self._voice
+                return self._voices[voice_id]
             if self._voice is None:
                 self._voice = self._loader(
                     self._files.model_path,
@@ -172,7 +192,7 @@ class PiperSpeechSynthesizer:
         cancellation: CancellationToken,
     ) -> SynthesizedAudio:
         started = time.monotonic()
-        voice = self._loaded_voice()
+        voice = self._loaded_voice(voice_binding.voice_id)
         chunks: list[AudioChunk] = []
         duration = 0.0
         for sequence, piper_chunk in enumerate(voice.synthesize(request.text)):
