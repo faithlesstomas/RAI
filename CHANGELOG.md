@@ -2,6 +2,31 @@
 
 <!-- version list -->
 
+## v0.8.0 (2026-09-10)
+
+### Bug Fixes
+
+- **history**: Reconnect GNOME monitor across sessions
+  ([`122b2ba`](https://gitlab.com/tk-lab1/ai/rai/-/commit/122b2baf523790d44550801df2fe02f33629cfce))
+
+- **history**: Validate live GNOME collectors
+  ([`137202d`](https://gitlab.com/tk-lab1/ai/rai/-/commit/137202dc6ca189708155e3446bcac4f84b87f147))
+
+- **release**: Attach tag publishing to release branch
+  ([`9499026`](https://gitlab.com/tk-lab1/ai/rai/-/commit/9499026fbedfbcfb6f4b5708a8d4ddc08a2b2e94))
+
+- **release**: Publish GitLab assets with glab
+  ([`dfaff19`](https://gitlab.com/tk-lab1/ai/rai/-/commit/dfaff19b1b62a5e593ea4e5a92e8a36ed95c845d))
+
+- **tests**: Restore speech synthesis lint
+  ([`5aaa720`](https://gitlab.com/tk-lab1/ai/rai/-/commit/5aaa7206c5a430537e628daaa2e3fffb07a9d1dd))
+
+### Features
+
+- **speech**: Expose speech.synthesize capability via MCP and default runtime
+  ([`c26d666`](https://gitlab.com/tk-lab1/ai/rai/-/commit/c26d666d2fdefd961ca9a0974dc890938a9fc251))
+
+
 ## v0.7.0 (2026-09-09)
 
 ### Bug Fixes
