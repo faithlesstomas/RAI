@@ -2,6 +2,14 @@
 
 <!-- version list -->
 
+## v0.8.1 (2026-09-10)
+
+### Bug Fixes
+
+- **release**: Authenticate glab with CI job token
+  ([`694a5c0`](https://gitlab.com/tk-lab1/ai/rai/-/commit/694a5c0100da39b4ee61bce5989ad9b71fecc8f1))
+
+
 ## v0.8.0 (2026-09-10)
 
 ### Bug Fixes
