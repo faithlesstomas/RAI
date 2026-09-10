@@ -8,6 +8,7 @@ import os
 import shutil
 import subprocess
 import sys
+from collections.abc import AsyncIterator
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -49,7 +50,12 @@ from rai.history.sidecars.filesystem import (
     changed_paths,
     metadata_snapshot,
 )
-from rai.history.sidecars.gnome import EXTENSION_BUS, EXTENSION_PATH
+from rai.history.sidecars.gnome import (
+    EXTENSION_BUS,
+    EXTENSION_PATH,
+    SCREEN_SAVER_BUS,
+    _session_owner_replaced,
+)
 from rai.history.sidecars.process import activity_kind, process_event
 from rai.history.sidecars.install_gnome import install
 from rai.kernel.events import EventCursor, JournalFailure
@@ -69,6 +75,7 @@ PRIVATE_FILE_MODE = 0o600
 EXPECTED_SPLIT_EPISODES = 2
 EXPECTED_OUT_OF_ORDER_OBSERVATIONS = 2
 EXPECTED_EXTENSION_VERSION = 2
+EXPECTED_SIDECAR_STARTS = 2
 
 
 def service(tmp_path: Path, firewall: PrivacyFirewall | None = None) -> RichHistoryService:
@@ -302,6 +309,59 @@ async def test_supervisor_stops_immediately_and_isolates_failures() -> None:
     await supervisor.set_controls(session_locked=True)
     assert supervisor.status()[0].enabled is False
     assert supervisor.status()[0].state == "STOPPED"
+
+
+@pytest.mark.asyncio
+async def test_gnome_monitor_restarts_after_session_owner_changes_while_locked() -> None:
+    class RestartingGnomeSource:
+        permission = "GRANTED"
+
+        def __init__(self) -> None:
+            self.attempts = 0
+
+        async def events(
+            self, cancellation: CancellationToken
+        ) -> AsyncIterator[SourceEvent]:
+            self.attempts += 1
+            if self.attempts == 1:
+                yield SourceEvent(
+                    source="gnome", kind="session_locked", session_locked=True
+                )
+                raise RuntimeError("session bus owner changed")
+            yield SourceEvent(source="gnome", kind="session_unlocked")
+            while not cancellation.cancelled:
+                await asyncio.sleep(0)
+
+    source = RestartingGnomeSource()
+
+    async def receive(event: SourceEvent) -> None:
+        await supervisor.observe_session_state(event.kind == "session_locked")
+
+    supervisor = CollectorSupervisor(receive, base_backoff=0)
+    supervisor.register(GnomeSessionCollector(source))
+    supervisor.register(SemanticCollector("process", QueueEventSource()))
+    await supervisor.set_controls(enabled=True)
+    for _attempt in range(50):
+        await asyncio.sleep(0)
+        states = {item.name: item.state for item in supervisor.status()}
+        if (
+            source.attempts >= EXPECTED_SIDECAR_STARTS
+            and not supervisor.session_locked
+            and states["process"] == "RUNNING"
+        ):
+            break
+    health = {item.name: item for item in supervisor.status()}
+    assert source.attempts == EXPECTED_SIDECAR_STARTS
+    assert health["gnome"].restart_count == 1
+    assert health["process"].state == "RUNNING"
+    await supervisor.stop()
+
+
+def test_gnome_sidecar_restarts_only_when_session_bus_owner_is_replaced() -> None:
+    assert _session_owner_replaced((SCREEN_SAVER_BUS, ":1.10", "")) is True
+    assert _session_owner_replaced((SCREEN_SAVER_BUS, ":1.10", ":1.11")) is True
+    assert _session_owner_replaced((SCREEN_SAVER_BUS, "", ":1.11")) is False
+    assert _session_owner_replaced((EXTENSION_BUS, ":1.10", "")) is False
 
 
 @pytest.mark.asyncio

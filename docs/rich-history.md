@@ -135,6 +135,11 @@ explicitly disabled for a loopback-only development service. The acceptance
 record must contain versions and event kinds, never raw titles, command lines,
 environment variables, credentials or screenshots.
 
+During a native session lock, the GNOME lock monitor remains active while
+non-essential collectors stop. If the GNOME screen-saver D-Bus owner changes
+during logout or a shell restart, the sidecar exits and the supervisor reconnects
+it with bounded backoff, including while the session is still marked as locked.
+
 Production bridges are registered in `$XDG_CONFIG_HOME/rai/config.json` as
 command arrays and run as separate processes without a shell or inherited
 credential variables:

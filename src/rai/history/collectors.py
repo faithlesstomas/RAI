@@ -439,7 +439,10 @@ class CollectorSupervisor:
         )
 
     async def _run(self, runtime: _Runtime) -> None:
-        while self._may_collect() and not runtime.cancellation.cancelled:
+        while (
+            self._may_run(runtime.collector.name)
+            and not runtime.cancellation.cancelled
+        ):
             try:
                 started = await runtime.collector.start()
                 if isinstance(started, Failure):
@@ -464,6 +467,13 @@ class CollectorSupervisor:
                 runtime.last_error = type(exc).__name__
                 runtime.restart_count += 1
                 await asyncio.sleep(min(self._base_backoff * (2 ** (runtime.restart_count - 1)), self._max_backoff))
+
+    def _may_run(self, collector_name: str) -> bool:
+        return (
+            self.enabled
+            and not self.emergency_stopped
+            and (not self.session_locked or collector_name == "gnome")
+        )
 
     def _may_collect(self) -> bool:
         return self.enabled and not self.session_locked and not self.emergency_stopped
