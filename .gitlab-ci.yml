@@ -107,6 +107,8 @@ package:
 publish_gitlab:
   stage: release
   image: registry.gitlab.com/gitlab-org/cli:latest
+  variables:
+    GLAB_ENABLE_CI_AUTOLOGIN: "true"
   before_script: []
   needs:
     - job: package
