@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+import re
 import shutil
 from collections.abc import AsyncIterator, Awaitable, Callable
 from dataclasses import dataclass
@@ -20,9 +21,23 @@ from .models import CollectorHealth, SourceEvent, utc_now
 
 MAX_SIDECAR_EVENT_BYTES = 64 * 1024
 
+_APPLICATION_ID_PATH_SUFFIX = re.compile(r"\s+\([^)]*[/\\][^)]*\)\s*$")
+_APPLICATION_ID_UNSAFE = re.compile(r"[^a-z0-9._:+-]+")
+
 COLLECTOR_PRODUCER = ProducerIdentity(
     producer_id="rai.collector-supervisor", kind="runtime", version="1.0.0"
 )
+
+
+def normalize_application_id(value: str | None) -> str | None:
+    """Return a bounded desktop identity without leaking path-like WM metadata."""
+    if value is None:
+        return None
+    normalized = _APPLICATION_ID_PATH_SUFFIX.sub("", value.strip().casefold()).strip()
+    if "/" in normalized or "\\" in normalized:
+        normalized = re.split(r"[/\\]", normalized)[-1]
+    normalized = _APPLICATION_ID_UNSAFE.sub("-", normalized).strip("-.")
+    return normalized[:256] or None
 
 
 class SemanticEventSource(Protocol):
@@ -183,7 +198,9 @@ class GnomeSessionCollector(SemanticCollector):
         desktop_id = payload.get("desktop_entry_id") or payload.get("wm_class")
         return SourceEvent(
             source="gnome", kind=str(payload["kind"]), timestamp=payload.get("timestamp", utc_now()),
-            application_id=str(desktop_id).casefold() if desktop_id else None,
+            application_id=normalize_application_id(
+                str(desktop_id) if desktop_id else None
+            ),
             title=payload.get("title"), session_locked=bool(payload.get("session_locked", False)),
             payload={key: payload[key] for key in ("workspace", "idle") if key in payload},
         )
@@ -192,7 +209,7 @@ class GnomeSessionCollector(SemanticCollector):
     def sanitize(event: SourceEvent) -> SourceEvent:
         return SourceEvent(
             source="gnome", kind=event.kind, timestamp=event.timestamp,
-            application_id=event.application_id.casefold() if event.application_id else None,
+            application_id=normalize_application_id(event.application_id),
             title=event.title, resource_id=event.resource_id,
             session_locked=event.session_locked,
             payload={key: event.payload[key] for key in ("workspace", "idle") if key in event.payload},
@@ -252,7 +269,8 @@ class ProcessContextCollector(SemanticCollector):
     @staticmethod
     def normalize(pid: int, executable: str, desktop_id: str | None = None) -> SourceEvent:
         return SourceEvent(
-            source="process", kind="foreground_process", application_id=desktop_id,
+            source="process", kind="foreground_process",
+            application_id=normalize_application_id(desktop_id),
             resource_id=f"process:{pid}", payload={"executable": Path(executable).name},
         )
 
@@ -261,7 +279,8 @@ class ProcessContextCollector(SemanticCollector):
         executable = Path(str(event.payload.get("executable", "unknown"))).name
         return SourceEvent(
             source="process", kind=event.kind, timestamp=event.timestamp,
-            application_id=event.application_id, resource_id=event.resource_id,
+            application_id=normalize_application_id(event.application_id),
+            resource_id=event.resource_id,
             project=event.project, payload={"executable": executable},
         )
 
@@ -420,7 +439,10 @@ class CollectorSupervisor:
         )
 
     async def _run(self, runtime: _Runtime) -> None:
-        while self._may_collect() and not runtime.cancellation.cancelled:
+        while (
+            self._may_run(runtime.collector.name)
+            and not runtime.cancellation.cancelled
+        ):
             try:
                 started = await runtime.collector.start()
                 if isinstance(started, Failure):
@@ -445,6 +467,13 @@ class CollectorSupervisor:
                 runtime.last_error = type(exc).__name__
                 runtime.restart_count += 1
                 await asyncio.sleep(min(self._base_backoff * (2 ** (runtime.restart_count - 1)), self._max_backoff))
+
+    def _may_run(self, collector_name: str) -> bool:
+        return (
+            self.enabled
+            and not self.emergency_stopped
+            and (not self.session_locked or collector_name == "gnome")
+        )
 
     def _may_collect(self) -> bool:
         return self.enabled and not self.session_locked and not self.emergency_stopped

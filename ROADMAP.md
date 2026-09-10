@@ -520,8 +520,9 @@ screenshots or key logging.
 
 Status: `[/]` — the provider-neutral pipeline, privacy boundary, encrypted
 storage, deterministic episode builder and local review API pass automated
-acceptance tests. Production validation against supported live GNOME, AT-SPI
-and browser sessions remains open and is tracked separately below.
+acceptance tests. Live GNOME validation is complete; production validation of
+AT-SPI, browser integration and the complete cross-application scenario remains
+open and is tracked separately below.
 
 Prerequisites: Stage 1 records and the Stage 2 event journal and local
 subscriptions. GAIA is not required for the local Rich History acceptance
@@ -540,12 +541,12 @@ slice.
 
 #### 3.2 GNOME session collector
 
-- [/] Observe session lock/unlock, idle/active transitions, workspace changes and
+- [x] Observe session lock/unlock, idle/active transitions, workspace changes and
   active application/window changes using supported GNOME interfaces.
-- [/] Normalize application identity through desktop-entry IDs where possible.
-- [/] Treat window titles as potentially private content and classify them before
+- [x] Normalize application identity through desktop-entry IDs where possible.
+- [x] Treat window titles as potentially private content and classify them before
   persistence.
-- [/] Avoid privileged `/dev/input` access and global raw input capture.
+- [x] Avoid privileged `/dev/input` access and global raw input capture.
 
 #### 3.3 AT-SPI semantic collector
 
@@ -656,8 +657,9 @@ session.
 
 Production validation gate (still open):
 
-- [ ] Capture lock, idle, workspace and active-window transitions from the
-  packaged GNOME extension in a supported live GNOME session.
+- [x] Capture lock, idle, workspace and active-window transitions from the
+  packaged GNOME extension in a supported live GNOME session; validated on
+  GNOME Shell 50.1 with extension version 2 in GitLab issue #10 and MR !16.
 - [ ] Capture bounded focus, document and coalesced text-activity events from a
   live AT-SPI accessibility bus without retaining entered text.
 - [ ] Deliver browser navigation metadata through a packaged browser producer

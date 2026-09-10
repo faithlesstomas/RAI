@@ -1,5 +1,6 @@
 import Gio from 'gi://Gio';
 import GLib from 'gi://GLib';
+import Shell from 'gi://Shell';
 import {Extension} from 'resource:///org/gnome/shell/extensions/extension.js';
 import * as Main from 'resource:///org/gnome/shell/ui/main.js';
 
@@ -25,6 +26,7 @@ const INTERFACE = `
 
 export default class RaiHistoryExtension extends Extension {
     enable() {
+        this._windowTracker = Shell.WindowTracker.get_default();
         this._dbus = Gio.DBusExportedObject.wrapJSObject(INTERFACE, this);
         this._dbus.export(Gio.DBus.session, '/org/richai/History');
         this._owner = Gio.bus_own_name_on_connection(
@@ -55,6 +57,7 @@ export default class RaiHistoryExtension extends Extension {
         this._workspaceSignal = null;
         this._owner = null;
         this._dbus = null;
+        this._windowTracker = null;
     }
 
     GetSnapshot() {
@@ -71,10 +74,14 @@ export default class RaiHistoryExtension extends Extension {
     }
 
     _window() {
+        if (Main.sessionMode.isLocked)
+            return ['', '', 0];
         const window = global.display.focus_window;
         if (!window)
             return ['', '', 0];
-        const applicationId = window.get_gtk_application_id()
+        const application = this._windowTracker?.get_window_app(window);
+        const applicationId = application?.get_id()
+            || window.get_gtk_application_id()
             || window.get_wm_class_instance()
             || window.get_wm_class()
             || '';
