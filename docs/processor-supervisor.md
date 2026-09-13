@@ -58,6 +58,30 @@ The `ProcessorSupervisor` implements the kernel's `LocalProcessor` protocol. It 
 6. **Provenance & Claim Synthesis:**
    Transformations from Stage 3 `Episode` packages to `Claim` objects include cryptographic or identifier-based `ProvenanceReference` records linking claims directly to the evidence episodes.
 
+### Request pipeline and cache boundaries
+
+`process()` delegates each stage to a typed helper while preserving one ordered
+guard pipeline:
+
+1. lifecycle and cancellation checks;
+2. bounded-task contract and caller-budget intersection;
+3. wall-clock deadline calculation;
+4. privacy filtering, retained classification and allowed-source derivation;
+5. deterministic prompt construction and input-budget validation;
+6. capacity acquisition, provider/resource checks and lazy model loading;
+7. bounded generation, output validation and provenance-bearing `Claim` creation.
+
+This ordering defines the safe integration points for result caching. A future
+cache lookup may happen only after steps 1–5, so a hit cannot bypass current
+budget, privacy, contract or classification checks. Cache keys must also bind
+the policy, model/artifact and contract versions plus retained source identity.
+A cached validated payload must be rebound to the current context provenance
+and classification before returning a `Claim`. A cache store may happen only
+after step 7 has produced a successfully validated `Claim`; raw model output
+and validation failures are never cacheable. Capacity belongs only to the
+engine-execution path and is released exactly once, or deferred until an
+uninterruptible backend operation has drained after cancellation or timeout.
+
 ---
 
 ## Implemented Local Text Adapters

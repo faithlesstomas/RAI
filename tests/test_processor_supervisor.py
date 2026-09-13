@@ -50,6 +50,7 @@ from rai.kernel.records import (
 TEST_PRODUCER = ProducerIdentity(
     producer_id="test.stage4", kind="test", version="1.0.0"
 )
+EXPECTED_CAPACITY_RELEASES = 2
 
 
 def _make_budget(max_tokens: int = 100) -> InferenceBudget:
@@ -178,6 +179,18 @@ class SyncMockEngine:
 
     def unload(self) -> None:
         self.is_loaded = False
+
+
+class ReleaseCountingSupervisor(ProcessorSupervisor):
+    """Supervisor probe that records each capacity release."""
+
+    def __init__(self, engine: LocalTextEngine) -> None:
+        super().__init__(engine=engine, max_concurrency=1, idle_unload_seconds=0)
+        self.release_calls = 0
+
+    def _release_capacity(self) -> None:
+        self.release_calls += 1
+        super()._release_capacity()
 
 
 def _make_episode() -> Episode:
@@ -642,6 +655,83 @@ async def test_privacy_firewall_drops_secret_and_blocked() -> None:
     assert res_sec.failure().code == "DATA_CLASS_REJECTED"
     assert len(mock_engine.generate_calls) == 0
 
+    await supervisor.stop()
+
+
+@pytest.mark.asyncio
+async def test_privacy_rejection_precedes_capacity_and_engine_resolution() -> None:
+    """Rejected context must not reserve capacity or resolve a model backend."""
+    supervisor = ProcessorSupervisor(
+        engine=None,
+        backend="unsupported-test-backend",
+        max_concurrency=1,
+        idle_unload_seconds=0,
+    )
+    await supervisor.start()
+    context = ContextPackage(
+        task_id="task:secret-only",
+        manifest=ContextManifest(
+            destination="local-processor",
+            items=(
+                ContextManifestItem(
+                    source_id="secret-source",
+                    source_type="secret",
+                    data_class=DataClass.SECRET,
+                ),
+            ),
+            approved=True,
+            producer=TEST_PRODUCER,
+        ),
+        content={"secret-source": "must-not-reach-engine"},
+        producer=TEST_PRODUCER,
+    )
+
+    result = await supervisor.process(
+        Task(objective="Reject secret", producer=TEST_PRODUCER),
+        context,
+        _make_budget(),
+        CancellationToken(),
+    )
+
+    assert isinstance(result, Failure)
+    assert result.failure().code == "DATA_CLASS_REJECTED"
+    assert supervisor.engine is None
+    assert supervisor.health().active_requests == 0
+    assert supervisor.health().total_requests == 0
+    await supervisor.stop()
+
+
+@pytest.mark.asyncio
+async def test_post_acquisition_failure_releases_capacity_exactly_once() -> None:
+    """Every synchronous exit after acquisition releases one capacity lease."""
+    engine = MockEngine(required_ram_bytes=2048)
+    supervisor = ReleaseCountingSupervisor(engine)
+    await supervisor.start()
+    task = Task(objective="Check capacity release", producer=TEST_PRODUCER)
+    context = _make_context_package(_make_episode())
+
+    rejected = await supervisor.process(
+        task,
+        context,
+        _make_budget().model_copy(update={"max_ram_bytes": 1024}),
+        CancellationToken(),
+    )
+
+    assert isinstance(rejected, Failure)
+    assert rejected.failure().code == "RESOURCE_CAPACITY_EXCEEDED"
+    assert supervisor.release_calls == 1
+    assert supervisor.health().active_requests == 0
+
+    accepted = await supervisor.process(
+        task,
+        context,
+        _make_budget().model_copy(update={"max_ram_bytes": 4096}),
+        CancellationToken(),
+    )
+
+    assert isinstance(accepted, Success)
+    assert supervisor.release_calls == EXPECTED_CAPACITY_RELEASES
+    assert supervisor.health().active_requests == 0
     await supervisor.stop()
 
 
