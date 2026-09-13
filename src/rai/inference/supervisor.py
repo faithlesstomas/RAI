@@ -7,6 +7,7 @@ idle unloading, and task-to-claim conversion with provenance.
 from __future__ import annotations
 
 import asyncio
+from dataclasses import dataclass
 from datetime import datetime, timezone
 import logging
 import time
@@ -18,6 +19,7 @@ from rai.kernel.ports import CancellationToken, LifecycleState, LocalProcessor
 from rai.kernel.records import (
     ActionFailure,
     Claim,
+    ContextManifestItem,
     ContextPackage,
     DataClass,
     InferenceBudget,
@@ -30,6 +32,7 @@ from .factory import get_available_backends, is_backend_available, load_local_mo
 from .protocols import (
     AsyncEngineAdapter,
     InferenceEngine,
+    InferenceResult,
     LocalTextEngine,
     ProcessorHealth,
     is_async_local_engine,
@@ -45,6 +48,34 @@ SUPERVISOR_PRODUCER = ProducerIdentity(
 )
 
 
+@dataclass(frozen=True)
+class _RetainedContext:
+    """Privacy-filtered context metadata safe to use for local inference."""
+
+    content: dict[str, Any]
+    data_class: DataClass
+    source_ids: frozenset[str]
+
+
+@dataclass(frozen=True)
+class _PreparedRequest:
+    """Validated request state at the future cache-lookup boundary."""
+
+    contract: BoundedTaskContract | None
+    budget: InferenceBudget
+    operation_deadline: float
+    prompt: str
+    retained_context: _RetainedContext
+
+
+@dataclass(frozen=True)
+class _GuardedOperationFailure:
+    """Engine failure plus ownership of the reserved capacity lease."""
+
+    failure: ActionFailure
+    capacity_release_deferred: bool = False
+
+
 def _utc_now() -> datetime:
     return datetime.now(timezone.utc)
 
@@ -56,7 +87,7 @@ class ProcessorSupervisor(LocalProcessor):
     and schema-constrained Claim generation from ContextPackages.
     """
 
-    def __init__(
+    def __init__(  # noqa: PLR0913
         self,
         engine: Optional[Union[LocalTextEngine, InferenceEngine]] = None,
         model_name: str = "default",
@@ -297,19 +328,12 @@ class ProcessorSupervisor(LocalProcessor):
             except Exception as exc:
                 logger.error("Unexpected error in idle reaper loop: %s", exc)
 
-    async def process(
+    def _guard_request_start(
         self,
         task: Task,
-        context: ContextPackage,
-        budget: InferenceBudget,
         cancellation: CancellationToken,
-        *,
-        bounded_task: BoundedTaskKind | str | None = None,
-    ) -> Result[Claim, ActionFailure]:
-        """
-        Executes bounded local inference over context packages.
-        Outputs a schema-validated Claim with provenance.
-        """
+    ) -> Result[None, ActionFailure]:
+        """Reject requests which cannot enter the preparation pipeline."""
         if self._state != LifecycleState.RUNNING:
             return Failure(
                 self._failure(
@@ -318,86 +342,101 @@ class ProcessorSupervisor(LocalProcessor):
                     request_id=task.record_id,
                 )
             )
-
         if cancellation.cancelled:
             return Failure(self._cancelled(task.record_id))
+        return Success(None)
 
-        contract: BoundedTaskContract | None = None
-        if bounded_task is not None:
-            contract_res = get_bounded_task_contract(bounded_task)
-            if isinstance(contract_res, Failure):
-                contract_failure = contract_res.failure()
-                return Failure(
-                    self._failure(
-                        contract_failure.code,
-                        contract_failure.message,
-                        request_id=task.record_id,
-                        retryable=contract_failure.retryable,
-                    )
-                )
-            contract = contract_res.unwrap()
-            budget = contract.limits.constrain(budget)
+    def _resolve_contract(
+        self,
+        bounded_task: BoundedTaskKind | str | None,
+        budget: InferenceBudget,
+        request_id: str,
+    ) -> Result[
+        tuple[BoundedTaskContract | None, InferenceBudget], ActionFailure
+    ]:
+        """Resolve one bounded contract and apply its non-expandable limits."""
+        if bounded_task is None:
+            return Success((None, budget))
 
-        # 1. Budget enforcement: output tokens must be strictly positive
-        if budget.max_output_tokens <= 0:
+        contract_result = get_bounded_task_contract(bounded_task)
+        if isinstance(contract_result, Failure):
+            contract_failure = contract_result.failure()
             return Failure(
                 self._failure(
-                    "BUDGET_EXCEEDED",
-                    "max_output_tokens is 0; generation forbidden by budget",
-                    request_id=task.record_id,
+                    contract_failure.code,
+                    contract_failure.message,
+                    request_id=request_id,
+                    retryable=contract_failure.retryable,
                 )
             )
 
-        # 2. Budget latency & cancellation deadline
-        now = _utc_now()
-        deadline_rem = (budget.cancellation_deadline - now).total_seconds()
-        timeout = min(budget.max_latency_seconds, deadline_rem)
+        contract = contract_result.unwrap()
+        return Success((contract, contract.limits.constrain(budget)))
+
+    def _operation_deadline(
+        self,
+        budget: InferenceBudget,
+        request_id: str,
+    ) -> Result[float, ActionFailure]:
+        """Calculate the monotonic deadline shared by capacity, load and generation."""
+        deadline_remaining = (
+            budget.cancellation_deadline - _utc_now()
+        ).total_seconds()
+        timeout = min(budget.max_latency_seconds, deadline_remaining)
         if timeout <= 0:
             return Failure(
                 self._failure(
                     "DEADLINE_EXCEEDED",
-                    f"Inference budget deadline exceeded before execution ({timeout:.2f}s remaining)",
-                    request_id=task.record_id,
+                    "Inference budget deadline exceeded before execution "
+                    f"({timeout:.2f}s remaining)",
+                    request_id=request_id,
                 )
             )
-        operation_deadline = time.monotonic() + timeout
+        return Success(time.monotonic() + timeout)
 
-        # 3. Privacy firewall: reject / drop SECRET and BLOCKED data
-        forbidden_classes = {DataClass.SECRET, DataClass.BLOCKED, "SECRET", "BLOCKED"}
+    def _retain_allowed_context(
+        self,
+        context: ContextPackage,
+        request_id: str,
+    ) -> Result[_RetainedContext, ActionFailure]:
+        """Drop mapped forbidden fields and fail closed on ambiguous content."""
+        forbidden_classes = {
+            DataClass.SECRET,
+            DataClass.BLOCKED,
+            "SECRET",
+            "BLOCKED",
+        }
         manifest_items = context.manifest.items
-
-        forbidden_items = [
+        forbidden_items = tuple(
             item for item in manifest_items if item.data_class in forbidden_classes
-        ]
-        allowed_items = [
-            item for item in manifest_items
-            if item.data_class not in forbidden_classes
-        ]
+        )
+        allowed_items = tuple(
+            item for item in manifest_items if item.data_class not in forbidden_classes
+        )
 
         if manifest_items and not allowed_items:
             return Failure(
                 self._failure(
                     "DATA_CLASS_REJECTED",
-                    "Context package contains only SECRET or BLOCKED data classes which cannot be sent to local model",
-                    request_id=task.record_id,
+                    "Context package contains only SECRET or BLOCKED data classes "
+                    "which cannot be sent to local model",
+                    request_id=request_id,
                 )
             )
 
-        # A forbidden source without fields must map explicitly to content. If it
-        # does not, mixed content cannot be separated safely, so fail closed.
-        unmapped_forbidden = [
+        unmapped_forbidden = tuple(
             item.source_id
             for item in forbidden_items
             if not item.fields
             and not self._contains_content_key(context.content, item.source_id)
-        ]
+        )
         if unmapped_forbidden:
             return Failure(
                 self._failure(
                     "DATA_CLASS_REJECTED",
-                    "SECRET/BLOCKED manifest sources cannot be mapped safely to context content: "
-                    + ", ".join(unmapped_forbidden),
-                    request_id=task.record_id,
+                    "SECRET/BLOCKED manifest sources cannot be mapped safely to "
+                    "context content: " + ", ".join(unmapped_forbidden),
+                    request_id=request_id,
                 )
             )
 
@@ -411,41 +450,57 @@ class ProcessorSupervisor(LocalProcessor):
             dict[str, Any],
             self._drop_forbidden_content(context.content, forbidden_keys),
         )
-
         if context.content and not sanitized_content:
             return Failure(
                 self._failure(
                     "DATA_CLASS_REJECTED",
-                    "All context package content was stripped due to SECRET/BLOCKED policy",
-                    request_id=task.record_id,
+                    "All context package content was stripped due to "
+                    "SECRET/BLOCKED policy",
+                    request_id=request_id,
                 )
             )
 
-        # Classification and source identity are fixed from the retained manifest
-        # before model output is validated. A task may elevate classification but
-        # cannot weaken this baseline.
-        out_data_class = DataClass.PUBLIC
-        if allowed_items:
-            classes = {item.data_class for item in allowed_items}
-            if DataClass.PRIVATE in classes or "PRIVATE" in classes:
-                out_data_class = DataClass.PRIVATE
-            elif DataClass.LOCAL in classes or "LOCAL" in classes:
-                out_data_class = DataClass.LOCAL
-        else:
-            out_data_class = DataClass.LOCAL
-        allowed_source_ids = frozenset(item.source_id for item in allowed_items)
+        return Success(
+            _RetainedContext(
+                content=sanitized_content,
+                data_class=self._retained_data_class(allowed_items),
+                source_ids=frozenset(item.source_id for item in allowed_items),
+            )
+        )
 
-        # 4. Construct bounded prompt and enforce input token budget
+    @staticmethod
+    def _retained_data_class(
+        manifest_items: tuple[ContextManifestItem, ...],
+    ) -> DataClass:
+        """Return the strongest retained classification for derived output."""
+        if not manifest_items:
+            return DataClass.LOCAL
+
+        classes = {item.data_class for item in manifest_items}
+        if DataClass.PRIVATE in classes or "PRIVATE" in classes:
+            return DataClass.PRIVATE
+        if DataClass.LOCAL in classes or "LOCAL" in classes:
+            return DataClass.LOCAL
+        return DataClass.PUBLIC
+
+    def _prepare_prompt(
+        self,
+        task: Task,
+        retained: _RetainedContext,
+        contract: BoundedTaskContract | None,
+        budget: InferenceBudget,
+    ) -> Result[str, ActionFailure]:
+        """Build the deterministic prompt and enforce its input allowance."""
         prompt = (
             contract.build_prompt(
                 task.objective,
-                sanitized_content,
-                allowed_source_ids=allowed_source_ids,
+                retained.content,
+                allowed_source_ids=retained.source_ids,
             )
             if contract is not None
-            else self._build_prompt(task, sanitized_content)
+            else self._build_prompt(task, retained.content)
         )
-        est_tokens = max(len(prompt.split()), len(prompt) // 4)
+        estimated_tokens = max(len(prompt.split()), len(prompt) // 4)
         if budget.max_input_tokens <= 0:
             return Failure(
                 self._failure(
@@ -454,219 +509,418 @@ class ProcessorSupervisor(LocalProcessor):
                     request_id=task.record_id,
                 )
             )
-        if est_tokens > budget.max_input_tokens:
+        if estimated_tokens > budget.max_input_tokens:
             return Failure(
                 self._failure(
                     "BUDGET_EXCEEDED",
-                    f"Input token count ({est_tokens}) exceeds max_input_tokens ({budget.max_input_tokens})",
+                    f"Input token count ({estimated_tokens}) exceeds "
+                    f"max_input_tokens ({budget.max_input_tokens})",
                     request_id=task.record_id,
                 )
             )
+        return Success(prompt)
 
-        # 5. Concurrency bounding: fail immediately when saturated
-        if self._semaphore.locked():
+    def _prepare_request(
+        self,
+        task: Task,
+        context: ContextPackage,
+        budget: InferenceBudget,
+        bounded_task: BoundedTaskKind | str | None,
+    ) -> Result[_PreparedRequest, ActionFailure]:
+        """Prepare all policy-visible state before capacity or model access."""
+        contract_result = self._resolve_contract(
+            bounded_task, budget, task.record_id
+        )
+        if isinstance(contract_result, Failure):
+            return contract_result
+        contract, constrained_budget = contract_result.unwrap()
+
+        if constrained_budget.max_output_tokens <= 0:
             return Failure(
                 self._failure(
-                    "CAPACITY_EXCEEDED",
-                    f"Concurrency limit ({self.max_concurrency}) reached for local processor",
+                    "BUDGET_EXCEEDED",
+                    "max_output_tokens is 0; generation forbidden by budget",
                     request_id=task.record_id,
-                    retryable=True,
                 )
             )
 
-        acquired = False
-        try:
-            try:
-                remaining = operation_deadline - time.monotonic()
-                if remaining <= 0:
-                    return Failure(
-                        self._failure(
-                            "DEADLINE_EXCEEDED",
-                            "Inference budget deadline exceeded before capacity acquisition",
-                            request_id=task.record_id,
-                        )
-                    )
-                await asyncio.wait_for(
-                    self._semaphore.acquire(), timeout=min(0.05, remaining)
+        deadline_result = self._operation_deadline(
+            constrained_budget, task.record_id
+        )
+        if isinstance(deadline_result, Failure):
+            return deadline_result
+
+        retained_result = self._retain_allowed_context(context, task.record_id)
+        if isinstance(retained_result, Failure):
+            return retained_result
+        retained = retained_result.unwrap()
+
+        prompt_result = self._prepare_prompt(
+            task, retained, contract, constrained_budget
+        )
+        if isinstance(prompt_result, Failure):
+            return prompt_result
+
+        return Success(
+            _PreparedRequest(
+                contract=contract,
+                budget=constrained_budget,
+                operation_deadline=deadline_result.unwrap(),
+                prompt=prompt_result.unwrap(),
+                retained_context=retained,
+            )
+        )
+
+    async def _acquire_capacity(
+        self,
+        operation_deadline: float,
+        request_id: str,
+    ) -> Result[None, ActionFailure]:
+        """Reserve one capacity lease or return a typed bounded failure."""
+        if self._semaphore.locked():
+            return Failure(self._capacity_failure(request_id))
+
+        remaining = operation_deadline - time.monotonic()
+        if remaining <= 0:
+            return Failure(
+                self._failure(
+                    "DEADLINE_EXCEEDED",
+                    "Inference budget deadline exceeded before capacity acquisition",
+                    request_id=request_id,
                 )
-                acquired = True
-            except asyncio.TimeoutError:
-                if time.monotonic() >= operation_deadline:
-                    return Failure(
-                        self._failure(
-                            "DEADLINE_EXCEEDED",
-                            "Inference budget deadline exceeded during capacity acquisition",
-                            request_id=task.record_id,
-                        )
-                    )
+            )
+        try:
+            await asyncio.wait_for(
+                self._semaphore.acquire(), timeout=min(0.05, remaining)
+            )
+        except asyncio.TimeoutError:
+            if time.monotonic() >= operation_deadline:
                 return Failure(
                     self._failure(
-                        "CAPACITY_EXCEEDED",
-                        f"Concurrency limit ({self.max_concurrency}) reached for local processor",
-                        request_id=task.record_id,
-                        retryable=True,
+                        "DEADLINE_EXCEEDED",
+                        "Inference budget deadline exceeded during capacity acquisition",
+                        request_id=request_id,
                     )
                 )
+            return Failure(self._capacity_failure(request_id))
 
-            self._active_requests += 1
-            self._total_requests += 1
+        self._active_requests += 1
+        self._total_requests += 1
+        return Success(None)
 
-            if cancellation.cancelled:
-                return Failure(self._cancelled(task.record_id))
+    def _capacity_failure(self, request_id: str) -> ActionFailure:
+        """Build the common immediate-capacity failure."""
+        return self._failure(
+            "CAPACITY_EXCEEDED",
+            f"Concurrency limit ({self.max_concurrency}) reached for local processor",
+            request_id=request_id,
+            retryable=True,
+        )
 
-            # 6. Resolve engine and enforce allowed_providers
-            engine_res = self._get_engine()
-            if isinstance(engine_res, Failure):
-                self._error_count += 1
-                return engine_res
+    def _resolve_eligible_engine(
+        self,
+        prepared: _PreparedRequest,
+        request_id: str,
+    ) -> Result[LocalTextEngine, ActionFailure]:
+        """Resolve an engine and enforce provider and resource ceilings."""
+        engine_result = self._get_engine()
+        if isinstance(engine_result, Failure):
+            self._error_count += 1
+            return engine_result
+        engine = engine_result.unwrap()
 
-            engine = engine_res.unwrap()
-
-            if budget.allowed_providers:
-                allowed_set = set(budget.allowed_providers)
-                if engine.model_name not in allowed_set and self.backend not in allowed_set:
-                    return Failure(
-                        self._failure(
-                            "PROVIDER_DISALLOWED",
-                            f"Engine '{engine.model_name}' ({self.backend}) is not in allowed_providers: {budget.allowed_providers}",
-                            request_id=task.record_id,
-                        )
-                    )
-
-            for resource_name, required, limit in (
-                (
-                    "RAM",
-                    getattr(engine, "required_ram_bytes", None),
-                    budget.max_ram_bytes,
-                ),
-                (
-                    "VRAM",
-                    getattr(engine, "required_vram_bytes", None),
-                    budget.max_vram_bytes,
-                ),
-            ):
-                if required is not None and required > limit:
-                    return Failure(
-                        self._failure(
-                            "RESOURCE_CAPACITY_EXCEEDED",
-                            f"Engine requires {required} bytes of {resource_name}, budget allows {limit}",
-                            request_id=task.record_id,
-                        )
-                    )
-
-            # Ensure model is loaded
-            if not engine.is_loaded:
-                load_task = asyncio.create_task(engine.load())
-                load_res, operation_failure, deferred = await self._await_operation(
-                    load_task,
-                    cancellation=cancellation,
-                    deadline=operation_deadline,
-                    request_id=task.record_id,
-                    operation_name="model loading",
-                )
-                if deferred:
-                    acquired = False
-                if operation_failure is not None:
-                    return Failure(operation_failure)
-                if isinstance(load_res, Failure):
-                    self._error_count += 1
-                    return Failure(
-                        self._failure(
-                            "MODEL_LOAD_FAILED",
-                            f"Failed to load model '{engine.model_name}': {load_res.failure()}",
-                            request_id=task.record_id,
-                        )
-                    )
-
-            if cancellation.cancelled:
-                return Failure(self._cancelled(task.record_id))
-
-            # 7. Generate with live cancellation monitoring and timeout enforcement
-            gen_task = asyncio.create_task(
-                engine.generate(
-                    prompt=prompt,
-                    max_tokens=budget.max_output_tokens,
-                    temperature=contract.temperature if contract is not None else 0.7,
-                )
-            )
-
-            gen_res, operation_failure, deferred = await self._await_operation(
-                gen_task,
-                cancellation=cancellation,
-                deadline=operation_deadline,
-                request_id=task.record_id,
-                operation_name="generation",
-            )
-            if deferred:
-                acquired = False
-            if operation_failure is not None:
-                return Failure(operation_failure)
-
-            if isinstance(gen_res, Failure):
-                self._error_count += 1
+        allowed_providers = prepared.budget.allowed_providers
+        if allowed_providers:
+            allowed_set = set(allowed_providers)
+            if engine.model_name not in allowed_set and self.backend not in allowed_set:
                 return Failure(
+                    self._failure(
+                        "PROVIDER_DISALLOWED",
+                        f"Engine '{engine.model_name}' ({self.backend}) is not in "
+                        f"allowed_providers: {allowed_providers}",
+                        request_id=request_id,
+                    )
+                )
+
+        resource_result = self._check_engine_resources(
+            engine, prepared.budget, request_id
+        )
+        if isinstance(resource_result, Failure):
+            return resource_result
+        return Success(engine)
+
+    def _check_engine_resources(
+        self,
+        engine: LocalTextEngine,
+        budget: InferenceBudget,
+        request_id: str,
+    ) -> Result[None, ActionFailure]:
+        """Reject engines with known RAM or VRAM requirements above budget."""
+        resources = (
+            ("RAM", getattr(engine, "required_ram_bytes", None), budget.max_ram_bytes),
+            (
+                "VRAM",
+                getattr(engine, "required_vram_bytes", None),
+                budget.max_vram_bytes,
+            ),
+        )
+        for resource_name, required, limit in resources:
+            if required is not None and required > limit:
+                return Failure(
+                    self._failure(
+                        "RESOURCE_CAPACITY_EXCEEDED",
+                        f"Engine requires {required} bytes of {resource_name}, "
+                        f"budget allows {limit}",
+                        request_id=request_id,
+                    )
+                )
+        return Success(None)
+
+    async def _ensure_engine_loaded(
+        self,
+        engine: LocalTextEngine,
+        prepared: _PreparedRequest,
+        cancellation: CancellationToken,
+        request_id: str,
+    ) -> Result[None, _GuardedOperationFailure]:
+        """Load an engine within the shared deadline and capacity lease."""
+        if engine.is_loaded:
+            return Success(None)
+
+        load_task = asyncio.create_task(engine.load())
+        load_result, operation_failure, deferred = await self._await_operation(
+            load_task,
+            cancellation=cancellation,
+            deadline=prepared.operation_deadline,
+            request_id=request_id,
+            operation_name="model loading",
+        )
+        if operation_failure is not None:
+            return Failure(
+                _GuardedOperationFailure(operation_failure, deferred)
+            )
+        if isinstance(load_result, Failure):
+            self._error_count += 1
+            return Failure(
+                _GuardedOperationFailure(
+                    self._failure(
+                        "MODEL_LOAD_FAILED",
+                        f"Failed to load model '{engine.model_name}': "
+                        f"{load_result.failure()}",
+                        request_id=request_id,
+                    )
+                )
+            )
+        return Success(None)
+
+    async def _generate(
+        self,
+        engine: LocalTextEngine,
+        prepared: _PreparedRequest,
+        cancellation: CancellationToken,
+        request_id: str,
+    ) -> Result[InferenceResult, _GuardedOperationFailure]:
+        """Generate one bounded result with live cancellation monitoring."""
+        generation_task = asyncio.create_task(
+            engine.generate(
+                prompt=prepared.prompt,
+                max_tokens=prepared.budget.max_output_tokens,
+                temperature=(
+                    prepared.contract.temperature
+                    if prepared.contract is not None
+                    else 0.7
+                ),
+            )
+        )
+        generation_result, operation_failure, deferred = await self._await_operation(
+            generation_task,
+            cancellation=cancellation,
+            deadline=prepared.operation_deadline,
+            request_id=request_id,
+            operation_name="generation",
+        )
+        if operation_failure is not None:
+            return Failure(
+                _GuardedOperationFailure(operation_failure, deferred)
+            )
+        if isinstance(generation_result, Failure):
+            self._error_count += 1
+            return Failure(
+                _GuardedOperationFailure(
                     self._failure(
                         "INFERENCE_FAILED",
-                        f"Inference execution failed: {gen_res.failure()}",
-                        request_id=task.record_id,
+                        f"Inference execution failed: {generation_result.failure()}",
+                        request_id=request_id,
                         retryable=True,
                     )
                 )
+            )
+        return Success(generation_result.unwrap())
 
-            inference_result = gen_res.unwrap()
-            raw_statement = inference_result.text.strip()
-            confidence = 0.9
-            epistemic_status = "inferred"
-            if contract is not None:
-                validation_res = contract.validate_output(
-                    raw_statement,
-                    input_data_class=out_data_class,
-                    allowed_source_ids=allowed_source_ids,
-                )
-                if isinstance(validation_res, Failure):
-                    validation_failure = validation_res.failure()
-                    self._error_count += 1
-                    return Failure(
-                        self._failure(
-                            validation_failure.code,
-                            validation_failure.message,
-                            request_id=task.record_id,
-                            retryable=validation_failure.retryable,
-                        )
+    def _build_claim(
+        self,
+        task: Task,
+        context: ContextPackage,
+        prepared: _PreparedRequest,
+        inference_result: InferenceResult,
+    ) -> Result[Claim, ActionFailure]:
+        """Validate model output before the future cache-store boundary."""
+        raw_statement = inference_result.text.strip()
+        statement = raw_statement or "No summary or classification generated."
+        confidence = 0.9
+        epistemic_status = "inferred"
+        output_data_class = prepared.retained_context.data_class
+
+        if prepared.contract is not None:
+            validation_result = prepared.contract.validate_output(
+                raw_statement,
+                input_data_class=output_data_class,
+                allowed_source_ids=prepared.retained_context.source_ids,
+            )
+            if isinstance(validation_result, Failure):
+                validation_failure = validation_result.failure()
+                self._error_count += 1
+                return Failure(
+                    self._failure(
+                        validation_failure.code,
+                        validation_failure.message,
+                        request_id=task.record_id,
+                        retryable=validation_failure.retryable,
                     )
-                validated_output = validation_res.unwrap()
-                statement = validated_output.claim_statement()
-                confidence = validated_output.confidence
-                out_data_class = validated_output.result_data_class(out_data_class)
-                epistemic_status = (
-                    f"inferred:{contract.kind.value}@{contract.version}"
                 )
-            else:
-                statement = raw_statement or "No summary or classification generated."
-
-            # Construct provenance reference to context package
-            source_ref = ProvenanceReference(
-                source_id=context.record_id,
-                source_type=context.record_type,
-                source_version=context.schema_version,
-                relation="derived-from",
-                producer=context.producer,
+            validated_output = validation_result.unwrap()
+            statement = validated_output.claim_statement()
+            confidence = validated_output.confidence
+            output_data_class = validated_output.result_data_class(
+                output_data_class
+            )
+            epistemic_status = (
+                f"inferred:{prepared.contract.kind.value}@"
+                f"{prepared.contract.version}"
             )
 
-            claim = Claim(
+        source_reference = ProvenanceReference(
+            source_id=context.record_id,
+            source_type=context.record_type,
+            source_version=context.schema_version,
+            relation="derived-from",
+            producer=context.producer,
+        )
+        return Success(
+            Claim(
                 producer=SUPERVISOR_PRODUCER,
                 correlation_id=task.correlation_id,
                 statement=statement,
                 confidence=confidence,
                 epistemic_status=epistemic_status,
-                data_class=out_data_class,
-                provenance=(source_ref,),
+                data_class=output_data_class,
+                provenance=(source_reference,),
             )
-            return Success(claim)
+        )
 
+    async def _execute_prepared_request(
+        self,
+        task: Task,
+        context: ContextPackage,
+        prepared: _PreparedRequest,
+        cancellation: CancellationToken,
+    ) -> tuple[Result[Claim, ActionFailure], bool]:
+        """Execute with capacity reserved; return whether release is deferred."""
+        if cancellation.cancelled:
+            return Failure(self._cancelled(task.record_id)), False
+
+        engine_result = self._resolve_eligible_engine(prepared, task.record_id)
+        if isinstance(engine_result, Failure):
+            return engine_result, False
+        engine = engine_result.unwrap()
+
+        load_result = await self._ensure_engine_loaded(
+            engine, prepared, cancellation, task.record_id
+        )
+        if isinstance(load_result, Failure):
+            guarded_failure = load_result.failure()
+            return (
+                Failure(guarded_failure.failure),
+                guarded_failure.capacity_release_deferred,
+            )
+        if cancellation.cancelled:
+            return Failure(self._cancelled(task.record_id)), False
+
+        generation_result = await self._generate(
+            engine, prepared, cancellation, task.record_id
+        )
+        if isinstance(generation_result, Failure):
+            guarded_failure = generation_result.failure()
+            return (
+                Failure(guarded_failure.failure),
+                guarded_failure.capacity_release_deferred,
+            )
+
+        return (
+            self._build_claim(
+                task, context, prepared, generation_result.unwrap()
+            ),
+            False,
+        )
+
+    async def _execute_with_capacity(
+        self,
+        task: Task,
+        context: ContextPackage,
+        prepared: _PreparedRequest,
+        cancellation: CancellationToken,
+    ) -> Result[Claim, ActionFailure]:
+        """Release the capacity lease exactly once unless an operation drains."""
+        release_capacity = True
+        try:
+            result, release_deferred = await self._execute_prepared_request(
+                task, context, prepared, cancellation
+            )
+            release_capacity = not release_deferred
+            return result
         finally:
-            if acquired:
+            if release_capacity:
                 self._release_capacity()
+
+    async def process(
+        self,
+        task: Task,
+        context: ContextPackage,
+        budget: InferenceBudget,
+        cancellation: CancellationToken,
+        *,
+        bounded_task: BoundedTaskKind | str | None = None,
+    ) -> Result[Claim, ActionFailure]:
+        """
+        Executes bounded local inference over context packages.
+        Outputs a schema-validated Claim with provenance.
+        """
+        guard_result = self._guard_request_start(task, cancellation)
+        if isinstance(guard_result, Failure):
+            return guard_result
+
+        prepared_result = self._prepare_request(
+            task, context, budget, bounded_task
+        )
+        if isinstance(prepared_result, Failure):
+            return prepared_result
+        prepared = prepared_result.unwrap()
+
+        # Future cache lookup boundary: policy, privacy, contract, context and
+        # caller budget have been checked, but no capacity or model was touched.
+        # A cache implementation must key policy/model versions and retained
+        # classification/source identity, then rebind current provenance.
+        capacity_result = await self._acquire_capacity(
+            prepared.operation_deadline, task.record_id
+        )
+        if isinstance(capacity_result, Failure):
+            return capacity_result
+
+        result = await self._execute_with_capacity(
+            task, context, prepared, cancellation
+        )
+        # Future cache store boundary: only a schema-validated Claim can succeed.
+        return result
 
     async def process_bounded(
         self,
