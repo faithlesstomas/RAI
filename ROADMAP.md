@@ -812,9 +812,13 @@ backends and voice enrollment are tracked by #23–#25 under umbrella #21.
   fixtures and unit tests exist.
 - [x] Duplicate lens IDs are rejected and terminal request IDs cannot be reused
   during one sidecar process lifetime.
-- [ ] Complete live acceptance, bounded or restart-persistent replay protection
-  and GAIA transport.
-- [ ] Keep raw tensors inside the sidecar and PyTorch/J-lens dependencies outside
+- [x] Provide the versioned HTTP/NDJSON-over-UDS transport consumed by GAIA's
+  production NCSI adapter without importing either project's implementation
+  modules into the other.
+- [ ] Complete repeatable RAI live-model acceptance, authentication, bounded or
+  restart-persistent replay protection and the remaining disconnect, OOM,
+  timeout and cancellation failure gates.
+- [x] Keep raw tensors inside the sidecar and PyTorch/J-lens dependencies outside
   the default installation.
 
 RAI provides the optional neural runtime; GAIA retains Workspace, Control,
@@ -930,6 +934,221 @@ explicit user turn or policy-approved proactive trigger
   Count input/output tokens, latent iterations, retries, time and local compute;
   external APIs additionally report or conservatively estimate monetary cost.
 
+**Coconut-style continuous latent inference**
+
+`LATENT_RECURRENCE` specifically means a
+[Coconut-style](https://arxiv.org/abs/2412.06769) chain of continuous thought,
+not token recurrence, read-only J-lens observation or activation steering. At a
+latent position the final hidden-state vector for the preceding position is fed
+back as the next input embedding without the language-model-head -> token ->
+embedding round trip. The recurrent vector, KV cache and raw activations remain
+inside the neural process.
+
+Primary references:
+
+- Shibo Hao, Sainbayar Sukhbaatar, DiJia Su, Xian Li, Zhiting Hu, Jason Weston
+  and Yuandong Tian,
+  [*Training Large Language Models to Reason in a Continuous Latent
+  Space*](https://arxiv.org/abs/2412.06769), arXiv:2412.06769, accepted to COLM
+  2025. The paper introduces Coconut (Chain of Continuous Thought) and the
+  direct hidden-state-to-input-embedding recurrence used by this roadmap.
+- [Official Meta FAIR Coconut implementation](https://github.com/facebookresearch/coconut),
+  including the staged curriculum-training and evaluation configurations used
+  to reproduce the paper's GSM8K, ProntoQA and ProsQA experiments.
+
+This execution mode requires a checkpoint trained for continuous thoughts. The
+ability of a generic Transformers model to return hidden states or accept
+`inputs_embeds` is not evidence that the checkpoint supports Coconut. An
+untrained or incompatible checkpoint must return a typed unsupported result
+rather than running an unvalidated feedback loop.
+
+The existing separately startable neural sidecar becomes the single owner of
+the model, accelerator, KV cache and latent vectors for both direct and Coconut
+generation. Do not load a second copy of the same model in another daemon only
+to provide latent inference. Inside that boundary, keep the transport contract,
+the direct Transformers engine, a dedicated `CoconutEngine` and optional
+read-only observers separable.
+
+The sidecar exposes a transport-independent, versioned execution contract,
+initially named `rai.latent.v1`, over protected Unix-domain-socket HTTP with
+bounded streaming. Its minimum surface is:
+
+```text
+GET  /api/v1/latent/capabilities
+GET  /api/v1/latent/models
+POST /api/v1/latent/generate
+POST /api/v1/latent/requests/{request-id}/cancel
+```
+
+The event union distinguishes lifecycle, hidden computation and visible output
+without exporting the latent vector:
+
+```text
+GenerationStarted
+LatentStepCompleted
+NeuralStateObserved       # optional bounded observer output
+TokenDelta
+GenerationCompleted | GenerationFailed
+```
+
+RAI integrates this surface through an `AssistantModelBackend`; GAIA and other
+processes use protocol clients rather than importing the engine. The caller
+chooses the reasoning mode, fixed latent-step budget and optional observer. The
+sidecar executes one bounded inner numerical recurrence and enforces stricter
+local ceilings. When GAIA is the caller, GAIA retains ownership of the outer
+Workspace and Cognitive Control process; RAI does not create a competing
+cognitive controller.
+
+- [ ] Record an ADR that freezes the first Coconut execution semantics: latent
+  start/end markers, the exact returned hidden vector, final normalization,
+  attention mask, position IDs, KV-cache updates and the transition back to
+  ordinary token decoding.
+- [ ] Define a versioned Coconut artifact manifest containing immutable base and
+  trained checkpoint revisions, tokenizer and special-token IDs, training
+  recipe, supported latent-step range, dtype/quantization compatibility and
+  checksums.
+- [ ] Extend the neural sidecar with a dedicated `CoconutEngine`, fixed-step
+  execution, hard iteration/time/RAM/VRAM limits, cancellation between forward
+  passes, typed incompatibility and no raw-tensor egress.
+- [ ] Freeze `rai.latent.v1` conformance fixtures for capabilities, requests,
+  streaming events, cancellation, terminal replay and failure taxonomy before
+  implementing RAI, GAIA or third-party clients.
+- [ ] Add a RAI assistant adapter and a separate GAIA protocol adapter. Both send
+  explicit context and budgets; neither receives latent vectors, owns model
+  state or bypasses the caller's memory, epistemic or capability policy.
+- [ ] Keep Coconut curriculum training and checkpoint production in an explicit
+  offline workflow. The serving sidecar loads verified artifacts and never
+  starts training or downloads a model as an inference side effect.
+- [ ] Compare `DIRECT`, `TOKEN_SCRATCHPAD` and `COCONUT_FIXED` on the same
+  Coconut-compatible checkpoint, `ContextPackage`, seed and declared output and
+  compute budgets. Start with fixed latent counts including zero as the direct
+  control, and record answer/verifier quality, latency, energy, RAM/VRAM,
+  stability, failure and cancellation behavior.
+- [ ] Run every fixed-step comparison with observers disabled and with one
+  read-only observer enabled. Observer mode must leave deterministic output
+  unchanged and must not alter recurrence depth, halting or policy.
+- [ ] Consider learned or confidence/convergence-based latent halting only after
+  the fixed-step baselines are reproducible. Treat activation steering,
+  ablation and patching as a separate post-observation intervention gate.
+
+**Writable neural workspace slots**
+
+Treat writable slots as another optional inference architecture for this
+assistant, independent of GCAS, GAIA or any other cognitive runtime. The module
+tests whether a small fixed-capacity neural workspace improves reasoning and use
+of graph-retrieved context at a matched token and compute budget. It does not
+define symbolic slot roles, a global-workspace controller or an alternative
+durable memory system.
+
+For a request or bounded inference session, let
+`W[t] in R^(K x d_slot)` be a bank of `K` writable vectors. The model reads from
+that bank while processing its residual stream and produces gated, bounded
+updates for the next step or context segment. The residual stream carries the
+current computation through model depth; slots carry selected state through
+inference time. Slot identity is therefore not a token position, graph-node ID
+or claim that a vector has a human-readable role.
+
+Keep the graph store as the assistant's durable, auditable memory. A
+`ContextPackage` may initialize or condition slots, and visible model output may
+propose an ordinary memory update through the existing validation path, but the
+slot tensor itself is ephemeral research state. Version 1 resets it at every
+request boundary and never persists it between conversations. Longer-lived
+neural state requires a separate privacy, isolation, deletion and contamination
+review.
+
+Implement the experiment as a `SlotWorkspaceEngine` beside the direct and
+`CoconutEngine` implementations in the existing neural sidecar. The sidecar
+owns slot tensors, accelerator state and any recurrent cache. Core assistant
+code selects a declared `ReasoningStrategy` and sees only typed events, bounded
+metrics and visible output. It must not import model-specific slot classes or
+receive raw tensors.
+
+Expose the engine through a separate versioned `rai.slots.v1` contract rather
+than adding slot lifecycle semantics to `rai.latent.v1`. The initial surface is
+request-scoped:
+
+```text
+GET  /api/v1/slots/capabilities
+POST /api/v1/slots/generate
+POST /api/v1/slots/requests/{request-id}/cancel
+```
+
+The request declares the architecture, slot count, update count, observer and
+budgets. Streaming may report `SlotStepCompleted` and aggregate occupancy,
+update-norm, attention-entropy or routing metrics, but never slot vectors. An
+opaque internal handle and monotonically increasing version prevent stale
+writes; neither is a durable memory identifier.
+
+Evaluate three increasingly invasive variants instead of treating "slots" as
+one mechanism:
+
+1. `SLOT_TOKENS`: special memory/register tokens passed between bounded context
+   segments. This is the cheapest implementation baseline.
+2. `FAM_FEEDBACK`: selected hidden representations from one block become
+   attention-accessible working memory for the next block without introducing
+   a new learned cross-attention module.
+3. `SLOT_CROSS_ATTN`: a separate bank read through cross-attention and updated
+   by a gated writer/router. This is the target architecture discussed here,
+   but it changes the model computation and requires adaptation training.
+
+Relevant precedents are
+[Recurrent Memory Transformer](https://arxiv.org/abs/2207.06881), which passes
+trained memory tokens between segments;
+[TransformerFAM](https://arxiv.org/abs/2404.09173), which feeds latent
+representations back as working memory without adding weights;
+[Hymba](https://arxiv.org/abs/2411.13676), whose released models use learned
+meta tokens; and
+[MemoryLLM](https://arxiv.org/abs/2402.04624), which provides a much larger
+self-updatable latent memory pool. They are comparison points, not evidence
+that an ordinary causal-LM checkpoint already implements the proposed slot
+semantics.
+
+Training is an explicit experimental stage, not an inference side effect:
+
+- Protocol, lifecycle, isolation and observer tests need no training. Released
+  compatible checkpoints may also be evaluated unchanged as external
+  baselines.
+- `SLOT_TOKENS` and `FAM_FEEDBACK` may reuse pretrained weights, but require
+  continued or task fine-tuning before their memory behavior can be interpreted
+  as useful. A wrapper that merely recycles hidden states is a negative control.
+- `SLOT_CROSS_ATTN` introduces slot initialization, read and write behavior and
+  therefore requires at least parameter-efficient adaptation of those modules;
+  full continued pretraining is considered only after the frozen-backbone or
+  LoRA/adapter experiment passes its gate.
+- Keep all dataset creation, training and checkpoint publication in a separate
+  offline workflow. The sidecar loads a pinned, verified artifact manifest and
+  never trains or downloads weights during serving.
+
+- [ ] Record a slot-architecture ADR covering tensor shapes, insertion layers,
+  initialization, read attention, writer/router, gating, normalization,
+  detach/backpropagation policy, segment boundaries, reset and cancellation.
+- [ ] Freeze `rai.slots.v1` schemas and conformance fixtures, including
+  capability negotiation, unsupported checkpoints, stale handles, exactly one
+  terminal event and proof that no state leaks between requests.
+- [ ] Implement `SLOT_TOKENS` first and benchmark fixed `K` values such as 8,
+  16 and 32 against `DIRECT` and `TOKEN_SCRATCHPAD` before adding new model
+  modules.
+- [ ] Add `FAM_FEEDBACK` as the first pretrained-checkpoint adaptation and
+  measure zero-shot recycling as a negative control versus a reproducible
+  parameter-efficient fine-tune.
+- [ ] Implement `SLOT_CROSS_ATTN` with a frozen-backbone adapter experiment
+  first. Train slot initializers, cross-attention and gated writer/router on
+  next-token plus synthetic retention, overwrite, conflict and multi-step
+  reasoning tasks.
+- [ ] Evaluate every variant on the same base checkpoint, `ContextPackage`,
+  graph-retrieval results, seed and output/compute budgets. Record answer and
+  verifier quality, retrieval use, contradiction handling, latency, energy,
+  RAM/VRAM, slot utilization, stability and cancellation behavior.
+- [ ] Require causal ablations: shuffled or zeroed slots, frozen updates,
+  read-only slots and equivalent extra context tokens. Reject a claimed memory
+  benefit when a simpler token or compute-matched baseline explains it.
+- [ ] Compare Coconut and slot recurrence separately. Attempt a combined
+  `COCONUT_SLOTS` strategy only after both `COCONUT_FIXED` and at least one slot
+  variant independently pass their acceptance gates.
+- [ ] Keep semantic slot labels and durable cross-request neural state out of
+  the first implementation. Consider them only after stable slot utilization
+  and a measurable assistant-level benefit are reproduced.
+
 **Read-only interpretability first**
 
 - [ ] Generalize the NCSI/J-lens integration behind an
@@ -996,12 +1215,16 @@ Implementation order:
 3. Connect policy-approved Rich History episodes and local text/voice clients.
 4. Add one real local backend plus Direct and token-scratchpad comparison;
    external model APIs arrive through the separate Stage 6 hybrid module.
-5. Extend the neural sidecar with bounded latent recurrence and read-only
-   observers; add reproducible experiment manifests and evaluations.
-6. Benchmark optional Neo4j and AtomSpace memory adapters, the Hyperon/MeTTa
+5. Extend the neural sidecar with the versioned `rai.latent.v1` surface, a
+   Coconut-compatible fixed-step engine and read-only observers; add
+   reproducible experiment manifests and evaluations.
+6. Add the independent `rai.slots.v1` surface and evaluate `SLOT_TOKENS`, then
+   trained `FAM_FEEDBACK` and `SLOT_CROSS_ATTN`; do not combine them with
+   Coconut until their separate ablations pass.
+7. Benchmark optional Neo4j and AtomSpace memory adapters, the Hyperon/MeTTa
    reasoning sidecar and GraphRAG-style retrieval, then record the relevant
    ADRs.
-7. Remove the obsolete chat path, add opt-in proactive triggers and only after
+8. Remove the obsolete chat path, add opt-in proactive triggers and only after
    the observation gate consider GW-like coordination or approved capability
    proposals.
 
@@ -1019,26 +1242,31 @@ Acceptance slices:
 5. Correcting an older user statement supersedes it; the next context excludes
    the obsolete value, and deletion removes both source and derived retrieval
    entries.
-6. Direct, token-scratchpad and latent-recurrence runs consume the same recorded
-   `ContextPackage`; unsupported strategies fail explicitly and do not change
-   durable memory.
+6. Direct, token-scratchpad and `COCONUT_FIXED` runs consume the same recorded
+   `ContextPackage`; a Coconut-incompatible checkpoint or unsupported strategy
+   fails explicitly and does not change durable memory.
 7. With a fixed seed and deterministic backend, enabling a read-only observer
    leaves the delivered response unchanged and stores no raw hidden-state tensor
    by default.
-8. A cancelled or interrupted turn emits at most one terminal result, commits no
+8. A request-scoped slot run resets its state on completion or cancellation,
+   exports no raw vector and cannot affect the next request; its result is
+   compared with a token- and compute-matched no-slot control.
+9. A cancelled or interrupted turn emits at most one terminal result, commits no
    partial assistant claim as fact and cannot invoke a capability directly.
-9. The same memory/context conformance suite passes against the SQLite reference
+10. The same memory/context conformance suite passes against the SQLite reference
    adapter and at least one isolated candidate adapter before an alternative
    graph engine can become a supported profile.
-10. A contradicted or weakly supported claim retains its evidence and calibrated
+11. A contradicted or weakly supported claim retains its evidence and calibrated
     uncertainty state; neither retrieval score nor model confidence silently
     promotes it to fact.
 
 Required failure tests cover malformed output, model timeout, cancellation,
 out-of-memory, unavailable accelerator, low-confidence speech, denied screen
 capture, poisoned retrieved content, stale/superseded memory, observer failure,
-latent non-convergence, rejected executable graph rules, unavailable optional
-graph backends and attempted direct capability invocation.
+incompatible Coconut artifacts, latent timeout/non-convergence, rejected
+executable graph rules, unavailable optional graph backends, incompatible slot
+artifacts, stale slot versions, cross-request slot leakage, slot-update
+instability and attempted direct capability invocation.
 
 ### Stage 5 — Rich Actions: safe desktop and system control
 
