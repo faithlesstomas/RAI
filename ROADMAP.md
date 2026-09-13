@@ -37,13 +37,21 @@ product increments:
    by policy rather than arbitrary model-generated shell access.
 4. **Rich Local AI** — bounded local classification, extraction, summarization,
    grounding and routing that continue to work offline.
-5. **Rich Hybrid** — explicit, budgeted escalation to GAIA or external agent
-   harnesses using the minimum necessary context.
-6. **Rich Automation** — user-approved reusable workflows with fixed
+5. **Rich Assistant** — a continuous, local-first assistant with durable graph
+   memory and a bounded context reconstructed for every interaction rather than
+   inherited from a model-provider conversation.
+6. **Rich Hybrid AI** — policy-routed use of local models and external model
+   APIs with explicit context-egress, token, cost, latency and compute budgets.
+7. **Rich Agent Interop** — optional, separately packaged connections to
+   external cognitive runtimes and agent harnesses through bounded context and
+   capability contracts.
+8. **Rich Automation** — user-approved reusable workflows with fixed
    capabilities, privacy rules, resource budgets and audit trails.
 
-Each increment must remain useful when every external model provider is
-disabled.
+Rich History, Voice, Actions, Local AI and Assistant must remain useful when
+every external model provider and agent runtime is disabled. Rich Hybrid AI and
+Agent Interop are optional extensions; their absence or outage must not degrade
+local memory, policy, audit or previously accepted work.
 
 ## Product boundary
 
@@ -55,6 +63,8 @@ RAI owns:
 - capability discovery, invocation and result verification,
 - policy, authorization, sandboxing, human approval and audit,
 - context selection, redaction, data-egress control and privacy boundaries,
+- provider-neutral assistant sessions, graph-memory retrieval and bounded
+  context construction for local-first user interaction,
 - deterministic safety reflexes and routing between rules, bounded local
   processing and external cognitive backends,
 - local MCP/HTTP/Unix-socket interfaces and authenticated network transports for
@@ -63,19 +73,34 @@ RAI owns:
   and emergency stop.
 
 RAI does not own a universal reasoning loop, Global Workspace, Cognitive
-Control, goal verification or open-ended deliberation. An external cognitive
-runtime such as GAIA may own those semantics. RAI may perform bounded,
+Control, goal verification or open-ended deliberation. An optional external
+cognitive runtime may own those semantics. RAI may perform bounded,
 schema-constrained inference and deterministic local safety reactions, but it
 must not silently become an open-ended cognitive process controller.
 
+RAI may own a bounded assistant interaction loop: accept one user or approved
+proactive event, reconstruct one finite context from durable memory, invoke one
+replaceable reasoning strategy within a budget, validate its candidate outputs
+and commit only policy-approved records. This loop is not a GCAS Workspace and
+does not grant the model ownership of memory, tools, goals or execution.
+
+Hybrid model inference and external-agent interoperability are separate ports.
+An `AssistantModelBackend` performs one bounded model inference locally or
+through an external API. An optional `AgentBackend` delegates a bounded task to
+an external cognitive runtime or agent harness. Both receive explicit context,
+privacy and resource budgets and report usage to the common ledger, but agent
+session semantics do not leak into the assistant core.
+
 RAI owns its versioned embodiment, capability, policy and provenance contracts.
 Those contracts must support a useful standalone product and must not import or
-require GAIA. GCAS compatibility is an optional semantic mapping, not the source
-of RAI's runtime types. GAIA, Codex, Claude, Gemini, Antigravity and future
-harnesses remain replaceable `AgentBackend` implementations. J-lens is an
-optional neural-inspection sidecar, not a core dependency or release gate. A
-remote Android, VR or wearable client is a thin `DeviceAgent`, not necessarily
-a full RAI installation.
+require an external cognitive runtime. GCAS compatibility is an optional
+semantic mapping, not the source of RAI's runtime types. Local and external LLM
+providers remain replaceable `AssistantModelBackend` implementations. External
+cognitive runtimes and agent harnesses remain optional, separately packaged
+`AgentBackend` implementations; named integrations belong in adapters rather
+than the core. J-lens is an optional neural-inspection sidecar, not a core
+dependency or release gate. A remote Android, VR or wearable client is a thin
+`DeviceAgent`, not necessarily a full RAI installation.
 
 RAI must not depend on private ChatGPT Computer History, Chronicle or Skysight
 interfaces. Those systems are architectural references only. Linux collectors
@@ -218,6 +243,11 @@ model and provider. It supports per-task, daily and monthly quotas and refuses o
 asks before exceeding them. Unknown pricing or missing usage data cannot be
 treated as zero cost.
 
+This accounting applies uniformly to local processors, local or external
+`AssistantModelBackend` implementations and optional `AgentBackend` runtimes.
+Local execution may have zero provider price, but its tokens, wall time, energy
+when measurable, RAM/VRAM and accelerator occupancy are still budgeted usage.
+
 Cost controls follow this order:
 
 1. deterministic rule or typed operation — no inference,
@@ -244,15 +274,22 @@ Cost controls follow this order:
 9. Privacy filtering runs before persistence and before model routing.
 10. Models do not write durable state or execute operating-system actions
     directly.
-11. Every state-changing action has a risk decision, typed result and
+11. Provider conversation IDs, KV caches and hidden states are ephemeral
+    backend metadata, never the source of truth for assistant memory.
+12. Every assistant inference receives a finite, versioned context reconstructed
+    from policy-approved durable records; a raw transcript is not replayed by
+    default.
+13. Local models, external model APIs and agent harnesses use the same mandatory
+    inference-budget and usage-ledger boundary.
+14. Every state-changing action has a risk decision, typed result and
     postcondition verification.
-12. One cognitive process has one explicit controller; RAI never competes with
-    GAIA's Workspace or Control.
-13. Network delivery is replayable and idempotent; reconnects never silently
+15. One cognitive process has one explicit controller; an optional RAI research
+    controller and an external cognitive runtime cannot co-own the same process.
+16. Network delivery is replayable and idempotent; reconnects never silently
     lose or duplicate an accepted action.
-14. Pixel-based desktop control and arbitrary shell execution are fallback
+17. Pixel-based desktop control and arbitrary shell execution are fallback
     capabilities, not the default integration path.
-15. A stage is complete only when its acceptance tests and security failure
+18. A stage is complete only when its acceptance tests and security failure
     tests pass.
 
 ## Delivery sequence
@@ -784,6 +821,190 @@ RAI provides the optional neural runtime; GAIA retains Workspace, Control,
 epistemic and verification semantics. Detailed milestone status is tracked only
 in the [canonical cross-project integration plan](https://gitlab.com/tk-lab1/ai/gaia/-/blob/main/docs/ncsi-jlens-integration.md).
 
+#### 4.7 Rich Assistant: graph-memory conversation and reasoning laboratory
+
+Status: `[ ]` — the legacy provider-owned chat path exists, but it is not a
+supported compatibility surface and may be replaced incompatibly while RAI is
+pre-1.0.
+
+Purpose: provide a continuous, local-first desktop assistant whose durable
+memory and context policy belong to RAI while its LLM and reasoning strategy are
+replaceable. This is a bounded interaction runtime, not an implementation of
+GCAS, a Global Workspace or an autonomous goal loop.
+
+The core request path is:
+
+```text
+explicit user turn or policy-approved proactive trigger
+  -> privacy and interaction policy
+  -> graph-memory retrieval
+  -> finite ContextPackage plus ContextManifest
+  -> replaceable AssistantModelBackend and ReasoningStrategy
+  -> candidate response, memory proposals and capability proposals
+  -> validation and policy
+  -> one delivered response and separately committed durable records
+```
+
+**Assistant service and API replacement**
+
+- [ ] Introduce one container-owned `AssistantService` as the application
+  boundary for text, voice and future desktop clients. Do not implement a
+  second orchestration path per transport.
+- [ ] Replace `ChatService`, legacy agent chains and the Antigravity-owned chat
+  endpoint rather than preserving their behavior. CLI, REST or WebSocket chat
+  surfaces that remain may change schema and semantics before 1.0.
+- [ ] Treat an `AssistantSessionId` only as interaction and audit grouping. Each
+  model request starts from the explicit `ContextPackage`; provider conversation
+  IDs and implicit server-side history are forbidden as state.
+- [ ] Define streaming, cancellation, deadlines, interruption and exactly-once
+  terminal delivery independently of a model provider.
+
+**Durable graph memory and reconstructed context**
+
+- [ ] Define immutable assistant memory records and provenance edges for user
+  statements, preferences, conversation turns, assistant claims, observation
+  and episode references, summaries, corrections, contradictions and
+  supersession. Use RAI-native records; GCAS mappings remain optional adapters.
+- [ ] Keep the review/audit transcript logically separate from semantic memory.
+  Assistant output is an unverified claim and never becomes a fact merely
+  because it was generated or displayed.
+- [ ] Define a `MemoryGraphStore` protocol and a backend-independent schema
+  before selecting a graph engine. Storage-specific identifiers, queries and
+  executable rules must not leak into assistant-domain records.
+- [ ] Represent at least two logical timescales: a small, volatile working graph
+  for the active task and durable episodic/semantic graph memory. Promotion,
+  consolidation, expiry and eviction are explicit, auditable operations.
+- [ ] Implement a lightweight local reference adapter, initially as a SQLite
+  graph projection with stable node, hyperedge and provenance IDs, so tests and
+  the default desktop profile require no additional database service.
+- [ ] Benchmark an optional [Neo4j](https://neo4j.com/docs/operations-manual/current/introduction/)
+  adapter on traversal, temporal/provenance queries, deletion propagation,
+  startup, backup, memory footprint and local operational/security cost before
+  choosing it for a production profile.
+- [ ] Prototype an [OpenCog AtomSpace](https://github.com/opencog/atomspace)
+  memory adapter and a separate
+  [Hyperon/MeTTa](https://github.com/trueagi-io/hyperon-experimental)
+  reasoning sidecar. Evaluate typed hypergraph representation, rule/query
+  expression, changing truth values and short-/long-term space overlays. Neither
+  executable atoms nor MeTTa rules run inside the trusted RAI process or bypass
+  its validation and policy boundary.
+- [ ] Evaluate [GraphRAG-style retrieval](https://microsoft.github.io/graphrag/)
+  as a family of indexing and query strategies, not as the memory database
+  itself. Compare bounded neighborhood, temporal, vector, hybrid and
+  community-summary retrieval. Indexing is incremental, budgeted and local by
+  default; all model-generated entities, relations and summaries remain derived
+  claims with provenance.
+- [ ] Record the storage/retrieval choice in an ADR based on representative RAI
+  workloads. SQLite, Neo4j and AtomSpace are replaceable storage candidates;
+  Hyperon/MeTTa is a separate reasoning experiment. None is an automatic runtime
+  dependency.
+- [ ] Build every context from the current request, selected recent interaction
+  records, relevant graph memories and approved Rich History references. Apply
+  explicit token, character, item, privacy and latency budgets.
+- [ ] Persist a `ContextManifest` containing selected source IDs, exclusions,
+  redactions, ranking reasons, policy/model versions and actual size so a reply
+  can be reproduced and audited without retaining an opaque provider prompt.
+- [ ] Add deterministic consolidation, expiry, correction and deletion
+  propagation. A model may propose memory candidates but cannot commit, delete
+  or lower their privacy classification.
+
+**Replaceable models and reasoning strategies**
+
+- [ ] Define a provider-neutral `AssistantModelBackend` and separate
+  `ReasoningStrategy` contract. Report capabilities such as streaming, hidden
+  states, KV cache, latent recurrence, J-lens and deterministic seeding instead
+  of branching core code by provider name.
+- [ ] Implement comparable `DIRECT`, `TOKEN_SCRATCHPAD` and
+  `LATENT_RECURRENCE` strategies. Token scratchpads and latent state are
+  ephemeral research data and are not displayed or persisted by default.
+- [ ] Start latent recurrence with a fixed iteration count and hard compute/time
+  ceilings. Add convergence-, confidence- or learned-halting policies only
+  after fixed-step baselines and failure behavior are measured.
+- [ ] Return a typed unsupported-capability result when a backend cannot expose
+  hidden states or accept recurrent embeddings; do not silently emulate latent
+  recurrence with tokens.
+- [ ] Record a versioned run manifest with model, tokenizer, quantization,
+  strategy, iteration policy, random seed, budgets, context manifest and
+  observer artifacts.
+- [ ] Apply `InferenceBudget` and `UsageLedger` to every strategy and backend.
+  Count input/output tokens, latent iterations, retries, time and local compute;
+  external APIs additionally report or conservatively estimate monetary cost.
+
+**Read-only interpretability first**
+
+- [ ] Generalize the NCSI/J-lens integration behind an
+  `InterpretabilityObserver` with a no-op implementation and optional J-lens,
+  logit-lens, probe or sparse-autoencoder adapters.
+- [ ] Keep residual-stream tensors and latent slots inside the neural sidecar.
+  Persist only bounded observations or explicitly approved research artifacts.
+- [ ] Separate observation from intervention. Enabling a read-only observer must
+  not change context selection, sampling parameters, halting or capability
+  policy; steering requires a future, separately reviewed experiment contract.
+- [ ] Compare strategies on identical model checkpoints, contexts, seeds and
+  output/compute budgets. Measure answer quality, recall, contradiction
+  handling, false-memory adoption, context efficiency, latency, energy and
+  observer perturbation.
+
+**Post-observation research gate: GW-like coordination and uncertainty**
+
+- [ ] Use the read-only latent-recurrence, J-lens and slot experiments to test
+  whether stable broadcast-, competition-, ignition- or workspace-like dynamics
+  can be operationally identified. Do not assume in advance that they implement
+  Global Workspace Theory.
+- [ ] Compare an explicit GCAS Workspace mapping with alternative GWT-inspired
+  and non-workspace controllers using falsifiable tasks and the same memory,
+  model and compute budgets. Record negative results and ambiguous mappings.
+- [ ] Define bounded neural/slot observations that can be related to working-
+  graph nodes without treating a decoded label as the latent state's literal
+  meaning or automatically creating a durable belief.
+- [ ] Add an explicit uncertainty model for memories, retrieved claims and
+  proposed conclusions. Evaluate a Bayesian evidence-update baseline with
+  provenance, source reliability, temporal validity, contradiction and
+  calibration; a model's self-reported confidence is evidence, not probability
+  or authorization.
+- [ ] If intervention is justified, place the experimental workspace/controller
+  behind a separately startable protocol with no direct persistence or
+  capability access. It emits proposals and observations through the same
+  validation and policy path as every model.
+- [ ] Require an ADR after the observation-only experiments to decide whether a
+  useful GW-like process belongs in an optional RAI research module, an external
+  cognitive runtime or nowhere. It must not emerge implicitly inside
+  `AssistantService`.
+
+**Continuous local assistance without continuous LLM inference**
+
+- [ ] Feed the assistant from privacy-filtered Rich History observations and
+  deterministic episodes. Collection may be continuous and opt-in; LLM
+  inference is event-, schedule- or user-triggered and separately budgeted.
+- [ ] Perform routine consolidation locally. Preserve
+  `background_remote_tokens = 0` unless the user creates an explicit automation
+  with its own data and cost policy.
+- [ ] Require opt-in scopes, rate limits, quiet hours, deduplication and a visible
+  reason for every proactive interruption. Merely observing a salient event is
+  not permission to notify or act.
+- [ ] Allow the model to emit typed response, memory and capability proposals
+  only. All operating-system actions continue through `CapabilityService`,
+  policy, approval and postcondition verification.
+
+Implementation order:
+
+1. Freeze conformance fixtures for the desired memory/context behavior, then
+   introduce the new service, request/result records and one deterministic fake
+   backend.
+2. Add the graph-store protocol, SQLite reference adapter, retrieval, context
+   manifests and restart, correction, deletion and interruption tests.
+3. Connect policy-approved Rich History episodes and local text/voice clients.
+4. Add one real local backend plus Direct and token-scratchpad comparison;
+   external model APIs arrive through the separate Stage 6 hybrid module.
+5. Extend the neural sidecar with bounded latent recurrence and read-only
+   observers; add reproducible experiment manifests and evaluations.
+6. Benchmark optional Neo4j and AtomSpace memory adapters, the Hyperon/MeTTa
+   reasoning sidecar and GraphRAG-style retrieval, then record the relevant
+   ADRs.
+7. Remove the obsolete chat path, add opt-in proactive triggers and only after
+   the observation gate consider GW-like coordination or approved capability
+   proposals.
+
 Acceptance slices:
 
 1. A local processor converts an episode into validated structured output while
@@ -792,10 +1013,32 @@ Acceptance slices:
    answered locally through TTS without retaining raw audio.
 3. An accessibility-poor test application triggers one consented, cropped visual
    inference; its result is marked uncertain and the capture is removed.
+4. After a daemon restart, the assistant answers from selected graph memories
+   and source references while the model backend receives no implicit provider
+   conversation or full-transcript replay.
+5. Correcting an older user statement supersedes it; the next context excludes
+   the obsolete value, and deletion removes both source and derived retrieval
+   entries.
+6. Direct, token-scratchpad and latent-recurrence runs consume the same recorded
+   `ContextPackage`; unsupported strategies fail explicitly and do not change
+   durable memory.
+7. With a fixed seed and deterministic backend, enabling a read-only observer
+   leaves the delivered response unchanged and stores no raw hidden-state tensor
+   by default.
+8. A cancelled or interrupted turn emits at most one terminal result, commits no
+   partial assistant claim as fact and cannot invoke a capability directly.
+9. The same memory/context conformance suite passes against the SQLite reference
+   adapter and at least one isolated candidate adapter before an alternative
+   graph engine can become a supported profile.
+10. A contradicted or weakly supported claim retains its evidence and calibrated
+    uncertainty state; neither retrieval score nor model confidence silently
+    promotes it to fact.
 
 Required failure tests cover malformed output, model timeout, cancellation,
-out-of-memory, unavailable accelerator, low-confidence speech and denied screen
-capture.
+out-of-memory, unavailable accelerator, low-confidence speech, denied screen
+capture, poisoned retrieved content, stale/superseded memory, observer failure,
+latent non-convergence, rejected executable graph rules, unavailable optional
+graph backends and attempted direct capability invocation.
 
 ### Stage 5 — Rich Actions: safe desktop and system control
 
@@ -880,29 +1123,39 @@ Acceptance scenarios:
 Each scenario must pass through CLI and MCP using the same capability schema,
 policy decision, approval behavior and verified result.
 
-### Stage 6 — Rich Hybrid: external agents, ACP and budget control
+### Stage 6 — Rich Hybrid AI and optional agent interoperability
 
-Purpose: allow difficult reasoning and coding tasks to use GAIA or external
-agents without transferring ownership of memory, policy or the Linux desktop.
+Purpose: combine local inference with external model APIs and, independently,
+allow difficult delegated tasks to use optional external cognitive runtimes or
+agent harnesses without transferring ownership of memory, policy or the Linux
+desktop.
 
 Prerequisites: Stages 1, 3 and 5. A backend cannot be production-enabled until
 usage accounting, cancellation and data-egress auditing work.
 
-The integration flow is explicit and must preserve RAI's product boundary:
+Hybrid LLM inference and delegated agent execution are separate flows and
+modules. Both preserve RAI's product boundary:
 
 ```text
-durable event or explicit user task
+assistant turn
   -> deterministic trigger/router
   -> policy-filtered ContextPackage
-  -> replaceable AgentBackend
+  -> local or external AssistantModelBackend
+  -> validated response and memory/capability proposals
+
+bounded delegated task
+  -> policy-filtered ContextPackage
+  -> optional, separately packaged AgentBackend
   -> typed CapabilityRequest
   -> shared CapabilityService and PolicyEngine
   -> durable ActionResult or ActionFailure
 ```
 
 This coordination is not a universal reasoning loop inside RAI. The selected
-agent harness owns its reasoning and session semantics; RAI owns observation,
-context release, capability authority, verification and durable evidence.
+agent harness owns its internal reasoning. When it serves `AssistantService`,
+RAI still owns canonical assistant memory and interaction semantics; backend
+session metadata cannot replace them. RAI also owns observation, context
+release, capability authority, verification and durable evidence.
 
 #### 6.1 Context construction and egress
 
@@ -948,18 +1201,40 @@ on_budget_exceeded: cancel
 Token and currency amounts remain operator configuration because models and
 prices change independently of RAI releases.
 
-#### 6.3 AgentBackend conformance
+#### 6.3 External model API backends
+
+- [ ] Implement external LLM APIs through `AssistantModelBackend`, not
+  `AgentBackend`. A model backend performs one bounded inference and receives no
+  ambient tools, desktop access or ownership of assistant memory.
+- [ ] Send the same versioned `ContextPackage` and reasoning-strategy contract to
+  local and external models where capabilities permit. Unsupported latent or
+  observer features fail explicitly rather than changing strategy silently.
+- [ ] Disable provider-side conversation persistence when possible and never use
+  a remote conversation ID as context. Record provider retention expectations in
+  the outbound `ContextManifest`.
+- [ ] Reconcile reported prompt, cached, completion and reasoning tokens with
+  local estimates; treat absent or inconsistent usage as unknown and apply the
+  conservative budget policy.
+- [ ] Keep provider SDKs, credentials, retry rules and response normalization in
+  optional adapters. Removing one provider must not change memory or public
+  assistant-domain records.
+
+#### 6.4 AgentBackend conformance
 
 - [ ] Stabilize `AgentBackend` lifecycle, streaming, cancellation, usage,
   retryability, evidence and failure contracts.
-- [ ] Keep backend conversation/session IDs as adapter-owned metadata.
+- [ ] Package agent interoperability separately from assistant model backends;
+  installing an external LLM API adapter must not install ACP, agent tools or an
+  agent harness.
+- [ ] Keep backend conversation/session IDs as adapter-owned metadata and never
+  use them as the source of assistant memory or context.
 - [ ] Add GAIA as the reference cognitive-runtime integration.
 - [ ] Add one end-to-end external harness backend before multiplying providers.
 - [ ] Retain Antigravity only if it passes the common contracts without
   process-wide patching or private runtime coupling.
 - [ ] Make backend removal or outage preserve local history and capability state.
 
-#### 6.4 Optional GAIA embodiment adapter
+#### 6.5 Optional GAIA embodiment adapter
 
 - [ ] Implement GAIA strictly as an adapter over the public Stage 2 event and
   Stage 1 capability contracts; do not import GAIA implementation modules into
@@ -978,7 +1253,7 @@ prices change independently of RAI releases.
 The GAIA round-trip is an additional cross-project conformance test, not a
 prerequisite for the Stage 2 event plane, Rich History or local-only operation.
 
-#### 6.5 ACP and MCP roles
+#### 6.6 ACP and MCP roles
 
 - [x] Expose the base typed capability registry through authenticated local MCP;
   MCP calls use the shared validation, policy, approval and audit path.
@@ -994,7 +1269,7 @@ prerequisite for the Stage 2 event plane, Rich History or local-only operation.
 - [ ] Add conformance fixtures that prove an ACP agent cannot bypass RAI policy or
   obtain ambient desktop context.
 
-#### 6.6 Hybrid routing
+#### 6.7 Hybrid routing
 
 - [ ] Route deterministic tasks directly to capabilities without spending model
   tokens.
@@ -1007,14 +1282,21 @@ prerequisite for the Stage 2 event plane, Rich History or local-only operation.
 - [ ] Re-verify external claims and requested actions against local tools and
   observations before committing state.
 
-Acceptance slice:
+Acceptance slices:
 
 ```text
+assistant turn exceeds the selected local model envelope
+  -> minimal ContextPackage and outbound manifest are built
+  -> provider and token/cost budget policy is applied
+  -> one external AssistantModelBackend inference runs without tools
+  -> response proposals and exact or conservatively estimated usage return
+  -> assistant memory remains local and provider-independent
+
 user asks for a complex task
   -> local router marks it out of local scope
   -> ContextPackage and outbound manifest are built
   -> policy/budget decision and optional approval
-  -> GAIA or one external AgentBackend executes
+  -> one optional external AgentBackend executes
   -> agent uses only advertised RAI capabilities
   -> cancellation/usage/evidence are returned
   -> local postconditions verify the result
@@ -1202,8 +1484,10 @@ all distribution work until Stage 9.
 ```text
 Rich History works locally with zero remote tokens
 Rich Voice handles bounded requests without retaining raw audio
+Rich Assistant reconstructs bounded context from durable graph memory
 Rich Actions cannot bypass policy and verifies consequential results
-Rich Hybrid exposes every transfer and enforces cancellation and budgets
+Rich Hybrid AI exposes every model transfer and enforces token/cost budgets
+Rich Agent Interop remains optional and cannot bypass capability policy
 prompt injection cannot directly invoke capabilities or alter policy
 history deletion removes source and derived data according to policy
 external providers and local models are replaceable without losing runtime state
@@ -1259,34 +1543,54 @@ release-level regression tests.
    protected value.
 4. A later model request cannot retrieve what was never persisted.
 
-## Legacy chat retirement gates
+### Scenario F — durable assistant conversation
 
-Legacy removal is incremental and follows working replacement slices rather
-than a big-bang rewrite.
+1. The user states a project preference, ends the client and restarts RAI.
+2. A later question retrieves that preference from graph memory with provenance;
+   no model-provider conversation is resumed.
+3. The user corrects the preference and the prior record is marked superseded
+   rather than silently overwritten.
+4. Direct and latent-recurrence backends receive the same bounded context and
+   produce separate, reproducible run manifests.
+5. An optional J-lens observer records bounded neural observations without
+   changing the response or acquiring authority over memory and capabilities.
 
-1. The application container and typed registry become the only capability
-   invocation path.
-2. The Stage 2 provider-neutral Observation → CapabilityRequest → ActionResult
-   slice passes restart, replay and policy acceptance tests.
-3. CLI, REST and MCP use the same runtime services and policy decisions.
-4. Rich History stores normalized observations and episodes independently of
-   conversation history.
-5. `ChatService`, agent chains and provider-specific configuration move behind
-   an explicitly named compatibility package and stop defining durable state.
-6. Antigravity becomes an optional `AgentBackend`, disabled in the default
-   installation.
-7. Legacy chain endpoints receive a documented deprecation and migration path.
-8. Compatibility code that does not pass the common backend and security
-   contracts is removed before 1.0.
+## Legacy chat replacement and removal gates
+
+No supported consumer currently depends on the legacy chat endpoint. RAI is
+pre-1.0, so the replacement may intentionally break its CLI, REST, WebSocket,
+configuration and persistence semantics. Do not build a compatibility facade or
+migration layer without a concrete consumer requirement.
+
+1. Freeze tests for the new `AssistantService`, graph-memory and reconstructed-
+   context semantics before deleting the old implementation.
+2. Make the application container and typed registry the only capability path;
+   assistant model output remains a proposal rather than an invocation.
+3. Replace legacy chat handlers with the new service or remove unused transports
+   outright. Update OpenAPI, CLI help, configuration and tests in the same
+   breaking change.
+4. Remove provider-owned conversation resume, legacy agent chains and the simple
+   transcript store once their replacement acceptance slice passes restart and
+   cancellation tests.
+5. Retain Antigravity only if a current research or product need justifies a
+   conforming backend that accepts explicit `ContextPackage` values and cannot
+   invoke tools outside `CapabilityService`; otherwise remove it.
+6. Keep audit transcripts, Rich History and semantic graph memory as distinct
+   stores with explicit retention and deletion behavior.
+7. Document development-database reset or one narrow migration only when needed
+   for current test data; there is no general pre-1.0 compatibility promise.
+8. Remove all obsolete compatibility code before treating Rich Assistant as a
+   completed product outcome.
 
 ## Technical debt carried beyond Stage 1
 
 - `cli_compatibility.py` and `config_manager.py` remain oversized compatibility
   modules and still mix some I/O and UI concerns.
-- Antigravity compatibility still owns the legacy chat execution path, although
-  it is isolated behind the provider-neutral `AgentBackend` contract.
-- Conversation history still has more implementation weight than normalized
-  observation and action-result state.
+- Antigravity compatibility still owns the legacy chat execution path and is
+  scheduled for incompatible replacement by `AssistantService`, not long-term
+  preservation behind another facade.
+- Conversation history is still a flat transcript and has more implementation
+  weight than normalized observation, graph memory and action-result state.
 - The processor supervisor and bounded-task contracts are container-owned and
   tested, but no daemon API or registered capability dispatches work to them and
   neither production adapter has a repeatable live-model acceptance test.
