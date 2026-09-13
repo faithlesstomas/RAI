@@ -61,6 +61,8 @@ class ProcessorHealth:
     available_backends: tuple[str, ...] = ()
     required_ram_bytes: Optional[int] = None
     required_vram_bytes: Optional[int] = None
+    cache_hits: int = 0
+    cache_misses: int = 0
 
 
 @runtime_checkable

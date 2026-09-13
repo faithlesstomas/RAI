@@ -8,6 +8,17 @@ from .protocols import (
     ModelMetadata,
     ProcessorHealth,
 )
+from .cache import (
+    CACHE_KEY_VERSION,
+    BoundedResultCache,
+    BoundedResultCacheKey,
+    CacheLookup,
+    CacheLookupMetadata,
+    CacheLookupStatus,
+    CacheMissReason,
+    CachedBoundedResult,
+    SQLiteBoundedResultCache,
+)
 from .engines.llama import AsyncLlamaEngine, LlamaCppEngine
 from .factory import get_available_backends, is_backend_available, load_local_model
 from .supervisor import ProcessorSupervisor
@@ -44,6 +55,15 @@ __all__ = [
     "ModelMetadata",
     "ProcessorHealth",
     "ProcessorSupervisor",
+    "CACHE_KEY_VERSION",
+    "BoundedResultCache",
+    "BoundedResultCacheKey",
+    "CacheLookup",
+    "CacheLookupMetadata",
+    "CacheLookupStatus",
+    "CacheMissReason",
+    "CachedBoundedResult",
+    "SQLiteBoundedResultCache",
     "BOUNDED_TASK_CONTRACTS",
     "BoundedTaskContract",
     "BoundedTaskFailurePolicy",

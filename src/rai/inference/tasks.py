@@ -306,6 +306,11 @@ class BoundedTaskContract:
 
     _PROMPT_VERSION: ClassVar[str] = "1.0.0"
 
+    @property
+    def prompt_version(self) -> str:
+        """Return the version bound into prompts and inference cache keys."""
+        return self._PROMPT_VERSION
+
     def build_prompt(
         self,
         objective: str,

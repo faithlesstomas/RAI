@@ -71,16 +71,17 @@ guard pipeline:
 6. capacity acquisition, provider/resource checks and lazy model loading;
 7. bounded generation, output validation and provenance-bearing `Claim` creation.
 
-This ordering defines the safe integration points for result caching. A future
-cache lookup may happen only after steps 1–5, so a hit cannot bypass current
-budget, privacy, contract or classification checks. Cache keys must also bind
-the policy, model/artifact and contract versions plus retained source identity.
-A cached validated payload must be rebound to the current context provenance
-and classification before returning a `Claim`. A cache store may happen only
-after step 7 has produced a successfully validated `Claim`; raw model output
-and validation failures are never cacheable. Capacity belongs only to the
-engine-execution path and is released exactly once, or deferred until an
-uninterruptible backend operation has drained after cancellation or timeout.
+The persistent bounded-result cache uses the safe integration points in this
+ordering. Lookup happens only after steps 1–5, so a hit cannot bypass current
+budget, privacy, contract or classification checks. Keys bind policy,
+model/artifact, contract and prompt versions plus the retained classification,
+source identity, provider allow-list and output-token ceiling. A cached payload
+is schema-validated again and rebound to the current context provenance before
+returning a `Claim`. Store happens only after step 7 has produced a successfully
+validated claim; raw output, failures, cancellation and deadline results are
+never cacheable. Capacity belongs only to the engine-execution path and is
+released exactly once, or deferred until an uninterruptible backend operation
+has drained after cancellation or timeout.
 
 ---
 
@@ -178,6 +179,7 @@ if isinstance(result, Success):
     print("Synthesized claim:", claim.statement, claim.data_class)
 ```
 
-Supervisor teardown and model unloads are coordinated automatically during `container.close()`.
+Supervisor teardown, cache closure and model unloads are coordinated
+automatically during `container.close()`.
 Container ownership currently provides composition and teardown only. No daemon
 route or registered capability dispatches production work to the supervisor yet.
