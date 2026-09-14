@@ -76,7 +76,7 @@ class DeterministicAssistantBackend:
         return None
 
     def _resolve_preferences(
-        self, user_text: str, turn_id: str, durable_memories: list[object]
+        self, user_text: str, turn_id: str, durable_memories: tuple[object, ...] | list[object]
     ) -> tuple[str, list[MemoryProposal]]:
         lowered = user_text.lower()
         proposals: list[MemoryProposal] = []
@@ -157,7 +157,7 @@ class DeterministicAssistantBackend:
         current_turn = request.context.content.get("current_turn", {})
         user_text = str(current_turn.get("text", "")) if isinstance(current_turn, dict) else ""
         durable_memories = request.context.content.get("durable_memories", [])
-        if not isinstance(durable_memories, list):
+        if not isinstance(durable_memories, (list, tuple)):
             durable_memories = []
 
         response_text, proposals = self._resolve_preferences(

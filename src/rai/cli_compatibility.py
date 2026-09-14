@@ -1513,9 +1513,10 @@ def neural_fit_lens(  # noqa: PLR0913
     )
 
 
-from .cli_commands import register_kernel_commands  # noqa: E402
+from .cli_commands import register_assistant_commands, register_kernel_commands  # noqa: E402
 
 register_kernel_commands(cli)
+register_assistant_commands(cli)
 
 
 if __name__ == "__main__":

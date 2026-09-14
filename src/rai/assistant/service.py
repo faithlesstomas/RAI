@@ -2,10 +2,11 @@
 
 from __future__ import annotations
 
+import asyncio
 from collections.abc import Callable
 from datetime import timedelta
 import time
-from typing import Any
+from typing import Any, AsyncIterator
 
 from returns.result import Failure, Result, Success
 
@@ -382,3 +383,31 @@ class AssistantService:
 
     async def delete_turn(self, turn_id: str) -> Result[int, ActionFailure]:
         return await self.store.delete_turn(turn_id)
+
+    async def accept_turn_stream(
+        self,
+        turn: ConversationTurn,
+        cancellation: CancellationToken | None = None,
+        request_id: str | None = None,
+    ) -> AsyncIterator[Result[str, ActionFailure]]:
+        """Yield chunks as streaming transport events."""
+        queue: asyncio.Queue[Result[str, ActionFailure] | None] = asyncio.Queue()
+
+        def _on_chunk(chunk: str) -> None:
+            queue.put_nowait(Success(chunk))
+
+        async def _run() -> None:
+            res = await self.stream_turn(turn, _on_chunk, cancellation, request_id)
+            if isinstance(res, Failure):
+                queue.put_nowait(Failure(res.failure()))
+            queue.put_nowait(None)
+
+        task = asyncio.create_task(_run())
+        try:
+            while True:
+                item = await queue.get()
+                if item is None:
+                    break
+                yield item
+        finally:
+            await task

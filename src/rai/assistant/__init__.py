@@ -7,6 +7,7 @@ from .audit import (
     JsonlAssistantAuditLedger,
 )
 from .backends.deterministic import DeterministicAssistantBackend
+from .backends.local import LocalAssistantBackend
 from .context import AssistantContextBuilder
 from .ports import AssistantModelBackend, MemoryGraphStore, MemoryQuery
 from .query import MemoryQueryResolver
@@ -47,6 +48,7 @@ __all__ = [
     "InMemoryAssistantAuditLedger",
     "InferenceRequest",
     "JsonlAssistantAuditLedger",
+    "LocalAssistantBackend",
     "MemoryGraphStore",
     "MemoryProposal",
     "MemoryQuery",
