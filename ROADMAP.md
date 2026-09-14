@@ -852,42 +852,42 @@ explicit ConversationTurn or policy-approved proactive trigger
 
 **Assistant service and API replacement**
 
-- [ ] Introduce one container-owned `AssistantService` as the application
+- [x] Introduce one container-owned `AssistantService` as the application
   boundary for text, voice and future desktop clients. Do not implement a
   second orchestration path per transport.
-- [ ] Define distinct immutable contracts for `ConversationTurn`, terminal
+- [x] Define distinct immutable contracts for `ConversationTurn`, terminal
   `AssistantResponse` and the bounded `InferenceRequest` sent to a model
   backend. A normal conversational turn is not a `Task` merely because it
   requires inference.
-- [ ] Reserve `Task` for an explicit, trackable user goal or delegated unit of
+- [x] Reserve `Task` for an explicit, trackable user goal or delegated unit of
   work. Conversation may lead to a proposed task, but neither a model response
   nor intent classification may silently create or authorize one.
-- [ ] Replace `ChatService`, legacy agent chains and the Antigravity-owned chat
+- [x] Replace `ChatService`, legacy agent chains and the Antigravity-owned chat
   endpoint rather than preserving their behavior. CLI, REST or WebSocket chat
   surfaces that remain may change schema and semantics before 1.0.
-- [ ] Treat an `AssistantSessionId` only as interaction and audit grouping. Each
+- [x] Treat an `AssistantSessionId` only as interaction and audit grouping. Each
   model request starts from the explicit `ContextPackage`; provider conversation
   IDs and implicit server-side history are forbidden as state.
-- [ ] Define streaming, cancellation, deadlines, interruption and exactly-once
+- [x] Define streaming, cancellation, deadlines, interruption and exactly-once
   terminal delivery independently of a model provider.
 
 **Durable graph memory and reconstructed context**
 
-- [ ] Define immutable assistant memory records and provenance edges for user
+- [x] Define immutable assistant memory records and provenance edges for user
   statements, preferences, conversation turns, assistant claims, observation
   and episode references, summaries, corrections, contradictions and
   supersession. Use RAI-native records; GCAS mappings remain optional adapters.
-- [ ] Keep the review/audit transcript logically separate from semantic memory.
+- [x] Keep the review/audit transcript logically separate from semantic memory.
   Assistant output is an unverified claim and never becomes a fact merely
   because it was generated or displayed.
-- [ ] Define a `MemoryGraphStore` protocol and a backend-independent schema
+- [x] Define a `MemoryGraphStore` protocol and a backend-independent schema
   before selecting a graph engine. Storage-specific identifiers, queries and
   executable rules must not leak into assistant-domain records.
-- [ ] Represent at least two logical timescales: a small, volatile working graph
+- [x] Represent at least two logical timescales: a small, volatile working graph
   for the active interaction or explicit task and durable episodic/semantic
   graph memory. Promotion, consolidation, expiry and eviction are explicit,
   auditable operations.
-- [ ] Implement a lightweight local reference adapter, initially as a SQLite
+- [x] Implement a lightweight local reference adapter, initially as a SQLite
   graph projection with stable node, hyperedge and provenance IDs, so tests and
   the default desktop profile require no additional database service.
 - [ ] Benchmark an optional [Neo4j](https://neo4j.com/docs/operations-manual/current/introduction/)
@@ -911,19 +911,19 @@ explicit ConversationTurn or policy-approved proactive trigger
   workloads. SQLite, Neo4j and AtomSpace are replaceable storage candidates;
   Hyperon/MeTTa is a separate reasoning experiment. None is an automatic runtime
   dependency.
-- [ ] Build every context from the current request, selected recent interaction
+- [x] Build every context from the current request, selected recent interaction
   records, relevant graph memories and approved Rich History references. Apply
   explicit token, character, item, privacy and latency budgets.
-- [ ] Persist a `ContextManifest` containing selected source IDs, exclusions,
+- [x] Persist a `ContextManifest` containing selected source IDs, exclusions,
   redactions, ranking reasons, policy/model versions and actual size so a reply
   can be reproduced and audited without retaining an opaque provider prompt.
-- [ ] Add deterministic consolidation, expiry, correction and deletion
+- [x] Add deterministic consolidation, expiry, correction and deletion
   propagation. A model may propose memory candidates but cannot commit, delete
   or lower their privacy classification.
 
 **Replaceable models and reasoning strategies**
 
-- [ ] Define a provider-neutral `AssistantModelBackend` and separate
+- [x] Define a provider-neutral `AssistantModelBackend` and separate
   `ReasoningStrategy` contract. Report capabilities such as streaming, hidden
   states, KV cache, latent recurrence, J-lens and deterministic seeding instead
   of branching core code by provider name.

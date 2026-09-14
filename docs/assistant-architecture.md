@@ -1,11 +1,13 @@
-# Planned Rich Assistant architecture
-
+# Rich Assistant architecture
+ 
 ## Status and scope
-
-Rich Assistant is planned Stage 4.7 work. The current tree still exposes a
-provider-owned `ChatService` compatibility facade and a flat SQLite conversation
-history; neither defines the target API or memory semantics. This document
-freezes the boundary for the first replacement slice before implementation.
+ 
+Rich Assistant delivers Stage 4.7 work (Issue #34). The first graph-memory
+vertical slice is implemented in `rai.assistant`, providing transactional SQLite
+graph storage (`SQLiteMemoryGraphStore`), two-phase interaction execution
+(`AssistantService`), inspectable context packages with `ContextManifest`,
+and direct local model inference (`LocalAssistantBackend`). The 8-step user-visible
+acceptance scenario passes deterministically offline.
 
 The assistant is a continuous, local-first interaction surface with explicit,
 reconstructed context. It may conduct ordinary conversation, answer from RAI
