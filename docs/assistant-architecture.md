@@ -21,6 +21,8 @@ The assistant uses separate records for interaction, model execution and work:
 | `ConversationTurn` | Immutable user or assistant utterance with session grouping, reply linkage, privacy class and provenance. |
 | `AssistantResponse` | Exactly one terminal outcome for an accepted user turn, linked to the context and inference run that produced it. |
 | `InferenceRequest` | Ephemeral or audit-retained envelope for one bounded backend invocation. |
+| `MemoryProposal` | Untrusted candidate for retention, including its source, proposed kind, relations and privacy class. |
+| `MemoryRecord` | Immutable, policy-admitted durable memory with provenance, validity and correction state. |
 | `Task` | Explicit, trackable user goal or delegated unit of work. |
 | `Claim` | Derived proposition that remains unverified until admitted or assessed by an owning policy/runtime. |
 | `CapabilityRequest` | Proposed system action that must pass the common policy and verification path. |
@@ -39,7 +41,8 @@ For every accepted turn, `AssistantService` performs one bounded pipeline:
 accept ConversationTurn
   → validate session, size, data class and cancellation state
   → persist the accepted turn
-  → retrieve a bounded set of allowed graph records
+  → select a bounded recent conversation window
+  → retrieve relevant allowed records from durable graph memory
   → build ContextPackage and ContextManifest
   → invoke one AssistantModelBackend through an InferenceRequest
   → validate the candidate response and proposals
@@ -56,40 +59,117 @@ failure and never commits a generated assistant turn as successful.
 `AssistantSessionId` groups interactions and audit records; it is not model
 state. Each inference starts from the explicit context package. Provider-side
 conversation IDs and hidden history cannot be resumed as canonical state.
+Durable assistant memory is scoped to the configured local profile rather than
+to one conversation session. Cross-session retrieval still passes the current
+client, privacy and data-class policy before a record can enter context.
 
 The durable graph will distinguish interaction records from semantic memory.
-Initial turn nodes use stable RAI IDs and `REPLIES_TO` edges. Later slices may
-admit preferences, claims, summaries, corrections and relations such as
-`DERIVED_FROM`, `SUPPORTS`, `CONTRADICTS`, `ABOUT` and `SUPERSEDES`. Model output
-is only a proposal: deterministic policy owns admission, correction, expiry and
-deletion propagation.
+Turn nodes use stable RAI IDs and `REPLIES_TO` edges. The first product slice
+also admits a minimal, separately represented class of explicit user statements
+and preferences. Later slices may add claims, summaries and richer relations
+such as `DERIVED_FROM`, `SUPPORTS`, `CONTRADICTS`, `ABOUT` and `SUPERSEDES`.
+Model output is only a proposal: deterministic policy owns admission,
+correction, expiry and deletion propagation.
+
+An admitted user preference records that the user stated or selected the
+preference; it is not a verified proposition about the external world. The
+memory record retains its source-turn ID and remains distinct from the source
+turn, so retention, correction and deletion can be applied independently and
+audited through provenance edges.
 
 Latent recurrence vectors, writable slots, KV caches, token scratchpads and raw
 activations never become durable truth. They remain inside their backend or
 sidecar and are represented externally only by bounded run metadata and approved
 observer artifacts.
 
-## First vertical slice
+## Context composition
 
-The first implementation should deliver one narrow behavior end to end:
+Every inference receives one finite context assembled from independently
+selected layers:
+
+```text
+policy and assistant instructions
+  + current ConversationTurn
+  + bounded recent conversation window
+  + bounded relevant durable graph memories
+  + optional policy-approved Rich History references
+```
+
+The recent window and graph-memory retrieval are not interchangeable. The
+window preserves local conversational coherence by following the active reply
+chain and selecting recent turns. Durable retrieval selects current memories by
+query relevance, graph relations, provenance, temporal validity, privacy and
+supersession state, including memories created in another session. Each layer
+has explicit item, character or token, privacy and latency budgets; the current
+turn is retained before older context consumes the remaining size budget.
+
+`ContextManifest` records recent-turn IDs and durable-memory IDs separately. It
+also records exclusions, redactions, ranking reasons, policy and retrieval
+versions and actual sizes. A test must therefore be able to prove that a reply
+used graph memory rather than a hidden provider transcript or an oversized
+conversation replay.
+
+## First graph-memory vertical slice
+
+The first implementation should deliver one narrow memory-backed behavior end
+to end. A turn-only chat is useful scaffolding but does not satisfy this slice:
 
 1. Define versioned fixtures for `ConversationTurn`, `InferenceRequest` and
-   `AssistantResponse` without changing the meaning of kernel `Task`.
+   `AssistantResponse`, plus the minimal durable memory and provenance records,
+   without changing the meaning of kernel `Task`.
 2. Add a container-owned `AssistantService` and deterministic fake
-   `AssistantModelBackend`.
+   `AssistantModelBackend` that can return a response and bounded memory
+   proposals for conformance tests.
 3. Store user and assistant turn nodes plus `REPLIES_TO` edges in a minimal
-   SQLite implementation of a backend-neutral graph-store protocol.
-4. Reconstruct an explicit, size- and privacy-bounded context after daemon
-   restart and retain its `ContextManifest`.
-5. Prove that a normal chat exchange creates no `Task`, no `Claim` admitted as
-   fact and no `CapabilityRequest`.
-6. Cover duplicate delivery, cancellation, timeout, invalid backend output,
-   deletion and provider-state leakage with deterministic tests.
+   SQLite implementation of a backend-neutral graph-store protocol. Store an
+   admitted preference as a separate node linked to its source turn with
+   provenance, and represent a correction with `SUPERSEDES`.
+4. For every request, select the recent reply-chain window and relevant current
+   graph memories independently, then assemble one size- and privacy-bounded
+   `ContextPackage` and retain its `ContextManifest`.
+5. Reconstruct that context after daemon restart and across a new assistant
+   session without provider conversation state or full-transcript replay.
+6. Prove that ordinary conversation creates no `Task`, admits no assistant
+   output as fact and creates no `CapabilityRequest`.
+7. Cover duplicate delivery, cancellation, timeout, invalid backend output,
+   poisoned or superseded retrieval, source deletion and provider-state leakage
+   with deterministic tests.
 
-This slice intentionally excludes proactive triggers, tool use, semantic-memory
-promotion, vector retrieval, external model APIs, Coconut recurrence and
-writable slots. Those features build on the same service and graph boundaries
-after the direct conversational path is reliable.
+This slice intentionally excludes proactive triggers, tool use, general
+conversation summarization, vector retrieval, external model APIs, Coconut
+recurrence and writable slots. It includes only enough governed semantic-memory
+admission and retrieval to demonstrate that durable graph memory materially
+changes a later answer.
+
+## First user test: remembered preference
+
+The first user-visible test runs against an isolated local profile and one
+approved local `AssistantModelBackend`. A deterministic backend runs the same
+scenario first as the CI conformance floor; a live-model pass is recorded as
+separate product evidence.
+
+1. In session A, the user says: "Zapamiętaj, że w przykładach kodu preferuję
+   Guile zamiast Pythona." The response may acknowledge the preference, but
+   success is determined by the graph: a preference memory is admitted
+   separately from the turn and linked to it by provenance.
+2. End the client and restart the RAI daemon. Start session B so its recent
+   conversation window does not contain the original statement.
+3. Ask: "W jakim języku powinieneś pokazywać mi przykłady kodu?" The response
+   must select Guile. Its `ContextManifest` must list the preference under
+   durable graph memories and list no original statement under recent turns.
+   The inference trace must independently confirm empty provider-owned history.
+4. Correct the preference: "Zmień tę preferencję: używaj Pythona w przykładach
+   kodu." The new memory must `SUPERSEDES` the Guile preference while the old
+   record remains auditable and ineligible for current retrieval.
+5. Restart again and repeat the question. The answer and manifest must use only
+   the current Python preference. Deleting the correction's source must exercise
+   the declared deletion policy, remove or invalidate its derived retrieval
+   entry and never silently reactivate the superseded Guile preference.
+
+The harness also asserts bounded context size, source and ranking metadata,
+exactly one terminal response per accepted turn, no `Task` or capability
+invocation and no factual promotion of assistant prose. Passing only the recall
+answer is insufficient: the stored graph and manifest are acceptance evidence.
 
 ## Relationship to existing components
 
@@ -103,3 +183,10 @@ All proposed actions continue through `CapabilityService`. Rich History remains
 an independent, privacy-filtered evidence source. GAIA or another cognitive
 runtime may later implement `AgentBackend` for delegated tasks, but it does not
 own RAI assistant sessions or durable graph memory.
+
+GAIA's implemented conversational memory is a behavioral reference for the
+split between recent dialogue and relevant structured memory, restart recall,
+epistemically neutral retrieval, invalidation and supersession. RAI should reuse
+those acceptance ideas, not import GAIA's `Goal`, Global Workspace or Cognitive
+Object lifecycle into ordinary conversation. A future GCAS adapter maps RAI
+records at the boundary while RAI retains memory, privacy and context ownership.

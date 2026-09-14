@@ -261,10 +261,14 @@ development, research and maintenance:
 
 ## Project status and contribution
 
-RAI is experimental pre-1.0 software. The next product proof is a provider-neutral
-conversation slice: immutable user turn → explicit bounded context → replaceable
-model backend → terminal response → durable SQLite graph records with provenance.
-An ordinary conversation must not create a tracked `Task` or invoke a capability.
+RAI is experimental pre-1.0 software. The next product proof is a
+provider-neutral, memory-backed conversation slice: immutable user turn →
+bounded recent conversation window plus relevant durable graph memories →
+explicit `ContextPackage` and `ContextManifest` → replaceable model backend →
+terminal response and provenance-linked SQLite graph records. The first user
+test must recall and then supersede a preference across daemon restarts without
+provider-owned history. An ordinary conversation must not create a tracked
+`Task` or invoke a capability.
 
 See [CONTRIBUTING.md](CONTRIBUTING.md) before opening a GitLab issue or merge
 request. The project is licensed under the [Apache-2.0 License](LICENSE).

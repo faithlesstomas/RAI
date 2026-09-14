@@ -1217,21 +1217,27 @@ Training is an explicit experimental stage, not an inference side effect:
 Implementation order:
 
 1. Freeze conformance fixtures for `ConversationTurn`, `AssistantResponse` and
-   `InferenceRequest`, then deliver one vertical slice with `AssistantService`,
-   a deterministic fake backend and a minimal SQLite graph store. Store turn
-   nodes and `REPLIES_TO` edges, reconstruct an explicit context after restart,
-   prove that ordinary chat creates no `Task` and never resume provider-owned
-   conversation state.
-2. Connect policy-approved Rich History episodes and local text/voice clients.
-3. Add one real local backend plus Direct and token-scratchpad comparison;
+   `InferenceRequest` and minimal durable memory records. Implement
+   `AssistantService`, a deterministic fake backend and a SQLite graph store.
+   Store turn nodes and `REPLIES_TO` edges, admit an explicit user preference as
+   a separate provenance-linked memory, and reconstruct every context from both
+   a bounded recent reply-chain window and relevant current graph memories.
+2. Complete the first user-visible memory test with one real local backend:
+   remember a preference, restart into a session whose recent window excludes
+   the source turn, retrieve the preference through graph memory, supersede it
+   after a correction and prove the new value survives another restart. Retain
+   a `ContextManifest` that distinguishes recent-turn and durable-memory inputs;
+   do not call a turn-only chat an assistant MVP.
+3. Connect policy-approved Rich History episodes and local text/voice clients.
+4. Add Direct and token-scratchpad comparison;
    external model APIs arrive through the separate Stage 6 hybrid module.
-4. Extend the neural sidecar with the versioned `rai.latent.v1` surface, a
+5. Extend the neural sidecar with the versioned `rai.latent.v1` surface, a
    Coconut-compatible fixed-step engine and read-only observers; add
    reproducible experiment manifests and evaluations.
-5. Add the independent `rai.slots.v1` surface and evaluate `SLOT_TOKENS`, then
+6. Add the independent `rai.slots.v1` surface and evaluate `SLOT_TOKENS`, then
    trained `FAM_FEEDBACK` and `SLOT_CROSS_ATTN`; do not combine them with
    Coconut until their separate ablations pass.
-6. Benchmark optional Neo4j and AtomSpace memory adapters, the Hyperon/MeTTa
+7. Benchmark optional Neo4j and AtomSpace memory adapters, the Hyperon/MeTTa
    reasoning sidecar and GraphRAG-style retrieval, then record the relevant
    ADRs.
 8. Remove the obsolete chat path, add opt-in proactive triggers and only after
