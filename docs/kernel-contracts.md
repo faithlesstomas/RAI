@@ -41,3 +41,27 @@ The mapping is semantic and does not import GAIA implementation modules:
 Adapters may translate these JSON records into GCAS wire objects. They must not
 expose private backend SDK fields or move cognitive-control semantics into the
 RAI kernel.
+
+## Task and conversation boundary
+
+The current version 1 kernel schema contains `Task` because local processors and
+external agent backends need a bounded objective and a stable request identity.
+It is not a chat-message type and does not imply planning, autonomy or tool
+authority. In the transitional implementation, `LocalProcessor.process()` also
+uses it as the execution envelope for one inference operation.
+
+The planned assistant API separates those meanings:
+
+| Planned record | Meaning | Persistence rule |
+|---|---|---|
+| `ConversationTurn` | Something a user or assistant said in an interaction. | An immutable interaction record; it is not automatically semantic memory. |
+| `InferenceRequest` | One bounded request to a replaceable model backend. | Audit metadata may be retained; provider conversation state is never canonical memory. |
+| `AssistantResponse` | The terminal response for one accepted turn. | Linked to its turn, context manifest and backend/run metadata. |
+| `Task` | An explicit, trackable goal or delegated unit of work. | Created only through explicit interaction semantics and never inferred as authorization. |
+
+Therefore a greeting, question, correction or conversational follow-up does not
+become a `Task` merely because the assistant invokes a model to answer it. A
+conversation may result in a proposed task, claim or capability request, but
+each follows its own validation and policy boundary. These assistant records are
+roadmap contracts and are not part of `rai.kernel.v1` until their schemas and
+conformance fixtures land.

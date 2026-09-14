@@ -20,10 +20,13 @@ The project is in an architectural transition. The daemon, CLI, MCP gateway,
 desktop adapters, history store, sandbox and HITL foundations exist today.
 Provider-neutral kernel records, runtime ports, capability policy and audit
 contracts are implemented. Perception collection and deterministic episode
-building are implemented by the
-opt-in Rich History slice; local-model and hybrid routing remain roadmap work.
-GAIA, GCAS compatibility, Google Antigravity and J-lens are optional
-integrations or research paths; none is required by the core product.
+building are implemented by the opt-in Rich History slice. A lifecycle-managed
+local processor, six schema-constrained task contracts and a policy-aware result
+cache are also implemented, although live-model acceptance and runtime routing
+remain open. The RAI-native assistant, graph memory and hybrid routing are
+roadmap work. GAIA, GCAS compatibility, Google Antigravity, Coconut-style latent
+inference, writable slots and J-lens are optional integrations or research
+paths; none is required by the core product.
 
 The repository and import namespace remain `rai`. The Python distribution is
 published on PyPI as `rich-ai`, so installation and imports intentionally
@@ -50,13 +53,19 @@ use different names: `pip install rich-ai`, then `import rai` or run `rai`.
 ## Target architecture
 
 ```text
- CLI · GNOME · Emacs · optional agent backends
+ CLI · Voice · GNOME · Emacs · future desktop clients
                          │
               MCP / HTTP / Unix socket
                          │
 ┌────────────────────────▼─────────────────────────┐
 │                 RAI Local Runtime                │
 │                                                 │
+│ AssistantService (planned)                      │
+│ ConversationTurn ─ Context Builder ─ Graph Mem. │
+│          │               │                      │
+│          │       AssistantModelBackend          │
+│          │        local · external API          │
+│          │                                      │
 │ Capability Registry ─ Policy ─ HITL ─ Audit     │
 │          │                                      │
 │          ├── desktop / shell / files / process  │
@@ -69,7 +78,7 @@ use different names: `pip install rich-ai`, then `import rai` or run `rai`.
 │              Task & Escalation Router           │
 └────────────────────────┬─────────────────────────┘
                          │ AgentBackend
-               local · GAIA · external harnesses
+                 GAIA · external harnesses
 ```
 
 See [docs/architecture.md](docs/architecture.md) for component boundaries and
@@ -93,12 +102,16 @@ See [docs/architecture.md](docs/architecture.md) for component boundaries and
   pre-persistence privacy filtering, encrypted episodes, provenance queries and
   verified deletion.
 - experimental Antigravity chat compatibility.
-- experimental local inference protocols and llama.cpp implementation.
+- container-owned local processor supervision, six bounded task contracts and a
+  persistent policy-aware cache; Ollama and llama.cpp still require repeatable
+  live-model acceptance.
 - policy-controlled local `speech.synthesize` playback through Piper, exposed by
   the default capability registry and MCP when a local voice is provisioned.
 
 This list is deliberately narrower than the target architecture. In particular,
-RAI does not yet provide an autonomous hybrid model router.
+RAI does not yet provide the planned `AssistantService`, durable graph-memory
+conversation or hybrid model routing. The existing `ChatService` remains an
+experimental compatibility facade, not the target assistant API.
 
 ## Installation
 
@@ -187,7 +200,8 @@ The versioned documentation is published with GitLab Pages at
 [tk-lab1.gitlab.io/ai/rai/](https://tk-lab1.gitlab.io/ai/rai/).
 The source documentation lives in [`docs/`](docs/), including
 the [architecture](docs/architecture.md), [Rich History](docs/rich-history.md),
-[local voice](docs/local-voice.md) and [embodiment kernel
+[local voice](docs/local-voice.md), [planned assistant
+architecture](docs/assistant-architecture.md) and [embodiment kernel
 contracts](docs/kernel-contracts.md). The language-neutral Stage 1 contract is
 also available as a [JSON Schema](schemas/rai.kernel.v1.schema.json).
 
@@ -247,9 +261,10 @@ development, research and maintenance:
 
 ## Project status and contribution
 
-RAI is experimental pre-1.0 software. The next product proof is one vertical
-slice: Linux activity event → local episode → local answer → policy-controlled
-escalation to an external agent backend.
+RAI is experimental pre-1.0 software. The next product proof is a provider-neutral
+conversation slice: immutable user turn → explicit bounded context → replaceable
+model backend → terminal response → durable SQLite graph records with provenance.
+An ordinary conversation must not create a tracked `Task` or invoke a capability.
 
 See [CONTRIBUTING.md](CONTRIBUTING.md) before opening a GitLab issue or merge
 request. The project is licensed under the [Apache-2.0 License](LICENSE).

@@ -839,10 +839,11 @@ GCAS, a Global Workspace or an autonomous goal loop.
 The core request path is:
 
 ```text
-explicit user turn or policy-approved proactive trigger
+explicit ConversationTurn or policy-approved proactive trigger
   -> privacy and interaction policy
   -> graph-memory retrieval
   -> finite ContextPackage plus ContextManifest
+  -> bounded InferenceRequest
   -> replaceable AssistantModelBackend and ReasoningStrategy
   -> candidate response, memory proposals and capability proposals
   -> validation and policy
@@ -854,6 +855,13 @@ explicit user turn or policy-approved proactive trigger
 - [ ] Introduce one container-owned `AssistantService` as the application
   boundary for text, voice and future desktop clients. Do not implement a
   second orchestration path per transport.
+- [ ] Define distinct immutable contracts for `ConversationTurn`, terminal
+  `AssistantResponse` and the bounded `InferenceRequest` sent to a model
+  backend. A normal conversational turn is not a `Task` merely because it
+  requires inference.
+- [ ] Reserve `Task` for an explicit, trackable user goal or delegated unit of
+  work. Conversation may lead to a proposed task, but neither a model response
+  nor intent classification may silently create or authorize one.
 - [ ] Replace `ChatService`, legacy agent chains and the Antigravity-owned chat
   endpoint rather than preserving their behavior. CLI, REST or WebSocket chat
   surfaces that remain may change schema and semantics before 1.0.
@@ -876,8 +884,9 @@ explicit user turn or policy-approved proactive trigger
   before selecting a graph engine. Storage-specific identifiers, queries and
   executable rules must not leak into assistant-domain records.
 - [ ] Represent at least two logical timescales: a small, volatile working graph
-  for the active task and durable episodic/semantic graph memory. Promotion,
-  consolidation, expiry and eviction are explicit, auditable operations.
+  for the active interaction or explicit task and durable episodic/semantic
+  graph memory. Promotion, consolidation, expiry and eviction are explicit,
+  auditable operations.
 - [ ] Implement a lightweight local reference adapter, initially as a SQLite
   graph projection with stable node, hyperedge and provenance IDs, so tests and
   the default desktop profile require no additional database service.
@@ -1207,21 +1216,22 @@ Training is an explicit experimental stage, not an inference side effect:
 
 Implementation order:
 
-1. Freeze conformance fixtures for the desired memory/context behavior, then
-   introduce the new service, request/result records and one deterministic fake
-   backend.
-2. Add the graph-store protocol, SQLite reference adapter, retrieval, context
-   manifests and restart, correction, deletion and interruption tests.
-3. Connect policy-approved Rich History episodes and local text/voice clients.
-4. Add one real local backend plus Direct and token-scratchpad comparison;
+1. Freeze conformance fixtures for `ConversationTurn`, `AssistantResponse` and
+   `InferenceRequest`, then deliver one vertical slice with `AssistantService`,
+   a deterministic fake backend and a minimal SQLite graph store. Store turn
+   nodes and `REPLIES_TO` edges, reconstruct an explicit context after restart,
+   prove that ordinary chat creates no `Task` and never resume provider-owned
+   conversation state.
+2. Connect policy-approved Rich History episodes and local text/voice clients.
+3. Add one real local backend plus Direct and token-scratchpad comparison;
    external model APIs arrive through the separate Stage 6 hybrid module.
-5. Extend the neural sidecar with the versioned `rai.latent.v1` surface, a
+4. Extend the neural sidecar with the versioned `rai.latent.v1` surface, a
    Coconut-compatible fixed-step engine and read-only observers; add
    reproducible experiment manifests and evaluations.
-6. Add the independent `rai.slots.v1` surface and evaluate `SLOT_TOKENS`, then
+5. Add the independent `rai.slots.v1` surface and evaluate `SLOT_TOKENS`, then
    trained `FAM_FEEDBACK` and `SLOT_CROSS_ATTN`; do not combine them with
    Coconut until their separate ablations pass.
-7. Benchmark optional Neo4j and AtomSpace memory adapters, the Hyperon/MeTTa
+6. Benchmark optional Neo4j and AtomSpace memory adapters, the Hyperon/MeTTa
    reasoning sidecar and GraphRAG-style retrieval, then record the relevant
    ADRs.
 8. Remove the obsolete chat path, add opt-in proactive triggers and only after
