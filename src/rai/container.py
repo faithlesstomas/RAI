@@ -10,6 +10,8 @@ from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     import rai.inference.supervisor
+    from .assistant.ports import MemoryGraphStore
+    from .assistant.service import AssistantService
 
 from .kernel.audit import InMemoryAuditLedger, JsonlAuditLedger
 from .kernel.capabilities import CapabilityRegistry
@@ -48,6 +50,7 @@ class ApplicationContainer:
     event_journal_path: Path | None = None
     rich_history_path: Path | None = None
     history_key_provider: KeyProvider | None = None
+    assistant_memory_path: Path | None = None
     _history_service: HistoryService | None = field(default=None, init=False)
     _model_registry: ModelRegistry | None = field(default=None, init=False)
     _dispatcher_task: asyncio.Task[None] | None = field(default=None, init=False)
@@ -57,6 +60,8 @@ class ApplicationContainer:
     _processor_supervisor: rai.inference.supervisor.ProcessorSupervisor | None = field(
         default=None, init=False
     )
+    _memory_graph_store: MemoryGraphStore | None = field(default=None, init=False)
+    _assistant_service: AssistantService | None = field(default=None, init=False)
 
     def __post_init__(self) -> None:
         if self.audit_ledger is None:
@@ -210,6 +215,35 @@ class ApplicationContainer:
             )
         return self._processor_supervisor
 
+    @property
+    def memory_graph_store(self) -> MemoryGraphStore:
+        if self._memory_graph_store is None:
+            from .assistant.store import SQLiteMemoryGraphStore  # noqa: PLC0415
+            path = self.assistant_memory_path
+            if self.testing and path is None:
+                path = Path(tempfile.mkdtemp(prefix="rai-assistant-tests-")) / "memory_graph.sqlite3"
+            self._memory_graph_store = SQLiteMemoryGraphStore(path=path)
+        return self._memory_graph_store
+
+    @property
+    def assistant_service(self) -> AssistantService:
+        if self._assistant_service is None:
+            from .assistant.audit import (  # noqa: PLC0415
+                InMemoryAssistantAuditLedger,
+                JsonlAssistantAuditLedger,
+            )
+            from .assistant.service import AssistantService  # noqa: PLC0415
+            audit = (
+                InMemoryAssistantAuditLedger()
+                if self.testing
+                else JsonlAssistantAuditLedger()
+            )
+            self._assistant_service = AssistantService(
+                store=self.memory_graph_store,
+                audit_ledger=audit,
+            )
+        return self._assistant_service
+
     async def close(self) -> None:
         if self._dispatcher_task is not None:
             self._dispatcher_task.cancel()
@@ -228,3 +262,7 @@ class ApplicationContainer:
         if self._processor_supervisor is not None:
             await self._processor_supervisor.stop()
             self._processor_supervisor = None
+        self._assistant_service = None
+        if self._memory_graph_store is not None:
+            await self._memory_graph_store.stop()
+            self._memory_graph_store = None

@@ -10,9 +10,11 @@ from typing import Annotated, Any, Literal
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from rai.kernel.records import (
+    ActionFailure,
     DataClass,
     InferenceBudget,
     KernelRecord,
+    ProducerIdentity,
     ProvenanceReference,
     _new_id,
     _utc_now,
@@ -254,3 +256,25 @@ def parse_assistant_record(data: dict[str, Any]) -> KernelRecord:
     if model is None:
         raise ValueError(f"unsupported assistant record_type: {record_type!r}")
     return model.model_validate(data)
+
+
+def make_assistant_failure(
+    code: str,
+    message: str,
+    request_id: str = "assistant",
+    retryable: bool = False,
+    producer: ProducerIdentity | None = None,
+) -> ActionFailure:
+    """Construct a valid ActionFailure for assistant runtime errors."""
+    return ActionFailure(
+        request_id=request_id,
+        capability="assistant",
+        code=code,
+        message=message,
+        retryable=retryable,
+        producer=producer
+        or ProducerIdentity(
+            producer_id="assistant-service", kind="service", version="1.0.0"
+        ),
+    )
+
