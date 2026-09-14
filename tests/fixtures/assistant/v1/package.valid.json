@@ -1,0 +1,55 @@
+{
+  "record_type": "assistant_context_package",
+  "schema_version": "1.0.0",
+  "record_id": "pkg-valid-001",
+  "timestamp": "2026-09-14T12:00:03Z",
+  "producer": {
+    "producer_id": "assistant-service",
+    "kind": "service",
+    "version": "1.0.0"
+  },
+  "session_id": "session-test-001",
+  "turn_id": "turn-valid-001",
+  "manifest": {
+    "record_type": "assistant_context_manifest",
+    "schema_version": "1.0.0",
+    "record_id": "man-valid-001",
+    "timestamp": "2026-09-14T12:00:03Z",
+    "producer": {
+      "producer_id": "assistant-service",
+      "kind": "service",
+      "version": "1.0.0"
+    },
+    "session_id": "session-test-001",
+    "turn_id": "turn-valid-001",
+    "recent_turn_ids": [],
+    "durable_memory_ids": [
+      "mem-valid-001"
+    ],
+    "ranking_reasons": {
+      "mem-valid-001": "topic exact match: 'code_examples' (score: 1.0)"
+    },
+    "exclusions": [],
+    "redactions": [],
+    "retriever_version": "1.0.0",
+    "policy_version": "1.0.0",
+    "actual_tokens": 120,
+    "actual_characters": 450,
+    "items": []
+  },
+  "content": {
+    "system_instruction": "You are RAI assistant.",
+    "current_turn": {
+      "text": "W jakim języku powinieneś pokazywać mi przykłady kodu?"
+    },
+    "recent_turns": [],
+    "durable_memories": [
+      {
+        "record_id": "mem-valid-001",
+        "topic": "code_examples",
+        "preference": "Guile"
+      }
+    ]
+  },
+  "provenance": []
+}

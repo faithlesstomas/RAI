@@ -1,0 +1,13 @@
+{
+  "record_type": "conversation_turn",
+  "schema_version": "1.0.0",
+  "record_id": "turn-malformed",
+  "timestamp": "2026-09-14T12:00:00Z",
+  "producer": {
+    "producer_id": "cli-test",
+    "kind": "test",
+    "version": "1.0.0"
+  },
+  "role": "invalid_role",
+  "text": ""
+}

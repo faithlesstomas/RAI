@@ -1,0 +1,79 @@
+{
+  "record_type": "assistant_inference_request",
+  "schema_version": "1.0.0",
+  "record_id": "req-valid-001",
+  "timestamp": "2026-09-14T12:00:04Z",
+  "producer": {
+    "producer_id": "assistant-service",
+    "kind": "service",
+    "version": "1.0.0"
+  },
+  "session_id": "session-test-001",
+  "turn_id": "turn-valid-001",
+  "request_id": "req-id-001",
+  "context": {
+    "record_type": "assistant_context_package",
+    "schema_version": "1.0.0",
+    "record_id": "pkg-valid-001",
+    "timestamp": "2026-09-14T12:00:03Z",
+    "producer": {
+      "producer_id": "assistant-service",
+      "kind": "service",
+      "version": "1.0.0"
+    },
+    "session_id": "session-test-001",
+    "turn_id": "turn-valid-001",
+    "manifest": {
+      "record_type": "assistant_context_manifest",
+      "schema_version": "1.0.0",
+      "record_id": "man-valid-001",
+      "timestamp": "2026-09-14T12:00:03Z",
+      "producer": {
+        "producer_id": "assistant-service",
+        "kind": "service",
+        "version": "1.0.0"
+      },
+      "session_id": "session-test-001",
+      "turn_id": "turn-valid-001",
+      "recent_turn_ids": [],
+      "durable_memory_ids": [
+        "mem-valid-001"
+      ],
+      "ranking_reasons": {},
+      "exclusions": [],
+      "redactions": [],
+      "retriever_version": "1.0.0",
+      "policy_version": "1.0.0",
+      "actual_characters": 100,
+      "items": []
+    },
+    "content": {
+      "user_turn": "W jakim języku..."
+    },
+    "provenance": []
+  },
+  "budget": {
+    "record_type": "inference_budget",
+    "schema_version": "1.0.0",
+    "record_id": "budget-001",
+    "timestamp": "2026-09-14T12:00:00Z",
+    "producer": {
+      "producer_id": "assistant-service",
+      "kind": "service",
+      "version": "1.0.0"
+    },
+    "max_input_tokens": 1024,
+    "max_output_tokens": 256,
+    "max_agent_turns": 1,
+    "max_tool_calls": 0,
+    "max_images": 0,
+    "max_audio_seconds": 0,
+    "max_latency_seconds": 10,
+    "max_provider_cost": 0,
+    "max_ram_bytes": 1048576,
+    "max_vram_bytes": 0,
+    "cancellation_deadline": "2026-09-14T12:00:14Z"
+  },
+  "strategy": "DIRECT",
+  "model_name": "default"
+}
