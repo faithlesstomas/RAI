@@ -498,6 +498,8 @@ async def test_ollama_engine_generate_and_unload() -> None:
         assert inference_result.stats is not None
         assert inference_result.stats.output_tokens == 15
         assert inference_result.stats.input_tokens == 5
+        generation_call = mock_client.generate.call_args_list[0]
+        assert generation_call.kwargs["think"] is False
 
         # Unload (keep_alive=0)
         unload_res = await engine.unload()

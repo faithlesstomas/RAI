@@ -40,6 +40,27 @@ def test_runtime_allows_explicit_deterministic_conformance_backend() -> None:
     assert resolved.model == "deterministic-conformance"
 
 
+def test_runtime_uses_active_profile_for_backend_model_and_memory_scope() -> None:
+    resolved = resolve_assistant_config(
+        {
+            "active_agent": "work",
+            "agents": {
+                "work": {
+                    "backend": "ollama",
+                    "model": "qwen3.5:2b",
+                    "ollama_host": "http://127.0.0.1:11434",
+                    "system": "Answer concisely.",
+                }
+            },
+        }
+    )
+
+    assert resolved.backend == "ollama"
+    assert resolved.model == "qwen3.5:2b"
+    assert resolved.profile_scope == "work"
+    assert resolved.system_instruction == "Answer concisely."
+
+
 def test_cli_chat_persists_memory_through_interactive_path(tmp_path: Path) -> None:
     runner = CliRunner()
     environment = {"RAI_DATA_DIR": str(tmp_path / "data")}
@@ -74,3 +95,26 @@ def test_cli_ask_allows_explicit_conformance_backend(tmp_path: Path) -> None:
 
     assert result.exit_code == 0
     assert "Rozumiem." in result.output
+
+
+def test_cli_remembers_name_across_process_like_invocations(tmp_path: Path) -> None:
+    runner = CliRunner()
+    config = {"assistant": {"backend": "deterministic"}}
+    environment = {"RAI_DATA_DIR": str(tmp_path / "data")}
+
+    with patch("rai.cli_commands._assistant_config", return_value=config):
+        admission = runner.invoke(
+            cli,
+            ["assistant", "ask", "Jestem Tomek, a Ty?", "--backend", "deterministic"],
+            env=environment,
+        )
+        recall = runner.invoke(
+            cli,
+            ["assistant", "ask", "Jak mam na imię?", "--backend", "deterministic"],
+            env=environment,
+        )
+
+    assert admission.exit_code == 0, admission.output
+    assert "Zapamiętałem Twoje imię" in admission.output
+    assert recall.exit_code == 0, recall.output
+    assert "Masz na imię Tomek" in recall.output

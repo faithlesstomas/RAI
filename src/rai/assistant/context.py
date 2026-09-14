@@ -42,6 +42,7 @@ class AssistantContextBuilder:
         max_recent_turns: int = 10,
         max_memories: int = 5,
         max_context_characters: int = 8_000,
+        profile_scope: str = "default",
         producer: ProducerIdentity | None = None,
     ) -> None:
         self.store = store
@@ -50,6 +51,7 @@ class AssistantContextBuilder:
         self.max_recent_turns = max_recent_turns
         self.max_memories = max_memories
         self.max_context_characters = max_context_characters
+        self.profile_scope = profile_scope
         self.producer = producer or ProducerIdentity(
             producer_id="assistant-context-builder", kind="service", version="1.0.0"
         )
@@ -70,7 +72,7 @@ class AssistantContextBuilder:
         recent_turns = recent_res.unwrap()
 
         mem_res = await self.store.retrieve_relevant_memories(
-            profile_scope="default",
+            profile_scope=self.profile_scope,
             query=query,
             data_classes=query.data_classes,
             limit=self.max_memories,

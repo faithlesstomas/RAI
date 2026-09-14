@@ -7,6 +7,24 @@ import re
 from .ports import MemoryQuery
 
 _TOPIC_KEYWORDS: dict[str, tuple[str, ...]] = {
+    "user.identity.name": (
+        "imię",
+        "imienia",
+        "nazywam",
+        "name",
+    ),
+    "user.identity.age": (
+        "wiek",
+        "lat",
+        "old",
+        "age",
+    ),
+    "user.location.home": (
+        "mieszkam",
+        "mieszkasz",
+        "gdzie",
+        "live",
+    ),
     "code_examples": (
         "kod",
         "kodu",

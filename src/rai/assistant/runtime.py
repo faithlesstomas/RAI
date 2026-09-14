@@ -15,6 +15,7 @@ from rai.inference.factory import load_local_model
 
 from .backends.deterministic import DeterministicAssistantBackend
 from .backends.local import LocalAssistantBackend
+from .context import DEFAULT_SYSTEM_INSTRUCTION
 from .ports import AssistantModelBackend
 
 
@@ -28,11 +29,13 @@ class AssistantRuntimeConfig:
 
     backend: str
     model: str
-    max_output_tokens: int = 128
+    max_output_tokens: int = 256
     temperature: float = 0.2
     context_window: int = 2048
     model_artifact_version: str | None = None
     ollama_host: str = "http://127.0.0.1:11434"
+    profile_scope: str = "default"
+    system_instruction: str = DEFAULT_SYSTEM_INSTRUCTION
 
 
 def _discover_gguf(search_root: Path) -> Path | None:
@@ -62,6 +65,7 @@ def resolve_assistant_config(
     *,
     backend_override: str | None = None,
     model_override: str | None = None,
+    profile_override: str | None = None,
     search_root: Path | None = None,
 ) -> AssistantRuntimeConfig:
     """Resolve CLI, environment and persisted config into one runtime config."""
@@ -69,12 +73,18 @@ def resolve_assistant_config(
     assistant = raw_assistant if isinstance(raw_assistant, dict) else {}
     raw_local = config.get("local_ai", {})
     local_ai = raw_local if isinstance(raw_local, dict) else {}
+    profile_name = str(profile_override or config.get("active_agent") or "default")
+    raw_profiles = config.get("agents", {})
+    profiles = raw_profiles if isinstance(raw_profiles, dict) else {}
+    raw_profile = profiles.get(profile_name, {})
+    profile = raw_profile if isinstance(raw_profile, dict) else {}
 
     backend = (
         backend_override
         or os.environ.get("RAI_ASSISTANT_BACKEND")
         or assistant.get("backend")
         or local_ai.get("backend")
+        or profile.get("backend")
         or "auto"
     )
     model = (
@@ -82,12 +92,20 @@ def resolve_assistant_config(
         or os.environ.get("RAI_ASSISTANT_MODEL")
         or assistant.get("model")
         or local_ai.get("model")
+        or profile.get("model")
     )
     backend = str(backend).lower()
 
     if backend == "deterministic":
         return AssistantRuntimeConfig(
-            backend=backend, model="deterministic-conformance"
+            backend=backend,
+            model="deterministic-conformance",
+            profile_scope=profile_name,
+            system_instruction=str(
+                assistant.get("system")
+                or profile.get("system")
+                or DEFAULT_SYSTEM_INSTRUCTION
+            ),
         )
 
     if not model:
@@ -113,7 +131,7 @@ def resolve_assistant_config(
     return AssistantRuntimeConfig(
         backend=backend,
         model=model,
-        max_output_tokens=int(assistant.get("max_output_tokens", 128)),
+        max_output_tokens=int(assistant.get("max_output_tokens", 256)),
         temperature=float(assistant.get("temperature", 0.2)),
         context_window=int(assistant.get("context_window", 2048)),
         model_artifact_version=(
@@ -121,7 +139,18 @@ def resolve_assistant_config(
             if assistant.get("model_artifact_version")
             else _local_artifact_version(model)
         ),
-        ollama_host=str(assistant.get("ollama_host", "http://127.0.0.1:11434")),
+        ollama_host=str(
+            assistant.get("ollama_host")
+            or local_ai.get("ollama_host")
+            or profile.get("ollama_host")
+            or "http://127.0.0.1:11434"
+        ),
+        profile_scope=profile_name,
+        system_instruction=str(
+            assistant.get("system")
+            or profile.get("system")
+            or DEFAULT_SYSTEM_INSTRUCTION
+        ),
     )
 
 

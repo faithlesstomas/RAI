@@ -56,13 +56,14 @@ def _data_class_value(value: DataClass | str) -> str:
 class AssistantService:
     """One container-owned application boundary for assistant turns."""
 
-    def __init__(
+    def __init__(  # noqa: PLR0913
         self,
         store: MemoryGraphStore,
         backend: AssistantModelBackend | None = None,
         context_builder: AssistantContextBuilder | None = None,
         audit_ledger: AssistantAuditLedger | None = None,
         producer: ProducerIdentity | None = None,
+        profile_scope: str = "default",
     ) -> None:
         self.store = store
         self.backend = backend or DeterministicAssistantBackend()
@@ -71,6 +72,7 @@ class AssistantService:
         self.producer = producer or ProducerIdentity(
             producer_id="assistant-service", kind="service", version="1.0.0"
         )
+        self.profile_scope = profile_scope
         self._state = LifecycleState.CREATED
         self._request_locks: dict[str, asyncio.Lock] = {}
 
@@ -352,7 +354,7 @@ class AssistantService:
                     content=proposal.content,
                     source_turn_id=turn.record_id,
                     data_class=DataClass(memory_class),
-                    profile_scope="default",
+                    profile_scope=self.profile_scope,
                     valid_from=_utc_now(),
                     provenance=(
                         ProvenanceReference(

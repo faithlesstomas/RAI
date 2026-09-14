@@ -233,7 +233,9 @@ class ApplicationContainer:
                 JsonlAssistantAuditLedger,
             )
             from .assistant.service import AssistantService  # noqa: PLC0415
+            from .assistant.context import AssistantContextBuilder  # noqa: PLC0415
             from .assistant.runtime import (  # noqa: PLC0415
+                AssistantRuntimeConfig,
                 build_assistant_backend,
                 resolve_assistant_config,
             )
@@ -242,15 +244,26 @@ class ApplicationContainer:
                 if self.testing
                 else JsonlAssistantAuditLedger()
             )
-            backend = (
-                None
+            runtime = (
+                AssistantRuntimeConfig(
+                    backend="deterministic",
+                    model="deterministic-conformance",
+                    profile_scope=str(self.config.get("active_agent") or "default"),
+                )
                 if self.testing
-                else build_assistant_backend(resolve_assistant_config(self.config))
+                else resolve_assistant_config(self.config)
             )
+            backend = None if self.testing else build_assistant_backend(runtime)
             self._assistant_service = AssistantService(
                 store=self.memory_graph_store,
                 backend=backend,
+                context_builder=AssistantContextBuilder(
+                    store=self.memory_graph_store,
+                    system_instruction=runtime.system_instruction,
+                    profile_scope=runtime.profile_scope,
+                ),
                 audit_ledger=audit,
+                profile_scope=runtime.profile_scope,
             )
         return self._assistant_service
 

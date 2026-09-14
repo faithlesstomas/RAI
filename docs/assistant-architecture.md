@@ -69,7 +69,9 @@ disabled unless `legacy_chat.enabled` is explicitly set to `true`.
 state. Each inference starts from the explicit context package. Provider-side
 conversation IDs and hidden history cannot be resumed as canonical state.
 Durable assistant memory is scoped to the configured local profile rather than
-to one conversation session. Cross-session retrieval still passes the current
+to one conversation session. A profile selects model configuration, system
+instruction and the memory namespace. A session ID selects only the bounded
+recent-dialogue window. Cross-session retrieval still passes the current
 client, privacy and data-class policy before a record can enter context.
 
 The durable graph distinguishes interaction records from semantic memory.
@@ -165,12 +167,19 @@ guard metadata. Each process reconstructs its prompt from those RAI-owned
 records; no provider conversation ID is resumed. `RAI_DATA_DIR` selects an
 isolated profile for A/B experiments.
 
-The MVP has one intentionally narrow deterministic admission and grounding
-policy: explicit Guile/Python code-example preferences. The local model still
-runs for every response, but if it ignores or contradicts the selected
-preference, RAI returns the graph-grounded value and records
-`grounding_override=true`. This makes the failure visible without allowing a
-small model to erase the accepted preference.
+The MVP has a bounded deterministic admission and grounding policy for common
+personal facts (name, age and home location), explicit `remember`/`zapamiętaj`
+statements, and Guile/Python code-example preferences. The local model still
+runs for every response, but critical recall questions are answered from the
+selected active memory. RAI records `grounding_override=true` whenever that
+gate replaces model prose. This makes the intervention visible without
+allowing a small model to erase or hallucinate the accepted value.
+
+`rai`, `rai -p`, `rai assistant ask` and `rai assistant chat` instantiate this
+same service directly and do not require `rai serve`. The assistant HTTP routes
+are an alternative transport over a server-owned instance of the same service.
+Only explicit `rai --connect` enters the quarantined compatibility client; it
+does not define canonical assistant memory or session semantics.
 
 The SQLite database and audit ledger use per-user directories/files (0700/0600)
 and secure deletion. They are not yet encrypted independently of the user

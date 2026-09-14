@@ -13,9 +13,10 @@ from typing import AsyncIterator
 from returns.result import Failure, Result, Success
 
 from rai.kernel.ports import CancellationToken, LifecycleState
-from rai.kernel.records import ActionFailure, ProducerIdentity, _new_id, _utc_now
+from rai.kernel.records import ActionFailure, ProducerIdentity
 
 from ..context import DEFAULT_SYSTEM_INSTRUCTION
+from ..memory import extract_memory_proposals, grounded_memory_response
 from ..records import (
     AssistantCandidate,
     InferenceRequest,
@@ -32,7 +33,7 @@ class LocalAssistantBackend:
         engine: object | None = None,
         model_name: str | None = None,
         backend_name: str = "ollama",
-        max_output_tokens: int = 128,
+        max_output_tokens: int = 256,
         temperature: float = 0.2,
         model_artifact_version: str | None = None,
     ) -> None:
@@ -42,7 +43,7 @@ class LocalAssistantBackend:
         self.max_output_tokens = max_output_tokens
         self.temperature = temperature
         self.model_artifact_version = model_artifact_version
-        self.prompt_template_version = "rai-assistant-plain-text-v2"
+        self.prompt_template_version = "rai-assistant-plain-text-v3"
         self._state = LifecycleState.CREATED
         self.producer = ProducerIdentity(
             producer_id=f"local-assistant-{self.backend_name}",
@@ -112,9 +113,7 @@ class LocalAssistantBackend:
             )
             for mem in durable_memories:
                 if isinstance(mem, dict):
-                    topic = mem.get("topic", "")
-                    content = mem.get("content", {})
-                    lines.append(f"- [{topic}] {content}")
+                    lines.append(f"- {self._format_memory(mem)}")
             lines.append("")
 
         recent_turns = request.context.content.get("recent_turns", [])
@@ -135,43 +134,34 @@ class LocalAssistantBackend:
         lines.append("Asystent:")
         return "\n".join(lines)
 
+    @staticmethod
+    def _format_memory(memory: dict[object, object]) -> str:
+        """Render structured memory as a natural-language evidence statement."""
+        topic = str(memory.get("topic", "memory"))
+        content = memory.get("content", {})
+        if not isinstance(content, dict):
+            return f"[{topic}] {content}"
+        value = content.get("value")
+        statements = {
+            "user.identity.name": f"Użytkownik podał, że ma na imię {value}.",
+            "user.identity.age": f"Użytkownik podał, że ma {value} lat.",
+            "user.location.home": f"Użytkownik podał, że mieszka w {value}.",
+            "code_examples": (
+                "Użytkownik preferuje język "
+                f"{content.get('preference')} w przykładach kodu."
+            ),
+        }
+        if topic in statements:
+            return statements[topic]
+        if fact := content.get("fact"):
+            return f"Użytkownik poprosił o zapamiętanie: {fact}"
+        return f"[{topic}] {content}"
+
     def _extract_proposals(
         self, user_text: str, turn_id: str
     ) -> tuple[MemoryProposal, ...]:
         """Deterministically extract bounded memory proposals from user statements."""
-        lowered = user_text.lower()
-        proposals: list[MemoryProposal] = []
-
-        pref_match = None
-        if "guile" in lowered:
-            pref_match = "Guile"
-        elif "python" in lowered or "pythona" in lowered:
-            pref_match = "Python"
-
-        if (
-            "preferuj" in lowered
-            or "preferuję" in lowered
-            or "zapamiętaj" in lowered
-            or "zmień tę preferencję" in lowered
-            or "używaj" in lowered
-        ) and pref_match:
-            proposals.append(
-                MemoryProposal(
-                    record_id=_new_id(),
-                    timestamp=_utc_now(),
-                    producer=self.producer,
-                    source_turn_id=turn_id,
-                    kind="preference",
-                    topic="code_examples",
-                    content={
-                        "topic": "code_examples",
-                        "preference": pref_match,
-                        "raw_statement": user_text,
-                    },
-                )
-            )
-
-        return tuple(proposals)
+        return extract_memory_proposals(user_text, turn_id, self.producer)
 
     @staticmethod
     def _truncate_repetition(text: str) -> tuple[str, bool]:
@@ -189,41 +179,15 @@ class LocalAssistantBackend:
         return text.strip(), False
 
     @staticmethod
-    def _ground_preference_response(
+    def _ground_memory_response(
         user_text: str,
         durable_memories: tuple[object, ...] | list[object],
         proposals: tuple[MemoryProposal, ...],
         model_text: str,
     ) -> tuple[str, bool]:
-        """Apply the narrow deterministic grounding gate implemented by this MVP."""
-        if proposals:
-            preference = proposals[0].content.get("preference")
-            if preference:
-                return (
-                    f"Zapamiętałem: w przykładach kodu będę preferować język {preference}.",
-                    True,
-                )
-
-        lowered = user_text.lower()
-        asks_for_language = "jakim języku" in lowered or "w jakim języku" in lowered
-        if not asks_for_language:
-            return model_text, False
-
-        for memory in durable_memories:
-            if not isinstance(memory, dict) or memory.get("topic") != "code_examples":
-                continue
-            content = memory.get("content", {})
-            if isinstance(content, dict) and content.get("preference"):
-                preference = content["preference"]
-                return (
-                    "Zgodnie z Twoją zapisaną preferencją, powinienem pokazywać "
-                    f"przykłady kodu w języku {preference}.",
-                    model_text.casefold().find(str(preference).casefold()) < 0,
-                )
-
-        return (
-            "Nie mam zapisanej preferencji dotyczącej języka w przykładach kodu.",
-            True,
+        """Apply deterministic grounding for persisted personal facts."""
+        return grounded_memory_response(
+            user_text, durable_memories, proposals, model_text
         )
 
     async def generate(
@@ -294,7 +258,7 @@ class LocalAssistantBackend:
 
         response_text, repetition_truncated = self._truncate_repetition(response_text)
         proposals = self._extract_proposals(user_text, request.turn_id)
-        grounded_text, grounding_override = self._ground_preference_response(
+        grounded_text, grounding_override = self._ground_memory_response(
             user_text, durable_memories, proposals, response_text
         )
         candidate = AssistantCandidate(

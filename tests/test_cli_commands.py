@@ -124,7 +124,9 @@ def test_cli_standalone_one_shot(mock_assistant_ask) -> None:
     runner = click.testing.CliRunner()
     result = runner.invoke(rai_cli.cli, ["--prompt", "hello"])
 
-    mock_assistant_ask.assert_called_once_with("hello", None, None, None, False)
+    mock_assistant_ask.assert_called_once_with(
+        "hello", None, None, None, False, None, None
+    )
     assert result.exit_code == 0
 
 
@@ -134,8 +136,44 @@ def test_cli_standalone_interactive(mock_assistant_chat) -> None:
     runner = click.testing.CliRunner()
     result = runner.invoke(rai_cli.cli, [])
 
-    mock_assistant_chat.assert_called_once_with(None, None, None, False)
+    mock_assistant_chat.assert_called_once_with(
+        None, None, None, False, None, None
+    )
     assert result.exit_code == 0
+
+
+@patch("rai.cli_commands._run_assistant_ask")
+def test_cli_standalone_forwards_new_assistant_options(mock_assistant_ask) -> None:
+    runner = click.testing.CliRunner()
+    result = runner.invoke(
+        rai_cli.cli,
+        [
+            "--prompt",
+            "hello",
+            "--profile",
+            "work",
+            "--session-id",
+            "experiment-1",
+            "--backend",
+            "ollama",
+            "--model",
+            "qwen3.5:2b",
+            "--system",
+            "Be concise.",
+            "--show-context",
+        ],
+    )
+
+    assert result.exit_code == 0
+    mock_assistant_ask.assert_called_once_with(
+        "hello",
+        "experiment-1",
+        "ollama",
+        "qwen3.5:2b",
+        True,
+        "work",
+        "Be concise.",
+    )
 
 
 @patch("rai.cli.async_main_client")

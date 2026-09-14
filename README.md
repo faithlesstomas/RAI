@@ -170,13 +170,28 @@ settings can be persisted in `$XDG_CONFIG_HOME/rai/config.json`:
     "backend": "llama",
     "model": "/path/to/model.gguf",
     "context_window": 2048,
-    "max_output_tokens": 128,
+    "max_output_tokens": 256,
     "temperature": 0.2
   }
 }
 ```
 
-Use `--backend ollama --model MODEL_NAME` for a locally running Ollama daemon.
+The active agent profile is also a supported configuration source. Its
+`backend`, `model`, `ollama_host` and `system` fields are used when no explicit
+assistant or CLI override exists. For example, with an active Ollama profile,
+both commands below select the same graph-memory runtime:
+
+```bash
+uv run rai
+uv run rai assistant chat
+```
+
+Use `--backend ollama --model MODEL_NAME` for an explicit locally running
+Ollama model. `--profile NAME` selects both a configuration profile and its
+durable-memory scope; `--session-id ID` selects only the bounded recent-dialogue
+window. Inside interactive chat, use `/memories`, `/context`, `/session` and
+`/help` to inspect the runtime.
+
 There is no silent fake fallback: missing weights, missing optional dependencies
 and unavailable daemons produce a typed error. Memory is stored under
 `$XDG_DATA_HOME/rai/assistant/`; use an isolated `RAI_DATA_DIR` when comparing
@@ -192,7 +207,7 @@ limitations.
 ## Running RAI
 
 ```bash
-# Standalone compatibility CLI
+# Standalone graph-memory assistant (same runtime as `rai assistant chat`)
 uv run rai
 
 # List policy-controlled kernel capabilities
@@ -204,7 +219,7 @@ uv run rai capability invoke '{...}'
 # Local daemon (loopback by default)
 uv run rai serve
 
-# Client connected to the daemon
+# Explicit legacy compatibility client connected to the daemon
 uv run rai --connect
 ```
 
