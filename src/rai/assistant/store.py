@@ -737,17 +737,17 @@ class SQLiteMemoryGraphStore:
             placeholders = ",".join("?" for _ in allowed_classes)
             now_iso = datetime.now(timezone.utc).isoformat()
 
-            sql = f"""
-                SELECT m.*, l.status AS lifecycle_status
-                FROM memories m
-                JOIN memory_lifecycle l ON m.memory_id = l.memory_id
-                WHERE l.status = 'ACTIVE'
-                  AND m.profile_scope = ?
-                  AND m.data_class IN ({placeholders})
-                  AND m.valid_from <= ?
-                  AND (m.valid_until IS NULL OR m.valid_until > ?)
-                ORDER BY m.created_at DESC
-            """
+            sql = (
+                "SELECT m.*, l.status AS lifecycle_status "  # noqa: S608
+                "FROM memories m "
+                "JOIN memory_lifecycle l ON m.memory_id = l.memory_id "
+                "WHERE l.status = 'ACTIVE' "
+                "  AND m.profile_scope = ? "
+                f"  AND m.data_class IN ({placeholders}) "
+                "  AND m.valid_from <= ? "
+                "  AND (m.valid_until IS NULL OR m.valid_until > ?) "
+                "ORDER BY m.created_at DESC"
+            )
             params: list[Any] = [profile_scope, *allowed_classes, now_iso, now_iso]
             cur.execute(sql, params)
             rows = cur.fetchall()

@@ -250,11 +250,11 @@ class AssistantService:
         req_id = request_id or turn.record_id
 
         existing_res = await self.store.get_response_by_request_id(req_id)
-        if isinstance(existing_res, Success) and existing_res.unwrap() is not None:
+        if isinstance(existing_res, Success):
             resp = existing_res.unwrap()
-            assert resp is not None
-            on_chunk(resp.text)
-            return Success(resp)
+            if resp is not None:
+                on_chunk(resp.text)
+                return Success(resp)
 
         accepted_res = await self.store.accept_turn(turn)
         if isinstance(accepted_res, Failure):
