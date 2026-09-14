@@ -5,11 +5,8 @@ supervisor. A bounded task is not an agent: it receives a task and an approved,
 sanitized context package, performs one inference operation, and may only return
 a validated derived `Claim` or a typed `ActionFailure`.
 
-All six version `1.0.0` contracts are implemented. Stage 4.2 remains partial
-because persistent, policy-aware result caching is still tracked in
-[issue #16](https://gitlab.com/tk-lab1/ai/rai/-/issues/16), after the supervisor
-decomposition tracked in
-[issue #17](https://gitlab.com/tk-lab1/ai/rai/-/issues/17).
+All six version `1.0.0` contracts and persistent policy-aware result caching are
+implemented.
 
 ## Supported contracts
 
@@ -40,7 +37,7 @@ confidence and tool-call-shaped objects fail with
 confidence threshold fails with `ActionFailure(code="LOW_CONFIDENCE")`.
 
 The raw response is not copied into failure messages. A failed response never
-becomes a `Claim`.
+becomes a `Claim` or cache entry.
 
 Task-specific validation also runs before claim creation. Entity source IDs must
 exist in the retained, approved context manifest, salience labels must match the
@@ -72,11 +69,60 @@ The returned claim keeps the sanitized context package as provenance, preserves
 the highest retained input data class, uses validated model confidence, and
 records the task kind and contract version in `epistemic_status`.
 
+## Persistent result cache
+
+`SQLiteBoundedResultCache` stores only canonical JSON produced from an output
+that already passed its strict bounded-task schema. Failures, low-confidence or
+partial output, cancellation and deadline results are never stored. A cache hit
+is not accepted directly: the supervisor validates the cached JSON again
+against the current contract, retained classification and approved source IDs,
+then creates a new `Claim` bound to the current `ContextPackage` provenance.
+Corrupt or incompatible entries are invalidated and become normal misses.
+
+The version `1.0.0` key contract hashes a canonical request containing the
+deterministic prompt, retained data class, output-token ceiling and provider
+allow-list. It also binds the model name, immutable model artifact version,
+bounded-task contract version, prompt version and policy version. Consequently,
+changes to any execution or privacy boundary produce a miss. Public
+`CacheLookupMetadata` exposes only the opaque digest, versions, task/model
+identity, timestamps and typed hit/miss reason; it never exposes the prompt or
+normalized input.
+
+The local SQLite store defaults to 512 entries and a 24-hour TTL. Expired rows
+are removed on access and writes evict least-recently-used rows over capacity.
+The database lives under the RAI XDG cache directory and is created with mode
+`0600`. Cache I/O failures fail open as misses because the cache is disposable;
+all inference policy and validation checks still apply.
+
+Container-managed caching requires an immutable artifact identity. It remains
+disabled when `model_artifact_version` is absent:
+
+```python
+container = ApplicationContainer(
+    config={
+        "local_ai": {
+            "backend": "ollama",
+            "model": "qwen3:8b",
+            "model_artifact_version": "sha256:<model-manifest-digest>",
+            "result_cache": {
+                "enabled": True,
+                "ttl_seconds": 86400,
+                "max_entries": 512,
+            },
+        }
+    }
+)
+```
+
+Changing weights under the same artifact version violates the cache contract.
+Operators must update the version (preferably to a manifest digest), or disable
+the cache with `result_cache.enabled = False`.
+
 ## Extension rules
 
 New bounded tasks require separate registry entries with dedicated strict output
 models and adversarial contract tests. They must not reuse permissive tool-call
 parsers. Routing output remains a hint; deterministic policy makes the final
-`LOCAL`, `ASK`, `ESCALATE` or `DENY` decision in Stage 4.5. Persistent result
-caching is a separate follow-up because its key must include the task contract,
-model artifact, normalized input and policy versions.
+`LOCAL`, `ASK`, `ESCALATE` or `DENY` decision in Stage 4.5. Contract or prompt
+changes must advance their versions so cached output cannot cross the new
+validation boundary.

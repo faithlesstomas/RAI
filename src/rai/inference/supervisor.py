@@ -16,6 +16,7 @@ from typing import Any, Optional, Union, cast
 from returns.result import Failure, Result, Success
 
 from rai.kernel.ports import CancellationToken, LifecycleState, LocalProcessor
+from rai.kernel.policy import POLICY_VERSION
 from rai.kernel.records import (
     ActionFailure,
     Claim,
@@ -29,6 +30,12 @@ from rai.kernel.records import (
 )
 
 from .factory import get_available_backends, is_backend_available, load_local_model
+from .cache import (
+    BoundedResultCache,
+    BoundedResultCacheKey,
+    CacheLookupMetadata,
+    CacheLookupStatus,
+)
 from .protocols import (
     AsyncEngineAdapter,
     InferenceEngine,
@@ -76,6 +83,14 @@ class _GuardedOperationFailure:
     capacity_release_deferred: bool = False
 
 
+@dataclass(frozen=True)
+class _ValidatedClaim:
+    """Claim plus the canonical validated payload eligible for cache storage."""
+
+    claim: Claim
+    payload_json: str | None = None
+
+
 def _utc_now() -> datetime:
     return datetime.now(timezone.utc)
 
@@ -95,6 +110,9 @@ class ProcessorSupervisor(LocalProcessor):
         max_concurrency: int = 2,
         idle_unload_seconds: float = 300.0,
         name: str = "local-processor",
+        result_cache: BoundedResultCache | None = None,
+        model_artifact_version: str | None = None,
+        policy_version: str = POLICY_VERSION,
     ) -> None:
         self.name = name
         self.model_name = model_name
@@ -104,12 +122,18 @@ class ProcessorSupervisor(LocalProcessor):
         )
         self.max_concurrency = max_concurrency
         self.idle_unload_seconds = idle_unload_seconds
+        self.result_cache = result_cache
+        self.model_artifact_version = model_artifact_version
+        self.policy_version = policy_version
 
         self._state = LifecycleState.CREATED
         self._semaphore = asyncio.Semaphore(max_concurrency)
         self._active_requests = 0
         self._total_requests = 0
         self._error_count = 0
+        self._cache_hits = 0
+        self._cache_misses = 0
+        self._last_cache_lookup: CacheLookupMetadata | None = None
         self._last_active_timestamp: Optional[float] = None
         self._reaper_task: Optional[asyncio.Task[None]] = None
         self._drain_tasks: set[asyncio.Task[None]] = set()
@@ -187,6 +211,8 @@ class ProcessorSupervisor(LocalProcessor):
                 await self.engine.unload()
             except Exception as exc:
                 logger.warning("Error unloading engine during stop: %s", exc)
+        if self.result_cache is not None:
+            await self.result_cache.close()
 
         self._state = LifecycleState.STOPPED
         logger.info("ProcessorSupervisor stopped")
@@ -217,7 +243,14 @@ class ProcessorSupervisor(LocalProcessor):
                 if self.engine is not None
                 else None
             ),
+            cache_hits=self._cache_hits,
+            cache_misses=self._cache_misses,
         )
+
+    @property
+    def last_cache_lookup(self) -> CacheLookupMetadata | None:
+        """Return sanitized metadata for the most recently completed lookup."""
+        return self._last_cache_lookup
 
     def _release_capacity(self) -> None:
         """Release one processor slot after its engine operation really finishes."""
@@ -757,19 +790,49 @@ class ProcessorSupervisor(LocalProcessor):
             )
         return Success(generation_result.unwrap())
 
+    def _claim_from_output(  # noqa: PLR0913
+        self,
+        task: Task,
+        context: ContextPackage,
+        *,
+        statement: str,
+        confidence: float,
+        epistemic_status: str,
+        output_data_class: DataClass,
+    ) -> Claim:
+        """Bind validated output to the current request provenance."""
+
+        source_reference = ProvenanceReference(
+            source_id=context.record_id,
+            source_type=context.record_type,
+            source_version=context.schema_version,
+            relation="derived-from",
+            producer=context.producer,
+        )
+        return Claim(
+            producer=SUPERVISOR_PRODUCER,
+            correlation_id=task.correlation_id,
+            statement=statement,
+            confidence=confidence,
+            epistemic_status=epistemic_status,
+            data_class=output_data_class,
+            provenance=(source_reference,),
+        )
+
     def _build_claim(
         self,
         task: Task,
         context: ContextPackage,
         prepared: _PreparedRequest,
         inference_result: InferenceResult,
-    ) -> Result[Claim, ActionFailure]:
-        """Validate model output before the future cache-store boundary."""
+    ) -> Result[_ValidatedClaim, ActionFailure]:
+        """Validate model output before the cache-store boundary."""
         raw_statement = inference_result.text.strip()
         statement = raw_statement or "No summary or classification generated."
         confidence = 0.9
         epistemic_status = "inferred"
         output_data_class = prepared.retained_context.data_class
+        payload_json: str | None = None
 
         if prepared.contract is not None:
             validation_result = prepared.contract.validate_output(
@@ -798,33 +861,30 @@ class ProcessorSupervisor(LocalProcessor):
                 f"inferred:{prepared.contract.kind.value}@"
                 f"{prepared.contract.version}"
             )
+            if inference_result.finish_reason == "stop":
+                payload_json = validated_output.model_dump_json()
 
-        source_reference = ProvenanceReference(
-            source_id=context.record_id,
-            source_type=context.record_type,
-            source_version=context.schema_version,
-            relation="derived-from",
-            producer=context.producer,
-        )
         return Success(
-            Claim(
-                producer=SUPERVISOR_PRODUCER,
-                correlation_id=task.correlation_id,
-                statement=statement,
-                confidence=confidence,
-                epistemic_status=epistemic_status,
-                data_class=output_data_class,
-                provenance=(source_reference,),
+            _ValidatedClaim(
+                claim=self._claim_from_output(
+                    task,
+                    context,
+                    statement=statement,
+                    confidence=confidence,
+                    epistemic_status=epistemic_status,
+                    output_data_class=output_data_class,
+                ),
+                payload_json=payload_json,
             )
         )
 
-    async def _execute_prepared_request(
+    async def _execute_prepared_request(  # noqa: PLR0911
         self,
         task: Task,
         context: ContextPackage,
         prepared: _PreparedRequest,
         cancellation: CancellationToken,
-    ) -> tuple[Result[Claim, ActionFailure], bool]:
+    ) -> tuple[Result[_ValidatedClaim, ActionFailure], bool]:
         """Execute with capacity reserved; return whether release is deferred."""
         if cancellation.cancelled:
             return Failure(self._cancelled(task.record_id)), False
@@ -855,6 +915,8 @@ class ProcessorSupervisor(LocalProcessor):
                 Failure(guarded_failure.failure),
                 guarded_failure.capacity_release_deferred,
             )
+        if cancellation.cancelled:
+            return Failure(self._cancelled(task.record_id)), False
 
         return (
             self._build_claim(
@@ -869,7 +931,7 @@ class ProcessorSupervisor(LocalProcessor):
         context: ContextPackage,
         prepared: _PreparedRequest,
         cancellation: CancellationToken,
-    ) -> Result[Claim, ActionFailure]:
+    ) -> Result[_ValidatedClaim, ActionFailure]:
         """Release the capacity lease exactly once unless an operation drains."""
         release_capacity = True
         try:
@@ -882,7 +944,99 @@ class ProcessorSupervisor(LocalProcessor):
             if release_capacity:
                 self._release_capacity()
 
-    async def process(
+    def _cache_key(self, prepared: _PreparedRequest) -> BoundedResultCacheKey | None:
+        """Build the opaque cache key when all required versions are known."""
+        if (
+            self.result_cache is None
+            or self.model_artifact_version is None
+            or prepared.contract is None
+        ):
+            return None
+        model_name = self.engine.model_name if self.engine is not None else self.model_name
+        return BoundedResultCacheKey.build(
+            model_name=model_name,
+            model_artifact_version=self.model_artifact_version,
+            task_kind=prepared.contract.kind.value,
+            contract_version=prepared.contract.version,
+            prompt_version=prepared.contract.prompt_version,
+            policy_version=self.policy_version,
+            normalized_input={
+                "allowed_providers": sorted(prepared.budget.allowed_providers),
+                "data_class": prepared.retained_context.data_class.value,
+                "max_output_tokens": prepared.budget.max_output_tokens,
+                "prompt": prepared.prompt,
+            },
+        )
+
+    def _cache_provider_allowed(self, prepared: _PreparedRequest) -> bool:
+        """Prevent a hit from bypassing the caller's provider allow-list."""
+        allowed = set(prepared.budget.allowed_providers)
+        if not allowed:
+            return True
+        model_name = self.engine.model_name if self.engine is not None else self.model_name
+        return model_name in allowed or self.backend in allowed
+
+    async def _cached_claim(  # noqa: PLR0911
+        self,
+        key: BoundedResultCacheKey,
+        task: Task,
+        context: ContextPackage,
+        prepared: _PreparedRequest,
+        cancellation: CancellationToken,
+    ) -> Claim | None:
+        """Revalidate and rebind a cached bounded payload to current context."""
+        if self.result_cache is None or prepared.contract is None:
+            return None
+        lookup = await self.result_cache.lookup(key)
+        self._last_cache_lookup = lookup.metadata
+        if lookup.metadata.status != CacheLookupStatus.HIT or lookup.result is None:
+            self._cache_misses += 1
+            return None
+        if cancellation.cancelled:
+            return None
+        if time.monotonic() >= prepared.operation_deadline:
+            return None
+        if (
+            lookup.result.input_data_class
+            != prepared.retained_context.data_class
+        ):
+            await self.result_cache.invalidate(key)
+            self._cache_misses += 1
+            return None
+
+        validation = prepared.contract.validate_output(
+            lookup.result.payload_json,
+            input_data_class=prepared.retained_context.data_class,
+            allowed_source_ids=prepared.retained_context.source_ids,
+        )
+        if isinstance(validation, Failure):
+            await self.result_cache.invalidate(key)
+            self._cache_misses += 1
+            return None
+
+        output = validation.unwrap()
+        result_data_class = output.result_data_class(
+            prepared.retained_context.data_class
+        )
+        if lookup.result.result_data_class != result_data_class:
+            await self.result_cache.invalidate(key)
+            self._cache_misses += 1
+            return None
+        self._cache_hits += 1
+        self._total_requests += 1
+        return self._claim_from_output(
+            task,
+            context,
+            statement=output.claim_statement(),
+            confidence=output.confidence,
+            epistemic_status=(
+                f"inferred:{prepared.contract.kind.value}@"
+                f"{prepared.contract.version}"
+            ),
+            output_data_class=result_data_class,
+        )
+
+    async def process(  # noqa: PLR0911
         self,
         task: Task,
         context: ContextPackage,
@@ -895,6 +1049,7 @@ class ProcessorSupervisor(LocalProcessor):
         Executes bounded local inference over context packages.
         Outputs a schema-validated Claim with provenance.
         """
+        self._last_cache_lookup = None
         guard_result = self._guard_request_start(task, cancellation)
         if isinstance(guard_result, Failure):
             return guard_result
@@ -906,10 +1061,24 @@ class ProcessorSupervisor(LocalProcessor):
             return prepared_result
         prepared = prepared_result.unwrap()
 
-        # Future cache lookup boundary: policy, privacy, contract, context and
-        # caller budget have been checked, but no capacity or model was touched.
-        # A cache implementation must key policy/model versions and retained
-        # classification/source identity, then rebind current provenance.
+        cache_key = self._cache_key(prepared)
+        if cache_key is not None and self._cache_provider_allowed(prepared):
+            cached_claim = await self._cached_claim(
+                cache_key, task, context, prepared, cancellation
+            )
+            if cancellation.cancelled:
+                return Failure(self._cancelled(task.record_id))
+            if time.monotonic() >= prepared.operation_deadline:
+                return Failure(
+                    self._failure(
+                        "DEADLINE_EXCEEDED",
+                        "Inference budget deadline exceeded during cache lookup",
+                        request_id=task.record_id,
+                    )
+                )
+            if cached_claim is not None:
+                return Success(cached_claim)
+
         capacity_result = await self._acquire_capacity(
             prepared.operation_deadline, task.record_id
         )
@@ -919,8 +1088,32 @@ class ProcessorSupervisor(LocalProcessor):
         result = await self._execute_with_capacity(
             task, context, prepared, cancellation
         )
-        # Future cache store boundary: only a schema-validated Claim can succeed.
-        return result
+        if isinstance(result, Failure):
+            return result
+        if cancellation.cancelled:
+            return Failure(self._cancelled(task.record_id))
+        if time.monotonic() >= prepared.operation_deadline:
+            return Failure(
+                self._failure(
+                    "DEADLINE_EXCEEDED",
+                    "Inference budget deadline exceeded after generation",
+                    request_id=task.record_id,
+                )
+            )
+
+        validated = result.unwrap()
+        if (
+            cache_key is not None
+            and validated.payload_json is not None
+            and self.result_cache is not None
+        ):
+            await self.result_cache.store(
+                cache_key,
+                payload_json=validated.payload_json,
+                input_data_class=prepared.retained_context.data_class,
+                result_data_class=DataClass(validated.claim.data_class),
+            )
+        return Success(validated.claim)
 
     async def process_bounded(
         self,

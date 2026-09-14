@@ -699,9 +699,9 @@ host-capacity reporting remain open.
 
 #### 4.2 Bounded local tasks
 
-Status: `[/]` — all six versioned task contracts are implemented; policy-aware
-result caching remains open in GitLab issue #16 and follows the supervisor
-decomposition tracked by #17.
+Status: `[x]` — all six versioned task contracts and the persistent,
+policy-aware bounded-result cache are implemented. Cache reuse remains disabled
+until an operator supplies an immutable model artifact version.
 
 - [x] Add schema-constrained intent classification, entity extraction, episode
   summarization, salience estimation, privacy-risk elevation and routing hints.
@@ -709,7 +709,7 @@ decomposition tracked by #17.
 - [x] Validate outputs before they may become derived claims.
 - [x] Prevent local processors from writing state or invoking capabilities
   directly.
-- [ ] Cache results by model/artifact version, normalized input and policy version.
+- [x] Cache results by model/artifact version, normalized input and policy version.
 
 #### 4.3 Local voice loop
 
@@ -1296,9 +1296,9 @@ than a big-bang rewrite.
   exist. Local event replay and bounded backpressure are already implemented in
   Stage 2.
 - Full style linting contains legacy violations; critical lint is blocking now.
-- GitLab issues #8 and #9 were resolved by the Stage 4.1 supervisor work. Result
-  caching and supervisor decomposition remain tracked by #16 and #17. Issues #2
-  and #6 require reproduction against the new contracts before implementation.
+- GitLab issues #8, #9, #16 and #17 were resolved by the Stage 4.1 supervisor
+  and Stage 4.2 bounded-result work. Issues #2 and #6 require reproduction
+  against the new contracts before implementation.
 
 ## Issue and merge-request template for roadmap work
 

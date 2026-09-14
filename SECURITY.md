@@ -129,6 +129,17 @@ parsing, and timestamps beyond the permitted local future skew are rejected.
 Privacy deletion enables SQLite secure-delete semantics and truncates WAL data
 after the encrypted store and event journal commit their removals.
 
+The optional bounded-inference result cache is disposable local acceleration,
+not durable memory. Its key stores no prompt or normalized input, and reuse is
+isolated by the current policy, model artifact, task contract, prompt,
+classification, approved source identity and caller constraints. Cached JSON is
+validated again before a new provenance-bearing claim is created. The cache
+database has mode `0600`, a bounded capacity and TTL, but its validated derived
+payload is not field-encrypted. This is a documented residual risk under the
+trusted local Unix-account boundary. Operators who do not want derived private
+data in the XDG cache must set `local_ai.result_cache.enabled` to `false` and
+remove the disposable cache database.
+
 ## Reporting vulnerabilities
 
 Do not include secrets or exploit details in a public issue. Contact the project

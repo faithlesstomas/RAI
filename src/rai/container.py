@@ -6,7 +6,10 @@ from dataclasses import dataclass, field
 import asyncio
 from pathlib import Path
 import tempfile
-from typing import Any
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    import rai.inference.supervisor
 
 from .kernel.audit import InMemoryAuditLedger, JsonlAuditLedger
 from .kernel.capabilities import CapabilityRegistry
@@ -51,7 +54,9 @@ class ApplicationContainer:
     _event_socket: EventSocketServer | None = field(default=None, init=False)
     _rich_history_service: RichHistoryService | None = field(default=None, init=False)
     _rich_history_error: str | None = field(default=None, init=False)
-    _processor_supervisor: Any | None = field(default=None, init=False)
+    _processor_supervisor: rai.inference.supervisor.ProcessorSupervisor | None = field(
+        default=None, init=False
+    )
 
     def __post_init__(self) -> None:
         if self.audit_ledger is None:
@@ -153,20 +158,55 @@ class ApplicationContainer:
         return self._rich_history_service
 
     @property
-    def processor_supervisor(self) -> Any:
+    def processor_supervisor(self) -> rai.inference.supervisor.ProcessorSupervisor:
         if self._processor_supervisor is None:
+            from .inference.cache import (  # noqa: PLC0415
+                DEFAULT_CACHE_CAPACITY,
+                DEFAULT_CACHE_TTL_SECONDS,
+                SQLiteBoundedResultCache,
+            )
             from .inference.supervisor import ProcessorSupervisor  # noqa: PLC0415
             local_ai_config = self.config.get("local_ai", {})
             config = local_ai_config if isinstance(local_ai_config, dict) else {}
             backend = config.get("backend", "ollama")
             model = config.get("model", "default")
+            raw_artifact_version = config.get("model_artifact_version")
+            artifact_version = (
+                str(raw_artifact_version) if raw_artifact_version else None
+            )
             idle_unload = float(config.get("idle_unload_seconds", 300.0))
             concurrency = int(config.get("max_concurrency", 2))
+            raw_cache_config = config.get("result_cache", {})
+            cache_config = (
+                raw_cache_config if isinstance(raw_cache_config, dict) else {}
+            )
+            cache_enabled = bool(cache_config.get("enabled", True))
+            cache_path = cache_config.get("path")
+            result_cache = (
+                SQLiteBoundedResultCache(
+                    Path(cache_path) if cache_path else None,
+                    ttl_seconds=float(
+                        cache_config.get("ttl_seconds", DEFAULT_CACHE_TTL_SECONDS)
+                    ),
+                    max_entries=int(
+                        cache_config.get("max_entries", DEFAULT_CACHE_CAPACITY)
+                    ),
+                )
+                if cache_enabled and artifact_version
+                else None
+            )
             self._processor_supervisor = ProcessorSupervisor(
                 backend=backend,
                 model_name=model,
                 idle_unload_seconds=idle_unload,
                 max_concurrency=concurrency,
+                result_cache=result_cache,
+                model_artifact_version=artifact_version,
+                policy_version=(
+                    self.policy_engine.policy_version
+                    if self.policy_engine is not None
+                    else "unknown"
+                ),
             )
         return self._processor_supervisor
 
