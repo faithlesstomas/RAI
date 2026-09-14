@@ -104,6 +104,37 @@ Linux event
    → verified result
 ```
 
+## Planned assistant boundary
+
+The target Rich Assistant is a bounded application service, not a second
+cognitive kernel. One container-owned `AssistantService` will accept text,
+voice and future desktop interactions and construct every model call from
+explicit RAI state:
+
+```text
+ConversationTurn
+   → interaction and privacy policy
+   → bounded graph-memory retrieval
+   → ContextPackage + ContextManifest
+   → InferenceRequest
+   → AssistantModelBackend + ReasoningStrategy
+   → candidate AssistantResponse, memory proposals and capability proposals
+   → validation and policy
+   → one terminal response plus separately committed durable records
+```
+
+These records deliberately describe different things. A `ConversationTurn`
+records what was said. An `InferenceRequest` bounds one model invocation. A
+`Task` represents an explicit goal worth tracking or delegating. Consequently,
+ordinary chat does not create a task. If a turn proposes an operating-system
+action, the proposal still becomes a separate `CapabilityRequest` and passes
+through the existing policy, approval, invocation and verification path.
+
+The graph store, not a provider session, will own conversation and semantic
+memory. Provider conversation IDs, KV caches, hidden states, Coconut recurrence
+vectors and writable slots remain ephemeral backend state. The first replacement
+slice and its failure boundaries are specified in the [assistant architecture](assistant-architecture.md).
+
 ## Relationship to GCAS and GAIA
 
 GCAS can define portable cognitive records and contracts. GAIA can implement
@@ -128,5 +159,9 @@ are compatibility facades; SDK conversation internals do not enter kernel
 records. New CLI capability commands are separated into command, transport and
 rendering modules while the old command set lives in `cli_compatibility`.
 
-The `inference` package remains experimental and is not yet connected to the
-Stage 1 routing boundary.
+The container now owns the experimental processor supervisor, all six bounded
+task contracts and the optional policy-aware result cache. No daemon API,
+assistant service or registered capability currently dispatches work to that
+supervisor, and neither production text adapter has a repeatable live-model
+acceptance test. It is therefore implemented infrastructure, but not yet a
+complete Stage 1 routing or user-facing assistant path.

@@ -34,6 +34,7 @@ event-plane
 rich-history
 processor-supervisor
 bounded-local-tasks
+assistant-architecture
 local-voice
 neural-sidecar
 reference/modules

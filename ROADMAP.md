@@ -37,13 +37,21 @@ product increments:
    by policy rather than arbitrary model-generated shell access.
 4. **Rich Local AI** — bounded local classification, extraction, summarization,
    grounding and routing that continue to work offline.
-5. **Rich Hybrid** — explicit, budgeted escalation to GAIA or external agent
-   harnesses using the minimum necessary context.
-6. **Rich Automation** — user-approved reusable workflows with fixed
+5. **Rich Assistant** — a continuous, local-first assistant with durable graph
+   memory and a bounded context reconstructed for every interaction rather than
+   inherited from a model-provider conversation.
+6. **Rich Hybrid AI** — policy-routed use of local models and external model
+   APIs with explicit context-egress, token, cost, latency and compute budgets.
+7. **Rich Agent Interop** — optional, separately packaged connections to
+   external cognitive runtimes and agent harnesses through bounded context and
+   capability contracts.
+8. **Rich Automation** — user-approved reusable workflows with fixed
    capabilities, privacy rules, resource budgets and audit trails.
 
-Each increment must remain useful when every external model provider is
-disabled.
+Rich History, Voice, Actions, Local AI and Assistant must remain useful when
+every external model provider and agent runtime is disabled. Rich Hybrid AI and
+Agent Interop are optional extensions; their absence or outage must not degrade
+local memory, policy, audit or previously accepted work.
 
 ## Product boundary
 
@@ -55,6 +63,8 @@ RAI owns:
 - capability discovery, invocation and result verification,
 - policy, authorization, sandboxing, human approval and audit,
 - context selection, redaction, data-egress control and privacy boundaries,
+- provider-neutral assistant sessions, graph-memory retrieval and bounded
+  context construction for local-first user interaction,
 - deterministic safety reflexes and routing between rules, bounded local
   processing and external cognitive backends,
 - local MCP/HTTP/Unix-socket interfaces and authenticated network transports for
@@ -63,19 +73,34 @@ RAI owns:
   and emergency stop.
 
 RAI does not own a universal reasoning loop, Global Workspace, Cognitive
-Control, goal verification or open-ended deliberation. An external cognitive
-runtime such as GAIA may own those semantics. RAI may perform bounded,
+Control, goal verification or open-ended deliberation. An optional external
+cognitive runtime may own those semantics. RAI may perform bounded,
 schema-constrained inference and deterministic local safety reactions, but it
 must not silently become an open-ended cognitive process controller.
 
+RAI may own a bounded assistant interaction loop: accept one user or approved
+proactive event, reconstruct one finite context from durable memory, invoke one
+replaceable reasoning strategy within a budget, validate its candidate outputs
+and commit only policy-approved records. This loop is not a GCAS Workspace and
+does not grant the model ownership of memory, tools, goals or execution.
+
+Hybrid model inference and external-agent interoperability are separate ports.
+An `AssistantModelBackend` performs one bounded model inference locally or
+through an external API. An optional `AgentBackend` delegates a bounded task to
+an external cognitive runtime or agent harness. Both receive explicit context,
+privacy and resource budgets and report usage to the common ledger, but agent
+session semantics do not leak into the assistant core.
+
 RAI owns its versioned embodiment, capability, policy and provenance contracts.
 Those contracts must support a useful standalone product and must not import or
-require GAIA. GCAS compatibility is an optional semantic mapping, not the source
-of RAI's runtime types. GAIA, Codex, Claude, Gemini, Antigravity and future
-harnesses remain replaceable `AgentBackend` implementations. J-lens is an
-optional neural-inspection sidecar, not a core dependency or release gate. A
-remote Android, VR or wearable client is a thin `DeviceAgent`, not necessarily
-a full RAI installation.
+require an external cognitive runtime. GCAS compatibility is an optional
+semantic mapping, not the source of RAI's runtime types. Local and external LLM
+providers remain replaceable `AssistantModelBackend` implementations. External
+cognitive runtimes and agent harnesses remain optional, separately packaged
+`AgentBackend` implementations; named integrations belong in adapters rather
+than the core. J-lens is an optional neural-inspection sidecar, not a core
+dependency or release gate. A remote Android, VR or wearable client is a thin
+`DeviceAgent`, not necessarily a full RAI installation.
 
 RAI must not depend on private ChatGPT Computer History, Chronicle or Skysight
 interfaces. Those systems are architectural references only. Linux collectors
@@ -218,6 +243,11 @@ model and provider. It supports per-task, daily and monthly quotas and refuses o
 asks before exceeding them. Unknown pricing or missing usage data cannot be
 treated as zero cost.
 
+This accounting applies uniformly to local processors, local or external
+`AssistantModelBackend` implementations and optional `AgentBackend` runtimes.
+Local execution may have zero provider price, but its tokens, wall time, energy
+when measurable, RAM/VRAM and accelerator occupancy are still budgeted usage.
+
 Cost controls follow this order:
 
 1. deterministic rule or typed operation — no inference,
@@ -244,15 +274,22 @@ Cost controls follow this order:
 9. Privacy filtering runs before persistence and before model routing.
 10. Models do not write durable state or execute operating-system actions
     directly.
-11. Every state-changing action has a risk decision, typed result and
+11. Provider conversation IDs, KV caches and hidden states are ephemeral
+    backend metadata, never the source of truth for assistant memory.
+12. Every assistant inference receives a finite, versioned context reconstructed
+    from policy-approved durable records; a raw transcript is not replayed by
+    default.
+13. Local models, external model APIs and agent harnesses use the same mandatory
+    inference-budget and usage-ledger boundary.
+14. Every state-changing action has a risk decision, typed result and
     postcondition verification.
-12. One cognitive process has one explicit controller; RAI never competes with
-    GAIA's Workspace or Control.
-13. Network delivery is replayable and idempotent; reconnects never silently
+15. One cognitive process has one explicit controller; an optional RAI research
+    controller and an external cognitive runtime cannot co-own the same process.
+16. Network delivery is replayable and idempotent; reconnects never silently
     lose or duplicate an accepted action.
-14. Pixel-based desktop control and arbitrary shell execution are fallback
+17. Pixel-based desktop control and arbitrary shell execution are fallback
     capabilities, not the default integration path.
-15. A stage is complete only when its acceptance tests and security failure
+18. A stage is complete only when its acceptance tests and security failure
     tests pass.
 
 ## Delivery sequence
@@ -775,14 +812,431 @@ backends and voice enrollment are tracked by #23–#25 under umbrella #21.
   fixtures and unit tests exist.
 - [x] Duplicate lens IDs are rejected and terminal request IDs cannot be reused
   during one sidecar process lifetime.
-- [ ] Complete live acceptance, bounded or restart-persistent replay protection
-  and GAIA transport.
-- [ ] Keep raw tensors inside the sidecar and PyTorch/J-lens dependencies outside
+- [x] Provide the versioned HTTP/NDJSON-over-UDS transport consumed by GAIA's
+  production NCSI adapter without importing either project's implementation
+  modules into the other.
+- [ ] Complete repeatable RAI live-model acceptance, authentication, bounded or
+  restart-persistent replay protection and the remaining disconnect, OOM,
+  timeout and cancellation failure gates.
+- [x] Keep raw tensors inside the sidecar and PyTorch/J-lens dependencies outside
   the default installation.
 
 RAI provides the optional neural runtime; GAIA retains Workspace, Control,
 epistemic and verification semantics. Detailed milestone status is tracked only
 in the [canonical cross-project integration plan](https://gitlab.com/tk-lab1/ai/gaia/-/blob/main/docs/ncsi-jlens-integration.md).
+
+#### 4.7 Rich Assistant: graph-memory conversation and reasoning laboratory
+
+Status: `[ ]` — the legacy provider-owned chat path exists, but it is not a
+supported compatibility surface and may be replaced incompatibly while RAI is
+pre-1.0.
+
+Purpose: provide a continuous, local-first desktop assistant whose durable
+memory and context policy belong to RAI while its LLM and reasoning strategy are
+replaceable. This is a bounded interaction runtime, not an implementation of
+GCAS, a Global Workspace or an autonomous goal loop.
+
+The core request path is:
+
+```text
+explicit ConversationTurn or policy-approved proactive trigger
+  -> privacy and interaction policy
+  -> graph-memory retrieval
+  -> finite ContextPackage plus ContextManifest
+  -> bounded InferenceRequest
+  -> replaceable AssistantModelBackend and ReasoningStrategy
+  -> candidate response, memory proposals and capability proposals
+  -> validation and policy
+  -> one delivered response and separately committed durable records
+```
+
+**Assistant service and API replacement**
+
+- [ ] Introduce one container-owned `AssistantService` as the application
+  boundary for text, voice and future desktop clients. Do not implement a
+  second orchestration path per transport.
+- [ ] Define distinct immutable contracts for `ConversationTurn`, terminal
+  `AssistantResponse` and the bounded `InferenceRequest` sent to a model
+  backend. A normal conversational turn is not a `Task` merely because it
+  requires inference.
+- [ ] Reserve `Task` for an explicit, trackable user goal or delegated unit of
+  work. Conversation may lead to a proposed task, but neither a model response
+  nor intent classification may silently create or authorize one.
+- [ ] Replace `ChatService`, legacy agent chains and the Antigravity-owned chat
+  endpoint rather than preserving their behavior. CLI, REST or WebSocket chat
+  surfaces that remain may change schema and semantics before 1.0.
+- [ ] Treat an `AssistantSessionId` only as interaction and audit grouping. Each
+  model request starts from the explicit `ContextPackage`; provider conversation
+  IDs and implicit server-side history are forbidden as state.
+- [ ] Define streaming, cancellation, deadlines, interruption and exactly-once
+  terminal delivery independently of a model provider.
+
+**Durable graph memory and reconstructed context**
+
+- [ ] Define immutable assistant memory records and provenance edges for user
+  statements, preferences, conversation turns, assistant claims, observation
+  and episode references, summaries, corrections, contradictions and
+  supersession. Use RAI-native records; GCAS mappings remain optional adapters.
+- [ ] Keep the review/audit transcript logically separate from semantic memory.
+  Assistant output is an unverified claim and never becomes a fact merely
+  because it was generated or displayed.
+- [ ] Define a `MemoryGraphStore` protocol and a backend-independent schema
+  before selecting a graph engine. Storage-specific identifiers, queries and
+  executable rules must not leak into assistant-domain records.
+- [ ] Represent at least two logical timescales: a small, volatile working graph
+  for the active interaction or explicit task and durable episodic/semantic
+  graph memory. Promotion, consolidation, expiry and eviction are explicit,
+  auditable operations.
+- [ ] Implement a lightweight local reference adapter, initially as a SQLite
+  graph projection with stable node, hyperedge and provenance IDs, so tests and
+  the default desktop profile require no additional database service.
+- [ ] Benchmark an optional [Neo4j](https://neo4j.com/docs/operations-manual/current/introduction/)
+  adapter on traversal, temporal/provenance queries, deletion propagation,
+  startup, backup, memory footprint and local operational/security cost before
+  choosing it for a production profile.
+- [ ] Prototype an [OpenCog AtomSpace](https://github.com/opencog/atomspace)
+  memory adapter and a separate
+  [Hyperon/MeTTa](https://github.com/trueagi-io/hyperon-experimental)
+  reasoning sidecar. Evaluate typed hypergraph representation, rule/query
+  expression, changing truth values and short-/long-term space overlays. Neither
+  executable atoms nor MeTTa rules run inside the trusted RAI process or bypass
+  its validation and policy boundary.
+- [ ] Evaluate [GraphRAG-style retrieval](https://microsoft.github.io/graphrag/)
+  as a family of indexing and query strategies, not as the memory database
+  itself. Compare bounded neighborhood, temporal, vector, hybrid and
+  community-summary retrieval. Indexing is incremental, budgeted and local by
+  default; all model-generated entities, relations and summaries remain derived
+  claims with provenance.
+- [ ] Record the storage/retrieval choice in an ADR based on representative RAI
+  workloads. SQLite, Neo4j and AtomSpace are replaceable storage candidates;
+  Hyperon/MeTTa is a separate reasoning experiment. None is an automatic runtime
+  dependency.
+- [ ] Build every context from the current request, selected recent interaction
+  records, relevant graph memories and approved Rich History references. Apply
+  explicit token, character, item, privacy and latency budgets.
+- [ ] Persist a `ContextManifest` containing selected source IDs, exclusions,
+  redactions, ranking reasons, policy/model versions and actual size so a reply
+  can be reproduced and audited without retaining an opaque provider prompt.
+- [ ] Add deterministic consolidation, expiry, correction and deletion
+  propagation. A model may propose memory candidates but cannot commit, delete
+  or lower their privacy classification.
+
+**Replaceable models and reasoning strategies**
+
+- [ ] Define a provider-neutral `AssistantModelBackend` and separate
+  `ReasoningStrategy` contract. Report capabilities such as streaming, hidden
+  states, KV cache, latent recurrence, J-lens and deterministic seeding instead
+  of branching core code by provider name.
+- [ ] Implement comparable `DIRECT`, `TOKEN_SCRATCHPAD` and
+  `LATENT_RECURRENCE` strategies. Token scratchpads and latent state are
+  ephemeral research data and are not displayed or persisted by default.
+- [ ] Start latent recurrence with a fixed iteration count and hard compute/time
+  ceilings. Add convergence-, confidence- or learned-halting policies only
+  after fixed-step baselines and failure behavior are measured.
+- [ ] Return a typed unsupported-capability result when a backend cannot expose
+  hidden states or accept recurrent embeddings; do not silently emulate latent
+  recurrence with tokens.
+- [ ] Record a versioned run manifest with model, tokenizer, quantization,
+  strategy, iteration policy, random seed, budgets, context manifest and
+  observer artifacts.
+- [ ] Apply `InferenceBudget` and `UsageLedger` to every strategy and backend.
+  Count input/output tokens, latent iterations, retries, time and local compute;
+  external APIs additionally report or conservatively estimate monetary cost.
+
+**Coconut-style continuous latent inference**
+
+`LATENT_RECURRENCE` specifically means a
+[Coconut-style](https://arxiv.org/abs/2412.06769) chain of continuous thought,
+not token recurrence, read-only J-lens observation or activation steering. At a
+latent position the final hidden-state vector for the preceding position is fed
+back as the next input embedding without the language-model-head -> token ->
+embedding round trip. The recurrent vector, KV cache and raw activations remain
+inside the neural process.
+
+Primary references:
+
+- Shibo Hao, Sainbayar Sukhbaatar, DiJia Su, Xian Li, Zhiting Hu, Jason Weston
+  and Yuandong Tian,
+  [*Training Large Language Models to Reason in a Continuous Latent
+  Space*](https://arxiv.org/abs/2412.06769), arXiv:2412.06769, accepted to COLM
+  2025. The paper introduces Coconut (Chain of Continuous Thought) and the
+  direct hidden-state-to-input-embedding recurrence used by this roadmap.
+- [Official Meta FAIR Coconut implementation](https://github.com/facebookresearch/coconut),
+  including the staged curriculum-training and evaluation configurations used
+  to reproduce the paper's GSM8K, ProntoQA and ProsQA experiments.
+
+This execution mode requires a checkpoint trained for continuous thoughts. The
+ability of a generic Transformers model to return hidden states or accept
+`inputs_embeds` is not evidence that the checkpoint supports Coconut. An
+untrained or incompatible checkpoint must return a typed unsupported result
+rather than running an unvalidated feedback loop.
+
+The existing separately startable neural sidecar becomes the single owner of
+the model, accelerator, KV cache and latent vectors for both direct and Coconut
+generation. Do not load a second copy of the same model in another daemon only
+to provide latent inference. Inside that boundary, keep the transport contract,
+the direct Transformers engine, a dedicated `CoconutEngine` and optional
+read-only observers separable.
+
+The sidecar exposes a transport-independent, versioned execution contract,
+initially named `rai.latent.v1`, over protected Unix-domain-socket HTTP with
+bounded streaming. Its minimum surface is:
+
+```text
+GET  /api/v1/latent/capabilities
+GET  /api/v1/latent/models
+POST /api/v1/latent/generate
+POST /api/v1/latent/requests/{request-id}/cancel
+```
+
+The event union distinguishes lifecycle, hidden computation and visible output
+without exporting the latent vector:
+
+```text
+GenerationStarted
+LatentStepCompleted
+NeuralStateObserved       # optional bounded observer output
+TokenDelta
+GenerationCompleted | GenerationFailed
+```
+
+RAI integrates this surface through an `AssistantModelBackend`; GAIA and other
+processes use protocol clients rather than importing the engine. The caller
+chooses the reasoning mode, fixed latent-step budget and optional observer. The
+sidecar executes one bounded inner numerical recurrence and enforces stricter
+local ceilings. When GAIA is the caller, GAIA retains ownership of the outer
+Workspace and Cognitive Control process; RAI does not create a competing
+cognitive controller.
+
+- [ ] Record an ADR that freezes the first Coconut execution semantics: latent
+  start/end markers, the exact returned hidden vector, final normalization,
+  attention mask, position IDs, KV-cache updates and the transition back to
+  ordinary token decoding.
+- [ ] Define a versioned Coconut artifact manifest containing immutable base and
+  trained checkpoint revisions, tokenizer and special-token IDs, training
+  recipe, supported latent-step range, dtype/quantization compatibility and
+  checksums.
+- [ ] Extend the neural sidecar with a dedicated `CoconutEngine`, fixed-step
+  execution, hard iteration/time/RAM/VRAM limits, cancellation between forward
+  passes, typed incompatibility and no raw-tensor egress.
+- [ ] Freeze `rai.latent.v1` conformance fixtures for capabilities, requests,
+  streaming events, cancellation, terminal replay and failure taxonomy before
+  implementing RAI, GAIA or third-party clients.
+- [ ] Add a RAI assistant adapter and a separate GAIA protocol adapter. Both send
+  explicit context and budgets; neither receives latent vectors, owns model
+  state or bypasses the caller's memory, epistemic or capability policy.
+- [ ] Keep Coconut curriculum training and checkpoint production in an explicit
+  offline workflow. The serving sidecar loads verified artifacts and never
+  starts training or downloads a model as an inference side effect.
+- [ ] Compare `DIRECT`, `TOKEN_SCRATCHPAD` and `COCONUT_FIXED` on the same
+  Coconut-compatible checkpoint, `ContextPackage`, seed and declared output and
+  compute budgets. Start with fixed latent counts including zero as the direct
+  control, and record answer/verifier quality, latency, energy, RAM/VRAM,
+  stability, failure and cancellation behavior.
+- [ ] Run every fixed-step comparison with observers disabled and with one
+  read-only observer enabled. Observer mode must leave deterministic output
+  unchanged and must not alter recurrence depth, halting or policy.
+- [ ] Consider learned or confidence/convergence-based latent halting only after
+  the fixed-step baselines are reproducible. Treat activation steering,
+  ablation and patching as a separate post-observation intervention gate.
+
+**Writable neural workspace slots**
+
+Treat writable slots as another optional inference architecture for this
+assistant, independent of GCAS, GAIA or any other cognitive runtime. The module
+tests whether a small fixed-capacity neural workspace improves reasoning and use
+of graph-retrieved context at a matched token and compute budget. It does not
+define symbolic slot roles, a global-workspace controller or an alternative
+durable memory system.
+
+For a request or bounded inference session, let
+`W[t] in R^(K x d_slot)` be a bank of `K` writable vectors. The model reads from
+that bank while processing its residual stream and produces gated, bounded
+updates for the next step or context segment. The residual stream carries the
+current computation through model depth; slots carry selected state through
+inference time. Slot identity is therefore not a token position, graph-node ID
+or claim that a vector has a human-readable role.
+
+Keep the graph store as the assistant's durable, auditable memory. A
+`ContextPackage` may initialize or condition slots, and visible model output may
+propose an ordinary memory update through the existing validation path, but the
+slot tensor itself is ephemeral research state. Version 1 resets it at every
+request boundary and never persists it between conversations. Longer-lived
+neural state requires a separate privacy, isolation, deletion and contamination
+review.
+
+Implement the experiment as a `SlotWorkspaceEngine` beside the direct and
+`CoconutEngine` implementations in the existing neural sidecar. The sidecar
+owns slot tensors, accelerator state and any recurrent cache. Core assistant
+code selects a declared `ReasoningStrategy` and sees only typed events, bounded
+metrics and visible output. It must not import model-specific slot classes or
+receive raw tensors.
+
+Expose the engine through a separate versioned `rai.slots.v1` contract rather
+than adding slot lifecycle semantics to `rai.latent.v1`. The initial surface is
+request-scoped:
+
+```text
+GET  /api/v1/slots/capabilities
+POST /api/v1/slots/generate
+POST /api/v1/slots/requests/{request-id}/cancel
+```
+
+The request declares the architecture, slot count, update count, observer and
+budgets. Streaming may report `SlotStepCompleted` and aggregate occupancy,
+update-norm, attention-entropy or routing metrics, but never slot vectors. An
+opaque internal handle and monotonically increasing version prevent stale
+writes; neither is a durable memory identifier.
+
+Evaluate three increasingly invasive variants instead of treating "slots" as
+one mechanism:
+
+1. `SLOT_TOKENS`: special memory/register tokens passed between bounded context
+   segments. This is the cheapest implementation baseline.
+2. `FAM_FEEDBACK`: selected hidden representations from one block become
+   attention-accessible working memory for the next block without introducing
+   a new learned cross-attention module.
+3. `SLOT_CROSS_ATTN`: a separate bank read through cross-attention and updated
+   by a gated writer/router. This is the target architecture discussed here,
+   but it changes the model computation and requires adaptation training.
+
+Relevant precedents are
+[Recurrent Memory Transformer](https://arxiv.org/abs/2207.06881), which passes
+trained memory tokens between segments;
+[TransformerFAM](https://arxiv.org/abs/2404.09173), which feeds latent
+representations back as working memory without adding weights;
+[Hymba](https://arxiv.org/abs/2411.13676), whose released models use learned
+meta tokens; and
+[MemoryLLM](https://arxiv.org/abs/2402.04624), which provides a much larger
+self-updatable latent memory pool. They are comparison points, not evidence
+that an ordinary causal-LM checkpoint already implements the proposed slot
+semantics.
+
+Training is an explicit experimental stage, not an inference side effect:
+
+- Protocol, lifecycle, isolation and observer tests need no training. Released
+  compatible checkpoints may also be evaluated unchanged as external
+  baselines.
+- `SLOT_TOKENS` and `FAM_FEEDBACK` may reuse pretrained weights, but require
+  continued or task fine-tuning before their memory behavior can be interpreted
+  as useful. A wrapper that merely recycles hidden states is a negative control.
+- `SLOT_CROSS_ATTN` introduces slot initialization, read and write behavior and
+  therefore requires at least parameter-efficient adaptation of those modules;
+  full continued pretraining is considered only after the frozen-backbone or
+  LoRA/adapter experiment passes its gate.
+- Keep all dataset creation, training and checkpoint publication in a separate
+  offline workflow. The sidecar loads a pinned, verified artifact manifest and
+  never trains or downloads weights during serving.
+
+- [ ] Record a slot-architecture ADR covering tensor shapes, insertion layers,
+  initialization, read attention, writer/router, gating, normalization,
+  detach/backpropagation policy, segment boundaries, reset and cancellation.
+- [ ] Freeze `rai.slots.v1` schemas and conformance fixtures, including
+  capability negotiation, unsupported checkpoints, stale handles, exactly one
+  terminal event and proof that no state leaks between requests.
+- [ ] Implement `SLOT_TOKENS` first and benchmark fixed `K` values such as 8,
+  16 and 32 against `DIRECT` and `TOKEN_SCRATCHPAD` before adding new model
+  modules.
+- [ ] Add `FAM_FEEDBACK` as the first pretrained-checkpoint adaptation and
+  measure zero-shot recycling as a negative control versus a reproducible
+  parameter-efficient fine-tune.
+- [ ] Implement `SLOT_CROSS_ATTN` with a frozen-backbone adapter experiment
+  first. Train slot initializers, cross-attention and gated writer/router on
+  next-token plus synthetic retention, overwrite, conflict and multi-step
+  reasoning tasks.
+- [ ] Evaluate every variant on the same base checkpoint, `ContextPackage`,
+  graph-retrieval results, seed and output/compute budgets. Record answer and
+  verifier quality, retrieval use, contradiction handling, latency, energy,
+  RAM/VRAM, slot utilization, stability and cancellation behavior.
+- [ ] Require causal ablations: shuffled or zeroed slots, frozen updates,
+  read-only slots and equivalent extra context tokens. Reject a claimed memory
+  benefit when a simpler token or compute-matched baseline explains it.
+- [ ] Compare Coconut and slot recurrence separately. Attempt a combined
+  `COCONUT_SLOTS` strategy only after both `COCONUT_FIXED` and at least one slot
+  variant independently pass their acceptance gates.
+- [ ] Keep semantic slot labels and durable cross-request neural state out of
+  the first implementation. Consider them only after stable slot utilization
+  and a measurable assistant-level benefit are reproduced.
+
+**Read-only interpretability first**
+
+- [ ] Generalize the NCSI/J-lens integration behind an
+  `InterpretabilityObserver` with a no-op implementation and optional J-lens,
+  logit-lens, probe or sparse-autoencoder adapters.
+- [ ] Keep residual-stream tensors and latent slots inside the neural sidecar.
+  Persist only bounded observations or explicitly approved research artifacts.
+- [ ] Separate observation from intervention. Enabling a read-only observer must
+  not change context selection, sampling parameters, halting or capability
+  policy; steering requires a future, separately reviewed experiment contract.
+- [ ] Compare strategies on identical model checkpoints, contexts, seeds and
+  output/compute budgets. Measure answer quality, recall, contradiction
+  handling, false-memory adoption, context efficiency, latency, energy and
+  observer perturbation.
+
+**Post-observation research gate: GW-like coordination and uncertainty**
+
+- [ ] Use the read-only latent-recurrence, J-lens and slot experiments to test
+  whether stable broadcast-, competition-, ignition- or workspace-like dynamics
+  can be operationally identified. Do not assume in advance that they implement
+  Global Workspace Theory.
+- [ ] Compare an explicit GCAS Workspace mapping with alternative GWT-inspired
+  and non-workspace controllers using falsifiable tasks and the same memory,
+  model and compute budgets. Record negative results and ambiguous mappings.
+- [ ] Define bounded neural/slot observations that can be related to working-
+  graph nodes without treating a decoded label as the latent state's literal
+  meaning or automatically creating a durable belief.
+- [ ] Add an explicit uncertainty model for memories, retrieved claims and
+  proposed conclusions. Evaluate a Bayesian evidence-update baseline with
+  provenance, source reliability, temporal validity, contradiction and
+  calibration; a model's self-reported confidence is evidence, not probability
+  or authorization.
+- [ ] If intervention is justified, place the experimental workspace/controller
+  behind a separately startable protocol with no direct persistence or
+  capability access. It emits proposals and observations through the same
+  validation and policy path as every model.
+- [ ] Require an ADR after the observation-only experiments to decide whether a
+  useful GW-like process belongs in an optional RAI research module, an external
+  cognitive runtime or nowhere. It must not emerge implicitly inside
+  `AssistantService`.
+
+**Continuous local assistance without continuous LLM inference**
+
+- [ ] Feed the assistant from privacy-filtered Rich History observations and
+  deterministic episodes. Collection may be continuous and opt-in; LLM
+  inference is event-, schedule- or user-triggered and separately budgeted.
+- [ ] Perform routine consolidation locally. Preserve
+  `background_remote_tokens = 0` unless the user creates an explicit automation
+  with its own data and cost policy.
+- [ ] Require opt-in scopes, rate limits, quiet hours, deduplication and a visible
+  reason for every proactive interruption. Merely observing a salient event is
+  not permission to notify or act.
+- [ ] Allow the model to emit typed response, memory and capability proposals
+  only. All operating-system actions continue through `CapabilityService`,
+  policy, approval and postcondition verification.
+
+Implementation order:
+
+1. Freeze conformance fixtures for `ConversationTurn`, `AssistantResponse` and
+   `InferenceRequest`, then deliver one vertical slice with `AssistantService`,
+   a deterministic fake backend and a minimal SQLite graph store. Store turn
+   nodes and `REPLIES_TO` edges, reconstruct an explicit context after restart,
+   prove that ordinary chat creates no `Task` and never resume provider-owned
+   conversation state.
+2. Connect policy-approved Rich History episodes and local text/voice clients.
+3. Add one real local backend plus Direct and token-scratchpad comparison;
+   external model APIs arrive through the separate Stage 6 hybrid module.
+4. Extend the neural sidecar with the versioned `rai.latent.v1` surface, a
+   Coconut-compatible fixed-step engine and read-only observers; add
+   reproducible experiment manifests and evaluations.
+5. Add the independent `rai.slots.v1` surface and evaluate `SLOT_TOKENS`, then
+   trained `FAM_FEEDBACK` and `SLOT_CROSS_ATTN`; do not combine them with
+   Coconut until their separate ablations pass.
+6. Benchmark optional Neo4j and AtomSpace memory adapters, the Hyperon/MeTTa
+   reasoning sidecar and GraphRAG-style retrieval, then record the relevant
+   ADRs.
+8. Remove the obsolete chat path, add opt-in proactive triggers and only after
+   the observation gate consider GW-like coordination or approved capability
+   proposals.
 
 Acceptance slices:
 
@@ -792,10 +1246,37 @@ Acceptance slices:
    answered locally through TTS without retaining raw audio.
 3. An accessibility-poor test application triggers one consented, cropped visual
    inference; its result is marked uncertain and the capture is removed.
+4. After a daemon restart, the assistant answers from selected graph memories
+   and source references while the model backend receives no implicit provider
+   conversation or full-transcript replay.
+5. Correcting an older user statement supersedes it; the next context excludes
+   the obsolete value, and deletion removes both source and derived retrieval
+   entries.
+6. Direct, token-scratchpad and `COCONUT_FIXED` runs consume the same recorded
+   `ContextPackage`; a Coconut-incompatible checkpoint or unsupported strategy
+   fails explicitly and does not change durable memory.
+7. With a fixed seed and deterministic backend, enabling a read-only observer
+   leaves the delivered response unchanged and stores no raw hidden-state tensor
+   by default.
+8. A request-scoped slot run resets its state on completion or cancellation,
+   exports no raw vector and cannot affect the next request; its result is
+   compared with a token- and compute-matched no-slot control.
+9. A cancelled or interrupted turn emits at most one terminal result, commits no
+   partial assistant claim as fact and cannot invoke a capability directly.
+10. The same memory/context conformance suite passes against the SQLite reference
+   adapter and at least one isolated candidate adapter before an alternative
+   graph engine can become a supported profile.
+11. A contradicted or weakly supported claim retains its evidence and calibrated
+    uncertainty state; neither retrieval score nor model confidence silently
+    promotes it to fact.
 
 Required failure tests cover malformed output, model timeout, cancellation,
-out-of-memory, unavailable accelerator, low-confidence speech and denied screen
-capture.
+out-of-memory, unavailable accelerator, low-confidence speech, denied screen
+capture, poisoned retrieved content, stale/superseded memory, observer failure,
+incompatible Coconut artifacts, latent timeout/non-convergence, rejected
+executable graph rules, unavailable optional graph backends, incompatible slot
+artifacts, stale slot versions, cross-request slot leakage, slot-update
+instability and attempted direct capability invocation.
 
 ### Stage 5 — Rich Actions: safe desktop and system control
 
@@ -880,29 +1361,39 @@ Acceptance scenarios:
 Each scenario must pass through CLI and MCP using the same capability schema,
 policy decision, approval behavior and verified result.
 
-### Stage 6 — Rich Hybrid: external agents, ACP and budget control
+### Stage 6 — Rich Hybrid AI and optional agent interoperability
 
-Purpose: allow difficult reasoning and coding tasks to use GAIA or external
-agents without transferring ownership of memory, policy or the Linux desktop.
+Purpose: combine local inference with external model APIs and, independently,
+allow difficult delegated tasks to use optional external cognitive runtimes or
+agent harnesses without transferring ownership of memory, policy or the Linux
+desktop.
 
 Prerequisites: Stages 1, 3 and 5. A backend cannot be production-enabled until
 usage accounting, cancellation and data-egress auditing work.
 
-The integration flow is explicit and must preserve RAI's product boundary:
+Hybrid LLM inference and delegated agent execution are separate flows and
+modules. Both preserve RAI's product boundary:
 
 ```text
-durable event or explicit user task
+assistant turn
   -> deterministic trigger/router
   -> policy-filtered ContextPackage
-  -> replaceable AgentBackend
+  -> local or external AssistantModelBackend
+  -> validated response and memory/capability proposals
+
+bounded delegated task
+  -> policy-filtered ContextPackage
+  -> optional, separately packaged AgentBackend
   -> typed CapabilityRequest
   -> shared CapabilityService and PolicyEngine
   -> durable ActionResult or ActionFailure
 ```
 
 This coordination is not a universal reasoning loop inside RAI. The selected
-agent harness owns its reasoning and session semantics; RAI owns observation,
-context release, capability authority, verification and durable evidence.
+agent harness owns its internal reasoning. When it serves `AssistantService`,
+RAI still owns canonical assistant memory and interaction semantics; backend
+session metadata cannot replace them. RAI also owns observation, context
+release, capability authority, verification and durable evidence.
 
 #### 6.1 Context construction and egress
 
@@ -948,18 +1439,40 @@ on_budget_exceeded: cancel
 Token and currency amounts remain operator configuration because models and
 prices change independently of RAI releases.
 
-#### 6.3 AgentBackend conformance
+#### 6.3 External model API backends
+
+- [ ] Implement external LLM APIs through `AssistantModelBackend`, not
+  `AgentBackend`. A model backend performs one bounded inference and receives no
+  ambient tools, desktop access or ownership of assistant memory.
+- [ ] Send the same versioned `ContextPackage` and reasoning-strategy contract to
+  local and external models where capabilities permit. Unsupported latent or
+  observer features fail explicitly rather than changing strategy silently.
+- [ ] Disable provider-side conversation persistence when possible and never use
+  a remote conversation ID as context. Record provider retention expectations in
+  the outbound `ContextManifest`.
+- [ ] Reconcile reported prompt, cached, completion and reasoning tokens with
+  local estimates; treat absent or inconsistent usage as unknown and apply the
+  conservative budget policy.
+- [ ] Keep provider SDKs, credentials, retry rules and response normalization in
+  optional adapters. Removing one provider must not change memory or public
+  assistant-domain records.
+
+#### 6.4 AgentBackend conformance
 
 - [ ] Stabilize `AgentBackend` lifecycle, streaming, cancellation, usage,
   retryability, evidence and failure contracts.
-- [ ] Keep backend conversation/session IDs as adapter-owned metadata.
+- [ ] Package agent interoperability separately from assistant model backends;
+  installing an external LLM API adapter must not install ACP, agent tools or an
+  agent harness.
+- [ ] Keep backend conversation/session IDs as adapter-owned metadata and never
+  use them as the source of assistant memory or context.
 - [ ] Add GAIA as the reference cognitive-runtime integration.
 - [ ] Add one end-to-end external harness backend before multiplying providers.
 - [ ] Retain Antigravity only if it passes the common contracts without
   process-wide patching or private runtime coupling.
 - [ ] Make backend removal or outage preserve local history and capability state.
 
-#### 6.4 Optional GAIA embodiment adapter
+#### 6.5 Optional GAIA embodiment adapter
 
 - [ ] Implement GAIA strictly as an adapter over the public Stage 2 event and
   Stage 1 capability contracts; do not import GAIA implementation modules into
@@ -978,7 +1491,7 @@ prices change independently of RAI releases.
 The GAIA round-trip is an additional cross-project conformance test, not a
 prerequisite for the Stage 2 event plane, Rich History or local-only operation.
 
-#### 6.5 ACP and MCP roles
+#### 6.6 ACP and MCP roles
 
 - [x] Expose the base typed capability registry through authenticated local MCP;
   MCP calls use the shared validation, policy, approval and audit path.
@@ -994,7 +1507,7 @@ prerequisite for the Stage 2 event plane, Rich History or local-only operation.
 - [ ] Add conformance fixtures that prove an ACP agent cannot bypass RAI policy or
   obtain ambient desktop context.
 
-#### 6.6 Hybrid routing
+#### 6.7 Hybrid routing
 
 - [ ] Route deterministic tasks directly to capabilities without spending model
   tokens.
@@ -1007,14 +1520,21 @@ prerequisite for the Stage 2 event plane, Rich History or local-only operation.
 - [ ] Re-verify external claims and requested actions against local tools and
   observations before committing state.
 
-Acceptance slice:
+Acceptance slices:
 
 ```text
+assistant turn exceeds the selected local model envelope
+  -> minimal ContextPackage and outbound manifest are built
+  -> provider and token/cost budget policy is applied
+  -> one external AssistantModelBackend inference runs without tools
+  -> response proposals and exact or conservatively estimated usage return
+  -> assistant memory remains local and provider-independent
+
 user asks for a complex task
   -> local router marks it out of local scope
   -> ContextPackage and outbound manifest are built
   -> policy/budget decision and optional approval
-  -> GAIA or one external AgentBackend executes
+  -> one optional external AgentBackend executes
   -> agent uses only advertised RAI capabilities
   -> cancellation/usage/evidence are returned
   -> local postconditions verify the result
@@ -1202,8 +1722,10 @@ all distribution work until Stage 9.
 ```text
 Rich History works locally with zero remote tokens
 Rich Voice handles bounded requests without retaining raw audio
+Rich Assistant reconstructs bounded context from durable graph memory
 Rich Actions cannot bypass policy and verifies consequential results
-Rich Hybrid exposes every transfer and enforces cancellation and budgets
+Rich Hybrid AI exposes every model transfer and enforces token/cost budgets
+Rich Agent Interop remains optional and cannot bypass capability policy
 prompt injection cannot directly invoke capabilities or alter policy
 history deletion removes source and derived data according to policy
 external providers and local models are replaceable without losing runtime state
@@ -1259,34 +1781,54 @@ release-level regression tests.
    protected value.
 4. A later model request cannot retrieve what was never persisted.
 
-## Legacy chat retirement gates
+### Scenario F — durable assistant conversation
 
-Legacy removal is incremental and follows working replacement slices rather
-than a big-bang rewrite.
+1. The user states a project preference, ends the client and restarts RAI.
+2. A later question retrieves that preference from graph memory with provenance;
+   no model-provider conversation is resumed.
+3. The user corrects the preference and the prior record is marked superseded
+   rather than silently overwritten.
+4. Direct and latent-recurrence backends receive the same bounded context and
+   produce separate, reproducible run manifests.
+5. An optional J-lens observer records bounded neural observations without
+   changing the response or acquiring authority over memory and capabilities.
 
-1. The application container and typed registry become the only capability
-   invocation path.
-2. The Stage 2 provider-neutral Observation → CapabilityRequest → ActionResult
-   slice passes restart, replay and policy acceptance tests.
-3. CLI, REST and MCP use the same runtime services and policy decisions.
-4. Rich History stores normalized observations and episodes independently of
-   conversation history.
-5. `ChatService`, agent chains and provider-specific configuration move behind
-   an explicitly named compatibility package and stop defining durable state.
-6. Antigravity becomes an optional `AgentBackend`, disabled in the default
-   installation.
-7. Legacy chain endpoints receive a documented deprecation and migration path.
-8. Compatibility code that does not pass the common backend and security
-   contracts is removed before 1.0.
+## Legacy chat replacement and removal gates
+
+No supported consumer currently depends on the legacy chat endpoint. RAI is
+pre-1.0, so the replacement may intentionally break its CLI, REST, WebSocket,
+configuration and persistence semantics. Do not build a compatibility facade or
+migration layer without a concrete consumer requirement.
+
+1. Freeze tests for the new `AssistantService`, graph-memory and reconstructed-
+   context semantics before deleting the old implementation.
+2. Make the application container and typed registry the only capability path;
+   assistant model output remains a proposal rather than an invocation.
+3. Replace legacy chat handlers with the new service or remove unused transports
+   outright. Update OpenAPI, CLI help, configuration and tests in the same
+   breaking change.
+4. Remove provider-owned conversation resume, legacy agent chains and the simple
+   transcript store once their replacement acceptance slice passes restart and
+   cancellation tests.
+5. Retain Antigravity only if a current research or product need justifies a
+   conforming backend that accepts explicit `ContextPackage` values and cannot
+   invoke tools outside `CapabilityService`; otherwise remove it.
+6. Keep audit transcripts, Rich History and semantic graph memory as distinct
+   stores with explicit retention and deletion behavior.
+7. Document development-database reset or one narrow migration only when needed
+   for current test data; there is no general pre-1.0 compatibility promise.
+8. Remove all obsolete compatibility code before treating Rich Assistant as a
+   completed product outcome.
 
 ## Technical debt carried beyond Stage 1
 
 - `cli_compatibility.py` and `config_manager.py` remain oversized compatibility
   modules and still mix some I/O and UI concerns.
-- Antigravity compatibility still owns the legacy chat execution path, although
-  it is isolated behind the provider-neutral `AgentBackend` contract.
-- Conversation history still has more implementation weight than normalized
-  observation and action-result state.
+- Antigravity compatibility still owns the legacy chat execution path and is
+  scheduled for incompatible replacement by `AssistantService`, not long-term
+  preservation behind another facade.
+- Conversation history is still a flat transcript and has more implementation
+  weight than normalized observation, graph memory and action-result state.
 - The processor supervisor and bounded-task contracts are container-owned and
   tested, but no daemon API or registered capability dispatches work to them and
   neither production adapter has a repeatable live-model acceptance test.
