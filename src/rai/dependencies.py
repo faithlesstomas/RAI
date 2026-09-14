@@ -12,6 +12,9 @@ from .services.history import HistoryService
 from .services.model_registry import ModelRegistry
 from .history.service import RichHistoryService
 from .history.storage import KeyUnavailableError
+from .assistant.service import AssistantService
+from .kernel.ports import LifecycleState
+from returns.result import Failure
 
 
 def get_container(request: Request) -> ApplicationContainer:
@@ -29,6 +32,23 @@ def get_model_registry(request: Request) -> ModelRegistry:
 
 def get_history_service(request: Request) -> HistoryService:
     return get_container(request).history_service
+
+
+async def get_assistant_service(request: Request) -> AssistantService:
+    """Resolve and lazily start the configured graph-memory assistant."""
+    try:
+        service = get_container(request).assistant_service
+    except ValueError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    if service.state != LifecycleState.RUNNING:
+        result = await service.start()
+        if isinstance(result, Failure):
+            failure = result.failure()
+            raise HTTPException(
+                status_code=503,
+                detail={"code": failure.code, "message": failure.message},
+            )
+    return service
 
 
 async def get_rich_history_service(request: Request) -> RichHistoryService:

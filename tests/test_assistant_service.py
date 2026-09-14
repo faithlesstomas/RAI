@@ -3,16 +3,20 @@
 from __future__ import annotations
 
 from pathlib import Path
+import asyncio
+from datetime import timedelta
+from unittest.mock import AsyncMock
 import pytest
 from returns.result import Failure, Success
 
 from rai.assistant.audit import InMemoryAssistantAuditLedger
 from rai.assistant.backends.deterministic import DeterministicAssistantBackend
-from rai.assistant.records import ConversationTurn
+from rai.assistant.context import AssistantContextBuilder
+from rai.assistant.records import ConversationTurn, MemoryRecord
 from rai.assistant.service import AssistantService
 from rai.assistant.store import SQLiteMemoryGraphStore
 from rai.kernel.ports import CancellationToken
-from rai.kernel.records import ProducerIdentity
+from rai.kernel.records import DataClass, ProducerIdentity, _utc_now
 
 PRODUCER = ProducerIdentity(producer_id="service-test", kind="test", version="1.0.0")
 
@@ -26,7 +30,9 @@ def service(tmp_path: Path) -> AssistantService:
 
 
 @pytest.mark.asyncio
-async def test_service_successful_turn_with_preference(service: AssistantService) -> None:
+async def test_service_successful_turn_with_preference(
+    service: AssistantService,
+) -> None:
     turn = ConversationTurn(
         record_id="turn-pref-1",
         producer=PRODUCER,
@@ -152,7 +158,9 @@ async def test_service_streaming(service: AssistantService) -> None:
         text="Zapamiętaj, że w przykładach kodu preferuję Guile zamiast Pythona.",
     )
     chunks: list[str] = []
-    res = await service.stream_turn(turn, on_chunk=chunks.append, request_id="req-stream-1")
+    res = await service.stream_turn(
+        turn, on_chunk=chunks.append, request_id="req-stream-1"
+    )
     assert isinstance(res, Success)
     assert len(chunks) > 0
     full_text = "".join(chunks)
@@ -163,3 +171,148 @@ async def test_service_streaming(service: AssistantService) -> None:
     assert isinstance(terminal, Success)
     assert terminal.unwrap() is not None
     assert terminal.unwrap().status == "COMPLETED"
+
+
+@pytest.mark.asyncio
+async def test_concurrent_duplicate_request_invokes_backend_once(
+    tmp_path: Path,
+) -> None:
+    backend = DeterministicAssistantBackend(delay_seconds=0.05)
+    original_generate = backend.generate
+    backend.generate = AsyncMock(wraps=original_generate)  # type: ignore[method-assign]
+    service = AssistantService(
+        store=SQLiteMemoryGraphStore(path=tmp_path / "concurrent.sqlite3"),
+        backend=backend,
+    )
+    turn = ConversationTurn(
+        record_id="turn-concurrent",
+        producer=PRODUCER,
+        session_id="session-concurrent",
+        role="user",
+        text="Hello",
+    )
+
+    first, second = await asyncio.gather(
+        service.accept_turn(turn, request_id="request-concurrent"),
+        service.accept_turn(turn, request_id="request-concurrent"),
+    )
+
+    assert isinstance(first, Success)
+    assert isinstance(second, Success)
+    assert first.unwrap().record_id == second.unwrap().record_id
+    assert backend.generate.await_count == 1  # type: ignore[attr-defined]
+
+
+@pytest.mark.asyncio
+async def test_invalid_backend_candidate_is_committed_as_failure(
+    tmp_path: Path,
+) -> None:
+    backend = DeterministicAssistantBackend()
+    backend.generate = AsyncMock(return_value=Success(object()))  # type: ignore[method-assign]
+    store = SQLiteMemoryGraphStore(path=tmp_path / "invalid.sqlite3")
+    service = AssistantService(store=store, backend=backend)
+    turn = ConversationTurn(
+        record_id="turn-invalid",
+        producer=PRODUCER,
+        session_id="session-invalid",
+        role="user",
+        text="Hello",
+    )
+
+    result = await service.accept_turn(turn, request_id="request-invalid")
+
+    assert isinstance(result, Failure)
+    assert result.failure().code == "INVALID_OUTPUT"
+    stored = await store.get_response_by_request_id("request-invalid")
+    assert isinstance(stored, Success)
+    assert stored.unwrap() is not None
+    assert stored.unwrap().status == "FAILED"
+
+
+@pytest.mark.asyncio
+async def test_memory_privacy_class_cannot_be_downgraded(tmp_path: Path) -> None:
+    store = SQLiteMemoryGraphStore(path=tmp_path / "privacy.sqlite3")
+    service = AssistantService(store=store, backend=DeterministicAssistantBackend())
+    turn = ConversationTurn(
+        record_id="turn-private",
+        producer=PRODUCER,
+        session_id="session-private",
+        role="user",
+        text="Preferuję Guile w przykładach kodu.",
+        data_class=DataClass.PRIVATE,
+    )
+
+    result = await service.accept_turn(turn)
+    assert isinstance(result, Success)
+    public_retrieval = await store.retrieve_relevant_memories()
+    private_retrieval = await store.retrieve_relevant_memories(
+        data_classes=(DataClass.PRIVATE,)
+    )
+
+    assert isinstance(public_retrieval, Success)
+    assert public_retrieval.unwrap() == ()
+    assert isinstance(private_retrieval, Success)
+    assert private_retrieval.unwrap()[0][0].data_class == DataClass.PRIVATE
+
+
+@pytest.mark.asyncio
+async def test_context_builder_excludes_poisoned_expired_retrieval(
+    tmp_path: Path,
+) -> None:
+    store = SQLiteMemoryGraphStore(path=tmp_path / "poisoned.sqlite3")
+    source = ConversationTurn(
+        record_id="turn-source",
+        producer=PRODUCER,
+        session_id="session-poisoned",
+        role="user",
+        text="old statement",
+        status="COMPLETED",
+    )
+    await store.accept_turn(source)
+    expired = MemoryRecord(
+        record_id="memory-expired",
+        producer=PRODUCER,
+        topic="other",
+        content={"statement": "stale"},
+        source_turn_id=source.record_id,
+        valid_from=_utc_now() - timedelta(days=2),
+        valid_until=_utc_now() - timedelta(days=1),
+    )
+    store.retrieve_relevant_memories = AsyncMock(  # type: ignore[method-assign]
+        return_value=Success(((expired, "poisoned adapter result"),))
+    )
+    builder = AssistantContextBuilder(store=store)
+    current = ConversationTurn(
+        record_id="turn-current",
+        producer=PRODUCER,
+        session_id="session-poisoned",
+        role="user",
+        text="what is current?",
+    )
+
+    result = await builder.build_context(current)
+
+    assert isinstance(result, Success)
+    manifest = result.unwrap().manifest
+    assert manifest.durable_memory_ids == ()
+    assert manifest.exclusions == ("memory-expired:temporal_validity",)
+
+
+@pytest.mark.asyncio
+async def test_context_builder_fails_closed_when_current_turn_exceeds_budget(
+    tmp_path: Path,
+) -> None:
+    store = SQLiteMemoryGraphStore(path=tmp_path / "budget.sqlite3")
+    builder = AssistantContextBuilder(store=store, max_context_characters=256)
+    current = ConversationTurn(
+        record_id="turn-over-budget",
+        producer=PRODUCER,
+        session_id="session-budget",
+        role="user",
+        text="x" * 300,
+    )
+
+    result = await builder.build_context(current)
+
+    assert isinstance(result, Failure)
+    assert result.failure().code == "CONTEXT_BUDGET_EXCEEDED"

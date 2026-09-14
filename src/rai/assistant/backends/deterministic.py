@@ -23,12 +23,18 @@ class DeterministicAssistantBackend:
 
     def __init__(
         self,
-        fail_mode: Literal["none", "timeout", "cancellation", "error", "invalid"] = "none",
+        fail_mode: Literal[
+            "none", "timeout", "cancellation", "error", "invalid"
+        ] = "none",
         delay_seconds: float = 0.0,
     ) -> None:
         self.fail_mode = fail_mode
         self.delay_seconds = delay_seconds
         self._state = LifecycleState.CREATED
+        self.backend_name = "deterministic"
+        self.model_name = "deterministic-conformance"
+        self.model_artifact_version = "1.0.0"
+        self.prompt_template_version = "deterministic-v1"
         self.producer = ProducerIdentity(
             producer_id="deterministic-backend", kind="test", version="1.0.0"
         )
@@ -76,14 +82,21 @@ class DeterministicAssistantBackend:
         return None
 
     def _resolve_preferences(
-        self, user_text: str, turn_id: str, durable_memories: tuple[object, ...] | list[object]
+        self,
+        user_text: str,
+        turn_id: str,
+        durable_memories: tuple[object, ...] | list[object],
     ) -> tuple[str, list[MemoryProposal]]:
         lowered = user_text.lower()
         proposals: list[MemoryProposal] = []
         response_text = "Rozumiem."
 
         if "preferuj" in lowered or "preferuję" in lowered:
-            pref = "Guile" if "guile" in lowered else ("Python" if "python" in lowered else None)
+            pref = (
+                "Guile"
+                if "guile" in lowered
+                else ("Python" if "python" in lowered else None)
+            )
             if pref:
                 proposals.append(
                     MemoryProposal(
@@ -120,27 +133,24 @@ class DeterministicAssistantBackend:
                     },
                 )
             )
-            response_text = (
-                "Zmieniłem preferencję: od teraz w przykładach kodu będę używać języka Python."
-            )
+            response_text = "Zmieniłem preferencję: od teraz w przykładach kodu będę używać języka Python."
 
         elif "w jakim języku" in lowered or "jakim języku" in lowered:
             found_preference: str | None = None
             for mem in durable_memories:
                 if isinstance(mem, dict):
                     content = mem.get("content", {})
-                    if isinstance(content, dict) and content.get("topic") == "code_examples":
+                    if (
+                        isinstance(content, dict)
+                        and content.get("topic") == "code_examples"
+                    ):
                         found_preference = str(content.get("preference"))
                         break
 
             if found_preference:
-                response_text = (
-                    f"Zgodnie z Twoją zapisaną preferencją, powinienem pokazywać przykłady kodu w języku {found_preference}."
-                )
+                response_text = f"Zgodnie z Twoją zapisaną preferencją, powinienem pokazywać przykłady kodu w języku {found_preference}."
             else:
-                response_text = (
-                    "Nie mam zapisanej preferencji dotyczącej języka w przykładach kodu."
-                )
+                response_text = "Nie mam zapisanej preferencji dotyczącej języka w przykładach kodu."
 
         return response_text, proposals
 
@@ -155,7 +165,9 @@ class DeterministicAssistantBackend:
             await asyncio.sleep(self.delay_seconds)
 
         current_turn = request.context.content.get("current_turn", {})
-        user_text = str(current_turn.get("text", "")) if isinstance(current_turn, dict) else ""
+        user_text = (
+            str(current_turn.get("text", "")) if isinstance(current_turn, dict) else ""
+        )
         durable_memories = request.context.content.get("durable_memories", [])
         if not isinstance(durable_memories, (list, tuple)):
             durable_memories = []

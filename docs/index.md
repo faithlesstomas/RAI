@@ -35,6 +35,7 @@ rich-history
 processor-supervisor
 bounded-local-tasks
 assistant-architecture
+assistant-live-acceptance
 local-voice
 neural-sidecar
 reference/modules

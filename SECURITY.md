@@ -69,6 +69,28 @@ Google Antigravity SDK access is confined to `rai.backends.antigravity`. Its
 private conversation fields are compatibility implementation details and never
 appear in public runtime records.
 
+## Assistant memory and model output
+
+The supported local assistant reconstructs every inference from a bounded
+`ContextPackage`; provider conversation IDs are not canonical state. The old
+provider-owned CLI path is no longer the standalone default, and its HTTP/SSE/
+WebSocket endpoints return `410 Gone` unless `legacy_chat.enabled` is explicitly
+set for compatibility.
+
+Assistant output and memory proposals are untrusted. Only deterministic policy
+admits the current MVP's explicit code-language preference, preserves provenance
+to the user turn and prevents a proposal from lowering its source privacy class.
+`SECRET` and `BLOCKED` turns are rejected. Default retrieval allows `PUBLIC` and
+`LOCAL` records only and revalidates profile, temporal validity, privacy and
+source existence even when a storage adapter returns a candidate. Selected and
+excluded IDs are recorded in the context manifest.
+
+Assistant SQLite and JSONL files are created in mode-`0700` directories with
+mode-`0600` files; SQLite secure deletion is enabled. Unlike Rich History, this
+first assistant store is not independently encrypted. Its threat boundary is
+therefore the protected local Unix account. Use an isolated `RAI_DATA_DIR` for
+experiments and remove that profile when its retention is no longer wanted.
+
 ## Voice data and synthesis
 
 Speech text and audio are data, not control authority. The Stage 4.3 synthesis

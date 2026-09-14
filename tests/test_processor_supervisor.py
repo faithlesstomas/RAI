@@ -254,7 +254,10 @@ def test_issue_8_lazy_imports_and_guards() -> None:
     assert engine.model_name == "nonexistent.gguf"
 
     # If llama_cpp is not installed, calling load fails gracefully
-    with patch("rai.inference.engines.llama.is_llama_cpp_available", return_value=False):
+    with (
+        patch("rai.inference.engines.llama.is_llama_cpp_available", return_value=False),
+        patch("rai.inference.factory.is_llama_cpp_available", return_value=False),
+    ):
         assert not is_backend_available("llama")
         res = engine.generate("hello")
         assert isinstance(res, Failure)

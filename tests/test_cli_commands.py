@@ -118,27 +118,23 @@ def test_edit_config_command_no_config_path(mock_error_console_print, mock_get_c
     assert result.exit_code == 0
 
 
-@patch("rai.cli.async_run_standalone")
-def test_cli_standalone_one_shot(mock_async_run_standalone) -> None:
-    """Test 'rai --prompt "hello"' executes in standalone one-shot mode."""
+@patch("rai.cli_commands._run_assistant_ask")
+def test_cli_standalone_one_shot(mock_assistant_ask) -> None:
+    """Test 'rai --prompt "hello"' uses the graph-memory assistant."""
     runner = click.testing.CliRunner()
     result = runner.invoke(rai_cli.cli, ["--prompt", "hello"])
 
-    mock_async_run_standalone.assert_called_once()
-    options = mock_async_run_standalone.call_args.args[0]
-    assert options.prompt == "hello"
+    mock_assistant_ask.assert_called_once_with("hello", None, None, None, False)
     assert result.exit_code == 0
 
 
-@patch("rai.cli.async_run_standalone")
-def test_cli_standalone_interactive(mock_async_run_standalone) -> None:
-    """Test 'rai' (no prompt) executes in standalone interactive mode."""
+@patch("rai.cli_commands._run_assistant_chat")
+def test_cli_standalone_interactive(mock_assistant_chat) -> None:
+    """Test 'rai' (no prompt) uses interactive graph-memory chat."""
     runner = click.testing.CliRunner()
     result = runner.invoke(rai_cli.cli, [])
 
-    mock_async_run_standalone.assert_called_once()
-    options = mock_async_run_standalone.call_args.args[0]
-    assert options.prompt == ""
+    mock_assistant_chat.assert_called_once_with(None, None, None, False)
     assert result.exit_code == 0
 
 

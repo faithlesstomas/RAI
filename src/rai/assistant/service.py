@@ -10,9 +10,10 @@ from typing import Any, AsyncIterator
 
 from returns.result import Failure, Result, Success
 
-from rai.kernel.ports import CancellationToken
+from rai.kernel.ports import CancellationToken, LifecycleState
 from rai.kernel.records import (
     ActionFailure,
+    DataClass,
     InferenceBudget,
     ProducerIdentity,
     ProvenanceReference,
@@ -20,19 +21,36 @@ from rai.kernel.records import (
     _utc_now,
 )
 
-from .audit import AssistantAuditEntry, AssistantAuditLedger, InMemoryAssistantAuditLedger
+from .audit import (
+    AssistantAuditEntry,
+    AssistantAuditLedger,
+    InMemoryAssistantAuditLedger,
+)
 from .backends.deterministic import DeterministicAssistantBackend
 from .context import AssistantContextBuilder
 from .ports import AssistantModelBackend, MemoryGraphStore
 from .records import (
     AssistantCandidate,
+    AssistantContextManifest,
+    AssistantContextPackage,
     AssistantResponse,
     ConversationTurn,
     InferenceRequest,
     MemoryRecord,
     MemoryRelation,
     MemoryRelationKind,
+    make_assistant_failure,
 )
+
+_DATA_CLASS_RANK = {
+    DataClass.PUBLIC.value: 0,
+    DataClass.LOCAL.value: 1,
+    DataClass.PRIVATE.value: 2,
+}
+
+
+def _data_class_value(value: DataClass | str) -> str:
+    return value.value if isinstance(value, DataClass) else str(value)
 
 
 class AssistantService:
@@ -53,6 +71,123 @@ class AssistantService:
         self.producer = producer or ProducerIdentity(
             producer_id="assistant-service", kind="service", version="1.0.0"
         )
+        self._state = LifecycleState.CREATED
+        self._request_locks: dict[str, asyncio.Lock] = {}
+
+    @property
+    def state(self) -> LifecycleState:
+        return self._state
+
+    async def start(self) -> Result[LifecycleState, ActionFailure]:
+        """Start durable storage and the selected model backend."""
+        store_res = await self.store.start()
+        if isinstance(store_res, Failure):
+            self._state = LifecycleState.FAILED
+            return Failure(store_res.failure())
+        backend_res = await self.backend.start()
+        if isinstance(backend_res, Failure):
+            await self.store.stop()
+            self._state = LifecycleState.FAILED
+            return Failure(backend_res.failure())
+        self._state = LifecycleState.RUNNING
+        return Success(self._state)
+
+    async def stop(self) -> Result[LifecycleState, ActionFailure]:
+        """Stop model and storage, preserving the first lifecycle failure."""
+        backend_res = await self.backend.stop()
+        store_res = await self.store.stop()
+        if isinstance(backend_res, Failure):
+            self._state = LifecycleState.FAILED
+            return Failure(backend_res.failure())
+        if isinstance(store_res, Failure):
+            self._state = LifecycleState.FAILED
+            return Failure(store_res.failure())
+        self._state = LifecycleState.STOPPED
+        return Success(self._state)
+
+    def _budget(self) -> InferenceBudget:
+        now = _utc_now()
+        return InferenceBudget(
+            record_id=_new_id(),
+            timestamp=now,
+            producer=self.producer,
+            max_input_tokens=2048,
+            max_output_tokens=int(getattr(self.backend, "max_output_tokens", 512)),
+            max_agent_turns=1,
+            max_tool_calls=0,
+            max_images=0,
+            max_audio_seconds=0,
+            max_latency_seconds=60,
+            max_provider_cost=0,
+            max_ram_bytes=2 * 1024 * 1024 * 1024,
+            max_vram_bytes=0,
+            cancellation_deadline=now + timedelta(seconds=60),
+        )
+
+    def _attach_backend_metadata(
+        self, context_package: AssistantContextPackage
+    ) -> AssistantContextPackage:
+        manifest = context_package.manifest.model_copy(
+            update={
+                "backend_name": getattr(self.backend, "backend_name", "deterministic"),
+                "model_name": getattr(
+                    self.backend, "model_name", "deterministic-conformance"
+                ),
+                "model_artifact_version": getattr(
+                    self.backend, "model_artifact_version", None
+                ),
+                "prompt_template_version": getattr(
+                    self.backend, "prompt_template_version", "deterministic-v1"
+                ),
+            }
+        )
+        return context_package.model_copy(update={"manifest": manifest})
+
+    async def _commit_failure(
+        self,
+        *,
+        turn: ConversationTurn,
+        request_id: str,
+        manifest: AssistantContextManifest,
+        error: ActionFailure,
+        latency_ms: float,
+    ) -> Failure[AssistantResponse, ActionFailure]:
+        status = "CANCELLED" if error.code == "CANCELLED" else "FAILED"
+        response = AssistantResponse(
+            record_id=_new_id(),
+            timestamp=_utc_now(),
+            producer=self.producer,
+            session_id=turn.session_id,
+            turn_id=turn.record_id,
+            user_turn_id=turn.record_id,
+            request_id=request_id,
+            manifest_id=manifest.record_id,
+            text="",
+            status=status,
+            error_message=error.message,
+        )
+        await self.store.commit_terminal(
+            response=response,
+            manifest=manifest,
+            assistant_turn=None,
+            memories=(),
+            relations=(),
+        )
+        await self.audit_ledger.append(
+            AssistantAuditEntry(
+                session_id=turn.session_id,
+                turn_id=turn.record_id,
+                request_id=request_id,
+                manifest_id=manifest.record_id,
+                model_name=str(getattr(self.backend, "model_name", "deterministic")),
+                backend_name=str(
+                    getattr(self.backend, "backend_name", "deterministic")
+                ),
+                status=status,
+                latency_ms=latency_ms,
+            )
+        )
+        return Failure(error)
 
     async def accept_turn(
         self,
@@ -60,13 +195,30 @@ class AssistantService:
         cancellation: CancellationToken | None = None,
         request_id: str | None = None,
     ) -> Result[AssistantResponse, ActionFailure]:
-        """Execute the one-turn assistant pipeline with exactly-once terminal delivery."""
-        token = cancellation or CancellationToken()
+        """Execute the one-turn pipeline with in-process exactly-once inference."""
         req_id = request_id or turn.record_id
+        lock = self._request_locks.setdefault(req_id, asyncio.Lock())
+        try:
+            async with lock:
+                return await self._accept_turn_locked(
+                    turn, cancellation or CancellationToken(), req_id
+                )
+        finally:
+            if not lock.locked():
+                self._request_locks.pop(req_id, None)
 
-        existing_res = await self.store.get_response_by_request_id(req_id)
-        if isinstance(existing_res, Success) and existing_res.unwrap() is not None:
-            return Success(existing_res.unwrap())  # type: ignore[arg-type]
+    async def _accept_turn_locked(  # noqa: PLR0911
+        self,
+        turn: ConversationTurn,
+        token: CancellationToken,
+        request_id: str,
+    ) -> Result[AssistantResponse, ActionFailure]:
+        existing_res = await self.store.get_response_by_request_id(request_id)
+        if isinstance(existing_res, Failure):
+            return Failure(existing_res.failure())
+        existing = existing_res.unwrap()
+        if existing is not None:
+            return Success(existing)
 
         accepted_res = await self.store.accept_turn(turn)
         if isinstance(accepted_res, Failure):
@@ -74,83 +226,93 @@ class AssistantService:
 
         ctx_res = await self.context_builder.build_context(turn)
         if isinstance(ctx_res, Failure):
-            return Failure(ctx_res.failure())
-        context_package = ctx_res.unwrap()
-        manifest = context_package.manifest
-
-        now = _utc_now()
-        budget = InferenceBudget(
-            record_id=_new_id(),
-            timestamp=now,
-            producer=self.producer,
-            max_input_tokens=2048,
-            max_output_tokens=512,
-            max_agent_turns=1,
-            max_tool_calls=0,
-            max_images=0,
-            max_audio_seconds=0,
-            max_latency_seconds=30,
-            max_provider_cost=0,
-            max_ram_bytes=1024 * 1024 * 1024,
-            max_vram_bytes=0,
-            cancellation_deadline=now + timedelta(seconds=30),
-        )
-
-        inference_req = InferenceRequest(
-            record_id=_new_id(),
-            timestamp=now,
-            producer=self.producer,
-            session_id=turn.session_id,
-            turn_id=turn.record_id,
-            request_id=req_id,
-            context=context_package,
-            budget=budget,
-            strategy="DIRECT",
-        )
-
-        start_time = time.perf_counter()
-        backend_res = await self.backend.generate(inference_req, token)
-        latency_ms = (time.perf_counter() - start_time) * 1000
-
-        if isinstance(backend_res, Failure):
-            err = backend_res.failure()
-            status = "CANCELLED" if getattr(err, "code", "") == "CANCELLED" else "FAILED"
-            fail_resp = AssistantResponse(
+            manifest = AssistantContextManifest(
                 record_id=_new_id(),
                 timestamp=_utc_now(),
                 producer=self.producer,
                 session_id=turn.session_id,
                 turn_id=turn.record_id,
-                user_turn_id=turn.record_id,
-                request_id=req_id,
-                manifest_id=manifest.record_id,
-                text="",
-                status=status,
-                error_message=err.message,
+                exclusions=("context_build_failed",),
+                backend_name=str(
+                    getattr(self.backend, "backend_name", "deterministic")
+                ),
+                model_name=str(getattr(self.backend, "model_name", "deterministic")),
+                model_artifact_version=getattr(
+                    self.backend, "model_artifact_version", None
+                ),
+                prompt_template_version=str(
+                    getattr(self.backend, "prompt_template_version", "deterministic-v1")
+                ),
             )
-            await self.store.commit_terminal(
-                response=fail_resp,
+            return await self._commit_failure(
+                turn=turn,
+                request_id=request_id,
                 manifest=manifest,
-                assistant_turn=None,
-                memories=(),
-                relations=(),
+                error=ctx_res.failure(),
+                latency_ms=0,
             )
-            await self.audit_ledger.append(
-                AssistantAuditEntry(
-                    session_id=turn.session_id,
-                    turn_id=turn.record_id,
-                    request_id=req_id,
-                    manifest_id=manifest.record_id,
-                    status=status,
-                    latency_ms=latency_ms,
-                )
+        context_package = self._attach_backend_metadata(ctx_res.unwrap())
+        manifest = context_package.manifest
+
+        inference_req = InferenceRequest(
+            record_id=_new_id(),
+            timestamp=_utc_now(),
+            producer=self.producer,
+            session_id=turn.session_id,
+            turn_id=turn.record_id,
+            request_id=request_id,
+            context=context_package,
+            budget=self._budget(),
+            strategy="DIRECT",
+            model_name=str(getattr(self.backend, "model_name", "deterministic")),
+        )
+
+        start_time = time.perf_counter()
+        backend_res = await self.backend.generate(inference_req, token)
+        latency_ms = (time.perf_counter() - start_time) * 1000
+        if isinstance(backend_res, Failure):
+            return await self._commit_failure(
+                turn=turn,
+                request_id=request_id,
+                manifest=manifest,
+                error=backend_res.failure(),
+                latency_ms=latency_ms,
             )
-            return Failure(err)
 
         candidate = backend_res.unwrap()
-        asst_turn_id = _new_id()
-        asst_turn = ConversationTurn(
-            record_id=asst_turn_id,
+        if not isinstance(candidate, AssistantCandidate):
+            error = make_assistant_failure(
+                code="INVALID_OUTPUT",
+                message="assistant backend returned an invalid candidate type",
+                request_id=request_id,
+            )
+            return await self._commit_failure(
+                turn=turn,
+                request_id=request_id,
+                manifest=manifest,
+                error=error,
+                latency_ms=latency_ms,
+            )
+        if any(
+            proposal.source_turn_id != turn.record_id
+            for proposal in candidate.proposals
+        ):
+            error = make_assistant_failure(
+                code="INVALID_OUTPUT",
+                message="memory proposal source does not match the current user turn",
+                request_id=request_id,
+            )
+            return await self._commit_failure(
+                turn=turn,
+                request_id=request_id,
+                manifest=manifest,
+                error=error,
+                latency_ms=latency_ms,
+            )
+
+        assistant_turn_id = _new_id()
+        assistant_turn = ConversationTurn(
+            record_id=assistant_turn_id,
             timestamp=_utc_now(),
             producer=self.producer,
             session_id=turn.session_id,
@@ -163,61 +325,65 @@ class AssistantService:
 
         admitted_memories: list[MemoryRecord] = []
         admitted_ids: list[str] = []
-        relations: list[MemoryRelation] = [
+        relations = [
             MemoryRelation(
                 relation_id=_new_id(),
-                source_id=asst_turn_id,
+                source_id=assistant_turn_id,
                 target_id=turn.record_id,
                 kind=MemoryRelationKind.REPLIES_TO,
             )
         ]
-
+        turn_class = _data_class_value(turn.data_class)
         for proposal in candidate.proposals:
-            mem_id = _new_id()
-            memory = MemoryRecord(
-                record_id=mem_id,
-                timestamp=_utc_now(),
-                producer=self.producer,
-                kind=proposal.kind,
-                topic=proposal.topic,
-                content=proposal.content,
-                source_turn_id=turn.record_id,
-                data_class=turn.data_class,
-                profile_scope="default",
-                valid_from=_utc_now(),
-                valid_until=None,
-                provenance=(
-                    ProvenanceReference(
-                        source_id=turn.record_id,
-                        source_type="conversation_turn",
-                        source_version="1.0.0",
-                        relation="DERIVED_FROM",
-                        producer=turn.producer,
-                    ),
-                ),
+            proposed_class = _data_class_value(proposal.privacy_class)
+            memory_class = (
+                proposed_class
+                if _DATA_CLASS_RANK[proposed_class] >= _DATA_CLASS_RANK[turn_class]
+                else turn_class
             )
-            admitted_memories.append(memory)
-            admitted_ids.append(mem_id)
+            memory_id = _new_id()
+            admitted_memories.append(
+                MemoryRecord(
+                    record_id=memory_id,
+                    timestamp=_utc_now(),
+                    producer=self.producer,
+                    kind=proposal.kind,
+                    topic=proposal.topic,
+                    content=proposal.content,
+                    source_turn_id=turn.record_id,
+                    data_class=DataClass(memory_class),
+                    profile_scope="default",
+                    valid_from=_utc_now(),
+                    provenance=(
+                        ProvenanceReference(
+                            source_id=turn.record_id,
+                            source_type="conversation_turn",
+                            source_version="1.0.0",
+                            relation="DERIVED_FROM",
+                            producer=turn.producer,
+                        ),
+                    ),
+                )
+            )
+            admitted_ids.append(memory_id)
 
-        completed_resp = AssistantResponse(
+        response = AssistantResponse(
             record_id=_new_id(),
             timestamp=_utc_now(),
             producer=self.producer,
             session_id=turn.session_id,
-            turn_id=asst_turn_id,
+            turn_id=assistant_turn_id,
             user_turn_id=turn.record_id,
-            request_id=req_id,
+            request_id=request_id,
             manifest_id=manifest.record_id,
             text=candidate.text,
             status="COMPLETED",
-            error_message=None,
             admitted_memory_ids=tuple(admitted_ids),
         )
-
         commit_res = await self.store.commit_terminal(
-            response=completed_resp,
+            response=response,
             manifest=manifest,
-            assistant_turn=asst_turn,
+            assistant_turn=assistant_turn,
             memories=tuple(admitted_memories),
             relations=tuple(relations),
         )
@@ -228,16 +394,30 @@ class AssistantService:
             AssistantAuditEntry(
                 session_id=turn.session_id,
                 turn_id=turn.record_id,
-                request_id=req_id,
+                request_id=request_id,
                 manifest_id=manifest.record_id,
+                model_name=str(getattr(self.backend, "model_name", "deterministic")),
+                backend_name=str(
+                    getattr(self.backend, "backend_name", "deterministic")
+                ),
+                model_artifact_version=getattr(
+                    self.backend, "model_artifact_version", None
+                ),
+                prompt_template_version=str(
+                    getattr(self.backend, "prompt_template_version", "deterministic-v1")
+                ),
                 status="COMPLETED",
                 latency_ms=latency_ms,
                 tokens={"input": candidate.tokens_in, "output": candidate.tokens_out},
+                generation_metadata={
+                    key: value
+                    for key, value in candidate.metadata.items()
+                    if key != "raw_model_output"
+                },
                 admitted_memories=tuple(admitted_ids),
             )
         )
-
-        return Success(completed_resp)
+        return Success(response)
 
     async def stream_turn(
         self,
@@ -246,140 +426,23 @@ class AssistantService:
         cancellation: CancellationToken | None = None,
         request_id: str | None = None,
     ) -> Result[AssistantResponse, ActionFailure]:
-        """Stream assistant output chunks as transport events before committing terminal state."""
-        token = cancellation or CancellationToken()
-        req_id = request_id or turn.record_id
+        """Deliver a committed response as a transport chunk.
 
-        existing_res = await self.store.get_response_by_request_id(req_id)
-        if isinstance(existing_res, Success):
-            resp = existing_res.unwrap()
-            if resp is not None:
-                on_chunk(resp.text)
-                return Success(resp)
-
-        accepted_res = await self.store.accept_turn(turn)
-        if isinstance(accepted_res, Failure):
-            return Failure(accepted_res.failure())
-
-        ctx_res = await self.context_builder.build_context(turn)
-        if isinstance(ctx_res, Failure):
-            return Failure(ctx_res.failure())
-        context_package = ctx_res.unwrap()
-        manifest = context_package.manifest
-
-        now = _utc_now()
-        budget = InferenceBudget(
-            record_id=_new_id(),
-            timestamp=now,
-            producer=self.producer,
-            max_input_tokens=2048,
-            max_output_tokens=512,
-            max_agent_turns=1,
-            max_tool_calls=0,
-            max_images=0,
-            max_audio_seconds=0,
-            max_latency_seconds=30,
-            max_provider_cost=0,
-            max_ram_bytes=1024 * 1024 * 1024,
-            max_vram_bytes=0,
-            cancellation_deadline=now + timedelta(seconds=30),
-        )
-
-        inference_req = InferenceRequest(
-            record_id=_new_id(),
-            timestamp=now,
-            producer=self.producer,
-            session_id=turn.session_id,
-            turn_id=turn.record_id,
-            request_id=req_id,
-            context=context_package,
-            budget=budget,
-            strategy="DIRECT",
-        )
-
-        accumulated: list[str] = []
-        stream_err: ActionFailure | None = None
-
-        async for chunk_res in self.backend.stream(inference_req, token):
-            if isinstance(chunk_res, Failure):
-                stream_err = chunk_res.failure()
-                break
-            chunk = chunk_res.unwrap()
-            accumulated.append(chunk)
-            on_chunk(chunk)
-
-        if stream_err is not None:
-            status = "CANCELLED" if getattr(stream_err, "code", "") == "CANCELLED" else "FAILED"
-            fail_resp = AssistantResponse(
-                record_id=_new_id(),
-                timestamp=_utc_now(),
-                producer=self.producer,
-                session_id=turn.session_id,
-                turn_id=turn.record_id,
-                user_turn_id=turn.record_id,
-                request_id=req_id,
-                manifest_id=manifest.record_id,
-                text="".join(accumulated),
-                status=status,
-                error_message=stream_err.message,
-            )
-            await self.store.commit_terminal(
-                response=fail_resp,
-                manifest=manifest,
-                assistant_turn=None,
-                memories=(),
-                relations=(),
-            )
-            return Failure(stream_err)
-
-        full_text = "".join(accumulated)
-        asst_turn_id = _new_id()
-        asst_turn = ConversationTurn(
-            record_id=asst_turn_id,
-            timestamp=_utc_now(),
-            producer=self.producer,
-            session_id=turn.session_id,
-            role="assistant",
-            text=full_text or "Rozumiem.",
-            reply_to_turn_id=turn.record_id,
-            data_class=turn.data_class,
-            status="COMPLETED",
-        )
-
-        completed_resp = AssistantResponse(
-            record_id=_new_id(),
-            timestamp=_utc_now(),
-            producer=self.producer,
-            session_id=turn.session_id,
-            turn_id=asst_turn_id,
-            user_turn_id=turn.record_id,
-            request_id=req_id,
-            manifest_id=manifest.record_id,
-            text=full_text or "Rozumiem.",
-            status="COMPLETED",
-            error_message=None,
-        )
-
-        await self.store.commit_terminal(
-            response=completed_resp,
-            manifest=manifest,
-            assistant_turn=asst_turn,
-            memories=(),
-            relations=(
-                MemoryRelation(
-                    relation_id=_new_id(),
-                    source_id=asst_turn_id,
-                    target_id=turn.record_id,
-                    kind=MemoryRelationKind.REPLIES_TO,
-                ),
-            ),
-        )
-        return Success(completed_resp)
+        The MVP deliberately commits the validated candidate and its memory proposals
+        through the same path as non-streaming requests. Backend token streaming can be
+        added later without creating a second persistence pipeline.
+        """
+        result = await self.accept_turn(turn, cancellation, request_id)
+        if isinstance(result, Success):
+            on_chunk(result.unwrap().text)
+        return result
 
     async def get_recent_turns(
         self, session_id: str, limit: int = 10
     ) -> Result[tuple[ConversationTurn, ...], ActionFailure]:
-        return await self.store.get_recent_reply_chain(session_id=session_id, limit=limit)
+        return await self.store.get_recent_reply_chain(
+            session_id=session_id, limit=limit
+        )
 
     async def delete_turn(self, turn_id: str) -> Result[int, ActionFailure]:
         return await self.store.delete_turn(turn_id)
@@ -390,24 +453,9 @@ class AssistantService:
         cancellation: CancellationToken | None = None,
         request_id: str | None = None,
     ) -> AsyncIterator[Result[str, ActionFailure]]:
-        """Yield chunks as streaming transport events."""
-        queue: asyncio.Queue[Result[str, ActionFailure] | None] = asyncio.Queue()
-
-        def _on_chunk(chunk: str) -> None:
-            queue.put_nowait(Success(chunk))
-
-        async def _run() -> None:
-            res = await self.stream_turn(turn, _on_chunk, cancellation, request_id)
-            if isinstance(res, Failure):
-                queue.put_nowait(Failure(res.failure()))
-            queue.put_nowait(None)
-
-        task = asyncio.create_task(_run())
-        try:
-            while True:
-                item = await queue.get()
-                if item is None:
-                    break
-                yield item
-        finally:
-            await task
+        """Yield a validated response while retaining one persistence pipeline."""
+        result = await self.accept_turn(turn, cancellation, request_id)
+        if isinstance(result, Failure):
+            yield Failure(result.failure())
+            return
+        yield Success(result.unwrap().text)

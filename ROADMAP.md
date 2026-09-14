@@ -827,9 +827,9 @@ in the [canonical cross-project integration plan](https://gitlab.com/tk-lab1/ai/
 
 #### 4.7 Rich Assistant: graph-memory conversation and reasoning laboratory
 
-Status: `[ ]` — the legacy provider-owned chat path exists, but it is not a
-supported compatibility surface and may be replaced incompatibly while RAI is
-pre-1.0.
+Status: `[/]` — the first local graph-memory preference slice and supported
+CLI/HTTP path are implemented and live-model verified. General semantic memory,
+Rich History grounding and later reasoning strategies remain planned.
 
 Purpose: provide a continuous, local-first desktop assistant whose durable
 memory and context policy belong to RAI while its LLM and reasoning strategy are
@@ -912,7 +912,8 @@ explicit ConversationTurn or policy-approved proactive trigger
   Hyperon/MeTTa is a separate reasoning experiment. None is an automatic runtime
   dependency.
 - [x] Build every context from the current request, selected recent interaction
-  records, relevant graph memories and approved Rich History references. Apply
+  records and relevant graph memories; reserve approved Rich History references
+  for a later slice. Apply
   explicit token, character, item, privacy and latency budgets.
 - [x] Persist a `ContextManifest` containing selected source IDs, exclusions,
   redactions, ranking reasons, policy/model versions and actual size so a reply

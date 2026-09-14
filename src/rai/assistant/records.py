@@ -8,6 +8,7 @@ import json
 from typing import Annotated, Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
+from typing_extensions import TypeAliasType
 
 from rai.kernel.records import (
     ActionFailure,
@@ -21,10 +22,21 @@ from rai.kernel.records import (
 )
 
 MAX_TURN_TEXT_BYTES = 16 * 1024
+MAX_SESSION_ID_LENGTH = 128
 MAX_PROPOSAL_CONTENT_CHARS = 1024
 MAX_PROPOSALS_PER_TURN = 5
 
-AssistantSessionId = str
+AssistantSessionId = TypeAliasType(
+    "AssistantSessionId",
+    Annotated[
+        str,
+        Field(
+            min_length=1,
+            max_length=MAX_SESSION_ID_LENGTH,
+            pattern=r"^[A-Za-z0-9][A-Za-z0-9._:-]*$",
+        ),
+    ],
+)
 
 
 class MemoryRelationKind(str, Enum):
@@ -55,7 +67,7 @@ class ConversationTurn(KernelRecord):
     """Immutable user or assistant turn within an assistant session."""
 
     record_type: Literal["conversation_turn"] = "conversation_turn"
-    session_id: str = Field(min_length=1)
+    session_id: AssistantSessionId
     role: Literal["user", "assistant"]
     text: str = Field(min_length=1, max_length=MAX_TURN_TEXT_BYTES)
     reply_to_turn_id: str | None = None
@@ -146,7 +158,7 @@ class AssistantContextManifest(KernelRecord):
     """Inspectable provenance manifest for an assembled assistant context."""
 
     record_type: Literal["assistant_context_manifest"] = "assistant_context_manifest"
-    session_id: str = Field(min_length=1)
+    session_id: AssistantSessionId
     turn_id: str = Field(min_length=1)
     recent_turn_ids: tuple[str, ...] = ()
     durable_memory_ids: tuple[str, ...] = ()
@@ -155,6 +167,10 @@ class AssistantContextManifest(KernelRecord):
     redactions: tuple[str, ...] = ()
     retriever_version: str = Field(default="1.0.0", min_length=1)
     policy_version: str = Field(default="1.0.0", min_length=1)
+    backend_name: str = Field(default="unknown", min_length=1)
+    model_name: str = Field(default="unknown", min_length=1)
+    model_artifact_version: str | None = None
+    prompt_template_version: str = Field(default="unknown", min_length=1)
     actual_tokens: int | None = None
     actual_characters: int = Field(default=0, ge=0)
     items: tuple[AssistantContextManifestItem, ...] = ()
@@ -164,7 +180,7 @@ class AssistantContextPackage(KernelRecord):
     """Reconstructed, bounded context package for an assistant inference."""
 
     record_type: Literal["assistant_context_package"] = "assistant_context_package"
-    session_id: str = Field(min_length=1)
+    session_id: AssistantSessionId
     turn_id: str = Field(min_length=1)
     manifest: AssistantContextManifest
     content: dict[str, Any]
@@ -175,7 +191,7 @@ class InferenceRequest(KernelRecord):
     """Envelope for one bounded model backend invocation."""
 
     record_type: Literal["assistant_inference_request"] = "assistant_inference_request"
-    session_id: str = Field(min_length=1)
+    session_id: AssistantSessionId
     turn_id: str = Field(min_length=1)
     request_id: str = Field(min_length=1)
     context: AssistantContextPackage
@@ -212,7 +228,7 @@ class AssistantResponse(KernelRecord):
     """Exactly one terminal outcome for an accepted turn."""
 
     record_type: Literal["assistant_response"] = "assistant_response"
-    session_id: str = Field(min_length=1)
+    session_id: AssistantSessionId
     turn_id: str = Field(min_length=1)
     user_turn_id: str = Field(min_length=1)
     request_id: str = Field(min_length=1)
@@ -277,4 +293,3 @@ def make_assistant_failure(
             producer_id="assistant-service", kind="service", version="1.0.0"
         ),
     )
-

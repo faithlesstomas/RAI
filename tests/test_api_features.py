@@ -20,7 +20,7 @@ async def test_stream_endpoint() -> None:
         # Case 1: No session_id passed (should generate one)
         response = await stream_chain_endpoint(
             AgentExecutionRequest(prompt="Test input", agent_id="default"),
-            app_config={},
+            app_config={"legacy_chat": {"enabled": True}},
         )
 
         assert response.status_code == 200
@@ -38,7 +38,7 @@ async def test_stream_endpoint() -> None:
                 agent_id="default",
                 session_id="custom-session-123",
             ),
-            app_config={},
+            app_config={"legacy_chat": {"enabled": True}},
         )
         assert response_prop.status_code == 200
         content_prop = "".join(

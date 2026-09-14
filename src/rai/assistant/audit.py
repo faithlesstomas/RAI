@@ -26,9 +26,13 @@ class AssistantAuditEntry(BaseModel):
     request_id: str = Field(min_length=1)
     manifest_id: str = Field(min_length=1)
     model_name: str = Field(default="default", min_length=1)
+    backend_name: str = Field(default="deterministic", min_length=1)
+    model_artifact_version: str | None = None
+    prompt_template_version: str = Field(default="unknown", min_length=1)
     status: Literal["COMPLETED", "FAILED", "CANCELLED"] = "COMPLETED"
     latency_ms: float = Field(default=0.0, ge=0.0)
     tokens: dict[str, int] = Field(default_factory=dict)
+    generation_metadata: dict[str, Any] = Field(default_factory=dict)
     admitted_memories: tuple[str, ...] = ()
     superseded_memories: tuple[str, ...] = ()
 

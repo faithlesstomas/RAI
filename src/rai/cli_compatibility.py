@@ -961,8 +961,34 @@ def cli(ctx: click.Context, **kwargs: Any) -> None: # noqa: ANN401
             # Client Mode
             asyncio.run(async_main_client(options))
         else:
-            # Standalone Mode
-            asyncio.run(async_run_standalone(options))
+            # The supported standalone text path is the RAI-owned graph-memory assistant.
+            from .cli_commands import (  # noqa: PLC0415
+                _run_assistant_ask,
+                _run_assistant_chat,
+            )
+
+            assistant_backend = "llama" if options.backend == "local" else options.backend
+            unsupported = {"gemini", "anthropic", "openai", "groq"}
+            if assistant_backend in unsupported:
+                raise click.ClickException(
+                    "Provider-owned standalone chat is quarantined. Use a local llama/ollama "
+                    "backend or the explicit --connect compatibility client."
+                )
+            if options.prompt:
+                _run_assistant_ask(
+                    options.prompt,
+                    options.session_override,
+                    assistant_backend,
+                    options.model,
+                    False,
+                )
+            else:
+                _run_assistant_chat(
+                    options.session_override,
+                    assistant_backend,
+                    options.model,
+                    False,
+                )
 
 
 

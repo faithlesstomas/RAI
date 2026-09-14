@@ -107,11 +107,14 @@ See [docs/architecture.md](docs/architecture.md) for component boundaries and
   live-model acceptance.
 - policy-controlled local `speech.synthesize` playback through Piper, exposed by
   the default capability registry and MCP when a local voice is provisioned.
+- a testable Rich Assistant MVP with RAI-owned SQLite graph memory, bounded
+  reconstructed context, llama.cpp/Ollama backends and inspectable manifests.
 
 This list is deliberately narrower than the target architecture. In particular,
-RAI does not yet provide the planned `AssistantService`, durable graph-memory
-conversation or hybrid model routing. The existing `ChatService` remains an
-experimental compatibility facade, not the target assistant API.
+the graph-memory MVP currently admits one narrow class of explicit code-language
+preferences; general semantic-memory extraction and hybrid model routing remain
+planned. The old provider-owned `ChatService` is disabled by default and remains
+only as an opt-in compatibility facade.
 
 ## Installation
 
@@ -147,6 +150,37 @@ from `rich-ai` package metadata.
 Model weights do not belong in the repository. Store them under an XDG data or
 cache directory and keep only a reproducible manifest/checksum in version
 control.
+
+### Try the local graph-memory assistant
+
+Install the llama.cpp extra and pass a chat-capable GGUF model:
+
+```bash
+uv sync --extra inference-llama
+uv run rai assistant chat --backend llama --model /path/to/model.gguf --show-context
+```
+
+When the current working tree contains `models/*.gguf`, `--backend` and
+`--model` may be omitted; RAI prefers a filename containing `chat`. The same
+settings can be persisted in `$XDG_CONFIG_HOME/rai/config.json`:
+
+```json
+{
+  "assistant": {
+    "backend": "llama",
+    "model": "/path/to/model.gguf",
+    "context_window": 2048,
+    "max_output_tokens": 128,
+    "temperature": 0.2
+  }
+}
+```
+
+Use `--backend ollama --model MODEL_NAME` for a locally running Ollama daemon.
+There is no silent fake fallback: missing weights, missing optional dependencies
+and unavailable daemons produce a typed error. Memory is stored under
+`$XDG_DATA_HOME/rai/assistant/`; use an isolated `RAI_DATA_DIR` when comparing
+experimental runs. See the [assistant operating and acceptance guide](docs/assistant-live-acceptance.md).
 
 Piper voices are discovered under
 `$XDG_DATA_HOME/rai/piper_voices/<voice-id>/` (or the equivalent default XDG
@@ -200,8 +234,8 @@ The versioned documentation is published with GitLab Pages at
 [tk-lab1.gitlab.io/ai/rai/](https://tk-lab1.gitlab.io/ai/rai/).
 The source documentation lives in [`docs/`](docs/), including
 the [architecture](docs/architecture.md), [Rich History](docs/rich-history.md),
-[local voice](docs/local-voice.md), [planned assistant
-architecture](docs/assistant-architecture.md) and [embodiment kernel
+[local voice](docs/local-voice.md), [assistant
+architecture](docs/assistant-architecture.md), [live acceptance evidence](docs/assistant-live-acceptance.md) and [embodiment kernel
 contracts](docs/kernel-contracts.md). The language-neutral Stage 1 contract is
 also available as a [JSON Schema](schemas/rai.kernel.v1.schema.json).
 

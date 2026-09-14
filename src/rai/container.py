@@ -233,13 +233,23 @@ class ApplicationContainer:
                 JsonlAssistantAuditLedger,
             )
             from .assistant.service import AssistantService  # noqa: PLC0415
+            from .assistant.runtime import (  # noqa: PLC0415
+                build_assistant_backend,
+                resolve_assistant_config,
+            )
             audit = (
                 InMemoryAssistantAuditLedger()
                 if self.testing
                 else JsonlAssistantAuditLedger()
             )
+            backend = (
+                None
+                if self.testing
+                else build_assistant_backend(resolve_assistant_config(self.config))
+            )
             self._assistant_service = AssistantService(
                 store=self.memory_graph_store,
+                backend=backend,
                 audit_ledger=audit,
             )
         return self._assistant_service
@@ -262,7 +272,10 @@ class ApplicationContainer:
         if self._processor_supervisor is not None:
             await self._processor_supervisor.stop()
             self._processor_supervisor = None
-        self._assistant_service = None
-        if self._memory_graph_store is not None:
+        if self._assistant_service is not None:
+            await self._assistant_service.stop()
+            self._assistant_service = None
+            self._memory_graph_store = None
+        elif self._memory_graph_store is not None:
             await self._memory_graph_store.stop()
             self._memory_graph_store = None
