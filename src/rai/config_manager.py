@@ -181,6 +181,9 @@ def load_config(path: Optional[str] = None) -> Dict[str, Any]:
             "default_voice": "pl_PL-gosia-medium",
         }),
         "rich_history": state.get("rich_history", {}),
+        "local_ai": state.get("local_ai", {}),
+        "assistant": state.get("assistant", {}),
+        "legacy_chat": state.get("legacy_chat", {}),
     }
 
 
@@ -198,6 +201,9 @@ def save_config(config_data: Dict[str, Any], path: Optional[str] = None) -> None
             "default_voice": "pl_PL-gosia-medium",
         }),
         "rich_history": config_data.get("rich_history", {}),
+        "local_ai": config_data.get("local_ai", {}),
+        "assistant": config_data.get("assistant", {}),
+        "legacy_chat": config_data.get("legacy_chat", {}),
     }
     save_state(state, path)
 

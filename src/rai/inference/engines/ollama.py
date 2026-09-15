@@ -1,6 +1,7 @@
 """
 Ollama implementation of LocalTextEngine.
 """
+
 from __future__ import annotations
 
 import logging
@@ -41,6 +42,7 @@ class OllamaEngine:
     def _get_client(self) -> Any:
         if self._client is None:
             import ollama  # noqa: PLC0415
+
             self._client = ollama.AsyncClient(host=self.host)
         return self._client
 
@@ -77,6 +79,10 @@ class OllamaEngine:
             response = await client.generate(
                 model=self._model_name,
                 prompt=prompt,
+                # Reasoning-only output is not a user-visible assistant answer. Small
+                # reasoning models can otherwise consume the entire token budget in
+                # the hidden `thinking` field and return an empty `response`.
+                think=False,
                 options=options,
             )
             duration = time.monotonic() - start_time

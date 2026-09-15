@@ -1,13 +1,14 @@
 # Rich Assistant architecture
- 
+
 ## Status and scope
- 
+
 Rich Assistant delivers Stage 4.7 work (Issue #34). The first graph-memory
 vertical slice is implemented in `rai.assistant`, providing transactional SQLite
 graph storage (`SQLiteMemoryGraphStore`), two-phase interaction execution
 (`AssistantService`), inspectable context packages with `ContextManifest`,
 and direct local model inference (`LocalAssistantBackend`). The 8-step user-visible
-acceptance scenario passes deterministically offline.
+acceptance scenario passes deterministically offline, and the restart/recall/
+correction path has also been exercised with a pinned TinyLlama GGUF artifact.
 
 The assistant is a continuous, local-first interaction surface with explicit,
 reconstructed context. It may conduct ordinary conversation, answer from RAI
@@ -56,16 +57,24 @@ Streaming chunks are transport events, not durable partial responses. A timeout,
 cancellation, backend failure or invalid output produces one typed terminal
 failure and never commits a generated assistant turn as successful.
 
+The supported text surfaces are `rai assistant ask`, `rai assistant chat`,
+`POST /api/v1/assistant/turn` and `POST /api/v1/assistant/stream`. The default
+standalone `rai`/`rai -p` path delegates to the same service. Legacy
+provider-owned `/api/v1/run`, `/api/v1/stream` and `/ws/v1/chat` behavior is
+disabled unless `legacy_chat.enabled` is explicitly set to `true`.
+
 ## State ownership
 
 `AssistantSessionId` groups interactions and audit records; it is not model
 state. Each inference starts from the explicit context package. Provider-side
 conversation IDs and hidden history cannot be resumed as canonical state.
 Durable assistant memory is scoped to the configured local profile rather than
-to one conversation session. Cross-session retrieval still passes the current
+to one conversation session. A profile selects model configuration, system
+instruction and the memory namespace. A session ID selects only the bounded
+recent-dialogue window. Cross-session retrieval still passes the current
 client, privacy and data-class policy before a record can enter context.
 
-The durable graph will distinguish interaction records from semantic memory.
+The durable graph distinguishes interaction records from semantic memory.
 Turn nodes use stable RAI IDs and `REPLIES_TO` edges. The first product slice
 also admits a minimal, separately represented class of explicit user statements
 and preferences. Later slices may add claims, summaries and richer relations
@@ -142,6 +151,42 @@ conversation summarization, vector retrieval, external model APIs, Coconut
 recurrence and writable slots. It includes only enough governed semantic-memory
 admission and retrieval to demonstrate that durable graph memory materially
 changes a later answer.
+
+## Local operation and observability
+
+Use a chat-capable GGUF file through llama.cpp:
+
+```bash
+uv sync --extra inference-llama
+uv run rai assistant chat --backend llama --model /path/to/model.gguf --show-context
+```
+
+`--show-context` prints the selected recent-turn IDs, durable-memory IDs,
+exclusions, model checksum, prompt version, token usage, latency and generation
+guard metadata. Each process reconstructs its prompt from those RAI-owned
+records; no provider conversation ID is resumed. `RAI_DATA_DIR` selects an
+isolated profile for A/B experiments.
+
+The MVP has a bounded deterministic admission and grounding policy for common
+personal facts (name, age and home location), explicit `remember`/`zapamiętaj`
+statements, and Guile/Python code-example preferences. The local model still
+runs for every response, but critical recall questions are answered from the
+selected active memory. RAI records `grounding_override=true` whenever that
+gate replaces model prose. This makes the intervention visible without
+allowing a small model to erase or hallucinate the accepted value.
+
+`rai`, `rai -p`, `rai assistant ask` and `rai assistant chat` instantiate this
+same service directly and do not require `rai serve`. The assistant HTTP routes
+are an alternative transport over a server-owned instance of the same service.
+Only explicit `rai --connect` enters the quarantined compatibility client; it
+does not define canonical assistant memory or session semantics.
+
+The SQLite database and audit ledger use per-user directories/files (0700/0600)
+and secure deletion. They are not yet encrypted independently of the user
+account. `SECRET` and `BLOCKED` turns are rejected; `PRIVATE` memory cannot be
+downgraded and is excluded from default retrieval. The slice performs whole-item
+exclusion rather than field-level redaction because its preference records have
+no mixed-class fields.
 
 ## First user test: remembered preference
 

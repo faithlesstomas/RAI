@@ -3,10 +3,17 @@
 from __future__ import annotations
 
 import json
+from datetime import datetime, timezone
 
 from returns.result import Failure, Result, Success
 
-from rai.kernel.records import ActionFailure, DataClass, ProducerIdentity, _new_id, _utc_now
+from rai.kernel.records import (
+    ActionFailure,
+    DataClass,
+    ProducerIdentity,
+    _new_id,
+    _utc_now,
+)
 
 from .ports import MemoryGraphStore
 from .query import MemoryQueryResolver
@@ -15,6 +22,7 @@ from .records import (
     AssistantContextManifestItem,
     AssistantContextPackage,
     ConversationTurn,
+    make_assistant_failure,
 )
 
 DEFAULT_SYSTEM_INSTRUCTION = (
@@ -33,6 +41,8 @@ class AssistantContextBuilder:
         system_instruction: str = DEFAULT_SYSTEM_INSTRUCTION,
         max_recent_turns: int = 10,
         max_memories: int = 5,
+        max_context_characters: int = 8_000,
+        profile_scope: str = "default",
         producer: ProducerIdentity | None = None,
     ) -> None:
         self.store = store
@@ -40,11 +50,13 @@ class AssistantContextBuilder:
         self.system_instruction = system_instruction
         self.max_recent_turns = max_recent_turns
         self.max_memories = max_memories
+        self.max_context_characters = max_context_characters
+        self.profile_scope = profile_scope
         self.producer = producer or ProducerIdentity(
             producer_id="assistant-context-builder", kind="service", version="1.0.0"
         )
 
-    async def build_context(
+    async def build_context(  # noqa: PLR0915
         self, turn: ConversationTurn
     ) -> Result[AssistantContextPackage, ActionFailure]:
         """Assemble a bounded, inspectable AssistantContextPackage."""
@@ -60,8 +72,9 @@ class AssistantContextBuilder:
         recent_turns = recent_res.unwrap()
 
         mem_res = await self.store.retrieve_relevant_memories(
-            profile_scope="default",
+            profile_scope=self.profile_scope,
             query=query,
+            data_classes=query.data_classes,
             limit=self.max_memories,
         )
         if isinstance(mem_res, Failure):
@@ -86,7 +99,29 @@ class AssistantContextBuilder:
         durable_ids: list[str] = []
         ranking_reasons: dict[str, str] = {}
         durable_content: list[dict[str, object]] = []
+        exclusions: list[str] = []
+        now = datetime.now(timezone.utc)
         for mem, reason in memories_with_reasons:
+            data_class = (
+                mem.data_class
+                if isinstance(mem.data_class, DataClass)
+                else DataClass(mem.data_class)
+            )
+            valid_source = await self.store.get_turn(mem.source_turn_id)
+            invalid_reasons = []
+            if mem.profile_scope != query.profile_scope:
+                invalid_reasons.append("profile_scope")
+            if data_class not in query.data_classes:
+                invalid_reasons.append("privacy_class")
+            if mem.valid_from > now or (
+                mem.valid_until is not None and mem.valid_until <= now
+            ):
+                invalid_reasons.append("temporal_validity")
+            if isinstance(valid_source, Failure) or valid_source.unwrap() is None:
+                invalid_reasons.append("missing_provenance_source")
+            if invalid_reasons:
+                exclusions.append(f"{mem.record_id}:{','.join(invalid_reasons)}")
+                continue
             durable_ids.append(mem.record_id)
             ranking_reasons[mem.record_id] = reason
             durable_content.append(
@@ -108,6 +143,10 @@ class AssistantContextBuilder:
                 )
             )
 
+        recent_content = [
+            {"record_id": t.record_id, "role": t.role, "text": t.text}
+            for t in recent_turns
+        ]
         content: dict[str, object] = {
             "system_instruction": self.system_instruction,
             "current_turn": {
@@ -115,14 +154,37 @@ class AssistantContextBuilder:
                 "role": turn.role,
                 "text": turn.text,
             },
-            "recent_turns": [
-                {"record_id": t.record_id, "role": t.role, "text": t.text}
-                for t in recent_turns
-            ],
+            "recent_turns": recent_content,
             "durable_memories": durable_content,
         }
 
         serialized = json.dumps(content, ensure_ascii=False)
+        while len(serialized) > self.max_context_characters and recent_content:
+            removed = recent_content.pop(0)
+            removed_id = str(removed["record_id"])
+            recent_ids.remove(removed_id)
+            items = [item for item in items if item.source_id != removed_id]
+            exclusions.append(f"{removed_id}:character_budget")
+            serialized = json.dumps(content, ensure_ascii=False)
+        while len(serialized) > self.max_context_characters and durable_content:
+            removed = durable_content.pop()
+            removed_id = str(removed["record_id"])
+            durable_ids.remove(removed_id)
+            ranking_reasons.pop(removed_id, None)
+            items = [item for item in items if item.source_id != removed_id]
+            exclusions.append(f"{removed_id}:character_budget")
+            serialized = json.dumps(content, ensure_ascii=False)
+        if len(serialized) > self.max_context_characters:
+            return Failure(
+                make_assistant_failure(
+                    code="CONTEXT_BUDGET_EXCEEDED",
+                    message=(
+                        "the current turn and required instructions exceed the "
+                        f"{self.max_context_characters}-character context budget"
+                    ),
+                    request_id=turn.record_id,
+                )
+            )
         total_chars = len(serialized)
         est_tokens = max(1, total_chars // 4)
 
@@ -135,7 +197,7 @@ class AssistantContextBuilder:
             recent_turn_ids=tuple(recent_ids),
             durable_memory_ids=tuple(durable_ids),
             ranking_reasons=ranking_reasons,
-            exclusions=(),
+            exclusions=tuple(exclusions),
             redactions=(),
             retriever_version="1.0.0",
             policy_version="1.0.0",

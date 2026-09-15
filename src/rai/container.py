@@ -233,14 +233,37 @@ class ApplicationContainer:
                 JsonlAssistantAuditLedger,
             )
             from .assistant.service import AssistantService  # noqa: PLC0415
+            from .assistant.context import AssistantContextBuilder  # noqa: PLC0415
+            from .assistant.runtime import (  # noqa: PLC0415
+                AssistantRuntimeConfig,
+                build_assistant_backend,
+                resolve_assistant_config,
+            )
             audit = (
                 InMemoryAssistantAuditLedger()
                 if self.testing
                 else JsonlAssistantAuditLedger()
             )
+            runtime = (
+                AssistantRuntimeConfig(
+                    backend="deterministic",
+                    model="deterministic-conformance",
+                    profile_scope=str(self.config.get("active_agent") or "default"),
+                )
+                if self.testing
+                else resolve_assistant_config(self.config)
+            )
+            backend = None if self.testing else build_assistant_backend(runtime)
             self._assistant_service = AssistantService(
                 store=self.memory_graph_store,
+                backend=backend,
+                context_builder=AssistantContextBuilder(
+                    store=self.memory_graph_store,
+                    system_instruction=runtime.system_instruction,
+                    profile_scope=runtime.profile_scope,
+                ),
                 audit_ledger=audit,
+                profile_scope=runtime.profile_scope,
             )
         return self._assistant_service
 
@@ -262,7 +285,10 @@ class ApplicationContainer:
         if self._processor_supervisor is not None:
             await self._processor_supervisor.stop()
             self._processor_supervisor = None
-        self._assistant_service = None
-        if self._memory_graph_store is not None:
+        if self._assistant_service is not None:
+            await self._assistant_service.stop()
+            self._assistant_service = None
+            self._memory_graph_store = None
+        elif self._memory_graph_store is not None:
             await self._memory_graph_store.stop()
             self._memory_graph_store = None

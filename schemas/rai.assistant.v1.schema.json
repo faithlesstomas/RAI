@@ -42,9 +42,7 @@
           "title": "Correlation Id"
         },
         "session_id": {
-          "minLength": 1,
-          "title": "Session Id",
-          "type": "string"
+          "$ref": "#/$defs/AssistantSessionId"
         },
         "turn_id": {
           "minLength": 1,
@@ -100,6 +98,36 @@
           "default": "1.0.0",
           "minLength": 1,
           "title": "Policy Version",
+          "type": "string"
+        },
+        "backend_name": {
+          "default": "unknown",
+          "minLength": 1,
+          "title": "Backend Name",
+          "type": "string"
+        },
+        "model_name": {
+          "default": "unknown",
+          "minLength": 1,
+          "title": "Model Name",
+          "type": "string"
+        },
+        "model_artifact_version": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Model Artifact Version"
+        },
+        "prompt_template_version": {
+          "default": "unknown",
+          "minLength": 1,
+          "title": "Prompt Template Version",
           "type": "string"
         },
         "actual_tokens": {
@@ -239,9 +267,7 @@
           "title": "Correlation Id"
         },
         "session_id": {
-          "minLength": 1,
-          "title": "Session Id",
-          "type": "string"
+          "$ref": "#/$defs/AssistantSessionId"
         },
         "turn_id": {
           "minLength": 1,
@@ -317,9 +343,7 @@
           "title": "Correlation Id"
         },
         "session_id": {
-          "minLength": 1,
-          "title": "Session Id",
-          "type": "string"
+          "$ref": "#/$defs/AssistantSessionId"
         },
         "turn_id": {
           "minLength": 1,
@@ -396,6 +420,12 @@
       "title": "AssistantResponse",
       "type": "object"
     },
+    "AssistantSessionId": {
+      "maxLength": 128,
+      "minLength": 1,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$",
+      "type": "string"
+    },
     "ConversationTurn": {
       "additionalProperties": false,
       "description": "Immutable user or assistant turn within an assistant session.",
@@ -438,9 +468,7 @@
           "title": "Correlation Id"
         },
         "session_id": {
-          "minLength": 1,
-          "title": "Session Id",
-          "type": "string"
+          "$ref": "#/$defs/AssistantSessionId"
         },
         "role": {
           "enum": [
@@ -689,9 +717,7 @@
           "title": "Correlation Id"
         },
         "session_id": {
-          "minLength": 1,
-          "title": "Session Id",
-          "type": "string"
+          "$ref": "#/$defs/AssistantSessionId"
         },
         "turn_id": {
           "minLength": 1,

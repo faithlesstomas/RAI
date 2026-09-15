@@ -17,8 +17,9 @@ Verifies the 8-step user-visible acceptance scenario:
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Any
 import pytest
-from returns.result import Failure, Success
+from returns.result import Failure, Result, Success
 
 from rai.assistant.backends.deterministic import DeterministicAssistantBackend
 from rai.assistant.backends.local import LocalAssistantBackend
@@ -32,8 +33,31 @@ from rai.assistant.service import AssistantService
 from rai.assistant.store import SQLiteMemoryGraphStore
 from rai.container import ApplicationContainer
 from rai.kernel.records import ProducerIdentity, _new_id
+from rai.inference.protocols import GenerationStats, InferenceResult
 
 PRODUCER = ProducerIdentity(producer_id="acceptance-test", kind="test", version="1.0.0")
+
+
+class _FakeLocalEngine:
+    def __init__(self) -> None:
+        self.prompt = ""
+
+    async def load(self) -> Result[None, Exception]:
+        return Success(None)
+
+    async def unload(self) -> Result[None, Exception]:
+        return Success(None)
+
+    async def generate(
+        self, prompt: str, **_kwargs: Any  # noqa: ANN401
+    ) -> Result[InferenceResult, Exception]:
+        self.prompt = prompt
+        return Success(
+            InferenceResult(
+                text="Zapamiętałem Guile.",
+                stats=GenerationStats(10, 3, 0.01, 300.0),
+            )
+        )
 
 
 @pytest.mark.asyncio
@@ -271,7 +295,8 @@ async def test_local_assistant_backend_text_completion_and_bypassing_chat_templa
     store = SQLiteMemoryGraphStore(path=db_path)
     await store.start()
 
-    backend = LocalAssistantBackend(engine=None, model_name="test-local")
+    engine = _FakeLocalEngine()
+    backend = LocalAssistantBackend(engine=engine, model_name="test-local")
     service = AssistantService(store=store, backend=backend)
 
     turn = ConversationTurn(
@@ -285,7 +310,9 @@ async def test_local_assistant_backend_text_completion_and_bypassing_chat_templa
     assert isinstance(res, Success)
     cand = res.unwrap()
     assert "Guile" in cand.text
+    assert cand.text.startswith("Zapamiętałem:")
     assert len(cand.admitted_memory_ids) == 1
+    assert "Użytkownik:" in engine.prompt
 
     # Streaming test
     turn_stream = ConversationTurn(
@@ -296,7 +323,9 @@ async def test_local_assistant_backend_text_completion_and_bypassing_chat_templa
         text="W jakim języku powinieneś pokazywać mi przykłady kodu?",
     )
     chunks: list[str] = []
-    async for chunk_res in service.accept_turn_stream(turn_stream, request_id="req-local-stream"):
+    async for chunk_res in service.accept_turn_stream(
+        turn_stream, request_id="req-local-stream"
+    ):
         assert isinstance(chunk_res, Success)
         chunks.append(chunk_res.unwrap())
 

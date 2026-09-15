@@ -11,6 +11,7 @@ from pydantic import ValidationError
 from rai.assistant.records import (
     ASSISTANT_RECORD_TYPES,
     MAX_PROPOSALS_PER_TURN,
+    MAX_SESSION_ID_LENGTH,
     AssistantCandidate,
     AssistantContextManifest,
     AssistantContextPackage,
@@ -37,7 +38,9 @@ def test_parse_valid_turn_fixture() -> None:
 
 
 def test_parse_valid_proposal_fixture() -> None:
-    data = json.loads((FIXTURE_ROOT / "proposal.valid.json").read_text(encoding="utf-8"))
+    data = json.loads(
+        (FIXTURE_ROOT / "proposal.valid.json").read_text(encoding="utf-8")
+    )
     record = parse_assistant_record(data)
     assert isinstance(record, MemoryProposal)
     assert record.topic == "code_examples"
@@ -55,7 +58,9 @@ def test_parse_valid_memory_fixture() -> None:
 
 
 def test_parse_valid_manifest_fixture() -> None:
-    data = json.loads((FIXTURE_ROOT / "manifest.valid.json").read_text(encoding="utf-8"))
+    data = json.loads(
+        (FIXTURE_ROOT / "manifest.valid.json").read_text(encoding="utf-8")
+    )
     record = parse_assistant_record(data)
     assert isinstance(record, AssistantContextManifest)
     assert "mem-valid-001" in record.durable_memory_ids
@@ -77,7 +82,9 @@ def test_parse_valid_request_fixture() -> None:
 
 
 def test_parse_valid_response_fixture() -> None:
-    data = json.loads((FIXTURE_ROOT / "response.valid.json").read_text(encoding="utf-8"))
+    data = json.loads(
+        (FIXTURE_ROOT / "response.valid.json").read_text(encoding="utf-8")
+    )
     record = parse_assistant_record(data)
     assert isinstance(record, AssistantResponse)
     assert record.status == "COMPLETED"
@@ -85,7 +92,9 @@ def test_parse_valid_response_fixture() -> None:
 
 
 def test_parse_failed_response_fixture() -> None:
-    data = json.loads((FIXTURE_ROOT / "response.failed.json").read_text(encoding="utf-8"))
+    data = json.loads(
+        (FIXTURE_ROOT / "response.failed.json").read_text(encoding="utf-8")
+    )
     record = parse_assistant_record(data)
     assert isinstance(record, AssistantResponse)
     assert record.status == "FAILED"
@@ -93,25 +102,33 @@ def test_parse_failed_response_fixture() -> None:
 
 
 def test_turn_rejects_secret_data_class() -> None:
-    data = json.loads((FIXTURE_ROOT / "turn.invalid_secret.json").read_text(encoding="utf-8"))
+    data = json.loads(
+        (FIXTURE_ROOT / "turn.invalid_secret.json").read_text(encoding="utf-8")
+    )
     with pytest.raises(ValidationError, match="cannot have SECRET data class"):
         parse_assistant_record(data)
 
 
 def test_turn_rejects_malformed_fixture() -> None:
-    data = json.loads((FIXTURE_ROOT / "turn.malformed.json").read_text(encoding="utf-8"))
+    data = json.loads(
+        (FIXTURE_ROOT / "turn.malformed.json").read_text(encoding="utf-8")
+    )
     with pytest.raises(ValidationError):
         parse_assistant_record(data)
 
 
 def test_proposal_rejects_over_budget_content() -> None:
-    data = json.loads((FIXTURE_ROOT / "proposal.over_budget.json").read_text(encoding="utf-8"))
+    data = json.loads(
+        (FIXTURE_ROOT / "proposal.over_budget.json").read_text(encoding="utf-8")
+    )
     with pytest.raises(ValidationError, match="exceeds max size"):
         parse_assistant_record(data)
 
 
 def test_rejects_unsupported_schema_version() -> None:
-    data = json.loads((FIXTURE_ROOT / "schema_version.unsupported.json").read_text(encoding="utf-8"))
+    data = json.loads(
+        (FIXTURE_ROOT / "schema_version.unsupported.json").read_text(encoding="utf-8")
+    )
     with pytest.raises(ValidationError, match="pattern|unsupported schema major"):
         parse_assistant_record(data)
 
@@ -158,6 +175,20 @@ def test_turn_text_length_limit() -> None:
             text=huge_text,
             producer=ProducerIdentity(producer_id="test", kind="test", version="1.0.0"),
         )
+
+
+@pytest.mark.parametrize("session_id", ["", "has spaces", "/absolute/path", "a" * 129])
+def test_assistant_session_id_is_schema_visible_and_validated(session_id: str) -> None:
+    with pytest.raises(ValidationError):
+        ConversationTurn(
+            session_id=session_id,
+            role="user",
+            text="Hello",
+            producer=ProducerIdentity(producer_id="test", kind="test", version="1.0.0"),
+        )
+
+    schema = assistant_json_schema()
+    assert schema["$defs"]["AssistantSessionId"]["maxLength"] == MAX_SESSION_ID_LENGTH
 
 
 def test_published_schema_matches_runtime_contract() -> None:

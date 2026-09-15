@@ -13,9 +13,10 @@ from typing import AsyncIterator
 from returns.result import Failure, Result, Success
 
 from rai.kernel.ports import CancellationToken, LifecycleState
-from rai.kernel.records import ActionFailure, ProducerIdentity, _new_id, _utc_now
+from rai.kernel.records import ActionFailure, ProducerIdentity
 
 from ..context import DEFAULT_SYSTEM_INSTRUCTION
+from ..memory import extract_memory_proposals, grounded_memory_response
 from ..records import (
     AssistantCandidate,
     InferenceRequest,
@@ -27,15 +28,22 @@ from ..records import (
 class LocalAssistantBackend:
     """Direct local model backend adapter for AssistantModelBackend protocol."""
 
-    def __init__(
+    def __init__(  # noqa: PLR0913
         self,
         engine: object | None = None,
         model_name: str | None = None,
         backend_name: str = "ollama",
+        max_output_tokens: int = 256,
+        temperature: float = 0.2,
+        model_artifact_version: str | None = None,
     ) -> None:
         self.engine = engine
         self.model_name = model_name or "local-model"
         self.backend_name = backend_name
+        self.max_output_tokens = max_output_tokens
+        self.temperature = temperature
+        self.model_artifact_version = model_artifact_version
+        self.prompt_template_version = "rai-assistant-plain-text-v3"
         self._state = LifecycleState.CREATED
         self.producer = ProducerIdentity(
             producer_id=f"local-assistant-{self.backend_name}",
@@ -48,6 +56,14 @@ class LocalAssistantBackend:
         return self._state
 
     async def start(self) -> Result[LifecycleState, ActionFailure]:
+        if self.engine is None:
+            self._state = LifecycleState.FAILED
+            return Failure(
+                make_assistant_failure(
+                    code="ENGINE_NOT_CONFIGURED",
+                    message="no local text engine is configured",
+                )
+            )
         if self.engine is not None and hasattr(self.engine, "load"):
             try:
                 load_res = await self.engine.load()
@@ -82,21 +98,22 @@ class LocalAssistantBackend:
     def _format_prompt(self, request: InferenceRequest) -> str:
         """Format an inspectable plain-text prompt bypassing chat template issues."""
         system_text = request.system_instruction or DEFAULT_SYSTEM_INSTRUCTION
-        lines = [f"System: {system_text}", ""]
+        lines = [
+            f"System: {system_text}",
+            "Use only relevant conversation and memory evidence below. Durable memory contains "
+            "user-stated claims or preferences, not verified world facts. If evidence is missing "
+            "or conflicting, say that you do not know. Never invent missing details.",
+            "",
+        ]
 
         durable_memories = request.context.content.get("durable_memories", [])
         if isinstance(durable_memories, (list, tuple)) and durable_memories:
-            lines.append("Zapisane fakty i preferencje użytkownika (trwała pamięć grafowa):")
+            lines.append(
+                "Trwała pamięć grafowa (twierdzenia lub preferencje podane przez użytkownika):"
+            )
             for mem in durable_memories:
                 if isinstance(mem, dict):
-                    topic = mem.get("topic", "")
-                    content = mem.get("content", {})
-                    pref = (
-                        content.get("preference", "")
-                        if isinstance(content, dict)
-                        else ""
-                    )
-                    lines.append(f"- [{topic}] Preferencja: {pref}")
+                    lines.append(f"- {self._format_memory(mem)}")
             lines.append("")
 
         recent_turns = request.context.content.get("recent_turns", [])
@@ -111,78 +128,67 @@ class LocalAssistantBackend:
 
         current_turn = request.context.content.get("current_turn", {})
         user_text = (
-            str(current_turn.get("text", ""))
-            if isinstance(current_turn, dict)
-            else ""
+            str(current_turn.get("text", "")) if isinstance(current_turn, dict) else ""
         )
         lines.append(f"Użytkownik: {user_text}")
         lines.append("Asystent:")
         return "\n".join(lines)
 
+    @staticmethod
+    def _format_memory(memory: dict[object, object]) -> str:
+        """Render structured memory as a natural-language evidence statement."""
+        topic = str(memory.get("topic", "memory"))
+        content = memory.get("content", {})
+        if not isinstance(content, dict):
+            return f"[{topic}] {content}"
+        value = content.get("value")
+        statements = {
+            "user.identity.name": f"Użytkownik podał, że ma na imię {value}.",
+            "user.identity.age": f"Użytkownik podał, że ma {value} lat.",
+            "user.location.home": f"Użytkownik podał, że mieszka w {value}.",
+            "code_examples": (
+                "Użytkownik preferuje język "
+                f"{content.get('preference')} w przykładach kodu."
+            ),
+        }
+        if topic in statements:
+            return statements[topic]
+        if fact := content.get("fact"):
+            return f"Użytkownik poprosił o zapamiętanie: {fact}"
+        return f"[{topic}] {content}"
+
     def _extract_proposals(
         self, user_text: str, turn_id: str
     ) -> tuple[MemoryProposal, ...]:
         """Deterministically extract bounded memory proposals from user statements."""
-        lowered = user_text.lower()
-        proposals: list[MemoryProposal] = []
+        return extract_memory_proposals(user_text, turn_id, self.producer)
 
-        pref_match = None
-        if "guile" in lowered:
-            pref_match = "Guile"
-        elif "python" in lowered or "pythona" in lowered:
-            pref_match = "Python"
+    @staticmethod
+    def _truncate_repetition(text: str) -> tuple[str, bool]:
+        """Stop exact sentence loops commonly emitted by very small local models."""
+        parts = re.split(r"(?<=[.!?])\s+", text.strip())
+        seen: set[str] = set()
+        kept: list[str] = []
+        for part in parts:
+            normalized = re.sub(r"\s+", " ", part).strip().casefold()
+            if normalized and normalized in seen:
+                return " ".join(kept).strip(), True
+            if normalized:
+                seen.add(normalized)
+                kept.append(part.strip())
+        return text.strip(), False
 
-        if (
-            "preferuj" in lowered
-            or "preferuję" in lowered
-            or "zapamiętaj" in lowered
-            or "zmień tę preferencję" in lowered
-            or "używaj" in lowered
-        ) and pref_match:
-            proposals.append(
-                MemoryProposal(
-                    record_id=_new_id(),
-                    timestamp=_utc_now(),
-                    producer=self.producer,
-                    source_turn_id=turn_id,
-                    kind="preference",
-                    topic="code_examples",
-                    content={
-                        "topic": "code_examples",
-                        "preference": pref_match,
-                        "raw_statement": user_text,
-                    },
-                )
-            )
-
-        return tuple(proposals)
-
-    def _fallback_inference(
-        self, user_text: str, durable_memories: tuple[object, ...] | list[object]
-    ) -> str:
-        """Fallback response logic when running without a heavy local weights file."""
-        lowered = user_text.lower()
-        if "w jakim języku" in lowered or "jakim języku" in lowered:
-            for mem in durable_memories:
-                if isinstance(mem, dict):
-                    content = mem.get("content", {})
-                    if (
-                        isinstance(content, dict)
-                        and content.get("topic") == "code_examples"
-                    ):
-                        return (
-                            f"Zgodnie z Twoją zapisaną preferencją, powinienem pokazywać przykłady kodu w języku {content.get('preference')}."
-                        )
-            return "Nie mam zapisanej preferencji dotyczącej języka w przykładach kodu."
-
-        if "preferuj" in lowered or "preferuję" in lowered or "zapamiętaj" in lowered:
-            lang = "Guile" if "guile" in lowered else ("Python" if "python" in lowered else "wybranym")
-            return f"Zapamiętałem: w przykładach kodu będę preferować język {lang}."
-
-        if "zmień tę preferencję" in lowered or "używaj pythona" in lowered:
-            return "Zmieniłem preferencję: od nowa w przykładach kodu będę używać języka Python."
-
-        return "Rozumiem."
+    @staticmethod
+    def _ground_memory_response(
+        user_text: str,
+        durable_memories: tuple[object, ...] | list[object],
+        proposals: tuple[MemoryProposal, ...],
+        model_text: str,
+    ) -> tuple[str, bool]:
+        """Apply deterministic grounding for persisted personal facts."""
+        return grounded_memory_response(
+            user_text, durable_memories, proposals, model_text
+        )
 
     async def generate(
         self, request: InferenceRequest, cancellation: CancellationToken
@@ -199,50 +205,86 @@ class LocalAssistantBackend:
         prompt = self._format_prompt(request)
         current_turn = request.context.content.get("current_turn", {})
         user_text = (
-            str(current_turn.get("text", ""))
-            if isinstance(current_turn, dict)
-            else ""
+            str(current_turn.get("text", "")) if isinstance(current_turn, dict) else ""
         )
         durable_memories = request.context.content.get("durable_memories", [])
         if not isinstance(durable_memories, (list, tuple)):
             durable_memories = []
 
-        response_text: str
-        if self.engine is not None and hasattr(self.engine, "generate"):
-            try:
-                gen_res = await self.engine.generate(
-                    prompt=prompt,
-                    stop=["Użytkownik:", "System:"],
+        if self.engine is None or not hasattr(self.engine, "generate"):
+            return Failure(
+                make_assistant_failure(
+                    code="ENGINE_NOT_CONFIGURED",
+                    message="no local text engine is configured",
+                    request_id=request.request_id,
                 )
-                if isinstance(gen_res, Failure):
-                    return Failure(
-                        make_assistant_failure(
-                            code="ENGINE_ERROR",
-                            message=f"local engine failed: {gen_res.failure()}",
-                            request_id=request.request_id,
-                            retryable=True,
-                        )
-                    )
-                result_obj = gen_res.unwrap()
-                response_text = result_obj.text.strip()
-            except Exception as exc:  # noqa: BLE001
+            )
+        try:
+            gen_res = await self.engine.generate(
+                prompt=prompt,
+                stop=["\nUżytkownik:", "\nSystem:", "\nAsystent:"],
+                max_tokens=self.max_output_tokens,
+                temperature=self.temperature,
+            )
+            if isinstance(gen_res, Failure):
                 return Failure(
                     make_assistant_failure(
                         code="ENGINE_ERROR",
-                        message=f"exception during local engine generation: {exc}",
+                        message=f"local engine failed: {gen_res.failure()}",
                         request_id=request.request_id,
                         retryable=True,
                     )
                 )
-        else:
-            response_text = self._fallback_inference(user_text, durable_memories)
+            result_obj = gen_res.unwrap()
+            response_text = result_obj.text.strip()
+        except Exception as exc:  # noqa: BLE001
+            return Failure(
+                make_assistant_failure(
+                    code="ENGINE_ERROR",
+                    message=f"exception during local engine generation: {exc}",
+                    request_id=request.request_id,
+                    retryable=True,
+                )
+            )
 
+        if not response_text:
+            return Failure(
+                make_assistant_failure(
+                    code="INVALID_OUTPUT",
+                    message="local engine returned an empty response",
+                    request_id=request.request_id,
+                )
+            )
+
+        response_text, repetition_truncated = self._truncate_repetition(response_text)
         proposals = self._extract_proposals(user_text, request.turn_id)
+        grounded_text, grounding_override = self._ground_memory_response(
+            user_text, durable_memories, proposals, response_text
+        )
         candidate = AssistantCandidate(
-            text=response_text or "Rozumiem.",
+            text=grounded_text,
             proposals=proposals,
-            tokens_in=len(prompt.split()),
-            tokens_out=len(response_text.split()) if response_text else 1,
+            tokens_in=(
+                result_obj.stats.input_tokens
+                if result_obj.stats
+                else len(prompt.split())
+            ),
+            tokens_out=(
+                result_obj.stats.output_tokens
+                if result_obj.stats
+                else len(response_text.split())
+            ),
+            metadata={
+                "backend": self.backend_name,
+                "model": self.model_name,
+                "model_artifact_version": self.model_artifact_version,
+                "prompt_template_version": self.prompt_template_version,
+                "finish_reason": result_obj.finish_reason,
+                "grounding_override": grounding_override,
+                "repetition_truncated": repetition_truncated,
+                "delivered_words": len(grounded_text.split()),
+                "raw_model_output": response_text,
+            },
         )
         return Success(candidate)
 

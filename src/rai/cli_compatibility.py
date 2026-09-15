@@ -359,6 +359,8 @@ class CliOptions:  # pylint: disable=too-many-instance-attributes
     quiet: bool = False
     stream: bool = False
     session_override: Optional[str] = None
+    profile_override: Optional[str] = None
+    show_context: bool = False
     config_path: Optional[str] = None
     log_level_opt: Optional[str] = None
     tts_voice_id: Optional[str] = None
@@ -878,10 +880,13 @@ async def async_main_client(options: CliOptions) -> None: # noqa: PLR0912
 # Section: AI Configuration
 @click.option("-s", "--system", default=None, help="Defines the system prompt for the AI.",
               cls=SectionedOption, section="AI Configuration")
+@click.option("--profile", "profile_override", default=None,
+              help="Assistant profile used for model configuration and durable-memory scope.",
+              cls=SectionedOption, section="AI Configuration")
 @click.option("-m", "--model", default=None, help="ID of the model to use.",
               cls=SectionedOption, section="AI Configuration")
 @click.option("-b", "--backend", default=None,
-              type=click.Choice(["ollama", "gemini", "anthropic", "openai", "groq", "local"]),
+              type=click.Choice(["ollama", "llama", "local", "gemini", "anthropic", "openai", "groq"]),
               help="The backend to use.",
               cls=SectionedOption, section="AI Configuration")
 # Section: Output Formatting
@@ -894,13 +899,16 @@ async def async_main_client(options: CliOptions) -> None: # noqa: PLR0912
 @click.option("--stream", is_flag=True,
               help="Enable streaming of LLM responses (disables Markdown).",
               cls=SectionedOption, section="Output Formatting")
+@click.option("--show-context", is_flag=True,
+              help="Print the selected context manifest after each response.",
+              cls=SectionedOption, section="Output Formatting")
 # Section: Speech
 @click.option("--tts", "tts_voice_id", default=None, is_flag=False, flag_value="_default_",
               help="Enable Text-to-Speech output. Optionally provide a voice ID.",
               cls=SectionedOption, section="Speech")
 # Section: Session & Debugging
-@click.option("--session", "session_override", default=None,
-              help="Run in a specific session for this command only.",
+@click.option("--session-id", "--session", "session_override", default=None,
+              help="Conversation session ID; --session is a legacy alias.",
               cls=SectionedOption, section="Session & Debugging")
 @click.option("--log-level", "log_level_opt", default=None,
               type=click.Choice(["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"], case_sensitive=False),
@@ -961,8 +969,38 @@ def cli(ctx: click.Context, **kwargs: Any) -> None: # noqa: ANN401
             # Client Mode
             asyncio.run(async_main_client(options))
         else:
-            # Standalone Mode
-            asyncio.run(async_run_standalone(options))
+            # The supported standalone text path is the RAI-owned graph-memory assistant.
+            from .cli_commands import (  # noqa: PLC0415
+                _run_assistant_ask,
+                _run_assistant_chat,
+            )
+
+            assistant_backend = "llama" if options.backend == "local" else options.backend
+            unsupported = {"gemini", "anthropic", "openai", "groq"}
+            if assistant_backend in unsupported:
+                raise click.ClickException(
+                    "Provider-owned standalone chat is quarantined. Use a local llama/ollama "
+                    "backend or the explicit --connect compatibility client."
+                )
+            if options.prompt:
+                _run_assistant_ask(
+                    options.prompt,
+                    options.session_override,
+                    assistant_backend,
+                    options.model,
+                    options.show_context,
+                    options.profile_override,
+                    options.system,
+                )
+            else:
+                _run_assistant_chat(
+                    options.session_override,
+                    assistant_backend,
+                    options.model,
+                    options.show_context,
+                    options.profile_override,
+                    options.system,
+                )
 
 
 

@@ -45,6 +45,19 @@ ChainRequest = AgentExecutionRequest
 
 # --- Endpoints ---
 
+
+def _require_legacy_chat(app_config: Dict[str, Any]) -> None:
+    raw = app_config.get("legacy_chat", {})
+    legacy = raw if isinstance(raw, dict) else {}
+    if not legacy.get("enabled", False):
+        raise HTTPException(
+            status_code=410,
+            detail=(
+                "Legacy provider-owned chat is disabled. Use "
+                "POST /api/v1/assistant/turn or /api/v1/assistant/stream."
+            ),
+        )
+
 @router.post("/api/v1/run")
 async def execute_chain(
         request: AgentExecutionRequest,
@@ -53,6 +66,7 @@ async def execute_chain(
     """
     Runs an agent with the given input and configurations.
     """
+    _require_legacy_chat(app_config)
     chat_service = ChatService()
     prompt = request.prompt or request.chain_input
     if not prompt:
@@ -103,6 +117,7 @@ async def stream_chain_endpoint(
     """
     Streams the result of an agent execution using Server-Sent Events (SSE).
     """
+    _require_legacy_chat(app_config)
     session_id = request.session_id or str(uuid.uuid4())
 
     async def event_generator() -> AsyncGenerator[str, None]:
@@ -205,13 +220,18 @@ async def get_models_for_backend(
 
 
 @router.websocket("/ws/v1/chat")
-async def websocket_endpoint(websocket: WebSocket) -> None:
+async def websocket_endpoint(websocket: WebSocket) -> None:  # noqa: PLR0912
     """Handles WebSocket connections for real-time chat."""
     if not is_authorized(websocket.headers, websocket.query_params.get("token")):
         await websocket.close(code=1008, reason="Unauthorized")
         return
     await websocket.accept()
     app_config = config_manager.load_config()  # Load config manually
+    try:
+        _require_legacy_chat(app_config)
+    except HTTPException:
+        await websocket.close(code=1008, reason="Legacy chat is disabled")
+        return
     session_id = None  # Preserve the stateful session ID across turns!
     try:
         while True:

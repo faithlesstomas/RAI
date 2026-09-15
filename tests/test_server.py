@@ -47,7 +47,8 @@ async def test_execute_chain_success(MockChatService) -> None: # noqa: ANN001
     }
 
     response = await execute_chain(
-        AgentExecutionRequest.model_validate(request_payload), app_config={}
+        AgentExecutionRequest.model_validate(request_payload),
+        app_config={"legacy_chat": {"enabled": True}},
     )
 
     assert response.status_code == 200 # noqa: PLR2004
@@ -74,7 +75,8 @@ async def test_execute_chain_failure(MockChatService) -> None: # noqa: ANN001
 
     with pytest.raises(HTTPException) as error:
         await execute_chain(
-            AgentExecutionRequest.model_validate(request_payload), app_config={}
+            AgentExecutionRequest.model_validate(request_payload),
+            app_config={"legacy_chat": {"enabled": True}},
         )
     assert error.value.status_code == 500 # noqa: PLR2004
     assert error.value.detail == "Something went wrong"
@@ -97,11 +99,23 @@ async def test_execute_chain_arun_exception(MockChatService) -> None: # noqa: AN
 
     with pytest.raises(HTTPException) as error:
         await execute_chain(
-            AgentExecutionRequest.model_validate(request_payload), app_config={}
+            AgentExecutionRequest.model_validate(request_payload),
+            app_config={"legacy_chat": {"enabled": True}},
         )
     assert error.value.status_code == 500 # noqa: PLR2004
     assert "Adapter crashed" in error.value.detail
     mock_service_instance.run_chain.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_legacy_run_is_quarantined_by_default() -> None:
+    with pytest.raises(HTTPException) as error:
+        await execute_chain(
+            AgentExecutionRequest(prompt="hello"),
+            app_config={},
+        )
+
+    assert error.value.status_code == 410  # noqa: PLR2004
 
 
 class FakeWebSocket:
@@ -134,7 +148,11 @@ class FakeWebSocket:
 
 @pytest.mark.asyncio
 @patch("rai.routers.execution.ChatService")
-async def test_websocket_endpoint_success(MockChatService) -> None: # noqa: ANN001
+@patch(
+    "rai.routers.execution.config_manager.load_config",
+    return_value={"legacy_chat": {"enabled": True}},
+)
+async def test_websocket_endpoint_success(_mock_config, MockChatService) -> None: # noqa: ANN001
     """
     Tests the /ws/v1/chat WebSocket endpoint for a successful execution.
     """
@@ -155,7 +173,11 @@ async def test_websocket_endpoint_success(MockChatService) -> None: # noqa: ANN0
 
 @pytest.mark.asyncio
 @patch("rai.routers.execution.ChatService")
-async def test_websocket_endpoint_failure(MockChatService) -> None: # noqa: ANN001
+@patch(
+    "rai.routers.execution.config_manager.load_config",
+    return_value={"legacy_chat": {"enabled": True}},
+)
+async def test_websocket_endpoint_failure(_mock_config, MockChatService) -> None: # noqa: ANN001
     """
     Tests the /ws/v1/chat WebSocket endpoint for a failed execution.
     """
@@ -173,7 +195,11 @@ async def test_websocket_endpoint_failure(MockChatService) -> None: # noqa: ANN0
 
 
 @pytest.mark.asyncio
-async def test_websocket_endpoint_invalid_request() -> None:
+@patch(
+    "rai.routers.execution.config_manager.load_config",
+    return_value={"legacy_chat": {"enabled": True}},
+)
+async def test_websocket_endpoint_invalid_request(_mock_config: MagicMock) -> None:
     """
     Tests the /ws/v1/chat WebSocket endpoint for an invalid request.
     """
