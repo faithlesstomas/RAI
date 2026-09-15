@@ -931,6 +931,13 @@ explicit ConversationTurn or policy-approved proactive trigger
   selected tier is insufficient. Record the route, sufficiency decision and
   fallbacks in `ContextManifest`; tune thresholds empirically per model and
   workload rather than treating published thresholds as constants.
+- [ ] After the retrieval floor and adaptive router are reproducible, evaluate
+  optional GWT-inspired context processing: one or a few bounded rounds of
+  candidate eligibility, competition, admission, broadcast and release before
+  `ContextPackage` assembly. Compare it with the router under identical memory,
+  model and compute budgets; treat it as an attention/orchestration experiment,
+  not a memory tier or a claim of GCAS conformance. See
+  [Assistant memory, GCAS and GWT-inspired processing](docs/assistant-memory-gcas-crosscheck.md).
 - [ ] Add multi-channel retrieval incrementally:
   - start with lexical FTS5/BM25 plus temporal and policy filters;
   - benchmark a local dense embedding channel and Weighted Reciprocal Rank

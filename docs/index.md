@@ -37,6 +37,7 @@ bounded-local-tasks
 assistant-architecture
 assistant-live-acceptance
 assistant-memory-roadmap
+assistant-memory-gcas-crosscheck
 local-voice
 neural-sidecar
 reference/modules
