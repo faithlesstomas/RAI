@@ -10,10 +10,20 @@ from .backends.deterministic import DeterministicAssistantBackend
 from .backends.local import LocalAssistantBackend
 from .context import AssistantContextBuilder
 from .diagnostics import MemoryDiagnosticReport, MemoryStageDiagnostic, diagnose_memory
+from .extraction import (
+    ExtractedClaimKind,
+    ExtractedMemoryCandidate,
+    MemoryExtractionOutput,
+    SchemaConstrainedMemoryExtractor,
+)
+from .evidence import RichHistoryEvidenceProvider
 from .ports import (
     AssistantModelBackend,
+    AssistantEvidence,
+    AssistantEvidenceProvider,
     AssistantSessionSummary,
     MemoryGraphStore,
+    MemoryProposalExtractor,
     MemoryQuery,
 )
 from .query import MemoryQueryResolver
@@ -47,6 +57,8 @@ __all__ = [
     "AssistantContextManifest",
     "AssistantContextManifestItem",
     "AssistantContextPackage",
+    "AssistantEvidence",
+    "AssistantEvidenceProvider",
     "AssistantModelBackend",
     "AssistantResponse",
     "AssistantService",
@@ -59,6 +71,10 @@ __all__ = [
     "JsonlAssistantAuditLedger",
     "LocalAssistantBackend",
     "MemoryGraphStore",
+    "MemoryProposalExtractor",
+    "MemoryExtractionOutput",
+    "ExtractedClaimKind",
+    "ExtractedMemoryCandidate",
     "MemoryDiagnosticReport",
     "MemoryOperation",
     "MemoryOperationKind",
@@ -69,7 +85,9 @@ __all__ = [
     "MemoryRelation",
     "MemoryRelationKind",
     "MemoryStageDiagnostic",
+    "RichHistoryEvidenceProvider",
     "SQLiteMemoryGraphStore",
+    "SchemaConstrainedMemoryExtractor",
     "parse_assistant_record",
     "diagnose_memory",
 ]

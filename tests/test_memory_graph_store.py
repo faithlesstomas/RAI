@@ -157,6 +157,7 @@ async def test_supersession_and_neutral_retrieval(
         relations=(),
     )
     assert isinstance(commit_1, Success)
+    historical_cutoff = _utc_now()
 
     # Query 1: Should retrieve Guile with topic exact match
     query = MemoryQuery(topic="code_examples")
@@ -228,6 +229,23 @@ async def test_supersession_and_neutral_retrieval(
     assert len(memories_2) == 1
     rec_2, reason_2 = memories_2[0]
     assert rec_2.content["preference"] == "Python"
+
+    # Bitemporal query: reconstruct what the system knew before the correction.
+    historical = await store.retrieve_relevant_memories(
+        query=MemoryQuery(
+            topic="code_examples",
+            transaction_at=historical_cutoff,
+            valid_at=historical_cutoff,
+        )
+    )
+    assert isinstance(historical, Success)
+    assert [memory.record_id for memory, _ in historical.unwrap()] == ["mem-1"]
+    previous = await store.get_memory("mem-1")
+    assert isinstance(previous, Success)
+    previous_record = previous.unwrap()
+    assert previous_record is not None
+    assert previous_record[0].expired_at is not None
+    assert previous_record[0].recorded_at <= historical_cutoff
 
     # Source turn deletion cascading:
     # Delete turn-source-2 -> mem-2 should be DELETED, but mem-1 MUST NOT be revived!

@@ -117,6 +117,15 @@ class DeterministicAssistantBackend:
             turn_id=request.turn_id,
             durable_memories=durable_memories,
         )
+        has_evidence = bool(
+            durable_memories
+            or request.context.content.get("episodic_evidence", ())
+            or request.context.content.get("external_evidence", ())
+        )
+        if not proposals and not has_evidence and "?" in user_text:
+            response_text = (
+                "Nie mam wystarczających źródeł, aby odpowiedzieć na to pytanie."
+            )
 
         candidate = AssistantCandidate(
             text=response_text,

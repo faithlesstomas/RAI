@@ -151,11 +151,11 @@ to end. A turn-only chat is useful scaffolding but does not satisfy this slice:
    poisoned or superseded retrieval, source deletion and provider-state leakage
    with deterministic tests.
 
-This slice intentionally excludes proactive triggers, tool use, general
+This slice intentionally excludes proactive triggers, tool use, lossy general
 conversation summarization, vector retrieval, external model APIs, Coconut
-recurrence and writable slots. It includes only enough governed semantic-memory
-admission and retrieval to demonstrate that durable graph memory materially
-changes a later answer.
+recurrence and writable slots. It now includes governed free-form candidate
+extraction, bitemporal claims, FTS5 raw-turn fallback and Rich History evidence,
+while keeping every model output outside the policy boundary.
 
 ## Local operation and observability
 
@@ -172,15 +172,23 @@ guard metadata. Each process reconstructs its prompt from those RAI-owned
 records; no provider conversation ID is resumed. `RAI_DATA_DIR` selects an
 isolated profile for A/B experiments.
 
-The MVP has a bounded deterministic admission and grounding policy for common
-personal facts (including natural attributes, name, age and home location),
-preferences, plans, explicit `remember`/`zapamiętaj` and `forget`/`zapomnij`
-requests. Quoted, hearsay, hedged and malformed candidates are retained as
-rejected operation evidence rather than silently becoming memory. The local model still
-runs for every response, but critical recall questions are answered from the
-selected active memory. RAI records `grounding_override=true` whenever that
-gate replaces model prose. This makes the intervention visible without
-allowing a small model to erase or hallucinate the accepted value.
+The runtime has a bounded deterministic admission and grounding policy for
+common personal facts, preferences, plans and optional explicit controls. A
+separate local schema-constrained extractor can propose arbitrary facts,
+preferences, plans, events, system state, relationships and conversation
+commitments from natural user turns. Quoted, hearsay, hedged and malformed
+candidates are retained as rejected operation evidence rather than silently
+becoming memory. The local model still runs for every response, but critical
+recall questions are answered from selected evidence. RAI records
+`grounding_override=true` whenever that gate replaces model prose.
+
+Context routing keeps recent interaction memory, FTS5/BM25 raw conversational
+evidence, Rich History observations and admitted claims separate. Compact
+memory above the configured sufficiency threshold avoids unnecessary raw
+disclosure; otherwise the router falls back to source evidence. The manifest
+records the route, alternatives, score, fallback, channel source IDs and exact
+budget. Real-world validity and transaction-time intervals support current and
+historical queries without rewriting old claims.
 
 Every attempted mutation has a versioned `MemoryOperation`. Its trace records
 the trigger, proposal/source span, policy outcome, before/after IDs and terminal

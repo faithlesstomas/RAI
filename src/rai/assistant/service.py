@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 from collections.abc import Callable
 from datetime import timedelta
+import json
 import time
 from typing import Any, AsyncIterator
 
@@ -28,7 +29,12 @@ from .audit import (
 )
 from .backends.deterministic import DeterministicAssistantBackend
 from .context import AssistantContextBuilder
-from .ports import AssistantModelBackend, MemoryGraphStore
+from .ports import (
+    AssistantModelBackend,
+    MemoryGraphStore,
+    MemoryProposalExtractor,
+    MemoryQuery,
+)
 from .query import MemoryQueryResolver
 from .records import (
     AssistantCandidate,
@@ -62,6 +68,21 @@ def _memory_operation_value(value: MemoryOperationKind | str) -> str:
     return value.value if isinstance(value, MemoryOperationKind) else str(value)
 
 
+def _claim_payload(content: dict[str, Any]) -> str:
+    """Return a stable semantic payload while ignoring extraction trace metadata."""
+    semantic_keys = (
+        "subject",
+        "predicate",
+        "value",
+        "preference",
+        "plan",
+        "fact",
+        "attribute",
+    )
+    semantic = {key: content[key] for key in semantic_keys if key in content}
+    return json.dumps(semantic or content, sort_keys=True, ensure_ascii=False)
+
+
 class AssistantService:
     """One container-owned application boundary for assistant turns."""
 
@@ -70,13 +91,18 @@ class AssistantService:
         store: MemoryGraphStore,
         backend: AssistantModelBackend | None = None,
         context_builder: AssistantContextBuilder | None = None,
+        memory_extractor: MemoryProposalExtractor | None = None,
         audit_ledger: AssistantAuditLedger | None = None,
         producer: ProducerIdentity | None = None,
         profile_scope: str = "default",
     ) -> None:
         self.store = store
         self.backend = backend or DeterministicAssistantBackend()
-        self.context_builder = context_builder or AssistantContextBuilder(store=store)
+        self.context_builder = context_builder or AssistantContextBuilder(
+            store=store,
+            profile_scope=profile_scope,
+        )
+        self.memory_extractor = memory_extractor
         self.audit_ledger = audit_ledger or InMemoryAssistantAuditLedger()
         self.producer = producer or ProducerIdentity(
             producer_id="assistant-service", kind="service", version="1.0.0"
@@ -242,6 +268,113 @@ class AssistantService:
                 )
                 continue
 
+            existing_res = await self.store.retrieve_relevant_memories(
+                profile_scope=self.profile_scope,
+                query=MemoryQuery(
+                    topic=proposal.topic,
+                    profile_scope=self.profile_scope,
+                    data_classes=(
+                        DataClass.PUBLIC,
+                        DataClass.LOCAL,
+                        DataClass.PRIVATE,
+                    ),
+                ),
+                data_classes=(
+                    DataClass.PUBLIC,
+                    DataClass.LOCAL,
+                    DataClass.PRIVATE,
+                ),
+                limit=10,
+            )
+            if isinstance(existing_res, Failure):
+                operations.append(
+                    MemoryOperation(
+                        record_id=_new_id(),
+                        timestamp=_utc_now(),
+                        producer=self.producer,
+                        operation=MemoryOperationKind(operation_value),
+                        trigger="conversation_turn",
+                        trigger_id=turn.record_id,
+                        profile_scope=self.profile_scope,
+                        policy_outcome="DENY",
+                        status="REJECTED",
+                        stage="ADMISSION",
+                        reason="active-claim lookup failed; no memory was changed",
+                        evidence=evidence,
+                        **self._proposal_trace(proposal),
+                    )
+                )
+                continue
+            existing = next(
+                (
+                    memory
+                    for memory, _reason in existing_res.unwrap()
+                    if memory.kind == proposal.kind and memory.topic == proposal.topic
+                ),
+                None,
+            )
+            if existing is not None:
+                same_claim = _claim_payload(existing.content) == _claim_payload(
+                    proposal.content
+                )
+                if same_claim:
+                    operations.append(
+                        MemoryOperation(
+                            record_id=_new_id(),
+                            timestamp=_utc_now(),
+                            producer=self.producer,
+                            operation=MemoryOperationKind.REMEMBER,
+                            trigger="conversation_turn",
+                            trigger_id=turn.record_id,
+                            profile_scope=self.profile_scope,
+                            target_memory_ids=(existing.record_id,),
+                            active_memory_ids_before=(existing.record_id,),
+                            active_memory_ids_after=(existing.record_id,),
+                            policy_outcome="ALLOW",
+                            status="NOOP",
+                            stage="ADMISSION",
+                            reason="equivalent active claim already exists",
+                            evidence=evidence,
+                            **self._proposal_trace(proposal),
+                        )
+                    )
+                    continue
+                mutable_personal_claim = (
+                    proposal.scope == "personal"
+                    and proposal.modality == "direct"
+                    and any(
+                        key in proposal.content for key in ("attribute", "preference")
+                    )
+                )
+                if (
+                    proposal.statement_type != "correction"
+                    and not mutable_personal_claim
+                ):
+                    operations.append(
+                        MemoryOperation(
+                            record_id=_new_id(),
+                            timestamp=_utc_now(),
+                            producer=self.producer,
+                            operation=MemoryOperationKind.UPDATE,
+                            trigger="conversation_turn",
+                            trigger_id=turn.record_id,
+                            profile_scope=self.profile_scope,
+                            target_memory_ids=(existing.record_id,),
+                            active_memory_ids_before=(existing.record_id,),
+                            active_memory_ids_after=(existing.record_id,),
+                            policy_outcome="DENY",
+                            status="REJECTED",
+                            stage="ADMISSION",
+                            reason=(
+                                "candidate conflicts with an active claim; "
+                                "an explicit correction is required"
+                            ),
+                            evidence=evidence,
+                            **self._proposal_trace(proposal),
+                        )
+                    )
+                    continue
+
             proposed_class = _data_class_value(proposal.privacy_class)
             turn_class = _data_class_value(turn.data_class)
             memory_class = (
@@ -265,11 +398,21 @@ class AssistantService:
                         "span_end": proposal.span_end,
                         "confidence": proposal.confidence,
                         "proposal_id": proposal.record_id,
+                        "scope": proposal.scope,
+                        "source_type": proposal.source_type,
                     },
                     source_turn_id=turn.record_id,
+                    source_type=proposal.source_type,
                     data_class=DataClass(memory_class),
                     profile_scope=self.profile_scope,
-                    valid_from=_utc_now(),
+                    epistemic_status=(
+                        "observed"
+                        if proposal.source_type
+                        in {"rich_history_episode", "system_observation"}
+                        else "asserted"
+                    ),
+                    valid_from=proposal.valid_from or _utc_now(),
+                    valid_until=proposal.valid_until,
                     provenance=(
                         ProvenanceReference(
                             source_id=turn.record_id,
@@ -282,6 +425,73 @@ class AssistantService:
                 )
             )
         return admitted, operations, forget_message
+
+    async def _extract_proposals(
+        self,
+        turn: ConversationTurn,
+        candidate_proposals: tuple[MemoryProposal, ...],
+        cancellation: CancellationToken,
+    ) -> tuple[tuple[MemoryProposal, ...], list[MemoryOperation]]:
+        """Merge bounded control proposals with schema-constrained model proposals."""
+        if self.memory_extractor is None:
+            return candidate_proposals, []
+
+        evidence = self._operation_evidence(turn)
+        extraction_id = _new_id()
+        extracted = await self.memory_extractor.extract(turn, cancellation)
+        if isinstance(extracted, Failure):
+            failure = extracted.failure()
+            operation = MemoryOperation(
+                record_id=_new_id(),
+                timestamp=_utc_now(),
+                producer=self.producer,
+                operation=MemoryOperationKind.REFLECT,
+                trigger="conversation_turn",
+                trigger_id=turn.record_id,
+                profile_scope=self.profile_scope,
+                proposal_id=extraction_id,
+                source_span=turn.text,
+                span_start=0,
+                span_end=len(turn.text),
+                policy_outcome="DENY",
+                status="REJECTED",
+                stage="EXTRACTION",
+                reason=f"{failure.code}: {failure.message}",
+                evidence=evidence,
+            )
+            return candidate_proposals, [operation]
+
+        model_proposals = extracted.unwrap()
+        merged: list[MemoryProposal] = list(candidate_proposals)
+        seen = {
+            (proposal.topic, proposal.span_start, proposal.span_end)
+            for proposal in candidate_proposals
+        }
+        for proposal in model_proposals:
+            identity = (proposal.topic, proposal.span_start, proposal.span_end)
+            if identity not in seen:
+                merged.append(proposal)
+                seen.add(identity)
+
+        operation = MemoryOperation(
+            record_id=_new_id(),
+            timestamp=_utc_now(),
+            producer=self.producer,
+            operation=MemoryOperationKind.REFLECT,
+            trigger="conversation_turn",
+            trigger_id=turn.record_id,
+            profile_scope=self.profile_scope,
+            proposal_id=extraction_id,
+            source_span=turn.text,
+            span_start=0,
+            span_end=len(turn.text),
+            policy_outcome="ALLOW",
+            status="APPLIED" if model_proposals else "NOOP",
+            stage="EXTRACTION",
+            reason=f"schema-valid candidates: {len(model_proposals)}",
+            evidence=evidence,
+        )
+        return tuple(merged), [operation]
 
     @property
     def state(self) -> LifecycleState:
@@ -422,6 +632,9 @@ class AssistantService:
         token: CancellationToken,
         request_id: str,
     ) -> Result[AssistantResponse, ActionFailure]:
+        turn = turn.model_copy(
+            update={"metadata": {**turn.metadata, "profile_scope": self.profile_scope}}
+        )
         existing_res = await self.store.get_response_by_request_id(request_id)
         if isinstance(existing_res, Failure):
             return Failure(existing_res.failure())
@@ -502,10 +715,10 @@ class AssistantService:
                 error=error,
                 latency_ms=latency_ms,
             )
-        if any(
-            proposal.source_turn_id != turn.record_id
-            for proposal in candidate.proposals
-        ):
+        proposals, extraction_operations = await self._extract_proposals(
+            turn, candidate.proposals, token
+        )
+        if any(proposal.source_turn_id != turn.record_id for proposal in proposals):
             error = make_assistant_failure(
                 code="INVALID_OUTPUT",
                 message="memory proposal source does not match the current user turn",
@@ -523,14 +736,15 @@ class AssistantService:
             admitted_memories,
             memory_operations,
             forget_message,
-        ) = await self._prepare_memory_changes(candidate.proposals, turn)
+        ) = await self._prepare_memory_changes(proposals, turn)
+        memory_operations = [*extraction_operations, *memory_operations]
         rejected_operations = [
             operation
             for operation in memory_operations
             if operation.status == "REJECTED"
         ]
         delivered_text = forget_message or candidate.text
-        if candidate.proposals and not admitted_memories and rejected_operations:
+        if proposals and not admitted_memories and rejected_operations:
             delivered_text = (
                 "Nie zapisałem tej informacji automatycznie: "
                 f"{rejected_operations[0].reason}."
@@ -547,6 +761,7 @@ class AssistantService:
             reply_to_turn_id=turn.record_id,
             data_class=turn.data_class,
             status="COMPLETED",
+            metadata={"profile_scope": self.profile_scope},
         )
 
         admitted_ids = [memory.record_id for memory in admitted_memories]

@@ -71,9 +71,11 @@ Exit evidence:
 
 ### M2 — evidence-preserving candidate extraction
 
-Status: `[/]`. Deterministic Polish/English controls, exact source spans and
-fail-closed admission are implemented; the schema-constrained local SLM
-extractor and measured extraction corpus are still open.
+Status: `[x]` for the local extraction/admission contract. Deterministic
+Polish/English controls and a separate schema-constrained local SLM extractor
+both emit untrusted proposals with exact source spans. Malformed, unsupported,
+uncertain, quoted and privacy-ineligible proposals fail closed and extraction
+failures are recorded independently from admission.
 
 Replace the narrow Issue #34 recognizers with a proposal pipeline that can find
 candidate preferences, personal statements, events, plans, corrections and
@@ -95,6 +97,11 @@ Exit evidence:
 
 ### M3 — bitemporal claim graph in SQLite
 
+Status: `[x]` for the SQLite reference. Claims carry real-world validity and
+transaction-time intervals; current and historical retrieval use both.
+Corrections preserve qualified `CONTRADICTS` and `SUPERSEDES` relations, and
+source deletion removes the raw FTS projection and dependent graph state.
+
 Add separate transaction and real-world validity intervals. Preserve previous
 states for historical questions while current-state queries exclude expired or
 superseded claims. Give relations their own provenance and eligibility instead
@@ -113,6 +120,11 @@ Exit evidence:
 
 ### M4 — reproducible retrieval floor
 
+Status: `[/]`. Cross-session raw user turns use an FTS5/BM25 projection and
+Rich History episodes are available through a bounded, privacy-aware evidence
+provider. The equal-budget benchmark runner and summary comparison remain
+open, so this stage is not yet complete.
+
 Implement raw-turn and raw-episode retrieval with FTS5/BM25 and query-driven
 pruning. Compare it against claim retrieval and summary retrieval before adding
 embedding or graph complexity. The harness fixes corpus, answerer, prompt,
@@ -128,6 +140,12 @@ Exit evidence:
   declared target workload.
 
 ### M5 — adaptive context router and verified fallback
+
+Status: `[/]`. The context builder now chooses compact claim memory when its
+configurable sufficiency threshold is met, otherwise falls back to raw turns
+and approved external evidence or records `no_evidence`. The manifest records
+candidate/rejected routes, score, fallback and evidence budget. Comparative
+short/long-history evaluation and verified derived write-back remain open.
 
 Select recent/full context for short histories when it is cheaper and at least
 as accurate. For longer histories, route through lexical or semantic memory.
@@ -164,6 +182,10 @@ Exit evidence:
 - quality gains survive multiple local models and are not judge-specific.
 
 ### M7 — scope, personalization and consolidation
+
+Status: `[/]`. Profile isolation is enforced for claims and raw-turn retrieval.
+Domain/purpose partitioning, consolidation and leakage/sycophancy evaluation
+remain open.
 
 Partition durable memory by user, profile, domain and purpose. Retrieve personal
 context only when the request and policy require it. Measure cross-domain

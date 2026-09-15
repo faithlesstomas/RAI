@@ -844,9 +844,10 @@ in the [canonical cross-project integration plan](https://gitlab.com/tk-lab1/ai/
 Status: `[/]` — the local graph-memory foundation plus a usable CLI,
 resumable/inspectable chat, exact context history and authenticated native
 REST/WebSocket surface are implemented. SQLite memory operations, replay and
-stage diagnostics form the Issue #35 M1 floor; schema-constrained extraction,
-general semantic memory, Rich History grounding and later reasoning strategies
-remain planned.
+stage diagnostics form the Issue #35 M1 floor. Schema-constrained free-form
+extraction, bitemporal claims, FTS5 raw-turn fallback, adaptive context routing
+and Rich History evidence grounding are implemented; equal-budget retrieval
+evaluation, dense/graph channels, consolidation and adapters remain planned.
 
 Purpose: provide a continuous, local-first desktop assistant whose durable
 memory and context policy belong to RAI while its LLM and reasoning strategy are
@@ -909,33 +910,38 @@ explicit ConversationTurn or policy-approved proactive trigger
   the default desktop profile require no additional database service.
 - [/] Make SQLite the authoritative evidence and memory-operation store before
   adding learned extraction or alternative graph engines:
-  - retain immutable, policy-approved source turns and Rich History episodes;
+  - [x] retain immutable, policy-approved source turns and reference approved
+    Rich History episodes through source IDs and observation provenance;
   - [x] store `MemoryProposal` evidence, admission decision and resulting state transition
     separately rather than treating extraction output as durable truth;
-  - preserve source spans, speaker, channel, modality, confidence, privacy,
+  - [/] preserve source spans, speaker, channel, modality, confidence, privacy,
     domain scope and model/policy versions for every derived claim;
   - [x] make the active MVP projection rebuildable from admitted records and
     operation logs;
-  - [ ] add approved Rich History episodes and full policy/model-version fields.
-- [ ] Extend `SQLiteMemoryGraphStore` with bi-temporal claims and relations:
-  - record transaction time (`recorded_at`, `expired_at`) separately from
+  - [/] add approved Rich History evidence; complete policy/model-version fields
+    remain open.
+- [x] Extend `SQLiteMemoryGraphStore` with bi-temporal claims and relations:
+  - [x] record transaction time (`recorded_at`, `expired_at`) separately from
     real-world validity (`valid_from`, `valid_until`);
-  - preserve obsolete facts for explicitly historical queries while excluding
+  - [x] preserve obsolete facts for explicitly historical queries while excluding
     them from current-state context;
-  - represent `SUPPORTS`, `CONTRADICTS`, `UPDATES` and `SUPERSEDES` with their
+  - [x] represent `SUPPORTS`, `CONTRADICTS`, `UPDATES` and `SUPERSEDES` with their
     own provenance and policy eligibility;
-  - bind derived facts bidirectionally to source turns or episodes.
-- [ ] Establish a simple, reproducible retrieval floor before graph traversal:
-  - index raw turns, episodes and admitted claims with SQLite FTS5/BM25;
-  - add query-driven pruning and independently bounded recent, raw-evidence and
+  - [x] bind derived facts to source turns and preserve episode observation IDs.
+- [/] Establish a simple, reproducible retrieval floor before graph traversal:
+  - [/] index raw turns with SQLite FTS5/BM25; episode and claim FTS projections
+    remain open;
+  - [x] add query-driven pruning and independently bounded recent, raw-evidence and
     semantic-memory channels;
-  - compare raw chunks, extracted facts and summaries using the same retrieval
+  - [ ] compare raw chunks, extracted facts and summaries using the same retrieval
     and context budgets.
-- [ ] Add a tiered context router which selects recent/full context for short
+- [/] Add a tiered context router which selects recent/full context for short
   histories and escalates from summaries or claims to raw evidence when the
   selected tier is insufficient. Record the route, sufficiency decision and
   fallbacks in `ContextManifest`; tune thresholds empirically per model and
-  workload rather than treating published thresholds as constants.
+  workload rather than treating published thresholds as constants. The
+  configurable deterministic routing/manifest contract is implemented; the
+  comparative tuning harness remains open.
 - [ ] After the retrieval floor and adaptive router are reproducible, evaluate
   optional GWT-inspired context processing: one or a few bounded rounds of
   candidate eligibility, competition, admission, broadcast and release before

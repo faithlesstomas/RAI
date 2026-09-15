@@ -91,6 +91,14 @@ async def diagnose_memory(  # noqa: PLR0912, PLR0915
             or operation.span_end is None
         )
     )
+    rejected_extractions = tuple(
+        operation.record_id
+        for operation in conversational_operations
+        if operation.stage == "EXTRACTION" and operation.status == "REJECTED"
+    )
+    extraction_failures = tuple(
+        dict.fromkeys((*missing_evidence, *rejected_extractions))
+    )
     stages.append(
         MemoryStageDiagnostic(
             stage="EXTRACTION",
@@ -98,17 +106,17 @@ async def diagnose_memory(  # noqa: PLR0912, PLR0915
                 "NOT_APPLICABLE"
                 if not conversational_operations
                 else "FAIL"
-                if missing_evidence
+                if extraction_failures
                 else "PASS"
             ),
             message=(
                 "no memory proposal has been observed"
                 if not conversational_operations
-                else "operation traces are missing source evidence"
-                if missing_evidence
+                else "extraction failed or its trace is missing source evidence"
+                if extraction_failures
                 else "all observed proposals retain their trigger evidence"
             ),
-            evidence_ids=missing_evidence
+            evidence_ids=extraction_failures
             or tuple(operation.record_id for operation in conversational_operations),
         )
     )

@@ -526,6 +526,12 @@ def grounded_memory_response(  # noqa: PLR0911, PLR0912
                     f"{content['attribute']} to {content['value']}.",
                     True,
                 )
+            if "predicate" in content and "value" in content:
+                return (
+                    "Według zapisanej informacji "
+                    f"{content['predicate']}: {content['value']}.",
+                    True,
+                )
             if preference := content.get("preference"):
                 return f"Mam zapisaną preferencję: {preference}.", True
             if plan := content.get("plan"):

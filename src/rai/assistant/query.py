@@ -111,4 +111,5 @@ class MemoryQueryResolver:
             topic=matched_topic,
             keywords=tuple(matched_keywords),
             profile_scope=profile_scope,
+            raw_text=text,
         )

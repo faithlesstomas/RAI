@@ -116,6 +116,31 @@ class LocalAssistantBackend:
                     lines.append(f"- {self._format_memory(mem)}")
             lines.append("")
 
+        episodic_evidence = request.context.content.get("episodic_evidence", [])
+        if isinstance(episodic_evidence, (list, tuple)) and episodic_evidence:
+            lines.append(
+                "Wcześniejsze wypowiedzi użytkownika (materiał źródłowy, niezweryfikowane twierdzenia):"
+            )
+            for item in episodic_evidence:
+                if isinstance(item, dict):
+                    timestamp = str(item.get("timestamp", "unknown time"))
+                    text = str(item.get("text", ""))
+                    lines.append(f"- [{timestamp}] {text}")
+            lines.append("")
+
+        external_evidence = request.context.content.get("external_evidence", [])
+        if isinstance(external_evidence, (list, tuple)) and external_evidence:
+            lines.append(
+                "Zatwierdzone lokalne źródła zewnętrzne (obserwacje, nie twierdzenia użytkownika):"
+            )
+            for item in external_evidence:
+                if isinstance(item, dict):
+                    source_type = str(item.get("source_type", "local_source"))
+                    timestamp = str(item.get("timestamp", "unknown time"))
+                    content = item.get("content", {})
+                    lines.append(f"- [{source_type}; {timestamp}] {content}")
+            lines.append("")
+
         recent_turns = request.context.content.get("recent_turns", [])
         if isinstance(recent_turns, (list, tuple)) and recent_turns:
             lines.append("Historia bieżącej rozmowy:")

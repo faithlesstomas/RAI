@@ -57,6 +57,22 @@
           "title": "Recent Turn Ids",
           "type": "array"
         },
+        "episodic_turn_ids": {
+          "default": [],
+          "items": {
+            "type": "string"
+          },
+          "title": "Episodic Turn Ids",
+          "type": "array"
+        },
+        "external_evidence_ids": {
+          "default": [],
+          "items": {
+            "type": "string"
+          },
+          "title": "External Evidence Ids",
+          "type": "array"
+        },
         "durable_memory_ids": {
           "default": [],
           "items": {
@@ -87,6 +103,51 @@
           },
           "title": "Redactions",
           "type": "array"
+        },
+        "routing_decision": {
+          "default": "no_evidence",
+          "enum": [
+            "recent_conversation",
+            "compact_memory",
+            "raw_evidence_fallback",
+            "no_evidence"
+          ],
+          "title": "Routing Decision",
+          "type": "string"
+        },
+        "route_candidates": {
+          "default": [],
+          "items": {
+            "type": "string"
+          },
+          "title": "Route Candidates",
+          "type": "array"
+        },
+        "rejected_routes": {
+          "default": [],
+          "items": {
+            "type": "string"
+          },
+          "title": "Rejected Routes",
+          "type": "array"
+        },
+        "sufficiency_score": {
+          "default": 0.0,
+          "maximum": 1.0,
+          "minimum": 0.0,
+          "title": "Sufficiency Score",
+          "type": "number"
+        },
+        "fallback_used": {
+          "default": false,
+          "title": "Fallback Used",
+          "type": "boolean"
+        },
+        "evidence_character_budget": {
+          "default": 0,
+          "minimum": 0,
+          "title": "Evidence Character Budget",
+          "type": "integer"
         },
         "retriever_version": {
           "default": "1.0.0",
@@ -1207,6 +1268,42 @@
           "title": "Scope",
           "type": "string"
         },
+        "source_type": {
+          "default": "conversation_turn",
+          "enum": [
+            "conversation_turn",
+            "rich_history_episode",
+            "system_observation"
+          ],
+          "title": "Source Type",
+          "type": "string"
+        },
+        "valid_from": {
+          "anyOf": [
+            {
+              "format": "date-time",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Valid From"
+        },
+        "valid_until": {
+          "anyOf": [
+            {
+              "format": "date-time",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Valid Until"
+        },
         "supersedes_memory_id": {
           "anyOf": [
             {
@@ -1299,6 +1396,16 @@
           "title": "Source Turn Id",
           "type": "string"
         },
+        "source_type": {
+          "default": "conversation_turn",
+          "enum": [
+            "conversation_turn",
+            "rich_history_episode",
+            "system_observation"
+          ],
+          "title": "Source Type",
+          "type": "string"
+        },
         "data_class": {
           "$ref": "#/$defs/DataClass",
           "default": "LOCAL"
@@ -1307,6 +1414,18 @@
           "default": "default",
           "minLength": 1,
           "title": "Profile Scope",
+          "type": "string"
+        },
+        "epistemic_status": {
+          "default": "asserted",
+          "enum": [
+            "asserted",
+            "observed",
+            "inferred",
+            "uncertain",
+            "contested"
+          ],
+          "title": "Epistemic Status",
           "type": "string"
         },
         "valid_from": {
@@ -1326,6 +1445,24 @@
           ],
           "default": null,
           "title": "Valid Until"
+        },
+        "recorded_at": {
+          "format": "date-time",
+          "title": "Recorded At",
+          "type": "string"
+        },
+        "expired_at": {
+          "anyOf": [
+            {
+              "format": "date-time",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Expired At"
         },
         "provenance": {
           "default": [],
@@ -1372,6 +1509,42 @@
           "title": "Created At",
           "type": "string"
         },
+        "confidence": {
+          "default": 1.0,
+          "maximum": 1.0,
+          "minimum": 0.0,
+          "title": "Confidence",
+          "type": "number"
+        },
+        "epistemic_status": {
+          "default": "asserted",
+          "enum": [
+            "asserted",
+            "observed",
+            "inferred",
+            "uncertain",
+            "contested"
+          ],
+          "title": "Epistemic Status",
+          "type": "string"
+        },
+        "provenance": {
+          "default": [],
+          "items": {
+            "$ref": "#/$defs/ProvenanceReference"
+          },
+          "title": "Provenance",
+          "type": "array"
+        },
+        "policy_outcome": {
+          "$ref": "#/$defs/PolicyOutcome",
+          "default": "ALLOW"
+        },
+        "eligible": {
+          "default": true,
+          "title": "Eligible",
+          "type": "boolean"
+        },
         "metadata": {
           "additionalProperties": true,
           "title": "Metadata",
@@ -1394,7 +1567,8 @@
         "ABOUT",
         "SUPERSEDES",
         "SUPPORTS",
-        "CONTRADICTS"
+        "CONTRADICTS",
+        "UPDATES"
       ],
       "title": "MemoryRelationKind",
       "type": "string"

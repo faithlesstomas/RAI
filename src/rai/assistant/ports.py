@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime
-from typing import AsyncIterator, Protocol, runtime_checkable
+from typing import Any, AsyncIterator, Protocol, runtime_checkable
 
 from returns.result import Result
 
@@ -19,6 +19,7 @@ from .records import (
     ConversationTurn,
     InferenceRequest,
     MemoryOperation,
+    MemoryProposal,
     MemoryRecord,
     MemoryRelation,
     MemoryRelationKind,
@@ -34,6 +35,9 @@ class MemoryQuery:
     profile_scope: str = "default"
     data_classes: tuple[DataClass, ...] = (DataClass.PUBLIC, DataClass.LOCAL)
     limit: int = 10
+    raw_text: str = ""
+    valid_at: datetime | None = None
+    transaction_at: datetime | None = None
 
 
 @dataclass(frozen=True)
@@ -46,6 +50,41 @@ class AssistantSessionSummary:
     turn_count: int
     last_role: str
     preview: str
+
+
+@dataclass(frozen=True)
+class AssistantEvidence:
+    """Provider-neutral evidence item retrieved from an approved local source."""
+
+    source_id: str
+    source_type: str
+    timestamp: datetime
+    content: dict[str, Any]
+    data_class: DataClass
+    ranking_reason: str
+
+
+@runtime_checkable
+class AssistantEvidenceProvider(Protocol):
+    """Read-only provider for non-conversation assistant evidence."""
+
+    async def retrieve(
+        self,
+        query: MemoryQuery,
+        data_classes: tuple[DataClass, ...],
+        limit: int,
+    ) -> Result[tuple[AssistantEvidence, ...], ActionFailure]: ...
+
+
+@runtime_checkable
+class MemoryProposalExtractor(Protocol):
+    """Untrusted candidate extractor separated from response generation."""
+
+    async def extract(
+        self,
+        turn: ConversationTurn,
+        cancellation: CancellationToken,
+    ) -> Result[tuple[MemoryProposal, ...], ActionFailure]: ...
 
 
 @runtime_checkable
@@ -113,6 +152,15 @@ class MemoryGraphStore(Protocol):
         data_classes: tuple[DataClass, ...] = (DataClass.PUBLIC, DataClass.LOCAL),
         limit: int = 10,
     ) -> Result[tuple[tuple[MemoryRecord, str], ...], ActionFailure]: ...
+
+    async def retrieve_relevant_turns(
+        self,
+        profile_scope: str,
+        query: MemoryQuery,
+        data_classes: tuple[DataClass, ...],
+        exclude_turn_ids: tuple[str, ...] = (),
+        limit: int = 5,
+    ) -> Result[tuple[tuple[ConversationTurn, str], ...], ActionFailure]: ...
 
     async def delete_turn(self, turn_id: str) -> Result[int, ActionFailure]: ...
 

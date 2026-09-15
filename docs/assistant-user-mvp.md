@@ -14,10 +14,13 @@ uv run rai assistant chat --backend llama --model /path/to/chat-model.gguf \
 ```
 
 Inside chat, `/history`, `/context`, `/memories`, `/operations` and
-`/diagnostics` inspect persisted state. `/remember TEXT` explicitly stores a
-fact. `/forget TEXT` removes matching active memory and `/forget all` clears the
-active profile projection. Reusing `--session-id work` resumes its reply chain;
-memory is profile-scoped and can therefore be recalled in a different session.
+`/diagnostics` inspect persisted state. Ordinary conversation is the primary
+memory input: with a local model backend, a separate schema-constrained pass
+proposes typed claims from the complete user turn and deterministic policy
+decides whether they may be stored. `/remember TEXT` and `/forget TEXT` remain
+optional explicit controls, not a prerequisite for useful memory. Reusing
+`--session-id work` resumes its reply chain; memory is profile-scoped and can
+therefore be recalled in a different session.
 
 Inspection commands do not load the model:
 
@@ -81,12 +84,34 @@ Send the same JSON object accepted by `POST /turn`. A successful reply is:
 Validation and service failures use `{"type":"error","error":{...}}` and do
 not create an alternative persistence path.
 
+## How memory is assembled
+
+RAI keeps three distinct kinds of context instead of flattening them into one
+model-written summary:
+
+1. the recent reply chain for conversational continuity;
+2. raw, policy-eligible evidence recovered from earlier user turns with
+   FTS5/BM25 or from Rich History episodes;
+3. admitted claims with exact source spans, modality, confidence, scope,
+   provenance and separate real-world and transaction-time intervals.
+
+For each answer the adaptive router first checks whether a compact claim is
+sufficient. If it is not, it falls back to raw evidence. If neither route has
+support, the answerer is instructed to abstain. The persisted context manifest
+records the selected route, rejected routes, sufficiency score, fallback,
+ranking reasons, source IDs and character budget.
+
+Corrections retain their earlier state for historical queries and create both
+`CONTRADICTS` and `SUPERSEDES` relations. Ambiguous conflicts cannot silently
+replace a claim. Deleting a source removes its raw retrieval entry and derived
+state without reactivating an older value.
+
 ## Current boundary
 
-This is a useful personal-memory MVP, not general human-like memory. Natural
-attribute, preference and plan patterns are deliberately conservative. Quoted,
-hearsay, uncertain and malformed candidates fail closed. FTS/dense retrieval,
-bitemporal claims, Rich History ingestion and model-assisted extraction remain
-future Issue #35 milestones. Interactive latency depends on the selected local
-model and hardware; deterministic mode exists for conformance tests, not as a
-chat model.
+This is an evidence-first general-memory increment, not human-like memory.
+Quoted, hearsay, uncertain, malformed and source-less candidates fail closed.
+The current retrieval floor is lexical; local dense retrieval, equal-budget
+benchmarking, domain-aware consolidation and optional graph-store adapters are
+still Issue #35 work. Interactive latency depends on the selected local model
+and hardware; deterministic mode exists for conformance tests, not as a chat
+model.

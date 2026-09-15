@@ -49,6 +49,7 @@ class MemoryRelationKind(str, Enum):
     SUPERSEDES = "SUPERSEDES"
     SUPPORTS = "SUPPORTS"
     CONTRADICTS = "CONTRADICTS"
+    UPDATES = "UPDATES"
 
 
 class MemoryOperationKind(str, Enum):
@@ -72,6 +73,13 @@ class MemoryRelation(BaseModel):
     target_id: str = Field(min_length=1)
     kind: MemoryRelationKind
     created_at: datetime = Field(default_factory=_utc_now)
+    confidence: float = Field(default=1.0, ge=0.0, le=1.0)
+    epistemic_status: Literal[
+        "asserted", "observed", "inferred", "uncertain", "contested"
+    ] = "asserted"
+    provenance: tuple[ProvenanceReference, ...] = ()
+    policy_outcome: PolicyOutcome = PolicyOutcome.ALLOW
+    eligible: bool = True
     metadata: dict[str, Any] = Field(default_factory=dict)
 
 
@@ -118,6 +126,11 @@ class MemoryProposal(KernelRecord):
     modality: Literal["direct", "hedged", "quoted", "hearsay"] = "direct"
     negated: bool = False
     scope: str = Field(default="personal", min_length=1, max_length=128)
+    source_type: Literal[
+        "conversation_turn", "rich_history_episode", "system_observation"
+    ] = "conversation_turn"
+    valid_from: datetime | None = None
+    valid_until: datetime | None = None
     supersedes_memory_id: str | None = None
     relations: tuple[MemoryRelation, ...] = ()
 
@@ -153,6 +166,16 @@ class MemoryProposal(KernelRecord):
                 raise ValueError("source span offsets do not match source_span length")
         return self
 
+    @model_validator(mode="after")
+    def validate_validity_interval(self) -> MemoryProposal:
+        if (
+            self.valid_from is not None
+            and self.valid_until is not None
+            and self.valid_until < self.valid_from
+        ):
+            raise ValueError("valid_until must not precede valid_from")
+        return self
+
 
 class MemoryRecord(KernelRecord):
     """Immutable, policy-admitted durable memory payload."""
@@ -162,10 +185,18 @@ class MemoryRecord(KernelRecord):
     topic: str = Field(min_length=1)
     content: dict[str, Any]
     source_turn_id: str = Field(min_length=1)
+    source_type: Literal[
+        "conversation_turn", "rich_history_episode", "system_observation"
+    ] = "conversation_turn"
     data_class: DataClass = DataClass.LOCAL
     profile_scope: str = Field(default="default", min_length=1)
+    epistemic_status: Literal[
+        "asserted", "observed", "inferred", "uncertain", "contested"
+    ] = "asserted"
     valid_from: datetime = Field(default_factory=_utc_now)
     valid_until: datetime | None = None
+    recorded_at: datetime = Field(default_factory=_utc_now)
+    expired_at: datetime | None = None
     provenance: tuple[ProvenanceReference, ...] = ()
 
     @field_validator("data_class")
@@ -175,6 +206,14 @@ class MemoryRecord(KernelRecord):
         if raw in (DataClass.SECRET.value, DataClass.BLOCKED.value):
             raise ValueError(f"memory record cannot have {raw} data class")
         return value
+
+    @model_validator(mode="after")
+    def validate_time_intervals(self) -> MemoryRecord:
+        if self.valid_until is not None and self.valid_until < self.valid_from:
+            raise ValueError("valid_until must not precede valid_from")
+        if self.expired_at is not None and self.expired_at < self.recorded_at:
+            raise ValueError("expired_at must not precede recorded_at")
+        return self
 
 
 class MemoryOperation(KernelRecord):
@@ -245,10 +284,23 @@ class AssistantContextManifest(KernelRecord):
     session_id: AssistantSessionId
     turn_id: str = Field(min_length=1)
     recent_turn_ids: tuple[str, ...] = ()
+    episodic_turn_ids: tuple[str, ...] = ()
+    external_evidence_ids: tuple[str, ...] = ()
     durable_memory_ids: tuple[str, ...] = ()
     ranking_reasons: dict[str, str] = Field(default_factory=dict)
     exclusions: tuple[str, ...] = ()
     redactions: tuple[str, ...] = ()
+    routing_decision: Literal[
+        "recent_conversation",
+        "compact_memory",
+        "raw_evidence_fallback",
+        "no_evidence",
+    ] = "no_evidence"
+    route_candidates: tuple[str, ...] = ()
+    rejected_routes: tuple[str, ...] = ()
+    sufficiency_score: float = Field(default=0.0, ge=0.0, le=1.0)
+    fallback_used: bool = False
+    evidence_character_budget: int = Field(default=0, ge=0)
     retriever_version: str = Field(default="1.0.0", min_length=1)
     policy_version: str = Field(default="1.0.0", min_length=1)
     backend_name: str = Field(default="unknown", min_length=1)

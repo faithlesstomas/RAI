@@ -15,7 +15,11 @@ if TYPE_CHECKING:
 
 from .kernel.audit import InMemoryAuditLedger, JsonlAuditLedger
 from .kernel.capabilities import CapabilityRegistry
-from .kernel.defaults import HitlApprovalBroker, create_default_capability_registry, isolation_available
+from .kernel.defaults import (
+    HitlApprovalBroker,
+    create_default_capability_registry,
+    isolation_available,
+)
 from .kernel.policy import PolicyEngine
 from .kernel.event_service import EventService
 from .kernel.dispatch import DeterministicEventDispatcher
@@ -41,7 +45,9 @@ class ApplicationContainer:
     """Own application-scoped services and their lifecycle."""
 
     config: dict[str, Any]
-    capability_registry: CapabilityRegistry = field(default_factory=create_default_capability_registry)
+    capability_registry: CapabilityRegistry = field(
+        default_factory=create_default_capability_registry
+    )
     audit_ledger: AuditLedger | None = None
     policy_engine: PolicyEngine | None = None
     testing: bool = False
@@ -65,7 +71,9 @@ class ApplicationContainer:
 
     def __post_init__(self) -> None:
         if self.audit_ledger is None:
-            self.audit_ledger = InMemoryAuditLedger() if self.testing else JsonlAuditLedger()
+            self.audit_ledger = (
+                InMemoryAuditLedger() if self.testing else JsonlAuditLedger()
+            )
         if self.policy_engine is None:
             self.policy_engine = PolicyEngine(isolation_available=isolation_available)
         self.capability_service = CapabilityService(
@@ -77,7 +85,10 @@ class ApplicationContainer:
         if self.event_journal is None:
             path = self.event_journal_path
             if self.testing and path is None:
-                path = Path(tempfile.mkdtemp(prefix="rai-event-tests-")) / "journal.sqlite3"
+                path = (
+                    Path(tempfile.mkdtemp(prefix="rai-event-tests-"))
+                    / "journal.sqlite3"
+                )
             self.event_journal = SQLiteEventJournal(path)
         self.event_service = EventService(self.event_journal)
         self.event_dispatcher = DeterministicEventDispatcher(
@@ -171,6 +182,7 @@ class ApplicationContainer:
                 SQLiteBoundedResultCache,
             )
             from .inference.supervisor import ProcessorSupervisor  # noqa: PLC0415
+
             local_ai_config = self.config.get("local_ai", {})
             config = local_ai_config if isinstance(local_ai_config, dict) else {}
             backend = config.get("backend", "ollama")
@@ -219,9 +231,13 @@ class ApplicationContainer:
     def memory_graph_store(self) -> MemoryGraphStore:
         if self._memory_graph_store is None:
             from .assistant.store import SQLiteMemoryGraphStore  # noqa: PLC0415
+
             path = self.assistant_memory_path
             if self.testing and path is None:
-                path = Path(tempfile.mkdtemp(prefix="rai-assistant-tests-")) / "memory_graph.sqlite3"
+                path = (
+                    Path(tempfile.mkdtemp(prefix="rai-assistant-tests-"))
+                    / "memory_graph.sqlite3"
+                )
             self._memory_graph_store = SQLiteMemoryGraphStore(path=path)
         return self._memory_graph_store
 
@@ -233,12 +249,20 @@ class ApplicationContainer:
                 JsonlAssistantAuditLedger,
             )
             from .assistant.service import AssistantService  # noqa: PLC0415
+            from .assistant.extraction import (  # noqa: PLC0415
+                SchemaConstrainedMemoryExtractor,
+            )
+            from .assistant.evidence import (  # noqa: PLC0415
+                RichHistoryEvidenceProvider,
+            )
+            from .assistant.backends.local import LocalAssistantBackend  # noqa: PLC0415
             from .assistant.context import AssistantContextBuilder  # noqa: PLC0415
             from .assistant.runtime import (  # noqa: PLC0415
                 AssistantRuntimeConfig,
                 build_assistant_backend,
                 resolve_assistant_config,
             )
+
             audit = (
                 InMemoryAssistantAuditLedger()
                 if self.testing
@@ -254,13 +278,42 @@ class ApplicationContainer:
                 else resolve_assistant_config(self.config)
             )
             backend = None if self.testing else build_assistant_backend(runtime)
+            memory_extractor = (
+                SchemaConstrainedMemoryExtractor(
+                    backend.engine,
+                    model_name=runtime.model,
+                    max_output_tokens=min(runtime.max_output_tokens * 2, 768),
+                )
+                if isinstance(backend, LocalAssistantBackend)
+                and backend.engine is not None
+                else None
+            )
+            evidence_providers = ()
+            rich_history_config = self.config.get("rich_history", {})
+            if isinstance(rich_history_config, dict) and rich_history_config.get(
+                "enabled"
+            ):
+                try:
+                    evidence_providers = (
+                        RichHistoryEvidenceProvider(self.rich_history_service),
+                    )
+                except KeyUnavailableError:
+                    self._rich_history_error = "KEY_UNAVAILABLE"
             self._assistant_service = AssistantService(
                 store=self.memory_graph_store,
                 backend=backend,
+                memory_extractor=memory_extractor,
                 context_builder=AssistantContextBuilder(
                     store=self.memory_graph_store,
                     system_instruction=runtime.system_instruction,
                     profile_scope=runtime.profile_scope,
+                    evidence_providers=evidence_providers,
+                    max_context_characters=runtime.max_context_characters,
+                    max_recent_turns=runtime.max_recent_turns,
+                    max_memories=runtime.max_memories,
+                    max_episodic_turns=runtime.max_episodic_turns,
+                    max_external_evidence=runtime.max_external_evidence,
+                    memory_sufficiency_threshold=(runtime.memory_sufficiency_threshold),
                 ),
                 audit_ledger=audit,
                 profile_scope=runtime.profile_scope,
