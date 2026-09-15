@@ -36,6 +36,7 @@ processor-supervisor
 bounded-local-tasks
 assistant-architecture
 assistant-live-acceptance
+assistant-memory-roadmap
 local-voice
 neural-sidecar
 reference/modules

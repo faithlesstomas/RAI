@@ -293,6 +293,18 @@ Cost controls follow this order:
     tests pass.
 19. An invalidated, expired or superseded fact cannot be admitted into an active
     ContextPackage without an explicit historical or temporal provenance flag.
+20. A derived claim or summary cannot silently increase source certainty,
+    erase modality or survive without an authorized path to raw evidence.
+21. Remember, forget, update, supersede, reflect and reconstruct are explicit
+    memory operations with typed inputs, state transitions and audit evidence.
+22. Retrieval and adapter comparisons use the same context budget, corpus,
+    answerer and evaluation protocol; unconstrained recall is not evidence of a
+    better memory architecture.
+23. Graph ranking runs only over a policy-eligible, provenance-qualified
+    subgraph. Untrusted topology cannot influence selection of trusted facts.
+24. Durable memory is scoped by user, profile and domain. Context assembly does
+    not leak personal claims into an unrelated domain merely because they are
+    relevant by embedding similarity.
 
 ## Delivery sequence
 
@@ -892,32 +904,58 @@ explicit ConversationTurn or policy-approved proactive trigger
 - [x] Implement a lightweight local reference adapter, initially as a SQLite
   graph projection with stable node, hyperedge and provenance IDs, so tests and
   the default desktop profile require no additional database service.
-- [ ] Incorporate a bi-temporal edge model (transactional T' and real-world valid T
-  timelines) and a 3-tier subgraph hierarchy (episodic Ge, semantic entity Gs,
-  and community Gc) directly into the reference `SQLiteMemoryGraphStore`:
-  - Adopt 4 explicit timestamps per edge: t'_created and t'_expired on T' for
-    system audit/invalidation, and t_valid, t_invalid on T for real-world fact validity.
-  - Employ an incremental Label Propagation Algorithm (LPA) rather than full batch
-    re-clustering (Leiden) to maintain dynamic community summaries at O(1) per new node.
-  - Bind extracted facts bidirectionally to source Rich History `Episode` records for
-    lossless provenance and citation.
+- [ ] Make SQLite the authoritative evidence and memory-operation store before
+  adding learned extraction or alternative graph engines:
+  - retain immutable, policy-approved source turns and Rich History episodes;
+  - store `MemoryProposal`, admission decision and resulting state transition
+    separately rather than treating extraction output as durable truth;
+  - preserve source spans, speaker, channel, modality, confidence, privacy,
+    domain scope and model/policy versions for every derived claim;
+  - make every projection rebuildable from admitted records and operation logs.
+- [ ] Extend `SQLiteMemoryGraphStore` with bi-temporal claims and relations:
+  - record transaction time (`recorded_at`, `expired_at`) separately from
+    real-world validity (`valid_from`, `valid_until`);
+  - preserve obsolete facts for explicitly historical queries while excluding
+    them from current-state context;
+  - represent `SUPPORTS`, `CONTRADICTS`, `UPDATES` and `SUPERSEDES` with their
+    own provenance and policy eligibility;
+  - bind derived facts bidirectionally to source turns or episodes.
+- [ ] Establish a simple, reproducible retrieval floor before graph traversal:
+  - index raw turns, episodes and admitted claims with SQLite FTS5/BM25;
+  - add query-driven pruning and independently bounded recent, raw-evidence and
+    semantic-memory channels;
+  - compare raw chunks, extracted facts and summaries using the same retrieval
+    and context budgets.
+- [ ] Add a tiered context router which selects recent/full context for short
+  histories and escalates from summaries or claims to raw evidence when the
+  selected tier is insufficient. Record the route, sufficiency decision and
+  fallbacks in `ContextManifest`; tune thresholds empirically per model and
+  workload rather than treating published thresholds as constants.
+- [ ] Add multi-channel retrieval incrementally:
+  - start with lexical FTS5/BM25 plus temporal and policy filters;
+  - benchmark a local dense embedding channel and Weighted Reciprocal Rank
+    Fusion (RRF) before enabling either by default;
+  - benchmark a local cross-encoder only when its quality gain justifies its
+    latency, memory and energy cost;
+  - add graph traversal or HippoRAG-style personalized PageRank only over the
+    provenance-qualified subgraph and with adversarial selection-integrity tests.
+- [ ] Add community summaries only after representative corpus-size benchmarks
+  show that raw/claim retrieval and bounded graph paths are insufficient.
+  Treat the community graph as a derived projection; evaluate incremental LPA
+  against batch clustering without assuming constant update complexity.
 - [ ] Benchmark an optional [FalkorDB](https://www.falkordb.com/) /
-  [Graphiti](https://github.com/getzep/graphiti) adapter (`GraphitiMemoryGraphStore`):
-  - Use FalkorDB (in-memory GraphBLAS module over Redis) for high-performance Cypher
-    traversal with a minimal desktop footprint compared to Neo4j.
-  - Bridge Graphiti's internal extraction and conflict resolution through a secure
-    `RAIGraphitiBridgeClient` that enforces the RAI Privacy Firewall (`DROP`/`REDACT`),
-    imposes hard `InferenceBudget` token limits, records usage in the `UsageLedger`,
-    and defaults extraction to a local SLM (`LocalTextEngine`, e.g. Qwen 2.5 3B).
-  - Buffer graph ingestion at consolidated `Episode` boundaries (Stage 3.8) or
-    high-salience turns (Stage 4.2), preventing synchronous per-message LLM extraction.
-- [ ] Implement Multi-Channel Retrieval with strategy-adaptive Weighted Reciprocal Rank
-  Fusion (RRF):
-  - Combine 4 candidate channels: local dense embeddings (`BGE-m3`), lexical FTS5 (BM25),
-    temporal validity window filtering (t_valid <= t_query < t_invalid), and
-    graph traversal / spreading activation (HippoRAG-style personalized PageRank).
-  - Apply an offline local cross-encoder (`bge-reranker-m3`) post-fusion before
-    context package assembly.
+  [Graphiti](https://github.com/getzep/graphiti) adapter
+  (`GraphitiMemoryGraphStore`) after the SQLite conformance floor is stable:
+  - keep RAI records and operation semantics canonical; Graphiti entity and
+    relation extraction remains an untrusted proposal source;
+  - enforce the Privacy Firewall, `InferenceBudget`, `UsageLedger`, source-span
+    provenance and the same retrieval budget used by SQLite baselines;
+  - buffer model-assisted ingestion at episode boundaries or explicitly
+    selected high-salience turns instead of requiring synchronous extraction
+    for every message;
+  - do not promote Graphiti to a supported default unless it beats the SQLite
+    floor on quality and operational cost without weakening deletion, audit or
+    selection-integrity guarantees.
 - [ ] Research an [OpenCog AtomSpace](https://github.com/opencog/atomspace) memory adapter
   and a separate [Hyperon/MeTTa](https://github.com/trueagi-io/hyperon-experimental)
   reasoning sidecar:
@@ -930,6 +968,9 @@ explicit ConversationTurn or policy-approved proactive trigger
   representative RAI workloads. SQLite, FalkorDB and AtomSpace are replaceable storage
   candidates; Hyperon/MeTTa is a separate reasoning experiment. None is an automatic runtime
   dependency.
+
+The staged experiment design, evidence model and acceptance matrix are detailed
+in [Assistant memory development plan](docs/assistant-memory-roadmap.md).
 
 Primary memory and temporal graph references:
 
@@ -950,6 +991,25 @@ Primary memory and temporal graph references:
 - Darren Edge et al.,
   [*From Local to Global: A Graph RAG Approach to Query-Focused Summarization*](https://arxiv.org/abs/2404.16130),
   arXiv:2404.16130, 2024. Foundational architecture for hierarchical community summarization.
+- [*TierMem: From Lossy to Verified -- The Sufficiency Principle for Agent Memory*](https://arxiv.org/abs/2602.17913),
+  arXiv:2602.17913, 2026. Preserves an immutable raw-evidence tier and escalates
+  from compact memory when it cannot answer the current query sufficiently.
+- Heng Zhou et al.,
+  [*LatticeMind: A Conflict-Aware Memory Primitive for Multi-Agent Systems*](https://arxiv.org/abs/2608.08236),
+  arXiv:2608.08236, 2026. Evaluates explicit conflict status and deterministic
+  write-time checks before model-assisted reconciliation.
+- [*Manufactured Confidence: How Memory Summarization Can Create False Certainty in LLM Agents*](https://arxiv.org/abs/2606.29279),
+  arXiv:2606.29279, 2026. Shows that lossy summaries can erase hedging and
+  provenance, turning uncertain source material into confidently reused claims.
+- [*Selection Integrity for LLM Graph Memory*](https://arxiv.org/abs/2606.12290),
+  arXiv:2606.12290, 2026. Shows that untrusted graph topology can corrupt
+  selection even when retrieved fact records themselves have valid provenance.
+- [*Diagnosing Retrieval vs. Utilization in Long-Term Conversational Memory*](https://arxiv.org/abs/2603.02473),
+  arXiv:2603.02473, 2026. Finds retrieval choice more consequential than several
+  lossy write-time transformations and motivates a strong raw-chunk baseline.
+- [*Beyond Memory Leaderboards: A Reproducible Protocol for Full-Text Scientific Recall*](https://arxiv.org/abs/2607.16848),
+  arXiv:2607.16848, 2026. Demonstrates that ingestion granularity, raw-text
+  preservation, modality and retrieval budget can invert adapter rankings.
 - [x] Build every context from the current request, selected recent interaction
   records and relevant graph memories; reserve approved Rich History references
   for a later slice. Apply
