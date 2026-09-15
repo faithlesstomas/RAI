@@ -2,6 +2,34 @@
 
 <!-- version list -->
 
+## v0.9.0 (2026-09-15)
+
+### Bug Fixes
+
+- **assistant**: Resolve ruff security issues S101 and S608 in service and store
+  ([`3605fc2`](https://gitlab.com/tk-lab1/ai/rai/-/commit/3605fc21c537bb9c804d13cc92472cf88e52c637))
+
+### Features
+
+- **assistant**: Complete local graph-memory MVP
+  ([`922c5f0`](https://gitlab.com/tk-lab1/ai/rai/-/commit/922c5f053313a38b0ae3b67da200338c4923747c))
+
+- **assistant**: Freeze schemas, records, and conformance fixtures for graph memory
+  ([`5be3bf7`](https://gitlab.com/tk-lab1/ai/rai/-/commit/5be3bf7ae5b65083b27b1c555550717d630dc145))
+
+- **assistant**: Implement deterministic graph-memory vertical path and service
+  ([`691a1cb`](https://gitlab.com/tk-lab1/ai/rai/-/commit/691a1cb7cf87742d6cecf90369fbb982baf5fc6d))
+
+- **assistant**: Implement local backend, CLI surface, and 8-step acceptance test
+  ([`93c3aea`](https://gitlab.com/tk-lab1/ai/rai/-/commit/93c3aead361576a130e9bf4498546cc58d0571f3))
+
+- **assistant**: Make local chat usable with personal memory
+  ([`3f7b726`](https://gitlab.com/tk-lab1/ai/rai/-/commit/3f7b72691d5ba2d9e59f386db1e3112d2f1bc32e))
+
+- **inference**: Cache bounded local task results
+  ([`44b9219`](https://gitlab.com/tk-lab1/ai/rai/-/commit/44b9219ca67310e5945ac0268a64d2329db4a759))
+
+
 ## v0.8.1 (2026-09-10)
 
 ### Bug Fixes
