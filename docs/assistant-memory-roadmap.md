@@ -50,6 +50,9 @@ created it.
 
 ### M1 — memory operations and diagnostic evaluation
 
+Status: `[x]` for the SQLite reference MVP. Broader benchmark corpora remain
+part of the later reproducible evaluation work.
+
 Define versioned operations for `remember`, `forget`, `update`, `supersede`,
 `reflect` and `reconstruct`. Each operation records its trigger, target, scope,
 precondition, state transition, policy decision and evidence.
@@ -67,6 +70,10 @@ Exit evidence:
 - no regex or model output can directly commit durable memory.
 
 ### M2 — evidence-preserving candidate extraction
+
+Status: `[/]`. Deterministic Polish/English controls, exact source spans and
+fail-closed admission are implemented; the schema-constrained local SLM
+extractor and measured extraction corpus are still open.
 
 Replace the narrow Issue #34 recognizers with a proposal pipeline that can find
 candidate preferences, personal statements, events, plans, corrections and

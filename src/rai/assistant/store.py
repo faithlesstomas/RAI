@@ -10,6 +10,7 @@ import os
 from pathlib import Path
 import sqlite3
 from typing import Any
+import unicodedata
 
 from returns.result import Failure, Result, Success
 
@@ -24,11 +25,14 @@ from rai.kernel.records import (
 )
 from rai.paths import data_dir
 
-from .ports import MemoryGraphStore, MemoryQuery
+from .ports import AssistantSessionSummary, MemoryGraphStore, MemoryQuery
 from .records import (
     AssistantContextManifest,
+    AssistantContextPackage,
     AssistantResponse,
     ConversationTurn,
+    MemoryOperation,
+    MemoryOperationKind,
     MemoryRecord,
     MemoryRelation,
     MemoryRelationKind,
@@ -44,6 +48,39 @@ def _to_data_class_str(dc: DataClass | str) -> str:
 
 def _to_relation_kind_str(rk: MemoryRelationKind | str) -> str:
     return rk.value if isinstance(rk, MemoryRelationKind) else str(rk)
+
+
+def _searchable_text(value: str) -> str:
+    return (
+        unicodedata.normalize("NFKD", value)
+        .encode("ascii", "ignore")
+        .decode()
+        .casefold()
+    )
+
+
+def _memory_from_row(row: sqlite3.Row) -> MemoryRecord:
+    provenance = tuple(
+        ProvenanceReference.model_validate(item)
+        for item in json.loads(row["provenance_json"])
+    )
+    return MemoryRecord(
+        record_id=row["memory_id"],
+        timestamp=datetime.fromisoformat(row["created_at"]),
+        producer=ProducerIdentity.model_validate_json(row["producer_json"]),
+        kind=row["kind"],
+        topic=row["topic"],
+        content=json.loads(row["content_json"]),
+        source_turn_id=row["source_turn_id"],
+        data_class=DataClass(row["data_class"]),
+        profile_scope=row["profile_scope"],
+        valid_from=datetime.fromisoformat(row["valid_from"]),
+        valid_until=(
+            datetime.fromisoformat(row["valid_until"]) if row["valid_until"] else None
+        ),
+        provenance=provenance,
+        correlation_id=row["correlation_id"],
+    )
 
 
 class SQLiteMemoryGraphStore:
@@ -182,10 +219,43 @@ class SQLiteMemoryGraphStore:
                     session_id TEXT NOT NULL,
                     turn_id TEXT NOT NULL REFERENCES nodes(node_id) ON DELETE CASCADE,
                     manifest_json TEXT NOT NULL,
+                    created_at TEXT NOT NULL,
+                    context_json TEXT
+                );
+                """
+            )
+            conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS memory_operations (
+                    operation_id TEXT PRIMARY KEY,
+                    profile_scope TEXT NOT NULL,
+                    operation TEXT NOT NULL,
+                    status TEXT NOT NULL,
+                    trigger_id TEXT NOT NULL,
+                    operation_json TEXT NOT NULL,
                     created_at TEXT NOT NULL
                 );
                 """
             )
+            conn.execute(
+                """
+                CREATE INDEX IF NOT EXISTS ix_memory_operations_profile_time
+                ON memory_operations(profile_scope, created_at, operation_id);
+                """
+            )
+            response_columns = {
+                str(row[1]) for row in conn.execute("PRAGMA table_info(responses)")
+            }
+            if "memory_operations_json" not in response_columns:
+                conn.execute(
+                    "ALTER TABLE responses ADD COLUMN memory_operations_json "
+                    "TEXT NOT NULL DEFAULT '[]'"
+                )
+            manifest_columns = {
+                str(row[1]) for row in conn.execute("PRAGMA table_info(manifests)")
+            }
+            if "context_json" not in manifest_columns:
+                conn.execute("ALTER TABLE manifests ADD COLUMN context_json TEXT")
         self._initialized = True
 
     async def start(self) -> Result[LifecycleState, ActionFailure]:
@@ -280,13 +350,15 @@ class SQLiteMemoryGraphStore:
         finally:
             conn.close()
 
-    async def commit_terminal(
+    async def commit_terminal(  # noqa: PLR0913
         self,
         response: AssistantResponse,
         manifest: AssistantContextManifest,
         assistant_turn: ConversationTurn | None,
         memories: tuple[MemoryRecord, ...],
         relations: tuple[MemoryRelation, ...],
+        operations: tuple[MemoryOperation, ...] = (),
+        context: AssistantContextPackage | None = None,
     ) -> Result[AssistantResponse, ActionFailure]:
         async with self._lock:
             return await asyncio.to_thread(
@@ -296,15 +368,19 @@ class SQLiteMemoryGraphStore:
                 assistant_turn,
                 memories,
                 relations,
+                operations,
+                context,
             )
 
-    def _sync_commit_terminal(
+    def _sync_commit_terminal(  # noqa: PLR0913
         self,
         response: AssistantResponse,
         manifest: AssistantContextManifest,
         assistant_turn: ConversationTurn | None,
         memories: tuple[MemoryRecord, ...],
         relations: tuple[MemoryRelation, ...],
+        operations: tuple[MemoryOperation, ...] = (),
+        context: AssistantContextPackage | None = None,
     ) -> Result[AssistantResponse, ActionFailure]:
         conn = self._connect()
         try:
@@ -318,11 +394,15 @@ class SQLiteMemoryGraphStore:
                 return Success(response)
 
             now_iso = _utc_now().isoformat()
+            recorded_operations = list(operations)
             with conn:
                 if assistant_turn is not None:
                     conn.execute(
                         "INSERT OR IGNORE INTO nodes (node_id, node_type, created_at) VALUES (?, 'turn', ?)",
-                        (assistant_turn.record_id, assistant_turn.timestamp.isoformat()),
+                        (
+                            assistant_turn.record_id,
+                            assistant_turn.timestamp.isoformat(),
+                        ),
                     )
                     conn.execute(
                         """
@@ -350,8 +430,9 @@ class SQLiteMemoryGraphStore:
                 conn.execute(
                     """
                     INSERT OR REPLACE INTO manifests (
-                        manifest_id, session_id, turn_id, manifest_json, created_at
-                    ) VALUES (?, ?, ?, ?, ?)
+                        manifest_id, session_id, turn_id, manifest_json, created_at,
+                        context_json
+                    ) VALUES (?, ?, ?, ?, ?, ?)
                     """,
                     (
                         manifest.record_id,
@@ -359,6 +440,7 @@ class SQLiteMemoryGraphStore:
                         manifest.turn_id,
                         manifest.model_dump_json(),
                         manifest.timestamp.isoformat(),
+                        context.model_dump_json() if context is not None else None,
                     ),
                 )
 
@@ -418,13 +500,57 @@ class SQLiteMemoryGraphStore:
                             _to_data_class_str(memory.data_class),
                             memory.profile_scope,
                             memory.valid_from.isoformat(),
-                            memory.valid_until.isoformat() if memory.valid_until else None,
+                            memory.valid_until.isoformat()
+                            if memory.valid_until
+                            else None,
                             memory.timestamp.isoformat(),
                             memory.producer.model_dump_json(),
                             memory.correlation_id,
-                            json.dumps([p.model_dump(mode="json") for p in memory.provenance]),
+                            json.dumps(
+                                [p.model_dump(mode="json") for p in memory.provenance]
+                            ),
                         ),
                     )
+
+                    if not any(
+                        memory.record_id in operation.result_memory_ids
+                        for operation in recorded_operations
+                    ):
+                        before = (supersedes_id,) if supersedes_id else ()
+                        recorded_operations.append(
+                            MemoryOperation(
+                                record_id=_new_id(),
+                                timestamp=_utc_now(),
+                                producer=ProducerIdentity(
+                                    producer_id="assistant-store",
+                                    kind="store",
+                                    version="1.0.0",
+                                ),
+                                operation=(
+                                    MemoryOperationKind.SUPERSEDE
+                                    if supersedes_id
+                                    else MemoryOperationKind.REMEMBER
+                                ),
+                                trigger="conversation_turn",
+                                trigger_id=response.user_turn_id,
+                                profile_scope=memory.profile_scope,
+                                target_memory_ids=before,
+                                result_memory_ids=(memory.record_id,),
+                                active_memory_ids_before=before,
+                                active_memory_ids_after=(memory.record_id,),
+                                preconditions=("source_turn_exists", "policy_allowed"),
+                                policy_outcome="ALLOW",
+                                status="APPLIED",
+                                stage="UPDATE" if supersedes_id else "STORAGE",
+                                evidence=memory.provenance,
+                                proposal_id=memory.content.get("proposal_id"),
+                                source_span=memory.content.get("source_span"),
+                                span_start=memory.content.get("span_start"),
+                                span_end=memory.content.get("span_end"),
+                                modality=memory.content.get("modality"),
+                                confidence=memory.content.get("confidence"),
+                            )
+                        )
                     conn.execute(
                         """
                         INSERT OR REPLACE INTO memory_lifecycle (
@@ -475,37 +601,84 @@ class SQLiteMemoryGraphStore:
                         ),
                     )
 
+                for operation in recorded_operations:
+                    if (
+                        operation.operation == MemoryOperationKind.FORGET.value
+                        and operation.status == "APPLIED"
+                    ):
+                        for memory_id in operation.target_memory_ids:
+                            conn.execute(
+                                """
+                                UPDATE memory_lifecycle
+                                SET status = 'DELETED', updated_at = ?
+                                WHERE memory_id = ? AND profile_scope = ? AND status = 'ACTIVE'
+                                """,
+                                (now_iso, memory_id, operation.profile_scope),
+                            )
+                    conn.execute(
+                        """
+                        INSERT OR IGNORE INTO memory_operations (
+                            operation_id, profile_scope, operation, status,
+                            trigger_id, operation_json, created_at
+                        ) VALUES (?, ?, ?, ?, ?, ?, ?)
+                        """,
+                        (
+                            operation.record_id,
+                            operation.profile_scope,
+                            str(operation.operation),
+                            operation.status,
+                            operation.trigger_id,
+                            operation.model_dump_json(),
+                            operation.timestamp.isoformat(),
+                        ),
+                    )
+
                 conn.execute(
                     "UPDATE turns SET status = ? WHERE turn_id = ?",
                     (response.status, response.user_turn_id),
                 )
 
+                response_to_store = response.model_copy(
+                    update={
+                        "memory_operation_ids": tuple(
+                            operation.record_id for operation in recorded_operations
+                        )
+                    }
+                )
                 conn.execute(
                     """
                     INSERT OR REPLACE INTO responses (
                         response_id, request_id, session_id, user_turn_id,
                         assistant_turn_id, manifest_id, status, text,
                         error_message, admitted_memories_json, provenance_json,
-                        created_at
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        created_at, memory_operations_json
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """,
                     (
-                        response.record_id,
-                        response.request_id,
-                        response.session_id,
-                        response.user_turn_id,
-                        assistant_turn.record_id if assistant_turn is not None else None,
+                        response_to_store.record_id,
+                        response_to_store.request_id,
+                        response_to_store.session_id,
+                        response_to_store.user_turn_id,
+                        assistant_turn.record_id
+                        if assistant_turn is not None
+                        else None,
                         manifest.record_id,
-                        response.status,
-                        response.text,
-                        response.error_message,
-                        json.dumps(list(response.admitted_memory_ids)),
-                        json.dumps([p.model_dump(mode="json") for p in response.provenance]),
-                        response.timestamp.isoformat(),
+                        response_to_store.status,
+                        response_to_store.text,
+                        response_to_store.error_message,
+                        json.dumps(list(response_to_store.admitted_memory_ids)),
+                        json.dumps(
+                            [
+                                p.model_dump(mode="json")
+                                for p in response_to_store.provenance
+                            ]
+                        ),
+                        response_to_store.timestamp.isoformat(),
+                        json.dumps(list(response_to_store.memory_operation_ids)),
                     ),
                 )
 
-            return Success(response)
+            return Success(response_to_store)
         except Exception as exc:  # noqa: BLE001
             logger.exception("commit_terminal failed")
             return Failure(
@@ -536,6 +709,7 @@ class SQLiteMemoryGraphStore:
             if row is None:
                 return Success(None)
             admitted = tuple(json.loads(row["admitted_memories_json"]))
+            operation_ids = tuple(json.loads(row["memory_operations_json"] or "[]"))
             prov_raw = json.loads(row["provenance_json"])
             provenance = tuple(ProvenanceReference.model_validate(p) for p in prov_raw)
             resp = AssistantResponse(
@@ -553,6 +727,7 @@ class SQLiteMemoryGraphStore:
                 status=row["status"],
                 error_message=row["error_message"],
                 admitted_memory_ids=admitted,
+                memory_operation_ids=operation_ids,
                 provenance=provenance,
             )
             return Success(resp)
@@ -602,6 +777,77 @@ class SQLiteMemoryGraphStore:
         finally:
             conn.close()
 
+    async def get_context_package(
+        self, manifest_id: str
+    ) -> Result[AssistantContextPackage | None, ActionFailure]:
+        async with self._lock:
+            return await asyncio.to_thread(self._sync_get_context_package, manifest_id)
+
+    def _sync_get_context_package(
+        self, manifest_id: str
+    ) -> Result[AssistantContextPackage | None, ActionFailure]:
+        conn = self._connect()
+        try:
+            self._init_db(conn)
+            row = conn.execute(
+                "SELECT context_json FROM manifests WHERE manifest_id = ?",
+                (manifest_id,),
+            ).fetchone()
+            if row is None or not row["context_json"]:
+                return Success(None)
+            return Success(
+                AssistantContextPackage.model_validate_json(row["context_json"])
+            )
+        except Exception as exc:  # noqa: BLE001
+            return Failure(
+                make_assistant_failure(
+                    code="GET_CONTEXT_PACKAGE_FAILED",
+                    message=str(exc),
+                    request_id=manifest_id,
+                )
+            )
+        finally:
+            conn.close()
+
+    async def get_latest_manifest_for_session(
+        self, session_id: str
+    ) -> Result[AssistantContextManifest | None, ActionFailure]:
+        async with self._lock:
+            return await asyncio.to_thread(
+                self._sync_get_latest_manifest_for_session, session_id
+            )
+
+    def _sync_get_latest_manifest_for_session(
+        self, session_id: str
+    ) -> Result[AssistantContextManifest | None, ActionFailure]:
+        conn = self._connect()
+        try:
+            self._init_db(conn)
+            row = conn.execute(
+                """
+                SELECT manifest_json FROM manifests
+                WHERE session_id = ?
+                ORDER BY created_at DESC, manifest_id DESC
+                LIMIT 1
+                """,
+                (session_id,),
+            ).fetchone()
+            if row is None:
+                return Success(None)
+            return Success(
+                AssistantContextManifest.model_validate_json(row["manifest_json"])
+            )
+        except Exception as exc:  # noqa: BLE001
+            return Failure(
+                make_assistant_failure(
+                    code="GET_LATEST_MANIFEST_FAILED",
+                    message=str(exc),
+                    request_id=session_id,
+                )
+            )
+        finally:
+            conn.close()
+
     async def get_turn(
         self, turn_id: str
     ) -> Result[ConversationTurn | None, ActionFailure]:
@@ -641,6 +887,41 @@ class SQLiteMemoryGraphStore:
                     code="GET_TURN_FAILED",
                     message=str(exc),
                     request_id=turn_id,
+                )
+            )
+        finally:
+            conn.close()
+
+    async def get_memory(
+        self, memory_id: str
+    ) -> Result[tuple[MemoryRecord, str] | None, ActionFailure]:
+        async with self._lock:
+            return await asyncio.to_thread(self._sync_get_memory, memory_id)
+
+    def _sync_get_memory(
+        self, memory_id: str
+    ) -> Result[tuple[MemoryRecord, str] | None, ActionFailure]:
+        conn = self._connect()
+        try:
+            self._init_db(conn)
+            row = conn.execute(
+                """
+                SELECT m.*, l.status AS lifecycle_status
+                FROM memories AS m
+                JOIN memory_lifecycle AS l ON l.memory_id = m.memory_id
+                WHERE m.memory_id = ?
+                """,
+                (memory_id,),
+            ).fetchone()
+            if row is None:
+                return Success(None)
+            return Success((_memory_from_row(row), str(row["lifecycle_status"])))
+        except Exception as exc:  # noqa: BLE001
+            return Failure(
+                make_assistant_failure(
+                    code="GET_MEMORY_FAILED",
+                    message=str(exc),
+                    request_id=memory_id,
                 )
             )
         finally:
@@ -757,31 +1038,8 @@ class SQLiteMemoryGraphStore:
             keywords = query.keywords if query else ()
 
             for row in rows:
-                content = json.loads(row["content_json"])
-                prov_raw = json.loads(row["provenance_json"])
-                provenance = tuple(
-                    ProvenanceReference.model_validate(p) for p in prov_raw
-                )
-                valid_until = (
-                    datetime.fromisoformat(row["valid_until"])
-                    if row["valid_until"]
-                    else None
-                )
-                record = MemoryRecord(
-                    record_id=row["memory_id"],
-                    timestamp=datetime.fromisoformat(row["created_at"]),
-                    producer=ProducerIdentity.model_validate_json(row["producer_json"]),
-                    kind=row["kind"],
-                    topic=row["topic"],
-                    content=content,
-                    source_turn_id=row["source_turn_id"],
-                    data_class=DataClass(row["data_class"]),
-                    profile_scope=row["profile_scope"],
-                    valid_from=datetime.fromisoformat(row["valid_from"]),
-                    valid_until=valid_until,
-                    provenance=provenance,
-                    correlation_id=row["correlation_id"],
-                )
+                record = _memory_from_row(row)
+                content = record.content
 
                 score = 0.0
                 reason = "active durable memory"
@@ -790,8 +1048,12 @@ class SQLiteMemoryGraphStore:
                     score = 1.0
                     reason = f"topic exact match: '{record.topic}' (score: 1.0)"
                 elif keywords:
-                    content_str = json.dumps(content).lower()
-                    matched = [kw for kw in keywords if kw.lower() in content_str]
+                    content_str = _searchable_text(
+                        f"{record.topic} {json.dumps(content, ensure_ascii=False)}"
+                    )
+                    matched = [
+                        kw for kw in keywords if _searchable_text(kw) in content_str
+                    ]
                     if matched:
                         score = 0.5 + 0.1 * len(matched)
                         reason = f"lexical match on {matched} (score: {score:.1f})"
@@ -816,6 +1078,62 @@ class SQLiteMemoryGraphStore:
         finally:
             conn.close()
 
+    async def list_sessions(
+        self, limit: int = 50
+    ) -> Result[tuple[AssistantSessionSummary, ...], ActionFailure]:
+        async with self._lock:
+            return await asyncio.to_thread(self._sync_list_sessions, limit)
+
+    def _sync_list_sessions(
+        self, limit: int
+    ) -> Result[tuple[AssistantSessionSummary, ...], ActionFailure]:
+        conn = self._connect()
+        try:
+            self._init_db(conn)
+            bounded_limit = max(1, min(limit, 200))
+            rows = conn.execute(
+                """
+                SELECT latest.session_id, summary.started_at, summary.updated_at,
+                       summary.turn_count, latest.role, latest.text
+                FROM turns AS latest
+                JOIN (
+                    SELECT session_id, MIN(timestamp) AS started_at,
+                           MAX(timestamp) AS updated_at, COUNT(*) AS turn_count
+                    FROM turns
+                    WHERE status = 'COMPLETED'
+                    GROUP BY session_id
+                ) AS summary
+                  ON latest.session_id = summary.session_id
+                 AND latest.timestamp = summary.updated_at
+                WHERE latest.status = 'COMPLETED'
+                ORDER BY summary.updated_at DESC, latest.session_id ASC
+                LIMIT ?
+                """,
+                (bounded_limit,),
+            ).fetchall()
+            sessions = tuple(
+                AssistantSessionSummary(
+                    session_id=str(row["session_id"]),
+                    started_at=datetime.fromisoformat(row["started_at"]),
+                    updated_at=datetime.fromisoformat(row["updated_at"]),
+                    turn_count=int(row["turn_count"]),
+                    last_role=str(row["role"]),
+                    preview=str(row["text"])[:160],
+                )
+                for row in rows
+            )
+            return Success(sessions)
+        except Exception as exc:  # noqa: BLE001
+            return Failure(
+                make_assistant_failure(
+                    code="LIST_SESSIONS_FAILED",
+                    message=str(exc),
+                    request_id="sessions",
+                )
+            )
+        finally:
+            conn.close()
+
     async def delete_turn(self, turn_id: str) -> Result[int, ActionFailure]:
         async with self._lock:
             return await asyncio.to_thread(self._sync_delete_turn, turn_id)
@@ -832,18 +1150,72 @@ class SQLiteMemoryGraphStore:
             now_iso = _utc_now().isoformat()
             with conn:
                 cur.execute(
-                    "SELECT memory_id, status FROM memory_lifecycle WHERE memory_id IN (SELECT memory_id FROM memories WHERE source_turn_id = ?)",
+                    "SELECT memory_id, profile_scope, status FROM memory_lifecycle "
+                    "WHERE memory_id IN (SELECT memory_id FROM memories WHERE source_turn_id = ?)",
                     (turn_id,),
                 )
                 derived_memories = cur.fetchall()
+                deleted_by_profile: dict[str, list[str]] = {}
                 for row in derived_memories:
                     mem_id = row["memory_id"]
                     status = row["status"]
-                    if status != "SUPERSEDED":
+                    if status == "ACTIVE":
                         conn.execute(
                             "UPDATE memory_lifecycle SET status = 'DELETED', updated_at = ? WHERE memory_id = ?",
                             (now_iso, mem_id),
                         )
+                        deleted_by_profile.setdefault(
+                            str(row["profile_scope"]), []
+                        ).append(str(mem_id))
+
+                for profile_scope, memory_ids in deleted_by_profile.items():
+                    operation = MemoryOperation(
+                        record_id=_new_id(),
+                        timestamp=_utc_now(),
+                        producer=ProducerIdentity(
+                            producer_id="assistant-store",
+                            kind="store",
+                            version="1.0.0",
+                        ),
+                        operation=MemoryOperationKind.FORGET,
+                        trigger="source_deletion",
+                        trigger_id=turn_id,
+                        profile_scope=profile_scope,
+                        target_memory_ids=tuple(memory_ids),
+                        active_memory_ids_before=tuple(memory_ids),
+                        active_memory_ids_after=(),
+                        preconditions=("source_turn_exists",),
+                        policy_outcome="ALLOW",
+                        status="APPLIED",
+                        stage="DELETION",
+                        reason="source turn deleted",
+                    )
+                    conn.execute(
+                        """
+                        INSERT INTO memory_operations (
+                            operation_id, profile_scope, operation, status,
+                            trigger_id, operation_json, created_at
+                        ) VALUES (?, ?, ?, ?, ?, ?, ?)
+                        """,
+                        (
+                            operation.record_id,
+                            operation.profile_scope,
+                            str(operation.operation),
+                            operation.status,
+                            operation.trigger_id,
+                            operation.model_dump_json(),
+                            now_iso,
+                        ),
+                    )
+
+                # Source deletion is content deletion, not only retrieval invalidation.
+                # The operation log retains opaque IDs and the state transition, while
+                # the source-derived memory payload and graph edges are securely erased.
+                for row in derived_memories:
+                    conn.execute(
+                        "DELETE FROM nodes WHERE node_id = ?",
+                        (str(row["memory_id"]),),
+                    )
 
                 conn.execute("DELETE FROM nodes WHERE node_id = ?", (turn_id,))
 
@@ -869,6 +1241,92 @@ class SQLiteMemoryGraphStore:
             return await asyncio.to_thread(
                 self._sync_get_relations, source_id, target_id, kind
             )
+
+    async def list_memory_operations(
+        self, profile_scope: str = "default", limit: int = 100
+    ) -> Result[tuple[MemoryOperation, ...], ActionFailure]:
+        """Return the latest operation records in chronological order."""
+        async with self._lock:
+            return await asyncio.to_thread(
+                self._sync_list_memory_operations, profile_scope, limit
+            )
+
+    def _sync_list_memory_operations(
+        self, profile_scope: str, limit: int
+    ) -> Result[tuple[MemoryOperation, ...], ActionFailure]:
+        conn = self._connect()
+        try:
+            self._init_db(conn)
+            bounded_limit = max(1, min(limit, 1000))
+            rows = conn.execute(
+                """
+                SELECT operation_json FROM memory_operations
+                WHERE profile_scope = ?
+                ORDER BY created_at DESC, operation_id DESC
+                LIMIT ?
+                """,
+                (profile_scope, bounded_limit),
+            ).fetchall()
+            operations = tuple(
+                MemoryOperation.model_validate_json(row["operation_json"])
+                for row in reversed(rows)
+            )
+            return Success(operations)
+        except Exception as exc:  # noqa: BLE001
+            return Failure(
+                make_assistant_failure(
+                    code="LIST_MEMORY_OPERATIONS_FAILED",
+                    message=str(exc),
+                    request_id=profile_scope,
+                )
+            )
+        finally:
+            conn.close()
+
+    async def replay_memory_projection(
+        self, profile_scope: str = "default"
+    ) -> Result[tuple[str, ...], ActionFailure]:
+        """Reconstruct active memory IDs exclusively from the operation log."""
+        async with self._lock:
+            return await asyncio.to_thread(
+                self._sync_replay_memory_projection, profile_scope
+            )
+
+    def _sync_replay_memory_projection(
+        self, profile_scope: str
+    ) -> Result[tuple[str, ...], ActionFailure]:
+        conn = self._connect()
+        try:
+            self._init_db(conn)
+            rows = conn.execute(
+                """
+                SELECT operation_json FROM memory_operations
+                WHERE profile_scope = ?
+                ORDER BY created_at ASC, operation_id ASC
+                """,
+                (profile_scope,),
+            ).fetchall()
+            active: dict[str, None] = {}
+            for row in rows:
+                operation = MemoryOperation.model_validate_json(row["operation_json"])
+                if operation.status != "APPLIED":
+                    continue
+                for memory_id in operation.target_memory_ids:
+                    active.pop(memory_id, None)
+                if operation.operation != MemoryOperationKind.FORGET.value:
+                    for memory_id in operation.result_memory_ids:
+                        active[memory_id] = None
+            return Success(tuple(active))
+        except Exception as exc:  # noqa: BLE001
+            return Failure(
+                make_assistant_failure(
+                    code="REPLAY_MEMORY_OPERATIONS_FAILED",
+                    message=str(exc),
+                    request_id=profile_scope,
+                )
+            )
+        finally:
+            conn.close()
 
     def _sync_get_relations(
         self,

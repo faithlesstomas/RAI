@@ -841,9 +841,12 @@ in the [canonical cross-project integration plan](https://gitlab.com/tk-lab1/ai/
 
 #### 4.7 Rich Assistant: graph-memory conversation and reasoning laboratory
 
-Status: `[/]` — the first local graph-memory preference slice and supported
-CLI/HTTP path are implemented and live-model verified. General semantic memory,
-Rich History grounding and later reasoning strategies remain planned.
+Status: `[/]` — the local graph-memory foundation plus a usable CLI,
+resumable/inspectable chat, exact context history and authenticated native
+REST/WebSocket surface are implemented. SQLite memory operations, replay and
+stage diagnostics form the Issue #35 M1 floor; schema-constrained extraction,
+general semantic memory, Rich History grounding and later reasoning strategies
+remain planned.
 
 Purpose: provide a continuous, local-first desktop assistant whose durable
 memory and context policy belong to RAI while its LLM and reasoning strategy are
@@ -904,14 +907,16 @@ explicit ConversationTurn or policy-approved proactive trigger
 - [x] Implement a lightweight local reference adapter, initially as a SQLite
   graph projection with stable node, hyperedge and provenance IDs, so tests and
   the default desktop profile require no additional database service.
-- [ ] Make SQLite the authoritative evidence and memory-operation store before
+- [/] Make SQLite the authoritative evidence and memory-operation store before
   adding learned extraction or alternative graph engines:
   - retain immutable, policy-approved source turns and Rich History episodes;
-  - store `MemoryProposal`, admission decision and resulting state transition
+  - [x] store `MemoryProposal` evidence, admission decision and resulting state transition
     separately rather than treating extraction output as durable truth;
   - preserve source spans, speaker, channel, modality, confidence, privacy,
     domain scope and model/policy versions for every derived claim;
-  - make every projection rebuildable from admitted records and operation logs.
+  - [x] make the active MVP projection rebuildable from admitted records and
+    operation logs;
+  - [ ] add approved Rich History episodes and full policy/model-version fields.
 - [ ] Extend `SQLiteMemoryGraphStore` with bi-temporal claims and relations:
   - record transaction time (`recorded_at`, `expired_at`) separately from
     real-world validity (`valid_from`, `valid_until`);

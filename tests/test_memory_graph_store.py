@@ -108,7 +108,9 @@ async def test_reply_chain_and_limits(store: SQLiteMemoryGraphStore) -> None:
 
 
 @pytest.mark.asyncio
-async def test_supersession_and_neutral_retrieval(store: SQLiteMemoryGraphStore) -> None:
+async def test_supersession_and_neutral_retrieval(
+    store: SQLiteMemoryGraphStore,
+) -> None:
     await store.start()
 
     turn_1 = ConversationTurn(
@@ -238,10 +240,18 @@ async def test_supersession_and_neutral_retrieval(store: SQLiteMemoryGraphStore)
     assert isinstance(ret_3, Success)
     memories_3 = ret_3.unwrap()
     assert len(memories_3) == 0
+    deleted_memory = await store.get_memory("mem-2")
+    assert isinstance(deleted_memory, Success)
+    assert deleted_memory.unwrap() is None
+    replayed = await store.replay_memory_projection()
+    assert isinstance(replayed, Success)
+    assert replayed.unwrap() == ()
 
 
 @pytest.mark.asyncio
-async def test_exactly_once_idempotency_for_responses(store: SQLiteMemoryGraphStore) -> None:
+async def test_exactly_once_idempotency_for_responses(
+    store: SQLiteMemoryGraphStore,
+) -> None:
     await store.start()
     turn = ConversationTurn(
         record_id="turn-once-1",

@@ -9,7 +9,13 @@ from .audit import (
 from .backends.deterministic import DeterministicAssistantBackend
 from .backends.local import LocalAssistantBackend
 from .context import AssistantContextBuilder
-from .ports import AssistantModelBackend, MemoryGraphStore, MemoryQuery
+from .diagnostics import MemoryDiagnosticReport, MemoryStageDiagnostic, diagnose_memory
+from .ports import (
+    AssistantModelBackend,
+    AssistantSessionSummary,
+    MemoryGraphStore,
+    MemoryQuery,
+)
 from .query import MemoryQueryResolver
 from .records import (
     AnyAssistantRecord,
@@ -21,6 +27,8 @@ from .records import (
     AssistantSessionId,
     ConversationTurn,
     InferenceRequest,
+    MemoryOperation,
+    MemoryOperationKind,
     MemoryProposal,
     MemoryRecord,
     MemoryRelation,
@@ -42,6 +50,7 @@ __all__ = [
     "AssistantModelBackend",
     "AssistantResponse",
     "AssistantService",
+    "AssistantSessionSummary",
     "AssistantSessionId",
     "ConversationTurn",
     "DeterministicAssistantBackend",
@@ -50,12 +59,17 @@ __all__ = [
     "JsonlAssistantAuditLedger",
     "LocalAssistantBackend",
     "MemoryGraphStore",
+    "MemoryDiagnosticReport",
+    "MemoryOperation",
+    "MemoryOperationKind",
     "MemoryProposal",
     "MemoryQuery",
     "MemoryQueryResolver",
     "MemoryRecord",
     "MemoryRelation",
     "MemoryRelationKind",
+    "MemoryStageDiagnostic",
     "SQLiteMemoryGraphStore",
     "parse_assistant_record",
+    "diagnose_memory",
 ]

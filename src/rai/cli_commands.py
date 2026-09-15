@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+from collections.abc import Awaitable, Callable
 import json
 from typing import Any
 
@@ -111,15 +112,22 @@ async def _echo_context_manifest(service: Any, manifest_id: str) -> None:  # noq
                 "tokens": run.tokens,
                 "generation": run.generation_metadata,
             }
+        package_result = await service.store.get_context_package(manifest.record_id)
+        if isinstance(package_result, Success) and package_result.unwrap() is not None:
+            summary["context_window"] = package_result.unwrap().content
         click.echo(f"\nContext manifest:\n{json.dumps(summary, indent=2)}", err=True)
+        return
+    click.echo("Context manifest not found.", err=True)
 
 
 async def _echo_memories(service: Any) -> None:  # noqa: ANN401
     """Show active memories in the current local profile scope."""
     from returns.result import Success  # noqa: PLC0415
+    from .kernel.records import DataClass  # noqa: PLC0415
 
     result = await service.store.retrieve_relevant_memories(
         profile_scope=service.profile_scope,
+        data_classes=(DataClass.PUBLIC, DataClass.LOCAL, DataClass.PRIVATE),
         limit=20,
     )
     if not isinstance(result, Success):
@@ -134,6 +142,115 @@ async def _echo_memories(service: Any) -> None:  # noqa: ANN401
         click.echo(
             f"- [{memory.kind}] {memory.topic}: {json.dumps(memory.content, ensure_ascii=False)}"
         )
+
+
+async def _echo_history(service: Any, session_id: str, limit: int = 20) -> None:  # noqa: ANN401
+    """Show the persisted conversation window for a session."""
+    from returns.result import Success  # noqa: PLC0415
+
+    result = await service.get_recent_turns(session_id, limit=limit)
+    if not isinstance(result, Success):
+        click.echo(f"Could not read chat history: {result.failure().message}", err=True)
+        return
+    turns = result.unwrap()
+    if not turns:
+        click.echo(f"No completed turns for session {session_id}.")
+        return
+    click.echo(f"Chat history for {session_id} ({len(turns)} turns):")
+    for turn in turns:
+        timestamp = turn.timestamp.astimezone().isoformat(timespec="seconds")
+        click.echo(f"- {timestamp} {turn.role}: {turn.text}")
+
+
+async def _echo_sessions(service: Any, limit: int = 20) -> None:  # noqa: ANN401
+    """Show discoverable local conversation sessions."""
+    from returns.result import Success  # noqa: PLC0415
+
+    result = await service.store.list_sessions(limit=limit)
+    if not isinstance(result, Success):
+        click.echo(f"Could not list sessions: {result.failure().message}", err=True)
+        return
+    sessions = result.unwrap()
+    if not sessions:
+        click.echo("No local assistant sessions found.")
+        return
+    click.echo("Assistant sessions:")
+    for session in sessions:
+        timestamp = session.updated_at.astimezone().isoformat(timespec="seconds")
+        click.echo(
+            f"- {session.session_id} | {session.turn_count} turns | {timestamp} | "
+            f"{session.last_role}: {session.preview}"
+        )
+
+
+async def _echo_memory_operations(service: Any, limit: int = 20) -> None:  # noqa: ANN401
+    """Show the append-only memory operation trace for the active profile."""
+    from returns.result import Success  # noqa: PLC0415
+
+    result = await service.store.list_memory_operations(
+        profile_scope=service.profile_scope, limit=limit
+    )
+    if not isinstance(result, Success):
+        click.echo(
+            f"Could not list memory operations: {result.failure().message}", err=True
+        )
+        return
+    operations = result.unwrap()
+    if not operations:
+        click.echo("No memory operations for this profile.")
+        return
+    click.echo("Memory operations:")
+    for operation in operations:
+        click.echo(
+            f"- {operation.timestamp.astimezone().isoformat(timespec='seconds')} "
+            f"{operation.operation} {operation.status} "
+            f"targets={','.join(operation.target_memory_ids) or '-'} "
+            f"results={','.join(operation.result_memory_ids) or '-'}"
+        )
+
+
+async def _echo_memory_diagnostics(service: Any) -> None:  # noqa: ANN401
+    """Show stage-specific memory integrity diagnostics."""
+    from returns.result import Success  # noqa: PLC0415
+
+    from .assistant.diagnostics import diagnose_memory  # noqa: PLC0415
+
+    result = await diagnose_memory(service.store, profile_scope=service.profile_scope)
+    if not isinstance(result, Success):
+        click.echo(f"Could not diagnose memory: {result.failure().message}", err=True)
+        return
+    report = result.unwrap()
+    click.echo(json.dumps(report.model_dump(mode="json"), indent=2, ensure_ascii=False))
+
+
+def _run_assistant_read(
+    profile: str | None,
+    action: Callable[[Any], Awaitable[None]],
+) -> None:
+    """Run a model-free assistant inspection command against durable local state."""
+    from returns.result import Success  # noqa: PLC0415
+
+    from .assistant.service import AssistantService  # noqa: PLC0415
+    from .assistant.store import SQLiteMemoryGraphStore  # noqa: PLC0415
+
+    config = _assistant_config(None, None, profile)
+    scope = str(config.get("active_agent") or "default")
+    service = AssistantService(
+        store=SQLiteMemoryGraphStore(),
+        profile_scope=scope,
+    )
+
+    async def _run() -> None:
+        start_res = await service.start()
+        if not isinstance(start_res, Success):
+            error = start_res.failure()
+            raise click.ClickException(f"[{error.code}] {error.message}")
+        try:
+            await action(service)
+        finally:
+            await service.stop()
+
+    asyncio.run(_run())
 
 
 def _run_assistant_ask(  # noqa: PLR0913
@@ -232,6 +349,17 @@ def _run_assistant_chat(  # noqa: PLR0913, PLR0915
             if not isinstance(start_res, Success):
                 err = start_res.failure()
                 raise click.ClickException(f"[{err.code}] {err.message}")
+            recent_res = await service.get_recent_turns(sid, limit=1)
+            if isinstance(recent_res, Success) and recent_res.unwrap():
+                reply_to_turn_id = recent_res.unwrap()[-1].record_id
+            latest_manifest_res = await service.store.get_latest_manifest_for_session(
+                sid
+            )
+            if (
+                isinstance(latest_manifest_res, Success)
+                and latest_manifest_res.unwrap() is not None
+            ):
+                last_manifest_id = latest_manifest_res.unwrap().record_id
             while True:
                 try:
                     user_input = click.prompt("You", prompt_suffix="> ")
@@ -245,13 +373,33 @@ def _run_assistant_chat(  # noqa: PLR0913, PLR0915
                 if stripped == "/help":
                     click.echo(
                         "/memories  active durable memories\n"
-                        "/context   manifest for the latest reply\n"
+                        "/operations memory operation audit trail\n"
+                        "/diagnostics stage-specific memory integrity report\n"
+                        "/history [N] persisted turns in this session\n"
+                        "/context   exact context window for the latest reply\n"
+                        "/remember TEXT explicitly save a fact\n"
+                        "/forget TEXT remove matching memory; use 'all' for everything\n"
                         "/session   current profile and session ID\n"
                         "/exit      leave the chat"
                     )
                     continue
                 if stripped == "/memories":
                     await _echo_memories(service)
+                    continue
+                if stripped == "/operations":
+                    await _echo_memory_operations(service)
+                    continue
+                if stripped == "/diagnostics":
+                    await _echo_memory_diagnostics(service)
+                    continue
+                if stripped.startswith("/history"):
+                    parts = stripped.split()
+                    try:
+                        limit = int(parts[1]) if len(parts) > 1 else 20
+                    except ValueError:
+                        click.echo("Usage: /history [number-of-turns]", err=True)
+                        continue
+                    await _echo_history(service, sid, max(1, min(limit, 200)))
                     continue
                 if stripped == "/context":
                     if last_manifest_id is None:
@@ -264,6 +412,18 @@ def _run_assistant_chat(  # noqa: PLR0913, PLR0915
                     continue
                 if not stripped:
                     continue
+
+                if stripped.startswith("/remember "):
+                    stripped = (
+                        f"Remember that {stripped.removeprefix('/remember ').strip()}"
+                    )
+                elif stripped.startswith("/forget "):
+                    target = stripped.removeprefix("/forget ").strip()
+                    stripped = (
+                        "Forget everything from memory"
+                        if target.casefold() == "all"
+                        else f"Forget about {target}"
+                    )
 
                 turn = ConversationTurn(
                     record_id=_new_id(),
@@ -366,3 +526,79 @@ def register_assistant_commands(root: click.Group) -> None:
     ) -> None:
         """Start an interactive chat session with the assistant."""
         _run_assistant_chat(session_id, backend, model, show_context, profile, system)
+
+    @assistant.command(name="memories")
+    @click.option("--profile", default=None, help="Assistant profile and memory scope.")
+    def memories_command(profile: str | None) -> None:
+        """List active durable memories without loading a model."""
+        _run_assistant_read(profile, _echo_memories)
+
+    @assistant.command(name="operations")
+    @click.option("--profile", default=None, help="Assistant profile and memory scope.")
+    @click.option("--limit", default=20, type=click.IntRange(1, 200), show_default=True)
+    def operations_command(profile: str | None, limit: int) -> None:
+        """Inspect the append-only memory operation audit trail."""
+
+        async def show(service: Any) -> None:  # noqa: ANN401
+            await _echo_memory_operations(service, limit=limit)
+
+        _run_assistant_read(profile, show)
+
+    @assistant.command(name="diagnostics")
+    @click.option("--profile", default=None, help="Assistant profile and memory scope.")
+    def diagnostics_command(profile: str | None) -> None:
+        """Check memory extraction, admission, storage, update and retrieval state."""
+        _run_assistant_read(profile, _echo_memory_diagnostics)
+
+    @assistant.command(name="sessions")
+    @click.option("--profile", default=None, help="Assistant profile and memory scope.")
+    @click.option("--limit", default=20, type=click.IntRange(1, 200), show_default=True)
+    def sessions_command(profile: str | None, limit: int) -> None:
+        """List local conversation sessions without loading a model."""
+
+        async def show(service: Any) -> None:  # noqa: ANN401
+            await _echo_sessions(service, limit=limit)
+
+        _run_assistant_read(profile, show)
+
+    @assistant.command(name="history")
+    @click.option("--session-id", required=True, help="Conversation session ID.")
+    @click.option("--profile", default=None, help="Assistant profile and memory scope.")
+    @click.option("--limit", default=20, type=click.IntRange(1, 200), show_default=True)
+    def history_command(session_id: str, profile: str | None, limit: int) -> None:
+        """Show persisted user and assistant turns for one session."""
+
+        async def show(service: Any) -> None:  # noqa: ANN401
+            await _echo_history(service, session_id, limit=limit)
+
+        _run_assistant_read(profile, show)
+
+    @assistant.command(name="context")
+    @click.option("--manifest-id", default=None, help="Exact context manifest ID.")
+    @click.option(
+        "--session-id", default=None, help="Use the latest context in a session."
+    )
+    @click.option("--profile", default=None, help="Assistant profile and memory scope.")
+    def context_command(
+        manifest_id: str | None, session_id: str | None, profile: str | None
+    ) -> None:
+        """Show the exact persisted context window used for a response."""
+        if bool(manifest_id) == bool(session_id):
+            raise click.UsageError(
+                "provide exactly one of --manifest-id or --session-id"
+            )
+
+        async def show(service: Any) -> None:  # noqa: ANN401
+            selected = manifest_id
+            if selected is None and session_id is not None:
+                result = await service.store.get_latest_manifest_for_session(session_id)
+                from returns.result import Success  # noqa: PLC0415
+
+                if not isinstance(result, Success) or result.unwrap() is None:
+                    click.echo("No context manifest found for this session.", err=True)
+                    return
+                selected = result.unwrap().record_id
+            if selected is not None:
+                await _echo_context_manifest(service, selected)
+
+        _run_assistant_read(profile, show)

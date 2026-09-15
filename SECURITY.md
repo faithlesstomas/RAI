@@ -78,12 +78,19 @@ WebSocket endpoints return `410 Gone` unless `legacy_chat.enabled` is explicitly
 set for compatibility.
 
 Assistant output and memory proposals are untrusted. Only deterministic policy
-admits the current MVP's explicit code-language preference, preserves provenance
-to the user turn and prevents a proposal from lowering its source privacy class.
+admits the current MVP's bounded personal attributes, preferences, plans and
+explicit memory requests. It requires an exact source span, rejects quoted,
+hearsay and hedged candidates from automatic admission, preserves provenance to
+the user turn and prevents a proposal from lowering its source privacy class.
 `SECRET` and `BLOCKED` turns are rejected. Default retrieval allows `PUBLIC` and
 `LOCAL` records only and revalidates profile, temporal validity, privacy and
 source existence even when a storage adapter returns a candidate. Selected and
 excluded IDs are recorded in the context manifest.
+
+Remember, supersede, reject and forget attempts are append-only typed operation
+records. Source deletion securely erases the source-derived memory payload and
+graph edges; the operation log retains only opaque IDs needed to prove that an
+obsolete memory is not reactivated.
 
 Assistant SQLite and JSONL files are created in mode-`0700` directories with
 mode-`0600` files; SQLite secure deletion is enabled. Unlike Rich History, this

@@ -7,7 +7,7 @@ from enum import Enum
 import json
 from typing import Annotated, Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 from typing_extensions import TypeAliasType
 
 from rai.kernel.records import (
@@ -15,6 +15,7 @@ from rai.kernel.records import (
     DataClass,
     InferenceBudget,
     KernelRecord,
+    PolicyOutcome,
     ProducerIdentity,
     ProvenanceReference,
     _new_id,
@@ -48,6 +49,17 @@ class MemoryRelationKind(str, Enum):
     SUPERSEDES = "SUPERSEDES"
     SUPPORTS = "SUPPORTS"
     CONTRADICTS = "CONTRADICTS"
+
+
+class MemoryOperationKind(str, Enum):
+    """User-visible and internal operations over durable assistant memory."""
+
+    REMEMBER = "REMEMBER"
+    FORGET = "FORGET"
+    UPDATE = "UPDATE"
+    SUPERSEDE = "SUPERSEDE"
+    REFLECT = "REFLECT"
+    RECONSTRUCT = "RECONSTRUCT"
 
 
 class MemoryRelation(BaseModel):
@@ -90,11 +102,22 @@ class MemoryProposal(KernelRecord):
 
     record_type: Literal["memory_proposal"] = "memory_proposal"
     source_turn_id: str = Field(min_length=1)
+    operation: MemoryOperationKind = MemoryOperationKind.REMEMBER
     kind: str = Field(default="preference", min_length=1)
     topic: str = Field(min_length=1)
+    target_topic: str | None = None
     content: dict[str, Any]
     privacy_class: DataClass = DataClass.LOCAL
     confidence: float = Field(default=1.0, ge=0.0, le=1.0)
+    source_span: str | None = Field(default=None, min_length=1, max_length=1024)
+    span_start: int | None = Field(default=None, ge=0)
+    span_end: int | None = Field(default=None, ge=1)
+    statement_type: Literal[
+        "assertion", "preference", "plan", "correction", "request"
+    ] = "assertion"
+    modality: Literal["direct", "hedged", "quoted", "hearsay"] = "direct"
+    negated: bool = False
+    scope: str = Field(default="personal", min_length=1, max_length=128)
     supersedes_memory_id: str | None = None
     relations: tuple[MemoryRelation, ...] = ()
 
@@ -115,6 +138,20 @@ class MemoryProposal(KernelRecord):
                 f"memory proposal content exceeds max size of {MAX_PROPOSAL_CONTENT_CHARS} characters"
             )
         return value
+
+    @model_validator(mode="after")
+    def validate_source_offsets(self) -> MemoryProposal:
+        """Require source offsets to be present together and bound the source span."""
+        if (self.span_start is None) != (self.span_end is None):
+            raise ValueError("source span offsets must be provided together")
+        if self.span_start is not None and self.span_end is not None:
+            if self.span_end <= self.span_start:
+                raise ValueError("span_end must be greater than span_start")
+            if self.source_span is None:
+                raise ValueError("source_span is required when offsets are present")
+            if self.span_end - self.span_start != len(self.source_span):
+                raise ValueError("source span offsets do not match source_span length")
+        return self
 
 
 class MemoryRecord(KernelRecord):
@@ -138,6 +175,53 @@ class MemoryRecord(KernelRecord):
         if raw in (DataClass.SECRET.value, DataClass.BLOCKED.value):
             raise ValueError(f"memory record cannot have {raw} data class")
         return value
+
+
+class MemoryOperation(KernelRecord):
+    """Immutable audit record for one attempted durable-memory operation."""
+
+    record_type: Literal["memory_operation"] = "memory_operation"
+    operation: MemoryOperationKind
+    trigger: Literal[
+        "conversation_turn", "user_command", "api", "source_deletion", "replay"
+    ]
+    trigger_id: str = Field(min_length=1)
+    profile_scope: str = Field(default="default", min_length=1)
+    proposal_id: str | None = None
+    source_span: str | None = None
+    span_start: int | None = Field(default=None, ge=0)
+    span_end: int | None = Field(default=None, ge=0)
+    modality: Literal["direct", "hedged", "quoted", "hearsay"] | None = None
+    confidence: float | None = Field(default=None, ge=0.0, le=1.0)
+    target_memory_ids: tuple[str, ...] = ()
+    result_memory_ids: tuple[str, ...] = ()
+    active_memory_ids_before: tuple[str, ...] = ()
+    active_memory_ids_after: tuple[str, ...] = ()
+    preconditions: tuple[str, ...] = ()
+    policy_outcome: PolicyOutcome = PolicyOutcome.ALLOW
+    status: Literal["APPLIED", "REJECTED", "NOOP"] = "APPLIED"
+    stage: Literal[
+        "EXTRACTION",
+        "ADMISSION",
+        "STORAGE",
+        "UPDATE",
+        "DELETION",
+        "RECONSTRUCTION",
+    ] = "STORAGE"
+    reason: str | None = None
+    evidence: tuple[ProvenanceReference, ...] = ()
+
+    @model_validator(mode="after")
+    def validate_source_span(self) -> MemoryOperation:
+        offsets = (self.span_start, self.span_end)
+        if any(value is not None for value in offsets):
+            if any(value is None for value in offsets):
+                raise ValueError("span_start and span_end must be provided together")
+            if self.source_span is None:
+                raise ValueError("source_span is required when offsets are present")
+            if self.span_end - self.span_start != len(self.source_span):  # type: ignore[operator]
+                raise ValueError("source span offsets do not match source_span length")
+        return self
 
 
 class AssistantContextManifestItem(BaseModel):
@@ -237,6 +321,7 @@ class AssistantResponse(KernelRecord):
     status: Literal["COMPLETED", "FAILED", "CANCELLED"] = "COMPLETED"
     error_message: str | None = None
     admitted_memory_ids: tuple[str, ...] = ()
+    memory_operation_ids: tuple[str, ...] = ()
     provenance: tuple[ProvenanceReference, ...] = ()
 
 
@@ -244,6 +329,7 @@ AnyAssistantRecord = Annotated[
     ConversationTurn
     | MemoryProposal
     | MemoryRecord
+    | MemoryOperation
     | AssistantContextManifest
     | AssistantContextPackage
     | InferenceRequest
@@ -257,6 +343,7 @@ ASSISTANT_RECORD_TYPES: dict[str, type[KernelRecord]] = {
         ConversationTurn,
         MemoryProposal,
         MemoryRecord,
+        MemoryOperation,
         AssistantContextManifest,
         AssistantContextPackage,
         InferenceRequest,

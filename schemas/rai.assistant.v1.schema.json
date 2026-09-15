@@ -399,6 +399,14 @@
           "title": "Admitted Memory Ids",
           "type": "array"
         },
+        "memory_operation_ids": {
+          "default": [],
+          "items": {
+            "type": "string"
+          },
+          "title": "Memory Operation Ids",
+          "type": "array"
+        },
         "provenance": {
           "default": [],
           "items": {
@@ -777,6 +785,264 @@
       "title": "InferenceRequest",
       "type": "object"
     },
+    "MemoryOperation": {
+      "additionalProperties": false,
+      "description": "Immutable audit record for one attempted durable-memory operation.",
+      "properties": {
+        "record_type": {
+          "const": "memory_operation",
+          "default": "memory_operation",
+          "title": "Record Type",
+          "type": "string"
+        },
+        "schema_version": {
+          "default": "1.0.0",
+          "pattern": "^1\\.(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)(?:[-+][0-9A-Za-z.-]+)?$",
+          "title": "Schema Version",
+          "type": "string"
+        },
+        "record_id": {
+          "minLength": 1,
+          "title": "Record Id",
+          "type": "string"
+        },
+        "timestamp": {
+          "format": "date-time",
+          "title": "Timestamp",
+          "type": "string"
+        },
+        "producer": {
+          "$ref": "#/$defs/ProducerIdentity"
+        },
+        "correlation_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Correlation Id"
+        },
+        "operation": {
+          "$ref": "#/$defs/MemoryOperationKind"
+        },
+        "trigger": {
+          "enum": [
+            "conversation_turn",
+            "user_command",
+            "api",
+            "source_deletion",
+            "replay"
+          ],
+          "title": "Trigger",
+          "type": "string"
+        },
+        "trigger_id": {
+          "minLength": 1,
+          "title": "Trigger Id",
+          "type": "string"
+        },
+        "profile_scope": {
+          "default": "default",
+          "minLength": 1,
+          "title": "Profile Scope",
+          "type": "string"
+        },
+        "proposal_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Proposal Id"
+        },
+        "source_span": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Source Span"
+        },
+        "span_start": {
+          "anyOf": [
+            {
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Span Start"
+        },
+        "span_end": {
+          "anyOf": [
+            {
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Span End"
+        },
+        "modality": {
+          "anyOf": [
+            {
+              "enum": [
+                "direct",
+                "hedged",
+                "quoted",
+                "hearsay"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Modality"
+        },
+        "confidence": {
+          "anyOf": [
+            {
+              "maximum": 1.0,
+              "minimum": 0.0,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Confidence"
+        },
+        "target_memory_ids": {
+          "default": [],
+          "items": {
+            "type": "string"
+          },
+          "title": "Target Memory Ids",
+          "type": "array"
+        },
+        "result_memory_ids": {
+          "default": [],
+          "items": {
+            "type": "string"
+          },
+          "title": "Result Memory Ids",
+          "type": "array"
+        },
+        "active_memory_ids_before": {
+          "default": [],
+          "items": {
+            "type": "string"
+          },
+          "title": "Active Memory Ids Before",
+          "type": "array"
+        },
+        "active_memory_ids_after": {
+          "default": [],
+          "items": {
+            "type": "string"
+          },
+          "title": "Active Memory Ids After",
+          "type": "array"
+        },
+        "preconditions": {
+          "default": [],
+          "items": {
+            "type": "string"
+          },
+          "title": "Preconditions",
+          "type": "array"
+        },
+        "policy_outcome": {
+          "$ref": "#/$defs/PolicyOutcome",
+          "default": "ALLOW"
+        },
+        "status": {
+          "default": "APPLIED",
+          "enum": [
+            "APPLIED",
+            "REJECTED",
+            "NOOP"
+          ],
+          "title": "Status",
+          "type": "string"
+        },
+        "stage": {
+          "default": "STORAGE",
+          "enum": [
+            "EXTRACTION",
+            "ADMISSION",
+            "STORAGE",
+            "UPDATE",
+            "DELETION",
+            "RECONSTRUCTION"
+          ],
+          "title": "Stage",
+          "type": "string"
+        },
+        "reason": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Reason"
+        },
+        "evidence": {
+          "default": [],
+          "items": {
+            "$ref": "#/$defs/ProvenanceReference"
+          },
+          "title": "Evidence",
+          "type": "array"
+        }
+      },
+      "required": [
+        "producer",
+        "operation",
+        "trigger",
+        "trigger_id"
+      ],
+      "title": "MemoryOperation",
+      "type": "object"
+    },
+    "MemoryOperationKind": {
+      "description": "User-visible and internal operations over durable assistant memory.",
+      "enum": [
+        "REMEMBER",
+        "FORGET",
+        "UPDATE",
+        "SUPERSEDE",
+        "REFLECT",
+        "RECONSTRUCT"
+      ],
+      "title": "MemoryOperationKind",
+      "type": "string"
+    },
     "MemoryProposal": {
       "additionalProperties": false,
       "description": "Untrusted candidate memory proposed by a model backend.",
@@ -823,6 +1089,10 @@
           "title": "Source Turn Id",
           "type": "string"
         },
+        "operation": {
+          "$ref": "#/$defs/MemoryOperationKind",
+          "default": "REMEMBER"
+        },
         "kind": {
           "default": "preference",
           "minLength": 1,
@@ -833,6 +1103,18 @@
           "minLength": 1,
           "title": "Topic",
           "type": "string"
+        },
+        "target_topic": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Target Topic"
         },
         "content": {
           "additionalProperties": true,
@@ -849,6 +1131,81 @@
           "minimum": 0.0,
           "title": "Confidence",
           "type": "number"
+        },
+        "source_span": {
+          "anyOf": [
+            {
+              "maxLength": 1024,
+              "minLength": 1,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Source Span"
+        },
+        "span_start": {
+          "anyOf": [
+            {
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Span Start"
+        },
+        "span_end": {
+          "anyOf": [
+            {
+              "minimum": 1,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Span End"
+        },
+        "statement_type": {
+          "default": "assertion",
+          "enum": [
+            "assertion",
+            "preference",
+            "plan",
+            "correction",
+            "request"
+          ],
+          "title": "Statement Type",
+          "type": "string"
+        },
+        "modality": {
+          "default": "direct",
+          "enum": [
+            "direct",
+            "hedged",
+            "quoted",
+            "hearsay"
+          ],
+          "title": "Modality",
+          "type": "string"
+        },
+        "negated": {
+          "default": false,
+          "title": "Negated",
+          "type": "boolean"
+        },
+        "scope": {
+          "default": "personal",
+          "maxLength": 128,
+          "minLength": 1,
+          "title": "Scope",
+          "type": "string"
         },
         "supersedes_memory_id": {
           "anyOf": [
@@ -1042,6 +1399,17 @@
       "title": "MemoryRelationKind",
       "type": "string"
     },
+    "PolicyOutcome": {
+      "description": "Machine-readable policy outcomes.",
+      "enum": [
+        "ALLOW",
+        "ASK",
+        "DENY",
+        "ESCALATE"
+      ],
+      "title": "PolicyOutcome",
+      "type": "string"
+    },
     "ProducerIdentity": {
       "additionalProperties": false,
       "description": "Identity of the component which produced a record.",
@@ -1128,6 +1496,7 @@
       "assistant_inference_request": "#/$defs/InferenceRequest",
       "assistant_response": "#/$defs/AssistantResponse",
       "conversation_turn": "#/$defs/ConversationTurn",
+      "memory_operation": "#/$defs/MemoryOperation",
       "memory_proposal": "#/$defs/MemoryProposal",
       "memory_record": "#/$defs/MemoryRecord"
     },
@@ -1142,6 +1511,9 @@
     },
     {
       "$ref": "#/$defs/MemoryRecord"
+    },
+    {
+      "$ref": "#/$defs/MemoryOperation"
     },
     {
       "$ref": "#/$defs/AssistantContextManifest"

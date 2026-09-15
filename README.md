@@ -22,9 +22,11 @@ Provider-neutral kernel records, runtime ports, capability policy and audit
 contracts are implemented. Perception collection and deterministic episode
 building are implemented by the opt-in Rich History slice. A lifecycle-managed
 local processor, six schema-constrained task contracts and a policy-aware result
-cache are also implemented, although live-model acceptance and runtime routing
-remain open. The RAI-native assistant, graph memory and hybrid routing are
-roadmap work. GAIA, GCAS compatibility, Google Antigravity, Coconut-style latent
+cache are also implemented, although broader live-model acceptance and runtime
+routing remain open. The RAI-native assistant now provides a usable CLI,
+RAI-owned chat history and an auditable SQLite memory slice; general semantic
+memory and hybrid routing remain roadmap work. GAIA, GCAS compatibility,
+Google Antigravity, Coconut-style latent
 inference, writable slots and J-lens are optional integrations or research
 paths; none is required by the core product.
 
@@ -60,7 +62,7 @@ use different names: `pip install rich-ai`, then `import rai` or run `rai`.
 ┌────────────────────────▼─────────────────────────┐
 │                 RAI Local Runtime                │
 │                                                 │
-│ AssistantService (planned)                      │
+│ AssistantService                                │
 │ ConversationTurn ─ Context Builder ─ Graph Mem. │
 │          │               │                      │
 │          │       AssistantModelBackend          │
@@ -107,14 +109,17 @@ See [docs/architecture.md](docs/architecture.md) for component boundaries and
   live-model acceptance.
 - policy-controlled local `speech.synthesize` playback through Piper, exposed by
   the default capability registry and MCP when a local voice is provisioned.
-- a testable Rich Assistant MVP with RAI-owned SQLite graph memory, bounded
-  reconstructed context, llama.cpp/Ollama backends and inspectable manifests.
+- a usable Rich Assistant MVP with interactive and one-shot CLI, resumable chat
+  sessions, RAI-owned SQLite graph memory, exact inspectable context windows,
+  authenticated REST/WebSocket clients and llama.cpp/Ollama backends.
 
-This list is deliberately narrower than the target architecture. In particular,
-the graph-memory MVP currently admits one narrow class of explicit code-language
-preferences; general semantic-memory extraction and hybrid model routing remain
-planned. The old provider-owned `ChatService` is disabled by default and remains
-only as an opt-in compatibility facade.
+This list is deliberately narrower than the target architecture. The memory MVP
+admits bounded personal attributes, preferences, plans and explicit remember or
+forget requests from ordinary Polish and English conversation. It rejects
+quoted, hearsay and hedged candidates from automatic admission.
+Schema-constrained SLM extraction, bitemporal claims, FTS/dense retrieval and
+hybrid model routing remain planned. The old provider-owned `ChatService` is
+disabled by default and remains only as an opt-in compatibility facade.
 
 ## Installation
 
@@ -189,13 +194,24 @@ uv run rai assistant chat
 Use `--backend ollama --model MODEL_NAME` for an explicit locally running
 Ollama model. `--profile NAME` selects both a configuration profile and its
 durable-memory scope; `--session-id ID` selects only the bounded recent-dialogue
-window. Inside interactive chat, use `/memories`, `/context`, `/session` and
-`/help` to inspect the runtime.
+window. Inside interactive chat, use `/remember TEXT`, `/forget TEXT`,
+`/memories`, `/history`, `/context`, `/operations`, `/diagnostics`, `/session`
+and `/help`. The same state can be inspected without loading a model:
+
+```bash
+uv run rai assistant sessions
+uv run rai assistant history --session-id SESSION
+uv run rai assistant memories
+uv run rai assistant context --session-id SESSION
+uv run rai assistant operations
+uv run rai assistant diagnostics
+```
 
 There is no silent fake fallback: missing weights, missing optional dependencies
 and unavailable daemons produce a typed error. Memory is stored under
 `$XDG_DATA_HOME/rai/assistant/`; use an isolated `RAI_DATA_DIR` when comparing
-experimental runs. See the [assistant operating and acceptance guide](docs/assistant-live-acceptance.md).
+experimental runs. See the [assistant operating and acceptance guide](docs/assistant-live-acceptance.md)
+and [assistant user MVP guide](docs/assistant-user-mvp.md).
 
 Piper voices are discovered under
 `$XDG_DATA_HOME/rai/piper_voices/<voice-id>/` (or the equivalent default XDG

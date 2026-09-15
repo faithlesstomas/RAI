@@ -29,6 +29,7 @@ from .audit import (
 from .backends.deterministic import DeterministicAssistantBackend
 from .context import AssistantContextBuilder
 from .ports import AssistantModelBackend, MemoryGraphStore
+from .query import MemoryQueryResolver
 from .records import (
     AssistantCandidate,
     AssistantContextManifest,
@@ -36,6 +37,9 @@ from .records import (
     AssistantResponse,
     ConversationTurn,
     InferenceRequest,
+    MemoryOperation,
+    MemoryOperationKind,
+    MemoryProposal,
     MemoryRecord,
     MemoryRelation,
     MemoryRelationKind,
@@ -47,10 +51,15 @@ _DATA_CLASS_RANK = {
     DataClass.LOCAL.value: 1,
     DataClass.PRIVATE.value: 2,
 }
+_AUTO_ADMISSION_CONFIDENCE = 0.75
 
 
 def _data_class_value(value: DataClass | str) -> str:
     return value.value if isinstance(value, DataClass) else str(value)
+
+
+def _memory_operation_value(value: MemoryOperationKind | str) -> str:
+    return value.value if isinstance(value, MemoryOperationKind) else str(value)
 
 
 class AssistantService:
@@ -75,6 +84,204 @@ class AssistantService:
         self.profile_scope = profile_scope
         self._state = LifecycleState.CREATED
         self._request_locks: dict[str, asyncio.Lock] = {}
+
+    @staticmethod
+    def _proposal_rejection_reason(  # noqa: PLR0911
+        proposal: MemoryProposal, turn: ConversationTurn
+    ) -> str | None:
+        """Apply deterministic admission rules to untrusted memory proposals."""
+        if proposal.source_span is None:
+            return "missing exact source span"
+        if proposal.span_start is None or proposal.span_end is None:
+            return "missing source span offsets"
+        if turn.text[proposal.span_start : proposal.span_end] != proposal.source_span:
+            return "source span does not match the accepted turn"
+        if proposal.modality in {"quoted", "hearsay"}:
+            return f"{proposal.modality} content requires explicit review"
+        if (
+            proposal.modality == "hedged"
+            or proposal.confidence < _AUTO_ADMISSION_CONFIDENCE
+        ):
+            return "uncertain content requires explicit review"
+        if proposal.negated and proposal.statement_type != "request":
+            return "implicit negated content is not auto-admitted"
+        return None
+
+    def _operation_evidence(
+        self, turn: ConversationTurn
+    ) -> tuple[ProvenanceReference, ...]:
+        return (
+            ProvenanceReference(
+                source_id=turn.record_id,
+                source_type="conversation_turn",
+                source_version=turn.schema_version,
+                relation="TRIGGERED_BY",
+                producer=turn.producer,
+            ),
+        )
+
+    @staticmethod
+    def _proposal_trace(proposal: MemoryProposal) -> dict[str, object]:
+        """Retain the exact untrusted extraction result on its operation trace."""
+        return {
+            "proposal_id": proposal.record_id,
+            "source_span": proposal.source_span,
+            "span_start": proposal.span_start,
+            "span_end": proposal.span_end,
+            "modality": proposal.modality,
+            "confidence": proposal.confidence,
+        }
+
+    async def _prepare_memory_changes(
+        self,
+        proposals: tuple[MemoryProposal, ...],
+        turn: ConversationTurn,
+    ) -> tuple[list[MemoryRecord], list[MemoryOperation], str | None]:
+        """Validate proposals and prepare atomic records for the store."""
+        admitted: list[MemoryRecord] = []
+        operations: list[MemoryOperation] = []
+        forget_message: str | None = None
+        evidence = self._operation_evidence(turn)
+
+        for proposal in proposals:
+            rejection = self._proposal_rejection_reason(proposal, turn)
+            operation_value = _memory_operation_value(proposal.operation)
+            if rejection:
+                operations.append(
+                    MemoryOperation(
+                        record_id=_new_id(),
+                        timestamp=_utc_now(),
+                        producer=self.producer,
+                        operation=MemoryOperationKind(operation_value),
+                        trigger="conversation_turn",
+                        trigger_id=turn.record_id,
+                        profile_scope=self.profile_scope,
+                        policy_outcome="DENY",
+                        status="REJECTED",
+                        stage="ADMISSION",
+                        reason=rejection,
+                        evidence=evidence,
+                        **self._proposal_trace(proposal),
+                    )
+                )
+                continue
+
+            if operation_value == MemoryOperationKind.FORGET.value:
+                query_text = str(proposal.content.get("query", "")).strip()
+                if proposal.target_topic == "*" or query_text == "*":
+                    query = None
+                else:
+                    query = MemoryQueryResolver.resolve(
+                        query_text, profile_scope=self.profile_scope
+                    )
+                target_res = await self.store.retrieve_relevant_memories(
+                    profile_scope=self.profile_scope,
+                    query=query,
+                    data_classes=(
+                        DataClass.PUBLIC,
+                        DataClass.LOCAL,
+                        DataClass.PRIVATE,
+                    ),
+                    limit=100,
+                )
+                if isinstance(target_res, Failure):
+                    operations.append(
+                        MemoryOperation(
+                            record_id=_new_id(),
+                            timestamp=_utc_now(),
+                            producer=self.producer,
+                            operation=MemoryOperationKind.FORGET,
+                            trigger="conversation_turn",
+                            trigger_id=turn.record_id,
+                            profile_scope=self.profile_scope,
+                            policy_outcome="DENY",
+                            status="REJECTED",
+                            stage="RETRIEVAL",
+                            reason=f"target retrieval failed: {target_res.failure().code}",
+                            evidence=evidence,
+                            **self._proposal_trace(proposal),
+                        )
+                    )
+                    forget_message = "Nie mogłem bezpiecznie sprawdzić pamięci; niczego nie usunąłem."
+                    continue
+                targets = tuple(
+                    memory.record_id for memory, _reason in target_res.unwrap()
+                )
+                status = "APPLIED" if targets else "NOOP"
+                operations.append(
+                    MemoryOperation(
+                        record_id=_new_id(),
+                        timestamp=_utc_now(),
+                        producer=self.producer,
+                        operation=MemoryOperationKind.FORGET,
+                        trigger="conversation_turn",
+                        trigger_id=turn.record_id,
+                        profile_scope=self.profile_scope,
+                        target_memory_ids=targets,
+                        active_memory_ids_before=targets,
+                        active_memory_ids_after=(),
+                        preconditions=("source_turn_exists", "policy_allowed"),
+                        policy_outcome="ALLOW",
+                        status=status,
+                        stage="DELETION",
+                        reason=(
+                            f"matched memory query: {query_text}"
+                            if targets
+                            else f"no active memory matched: {query_text}"
+                        ),
+                        evidence=evidence,
+                        **self._proposal_trace(proposal),
+                    )
+                )
+                forget_message = (
+                    f"Usunąłem {len(targets)} pasującą informację z pamięci."
+                    if len(targets) == 1
+                    else f"Usunąłem {len(targets)} pasujących informacji z pamięci."
+                    if targets
+                    else "Nie znalazłem w aktywnej pamięci pasującej informacji."
+                )
+                continue
+
+            proposed_class = _data_class_value(proposal.privacy_class)
+            turn_class = _data_class_value(turn.data_class)
+            memory_class = (
+                proposed_class
+                if _DATA_CLASS_RANK[proposed_class] >= _DATA_CLASS_RANK[turn_class]
+                else turn_class
+            )
+            admitted.append(
+                MemoryRecord(
+                    record_id=_new_id(),
+                    timestamp=_utc_now(),
+                    producer=self.producer,
+                    kind=proposal.kind,
+                    topic=proposal.topic,
+                    content={
+                        **proposal.content,
+                        "statement_type": proposal.statement_type,
+                        "modality": proposal.modality,
+                        "source_span": proposal.source_span,
+                        "span_start": proposal.span_start,
+                        "span_end": proposal.span_end,
+                        "confidence": proposal.confidence,
+                        "proposal_id": proposal.record_id,
+                    },
+                    source_turn_id=turn.record_id,
+                    data_class=DataClass(memory_class),
+                    profile_scope=self.profile_scope,
+                    valid_from=_utc_now(),
+                    provenance=(
+                        ProvenanceReference(
+                            source_id=turn.record_id,
+                            source_type="conversation_turn",
+                            source_version=turn.schema_version,
+                            relation="DERIVED_FROM",
+                            producer=turn.producer,
+                        ),
+                    ),
+                )
+            )
+        return admitted, operations, forget_message
 
     @property
     def state(self) -> LifecycleState:
@@ -312,6 +519,23 @@ class AssistantService:
                 latency_ms=latency_ms,
             )
 
+        (
+            admitted_memories,
+            memory_operations,
+            forget_message,
+        ) = await self._prepare_memory_changes(candidate.proposals, turn)
+        rejected_operations = [
+            operation
+            for operation in memory_operations
+            if operation.status == "REJECTED"
+        ]
+        delivered_text = forget_message or candidate.text
+        if candidate.proposals and not admitted_memories and rejected_operations:
+            delivered_text = (
+                "Nie zapisałem tej informacji automatycznie: "
+                f"{rejected_operations[0].reason}."
+            )
+
         assistant_turn_id = _new_id()
         assistant_turn = ConversationTurn(
             record_id=assistant_turn_id,
@@ -319,14 +543,13 @@ class AssistantService:
             producer=self.producer,
             session_id=turn.session_id,
             role="assistant",
-            text=candidate.text,
+            text=delivered_text,
             reply_to_turn_id=turn.record_id,
             data_class=turn.data_class,
             status="COMPLETED",
         )
 
-        admitted_memories: list[MemoryRecord] = []
-        admitted_ids: list[str] = []
+        admitted_ids = [memory.record_id for memory in admitted_memories]
         relations = [
             MemoryRelation(
                 relation_id=_new_id(),
@@ -335,40 +558,6 @@ class AssistantService:
                 kind=MemoryRelationKind.REPLIES_TO,
             )
         ]
-        turn_class = _data_class_value(turn.data_class)
-        for proposal in candidate.proposals:
-            proposed_class = _data_class_value(proposal.privacy_class)
-            memory_class = (
-                proposed_class
-                if _DATA_CLASS_RANK[proposed_class] >= _DATA_CLASS_RANK[turn_class]
-                else turn_class
-            )
-            memory_id = _new_id()
-            admitted_memories.append(
-                MemoryRecord(
-                    record_id=memory_id,
-                    timestamp=_utc_now(),
-                    producer=self.producer,
-                    kind=proposal.kind,
-                    topic=proposal.topic,
-                    content=proposal.content,
-                    source_turn_id=turn.record_id,
-                    data_class=DataClass(memory_class),
-                    profile_scope=self.profile_scope,
-                    valid_from=_utc_now(),
-                    provenance=(
-                        ProvenanceReference(
-                            source_id=turn.record_id,
-                            source_type="conversation_turn",
-                            source_version="1.0.0",
-                            relation="DERIVED_FROM",
-                            producer=turn.producer,
-                        ),
-                    ),
-                )
-            )
-            admitted_ids.append(memory_id)
-
         response = AssistantResponse(
             record_id=_new_id(),
             timestamp=_utc_now(),
@@ -378,9 +567,12 @@ class AssistantService:
             user_turn_id=turn.record_id,
             request_id=request_id,
             manifest_id=manifest.record_id,
-            text=candidate.text,
+            text=delivered_text,
             status="COMPLETED",
             admitted_memory_ids=tuple(admitted_ids),
+            memory_operation_ids=tuple(
+                operation.record_id for operation in memory_operations
+            ),
         )
         commit_res = await self.store.commit_terminal(
             response=response,
@@ -388,10 +580,13 @@ class AssistantService:
             assistant_turn=assistant_turn,
             memories=tuple(admitted_memories),
             relations=tuple(relations),
+            operations=tuple(memory_operations),
+            context=context_package,
         )
         if isinstance(commit_res, Failure):
             return Failure(commit_res.failure())
 
+        response = commit_res.unwrap()
         await self.audit_ledger.append(
             AssistantAuditEntry(
                 session_id=turn.session_id,
@@ -417,6 +612,7 @@ class AssistantService:
                     if key != "raw_model_output"
                 },
                 admitted_memories=tuple(admitted_ids),
+                memory_operations=response.memory_operation_ids,
             )
         )
         return Success(response)

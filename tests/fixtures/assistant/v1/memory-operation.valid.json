@@ -1,0 +1,37 @@
+{
+  "record_type": "memory_operation",
+  "schema_version": "1.0.0",
+  "record_id": "memory-operation-valid-001",
+  "timestamp": "2026-09-15T12:00:00Z",
+  "producer": {
+    "producer_id": "assistant-service",
+    "kind": "service",
+    "version": "1.0.0"
+  },
+  "operation": "SUPERSEDE",
+  "trigger": "conversation_turn",
+  "trigger_id": "turn-valid-001",
+  "profile_scope": "default",
+  "target_memory_ids": ["memory-old-001"],
+  "result_memory_ids": ["memory-new-001"],
+  "active_memory_ids_before": ["memory-old-001"],
+  "active_memory_ids_after": ["memory-new-001"],
+  "preconditions": ["source_turn_exists", "policy_allowed"],
+  "policy_outcome": "ALLOW",
+  "status": "APPLIED",
+  "stage": "UPDATE",
+  "reason": "new user statement supersedes the active value",
+  "evidence": [
+    {
+      "source_id": "turn-valid-001",
+      "source_type": "conversation_turn",
+      "source_version": "1.0.0",
+      "relation": "TRIGGERED_BY",
+      "producer": {
+        "producer_id": "cli-chat",
+        "kind": "user",
+        "version": "1.0.0"
+      }
+    }
+  ]
+}
