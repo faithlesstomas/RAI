@@ -120,10 +120,12 @@ Exit evidence:
 
 ### M4 — reproducible retrieval floor
 
-Status: `[/]`. Cross-session raw user turns use an FTS5/BM25 projection and
-Rich History episodes are available through a bounded, privacy-aware evidence
-provider. The equal-budget benchmark runner and summary comparison remain
-open, so this stage is not yet complete.
+Status: `[/]`. Cross-session raw user turns and durable claims use FTS5/BM25
+projections, while Rich History episodes are available through a bounded,
+privacy-aware evidence provider. The reproducible runner compares raw turns and
+claims with identical retrieval and character budgets and reports retrieval
+quality, abstention, latency and context size. Summary comparison, answer
+utilization and energy integration remain open, so this stage is not complete.
 
 Implement raw-turn and raw-episode retrieval with FTS5/BM25 and query-driven
 pruning. Compare it against claim retrieval and summary retrieval before adding
@@ -183,9 +185,10 @@ Exit evidence:
 
 ### M7 — scope, personalization and consolidation
 
-Status: `[/]`. Profile isolation is enforced for claims and raw-turn retrieval.
-Domain/purpose partitioning, consolidation and leakage/sycophancy evaluation
-remain open.
+Status: `[/]`. Profile, domain and purpose isolation is enforced for claims,
+raw-turn retrieval and recent context; manifests expose the selected scope.
+Negative tests cover unrelated-domain and wrong-purpose retrieval. Broader
+leakage/sycophancy evaluation and consolidation remain open.
 
 Partition durable memory by user, profile, domain and purpose. Retrieve personal
 context only when the request and policy require it. Measure cross-domain

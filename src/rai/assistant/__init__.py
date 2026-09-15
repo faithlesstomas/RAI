@@ -17,6 +17,12 @@ from .extraction import (
     SchemaConstrainedMemoryExtractor,
 )
 from .evidence import RichHistoryEvidenceProvider
+from .evaluation import (
+    RetrievalChannelMeasurement,
+    RetrievalEvaluationCase,
+    RetrievalEvaluationRun,
+    evaluate_retrieval_floor,
+)
 from .ports import (
     AssistantModelBackend,
     AssistantEvidence,
@@ -86,8 +92,12 @@ __all__ = [
     "MemoryRelationKind",
     "MemoryStageDiagnostic",
     "RichHistoryEvidenceProvider",
+    "RetrievalChannelMeasurement",
+    "RetrievalEvaluationCase",
+    "RetrievalEvaluationRun",
     "SQLiteMemoryGraphStore",
     "SchemaConstrainedMemoryExtractor",
     "parse_assistant_record",
     "diagnose_memory",
+    "evaluate_retrieval_floor",
 ]

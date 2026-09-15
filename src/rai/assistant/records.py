@@ -92,6 +92,8 @@ class ConversationTurn(KernelRecord):
     text: str = Field(min_length=1, max_length=MAX_TURN_TEXT_BYTES)
     reply_to_turn_id: str | None = None
     data_class: DataClass = DataClass.LOCAL
+    domain_scope: str = Field(default="general", min_length=1, max_length=128)
+    purpose: str = Field(default="assistant", min_length=1, max_length=128)
     status: Literal["ACCEPTED", "COMPLETED", "FAILED", "CANCELLED"] = "ACCEPTED"
     provenance: tuple[ProvenanceReference, ...] = ()
     metadata: dict[str, Any] = Field(default_factory=dict)
@@ -126,6 +128,8 @@ class MemoryProposal(KernelRecord):
     modality: Literal["direct", "hedged", "quoted", "hearsay"] = "direct"
     negated: bool = False
     scope: str = Field(default="personal", min_length=1, max_length=128)
+    domain_scope: str = Field(default="general", min_length=1, max_length=128)
+    purpose: str = Field(default="assistant", min_length=1, max_length=128)
     source_type: Literal[
         "conversation_turn", "rich_history_episode", "system_observation"
     ] = "conversation_turn"
@@ -190,6 +194,8 @@ class MemoryRecord(KernelRecord):
     ] = "conversation_turn"
     data_class: DataClass = DataClass.LOCAL
     profile_scope: str = Field(default="default", min_length=1)
+    domain_scope: str = Field(default="general", min_length=1, max_length=128)
+    purpose: str = Field(default="assistant", min_length=1, max_length=128)
     epistemic_status: Literal[
         "asserted", "observed", "inferred", "uncertain", "contested"
     ] = "asserted"
@@ -272,6 +278,8 @@ class AssistantContextManifestItem(BaseModel):
     source_type: str = Field(min_length=1)
     layer: str = Field(min_length=1)
     data_class: DataClass = DataClass.LOCAL
+    domain_scope: str = Field(default="general", min_length=1)
+    purpose: str = Field(default="assistant", min_length=1)
     ranking_reason: str | None = None
     fields: tuple[str, ...] = ()
     redactions: tuple[str, ...] = ()

@@ -273,6 +273,8 @@ class AssistantService:
                 query=MemoryQuery(
                     topic=proposal.topic,
                     profile_scope=self.profile_scope,
+                    domain_scopes=("general", proposal.domain_scope),
+                    purpose=proposal.purpose,
                     data_classes=(
                         DataClass.PUBLIC,
                         DataClass.LOCAL,
@@ -405,6 +407,8 @@ class AssistantService:
                     source_type=proposal.source_type,
                     data_class=DataClass(memory_class),
                     profile_scope=self.profile_scope,
+                    domain_scope=proposal.domain_scope,
+                    purpose=proposal.purpose,
                     epistemic_status=(
                         "observed"
                         if proposal.source_type
@@ -632,8 +636,23 @@ class AssistantService:
         token: CancellationToken,
         request_id: str,
     ) -> Result[AssistantResponse, ActionFailure]:
+        turn_query = MemoryQueryResolver.resolve(
+            turn.text, profile_scope=self.profile_scope
+        )
+        turn_domain = next(
+            (
+                domain
+                for domain in turn_query.domain_scopes
+                if domain != "general"
+            ),
+            "general",
+        )
         turn = turn.model_copy(
-            update={"metadata": {**turn.metadata, "profile_scope": self.profile_scope}}
+            update={
+                "metadata": {**turn.metadata, "profile_scope": self.profile_scope},
+                "domain_scope": turn_domain,
+                "purpose": "assistant",
+            }
         )
         existing_res = await self.store.get_response_by_request_id(request_id)
         if isinstance(existing_res, Failure):
@@ -760,6 +779,8 @@ class AssistantService:
             text=delivered_text,
             reply_to_turn_id=turn.record_id,
             data_class=turn.data_class,
+            domain_scope=turn.domain_scope,
+            purpose=turn.purpose,
             status="COMPLETED",
             metadata={"profile_scope": self.profile_scope},
         )

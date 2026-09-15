@@ -132,6 +132,15 @@ def _proposal(  # noqa: PLR0913
     confidence: float = 1.0,
     target_topic: str | None = None,
 ) -> MemoryProposal:
+    domain_scope = (
+        "software"
+        if topic == "code_examples"
+        else "project"
+        if topic.startswith("project.")
+        else "personal"
+        if topic.startswith("user.")
+        else "general"
+    )
     return MemoryProposal(
         record_id=_new_id(),
         timestamp=_utc_now(),
@@ -149,6 +158,7 @@ def _proposal(  # noqa: PLR0913
         modality=modality,
         negated=negated,
         confidence=confidence,
+        domain_scope=domain_scope,
     )
 
 

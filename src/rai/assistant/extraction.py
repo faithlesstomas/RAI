@@ -265,6 +265,12 @@ class SchemaConstrainedMemoryExtractor:
                     modality=candidate.modality,
                     negated=candidate.negated,
                     scope=candidate.scope,
+                    domain_scope={
+                        "personal": "personal",
+                        "system": "system",
+                        "conversation": "conversation",
+                        "project": "project",
+                    }[candidate.scope],
                     valid_from=candidate.valid_from,
                     valid_until=candidate.valid_until,
                 )

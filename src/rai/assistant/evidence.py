@@ -113,6 +113,8 @@ class RichHistoryEvidenceProvider:
                         if matched
                         else "Rich History activity-intent recency"
                     ),
+                    domain_scope="activity",
+                    purpose="assistant",
                 )
                 for _, episode, matched in ranked[: max(1, min(limit, 50))]
             )

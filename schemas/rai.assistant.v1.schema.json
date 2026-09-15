@@ -249,6 +249,18 @@
           "$ref": "#/$defs/DataClass",
           "default": "LOCAL"
         },
+        "domain_scope": {
+          "default": "general",
+          "minLength": 1,
+          "title": "Domain Scope",
+          "type": "string"
+        },
+        "purpose": {
+          "default": "assistant",
+          "minLength": 1,
+          "title": "Purpose",
+          "type": "string"
+        },
         "ranking_reason": {
           "anyOf": [
             {
@@ -568,6 +580,20 @@
         "data_class": {
           "$ref": "#/$defs/DataClass",
           "default": "LOCAL"
+        },
+        "domain_scope": {
+          "default": "general",
+          "maxLength": 128,
+          "minLength": 1,
+          "title": "Domain Scope",
+          "type": "string"
+        },
+        "purpose": {
+          "default": "assistant",
+          "maxLength": 128,
+          "minLength": 1,
+          "title": "Purpose",
+          "type": "string"
         },
         "status": {
           "default": "ACCEPTED",
@@ -1268,6 +1294,20 @@
           "title": "Scope",
           "type": "string"
         },
+        "domain_scope": {
+          "default": "general",
+          "maxLength": 128,
+          "minLength": 1,
+          "title": "Domain Scope",
+          "type": "string"
+        },
+        "purpose": {
+          "default": "assistant",
+          "maxLength": 128,
+          "minLength": 1,
+          "title": "Purpose",
+          "type": "string"
+        },
         "source_type": {
           "default": "conversation_turn",
           "enum": [
@@ -1414,6 +1454,20 @@
           "default": "default",
           "minLength": 1,
           "title": "Profile Scope",
+          "type": "string"
+        },
+        "domain_scope": {
+          "default": "general",
+          "maxLength": 128,
+          "minLength": 1,
+          "title": "Domain Scope",
+          "type": "string"
+        },
+        "purpose": {
+          "default": "assistant",
+          "maxLength": 128,
+          "minLength": 1,
+          "title": "Purpose",
           "type": "string"
         },
         "epistemic_status": {

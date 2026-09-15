@@ -107,6 +107,8 @@ def _memory_from_row(row: sqlite3.Row) -> MemoryRecord:
         source_type=row["source_type"],
         data_class=DataClass(row["data_class"]),
         profile_scope=row["profile_scope"],
+        domain_scope=row["domain_scope"],
+        purpose=row["purpose"],
         epistemic_status=row["epistemic_status"],
         valid_from=datetime.fromisoformat(row["valid_from"]),
         valid_until=(
@@ -132,6 +134,8 @@ def _turn_from_row(row: sqlite3.Row) -> ConversationTurn:
         text=row["text"],
         reply_to_turn_id=row["reply_to_turn_id"],
         data_class=DataClass(row["data_class"]),
+        domain_scope=row["domain_scope"],
+        purpose=row["purpose"],
         status=row["status"],
         correlation_id=row["correlation_id"],
         metadata=json.loads(row["metadata_json"] or "{}"),
@@ -193,6 +197,8 @@ class SQLiteMemoryGraphStore:
                     timestamp TEXT NOT NULL,
                     producer_json TEXT NOT NULL,
                     correlation_id TEXT,
+                    domain_scope TEXT NOT NULL DEFAULT 'general',
+                    purpose TEXT NOT NULL DEFAULT 'assistant',
                     metadata_json TEXT
                 );
                 """
@@ -208,6 +214,8 @@ class SQLiteMemoryGraphStore:
                     source_type TEXT NOT NULL DEFAULT 'conversation_turn',
                     data_class TEXT NOT NULL,
                     profile_scope TEXT NOT NULL,
+                    domain_scope TEXT NOT NULL DEFAULT 'general',
+                    purpose TEXT NOT NULL DEFAULT 'assistant',
                     epistemic_status TEXT NOT NULL DEFAULT 'asserted',
                     valid_from TEXT NOT NULL,
                     valid_until TEXT,
@@ -308,6 +316,18 @@ class SQLiteMemoryGraphStore:
             )
             conn.execute(
                 """
+                CREATE VIRTUAL TABLE IF NOT EXISTS memories_fts USING fts5(
+                    memory_id UNINDEXED,
+                    profile_scope UNINDEXED,
+                    kind UNINDEXED,
+                    topic,
+                    content,
+                    tokenize = 'unicode61 remove_diacritics 2'
+                );
+                """
+            )
+            conn.execute(
+                """
                 INSERT INTO turns_fts (turn_id, profile_scope, text)
                 SELECT t.turn_id,
                        COALESCE(json_extract(t.metadata_json, '$.profile_scope'), 'default'),
@@ -317,6 +337,19 @@ class SQLiteMemoryGraphStore:
                   AND NOT EXISTS (
                     SELECT 1 FROM turns_fts AS f WHERE f.turn_id = t.turn_id
                   )
+                """
+            )
+            conn.execute(
+                """
+                INSERT INTO memories_fts (
+                    memory_id, profile_scope, kind, topic, content
+                )
+                SELECT m.memory_id, m.profile_scope, m.kind, m.topic, m.content_json
+                FROM memories AS m
+                WHERE NOT EXISTS (
+                    SELECT 1 FROM memories_fts AS f
+                    WHERE f.memory_id = m.memory_id
+                )
                 """
             )
             conn.execute(
@@ -338,6 +371,19 @@ class SQLiteMemoryGraphStore:
             }
             if "context_json" not in manifest_columns:
                 conn.execute("ALTER TABLE manifests ADD COLUMN context_json TEXT")
+            turn_columns = {
+                str(row[1]) for row in conn.execute("PRAGMA table_info(turns)")
+            }
+            if "domain_scope" not in turn_columns:
+                conn.execute(
+                    "ALTER TABLE turns ADD COLUMN domain_scope TEXT NOT NULL "
+                    "DEFAULT 'general'"
+                )
+            if "purpose" not in turn_columns:
+                conn.execute(
+                    "ALTER TABLE turns ADD COLUMN purpose TEXT NOT NULL "
+                    "DEFAULT 'assistant'"
+                )
             memory_columns = {
                 str(row[1]) for row in conn.execute("PRAGMA table_info(memories)")
             }
@@ -350,6 +396,16 @@ class SQLiteMemoryGraphStore:
                 conn.execute(
                     "ALTER TABLE memories ADD COLUMN epistemic_status TEXT NOT NULL "
                     "DEFAULT 'asserted'"
+                )
+            if "domain_scope" not in memory_columns:
+                conn.execute(
+                    "ALTER TABLE memories ADD COLUMN domain_scope TEXT NOT NULL "
+                    "DEFAULT 'general'"
+                )
+            if "purpose" not in memory_columns:
+                conn.execute(
+                    "ALTER TABLE memories ADD COLUMN purpose TEXT NOT NULL "
+                    "DEFAULT 'assistant'"
                 )
             if "recorded_at" not in memory_columns:
                 conn.execute("ALTER TABLE memories ADD COLUMN recorded_at TEXT")
@@ -423,8 +479,8 @@ class SQLiteMemoryGraphStore:
                     INSERT INTO turns (
                         turn_id, session_id, role, text, reply_to_turn_id,
                         data_class, status, timestamp, producer_json,
-                        correlation_id, metadata_json
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        correlation_id, domain_scope, purpose, metadata_json
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """,
                     (
                         turn.record_id,
@@ -437,6 +493,8 @@ class SQLiteMemoryGraphStore:
                         turn.timestamp.isoformat(),
                         turn.producer.model_dump_json(),
                         turn.correlation_id,
+                        turn.domain_scope,
+                        turn.purpose,
                         json.dumps(turn.metadata),
                     ),
                 )
@@ -486,7 +544,7 @@ class SQLiteMemoryGraphStore:
                 context,
             )
 
-    def _sync_commit_terminal(  # noqa: PLR0912, PLR0913
+    def _sync_commit_terminal(  # noqa: PLR0912, PLR0913, PLR0915
         self,
         response: AssistantResponse,
         manifest: AssistantContextManifest,
@@ -523,8 +581,8 @@ class SQLiteMemoryGraphStore:
                         INSERT OR REPLACE INTO turns (
                             turn_id, session_id, role, text, reply_to_turn_id,
                             data_class, status, timestamp, producer_json,
-                            correlation_id, metadata_json
-                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                            correlation_id, domain_scope, purpose, metadata_json
+                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                         """,
                         (
                             assistant_turn.record_id,
@@ -537,6 +595,8 @@ class SQLiteMemoryGraphStore:
                             assistant_turn.timestamp.isoformat(),
                             assistant_turn.producer.model_dump_json(),
                             assistant_turn.correlation_id,
+                            assistant_turn.domain_scope,
+                            assistant_turn.purpose,
                             json.dumps(assistant_turn.metadata),
                         ),
                     )
@@ -684,10 +744,10 @@ class SQLiteMemoryGraphStore:
                         """
                         INSERT OR REPLACE INTO memories (
                             memory_id, kind, topic, content_json, source_turn_id, source_type,
-                            data_class, profile_scope, epistemic_status,
+                            data_class, profile_scope, domain_scope, purpose, epistemic_status,
                             valid_from, valid_until, recorded_at, expired_at,
                             created_at, producer_json, correlation_id, provenance_json
-                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                         """,
                         (
                             memory.record_id,
@@ -698,6 +758,8 @@ class SQLiteMemoryGraphStore:
                             memory.source_type,
                             _to_data_class_str(memory.data_class),
                             memory.profile_scope,
+                            memory.domain_scope,
+                            memory.purpose,
                             memory.epistemic_status,
                             memory.valid_from.isoformat(),
                             memory.valid_until.isoformat()
@@ -711,6 +773,24 @@ class SQLiteMemoryGraphStore:
                             json.dumps(
                                 [p.model_dump(mode="json") for p in memory.provenance]
                             ),
+                        ),
+                    )
+                    conn.execute(
+                        "DELETE FROM memories_fts WHERE memory_id = ?",
+                        (memory.record_id,),
+                    )
+                    conn.execute(
+                        """
+                        INSERT INTO memories_fts (
+                            memory_id, profile_scope, kind, topic, content
+                        ) VALUES (?, ?, ?, ?, ?)
+                        """,
+                        (
+                            memory.record_id,
+                            memory.profile_scope,
+                            memory.kind,
+                            memory.topic,
+                            json.dumps(memory.content, ensure_ascii=False),
                         ),
                     )
 
@@ -831,6 +911,10 @@ class SQLiteMemoryGraphStore:
                             conn.execute(
                                 "UPDATE memories SET expired_at = ? WHERE memory_id = ?",
                                 (now_iso, memory_id),
+                            )
+                            conn.execute(
+                                "DELETE FROM memories_fts WHERE memory_id = ?",
+                                (memory_id,),
                             )
                     conn.execute(
                         """
@@ -1206,7 +1290,7 @@ class SQLiteMemoryGraphStore:
                 self._sync_retrieve_memories, profile_scope, query, data_classes, limit
             )
 
-    def _sync_retrieve_memories(
+    def _sync_retrieve_memories(  # noqa: PLR0915
         self,
         profile_scope: str = "default",
         query: MemoryQuery | None = None,
@@ -1225,17 +1309,25 @@ class SQLiteMemoryGraphStore:
             transaction_iso = (transaction_at or now).isoformat()
             valid_iso = (valid_at or transaction_at or now).isoformat()
 
+            fts_query = _fts_query(query.keywords if query else ())
+            use_fts = bool(fts_query and not (query and query.topic))
+            select_prefix = (
+                "SELECT m.*, l.status AS lifecycle_status, "
+                "bm25(memories_fts) AS bm25_score "
+                "FROM memories_fts "
+                "JOIN memories m ON m.memory_id = memories_fts.memory_id "
+                if use_fts
+                else "SELECT m.*, l.status AS lifecycle_status, 0.0 AS bm25_score FROM memories m "
+            )
             sql = (
-                "SELECT m.*, l.status AS lifecycle_status "  # noqa: S608
-                "FROM memories m "
-                "JOIN memory_lifecycle l ON m.memory_id = l.memory_id "
+                select_prefix  # noqa: S608
+                + "JOIN memory_lifecycle l ON m.memory_id = l.memory_id "
                 "WHERE m.profile_scope = ? "
                 f"  AND m.data_class IN ({placeholders}) "
                 "  AND m.recorded_at <= ? "
                 "  AND (m.expired_at IS NULL OR m.expired_at > ?) "
                 "  AND m.valid_from <= ? "
                 "  AND (m.valid_until IS NULL OR m.valid_until > ?) "
-                "ORDER BY m.created_at DESC"
             )
             params: list[Any] = [
                 profile_scope,
@@ -1245,6 +1337,22 @@ class SQLiteMemoryGraphStore:
                 valid_iso,
                 valid_iso,
             ]
+            if query is not None:
+                if query.domain_scopes:
+                    allowed_domains = query.domain_scopes
+                    domain_placeholders = ",".join("?" for _ in allowed_domains)
+                    sql += (  # noqa: S608
+                        f" AND m.domain_scope IN ({domain_placeholders}) "
+                    )
+                    params.extend(allowed_domains)
+                sql += " AND m.purpose = ? "
+                params.append(query.purpose)
+            if use_fts:
+                sql += " AND memories_fts MATCH ? AND memories_fts.profile_scope = ? "
+                params.extend((fts_query, profile_scope))
+                sql += " ORDER BY bm25_score ASC, m.created_at DESC"
+            else:
+                sql += " ORDER BY m.created_at DESC"
             cur.execute(sql, params)
             rows = cur.fetchall()
 
@@ -1271,7 +1379,10 @@ class SQLiteMemoryGraphStore:
                     ]
                     if matched:
                         score = 0.5 + 0.1 * len(matched)
-                        reason = f"lexical match on {matched} (score: {score:.1f})"
+                        reason = (
+                            f"FTS5/BM25 claim match on {matched} "
+                            f"(bm25: {float(row['bm25_score']):.4f})"
+                        )
 
                 if target_topic is None and not keywords:
                     score = 0.1
@@ -1325,6 +1436,8 @@ class SQLiteMemoryGraphStore:
             self._init_db(conn)
             allowed_classes = [_to_data_class_str(dc) for dc in data_classes]
             placeholders = ",".join("?" for _ in allowed_classes)
+            allowed_domains = query.domain_scopes
+            domain_placeholders = ",".join("?" for _ in allowed_domains)
             fts_query = _fts_query(query.keywords)
             excluded = set(exclude_turn_ids)
             query_terms = tuple(
@@ -1339,6 +1452,12 @@ class SQLiteMemoryGraphStore:
                     "what do you remember",
                 )
             )
+            domain_clause = (
+                f"AND t.domain_scope IN ({domain_placeholders}) "  # noqa: S608
+                if allowed_domains
+                else ""
+            )
+            domain_params = allowed_domains if allowed_domains else ()
             if fts_query:
                 rows = conn.execute(
                     (
@@ -1348,9 +1467,17 @@ class SQLiteMemoryGraphStore:
                         "WHERE turns_fts MATCH ? AND turns_fts.profile_scope = ? "
                         "AND t.role = 'user' AND t.status = 'COMPLETED' "
                         f"AND t.data_class IN ({placeholders}) "
-                        "ORDER BY bm25_score ASC, t.timestamp DESC LIMIT 200"
+                        + domain_clause
+                        + "AND t.purpose = ? "
+                        + "ORDER BY bm25_score ASC, t.timestamp DESC LIMIT 200"
                     ),
-                    (fts_query, profile_scope, *allowed_classes),
+                    (
+                        fts_query,
+                        profile_scope,
+                        *allowed_classes,
+                        *domain_params,
+                        query.purpose,
+                    ),
                 ).fetchall()
             elif broad_recall:
                 rows = conn.execute(
@@ -1358,9 +1485,11 @@ class SQLiteMemoryGraphStore:
                         "SELECT t.*, 0.0 AS bm25_score FROM turns AS t "  # noqa: S608
                         "WHERE t.role = 'user' AND t.status = 'COMPLETED' "
                         f"AND t.data_class IN ({placeholders}) "
-                        "ORDER BY t.timestamp DESC LIMIT 200"
+                        + domain_clause
+                        + "AND t.purpose = ? "
+                        + "ORDER BY t.timestamp DESC LIMIT 200"
                     ),
-                    allowed_classes,
+                    (*allowed_classes, *domain_params, query.purpose),
                 ).fetchall()
             else:
                 rows = []
@@ -1538,6 +1667,10 @@ class SQLiteMemoryGraphStore:
                 # The operation log retains opaque IDs and the state transition, while
                 # the source-derived memory payload and graph edges are securely erased.
                 for row in derived_memories:
+                    conn.execute(
+                        "DELETE FROM memories_fts WHERE memory_id = ?",
+                        (str(row["memory_id"]),),
+                    )
                     conn.execute(
                         "DELETE FROM nodes WHERE node_id = ?",
                         (str(row["memory_id"]),),

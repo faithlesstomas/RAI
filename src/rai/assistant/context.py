@@ -70,7 +70,7 @@ class AssistantContextBuilder:
         self, turn: ConversationTurn
     ) -> Result[AssistantContextPackage, ActionFailure]:
         """Assemble a bounded, inspectable AssistantContextPackage."""
-        query = self.query_resolver.resolve(turn.text)
+        query = self.query_resolver.resolve(turn.text, self.profile_scope)
 
         recent_res = await self.store.get_recent_reply_chain(
             session_id=turn.session_id,
@@ -79,7 +79,13 @@ class AssistantContextBuilder:
         )
         if isinstance(recent_res, Failure):
             return Failure(recent_res.failure())
-        recent_turns = recent_res.unwrap()
+        all_recent_turns = recent_res.unwrap()
+        recent_turns = tuple(
+            item
+            for item in all_recent_turns
+            if (not query.domain_scopes or item.domain_scope in query.domain_scopes)
+            and item.purpose == query.purpose
+        )
 
         mem_res = await self.store.retrieve_relevant_memories(
             profile_scope=self.profile_scope,
@@ -101,6 +107,8 @@ class AssistantContextBuilder:
                     source_type="conversation_turn",
                     layer="recent_conversation",
                     data_class=rt.data_class,
+                    domain_scope=rt.domain_scope,
+                    purpose=rt.purpose,
                     ranking_reason="reply-chain chronological window",
                     fields=("text", "role"),
                 )
@@ -121,6 +129,10 @@ class AssistantContextBuilder:
             invalid_reasons = []
             if mem.profile_scope != query.profile_scope:
                 invalid_reasons.append("profile_scope")
+            if query.domain_scopes and mem.domain_scope not in query.domain_scopes:
+                invalid_reasons.append("domain_scope")
+            if mem.purpose != query.purpose:
+                invalid_reasons.append("purpose")
             if data_class not in query.data_classes:
                 invalid_reasons.append("privacy_class")
             if mem.valid_from > now or (
@@ -148,6 +160,8 @@ class AssistantContextBuilder:
                     source_type="memory_record",
                     layer="durable_memory",
                     data_class=mem.data_class,
+                    domain_scope=mem.domain_scope,
+                    purpose=mem.purpose,
                     ranking_reason=reason,
                     fields=("topic", "content"),
                 )
@@ -218,6 +232,8 @@ class AssistantContextBuilder:
                     source_type="conversation_turn",
                     layer="episodic_evidence",
                     data_class=source_turn.data_class,
+                    domain_scope=source_turn.domain_scope,
+                    purpose=source_turn.purpose,
                     ranking_reason=reason,
                     fields=("text", "role", "timestamp", "session_id"),
                 )
@@ -226,6 +242,12 @@ class AssistantContextBuilder:
         external_ids: list[str] = []
         external_content: list[dict[str, object]] = []
         for evidence in external_evidence:
+            if query.domain_scopes and evidence.domain_scope not in query.domain_scopes:
+                exclusions.append(f"{evidence.source_id}:domain_scope")
+                continue
+            if evidence.purpose != query.purpose:
+                exclusions.append(f"{evidence.source_id}:purpose")
+                continue
             external_ids.append(evidence.source_id)
             ranking_reasons[evidence.source_id] = evidence.ranking_reason
             external_content.append(
@@ -242,6 +264,8 @@ class AssistantContextBuilder:
                     source_type=evidence.source_type,
                     layer="external_evidence",
                     data_class=evidence.data_class,
+                    domain_scope=evidence.domain_scope,
+                    purpose=evidence.purpose,
                     ranking_reason=evidence.ranking_reason,
                     fields=("timestamp", "content"),
                 )

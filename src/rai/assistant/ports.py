@@ -38,6 +38,8 @@ class MemoryQuery:
     raw_text: str = ""
     valid_at: datetime | None = None
     transaction_at: datetime | None = None
+    domain_scopes: tuple[str, ...] = ()
+    purpose: str = "assistant"
 
 
 @dataclass(frozen=True)
@@ -62,6 +64,8 @@ class AssistantEvidence:
     content: dict[str, Any]
     data_class: DataClass
     ranking_reason: str
+    domain_scope: str = "general"
+    purpose: str = "assistant"
 
 
 @runtime_checkable

@@ -11,6 +11,7 @@ from returns.result import Failure, Success
 from rai.assistant.backends.deterministic import DeterministicAssistantBackend
 from rai.assistant.context import AssistantContextBuilder
 from rai.assistant.evidence import RichHistoryEvidenceProvider
+from rai.assistant.evaluation import RetrievalEvaluationCase, evaluate_retrieval_floor
 from rai.assistant.extraction import SchemaConstrainedMemoryExtractor
 from rai.assistant.ports import MemoryQuery
 from rai.assistant.records import ConversationTurn, MemoryRelationKind
@@ -29,6 +30,7 @@ from rai.kernel.records import (
 PRODUCER = ProducerIdentity(
     producer_id="assistant-extraction-test", kind="test", version="1.0.0"
 )
+EVALUATION_CONTEXT_BUDGET = 512
 
 
 class _StaticEngine:
@@ -37,14 +39,14 @@ class _StaticEngine:
         self.model_name = "schema-test-model"
         self.is_loaded = True
 
-    async def load(self):  # noqa: ANN201
+    async def load(self):  # noqa: ANN202
         return Success(None)
 
-    async def generate(self, **kwargs):  # noqa: ANN003, ANN201
+    async def generate(self, **kwargs):  # noqa: ANN003, ANN202
         del kwargs
         return Success(InferenceResult(text=self.text))
 
-    async def unload(self):  # noqa: ANN201
+    async def unload(self):  # noqa: ANN202
         return Success(None)
 
 
@@ -53,7 +55,7 @@ class _StaticRichHistory:
         self.episode = episode
         self.calls = 0
 
-    def query(self, **filters):  # noqa: ANN003, ANN201
+    def query(self, **filters):  # noqa: ANN003, ANN202
         del filters
         self.calls += 1
         return (self.episode,)
@@ -380,3 +382,122 @@ async def test_conflict_requires_correction_then_preserves_qualified_relations(
     assert contradicts.unwrap()[0].provenance
     assert contradicts.unwrap()[0].policy_outcome == "ALLOW"
     assert contradicts.unwrap()[0].eligible is True
+
+
+@pytest.mark.asyncio
+async def test_retrieval_floor_compares_raw_and_claim_bm25_under_equal_budgets(
+    tmp_path: Path,
+) -> None:
+    text = "Pracuję nad projektem Aurora i porządkuję testy."
+    span = "Pracuję nad projektem Aurora"
+    extractor = SchemaConstrainedMemoryExtractor(
+        _StaticEngine(_extraction_json("turn-eval", span)),  # type: ignore[arg-type]
+        model_name="schema-test-model",
+    )
+    store = SQLiteMemoryGraphStore(tmp_path / "evaluation.sqlite3")
+    service = AssistantService(
+        store=store,
+        backend=DeterministicAssistantBackend(),
+        memory_extractor=extractor,
+    )
+    await service.start()
+    admitted = await service.accept_turn(_turn("turn-eval", text))
+    assert isinstance(admitted, Success)
+    memory_id = admitted.unwrap().admitted_memory_ids[0]
+
+    evaluated = await evaluate_retrieval_floor(
+        store,
+        (
+            RetrievalEvaluationCase(
+                case_id="project-recall",
+                query_text="Co pamiętasz o projekcie Aurora?",
+                relevant_raw_turn_ids=("turn-eval",),
+                relevant_claim_ids=(memory_id,),
+            ),
+        ),
+        retrieval_limit=1,
+        context_character_budget=EVALUATION_CONTEXT_BUDGET,
+    )
+
+    assert isinstance(evaluated, Success)
+    run = evaluated.unwrap()
+    assert run.retrieval_limit == 1
+    assert run.context_character_budget == EVALUATION_CONTEXT_BUDGET
+    assert {item.channel for item in run.measurements} == {
+        "raw_turns_bm25",
+        "claims_bm25",
+    }
+    assert all(item.recall == 1.0 for item in run.measurements)
+    assert all(item.precision == 1.0 for item in run.measurements)
+    assert all(
+        item.context_characters <= EVALUATION_CONTEXT_BUDGET
+        for item in run.measurements
+    )
+    assert all(not item.retrieval_failed for item in run.measurements)
+
+
+@pytest.mark.asyncio
+async def test_retrieval_isolated_by_domain_and_purpose(tmp_path: Path) -> None:
+    text = "Pracuję nad projektem Aurora."
+    span = text[:-1]
+    topic = "claim.project.user.current.project"
+    extractor = SchemaConstrainedMemoryExtractor(
+        _StaticEngine(_extraction_json("turn-domain", span)),  # type: ignore[arg-type]
+        model_name="schema-test-model",
+    )
+    store = SQLiteMemoryGraphStore(tmp_path / "domain.sqlite3")
+    service = AssistantService(
+        store=store,
+        backend=DeterministicAssistantBackend(),
+        memory_extractor=extractor,
+    )
+    await service.start()
+    admitted = await service.accept_turn(_turn("turn-domain", text))
+    assert isinstance(admitted, Success)
+
+    project_query = MemoryQuery(
+        topic=topic,
+        keywords=("Aurora",),
+        raw_text="Co pamiętasz o projekcie Aurora?",
+        domain_scopes=("general", "project"),
+    )
+    personal_query = MemoryQuery(
+        topic=topic,
+        keywords=("Aurora",),
+        raw_text="Co pamiętasz o projekcie Aurora?",
+        domain_scopes=("general", "personal"),
+    )
+    wrong_purpose_query = MemoryQuery(
+        topic=topic,
+        keywords=("Aurora",),
+        raw_text="Co pamiętasz o projekcie Aurora?",
+        domain_scopes=("general", "project"),
+        purpose="analytics",
+    )
+
+    project_memories = await store.retrieve_relevant_memories(query=project_query)
+    personal_memories = await store.retrieve_relevant_memories(query=personal_query)
+    wrong_purpose_memories = await store.retrieve_relevant_memories(
+        query=wrong_purpose_query
+    )
+    project_turns = await store.retrieve_relevant_turns(
+        profile_scope="default",
+        query=project_query,
+        data_classes=(DataClass.LOCAL,),
+    )
+    personal_turns = await store.retrieve_relevant_turns(
+        profile_scope="default",
+        query=personal_query,
+        data_classes=(DataClass.LOCAL,),
+    )
+
+    assert isinstance(project_memories, Success)
+    assert project_memories.unwrap()[0][0].domain_scope == "project"
+    assert isinstance(personal_memories, Success)
+    assert personal_memories.unwrap() == ()
+    assert isinstance(wrong_purpose_memories, Success)
+    assert wrong_purpose_memories.unwrap() == ()
+    assert isinstance(project_turns, Success)
+    assert project_turns.unwrap()[0][0].domain_scope == "project"
+    assert isinstance(personal_turns, Success)
+    assert personal_turns.unwrap() == ()
