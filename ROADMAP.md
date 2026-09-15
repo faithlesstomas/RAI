@@ -291,6 +291,8 @@ Cost controls follow this order:
     capabilities, not the default integration path.
 18. A stage is complete only when its acceptance tests and security failure
     tests pass.
+19. An invalidated, expired or superseded fact cannot be admitted into an active
+    ContextPackage without an explicit historical or temporal provenance flag.
 
 ## Delivery sequence
 
@@ -890,27 +892,64 @@ explicit ConversationTurn or policy-approved proactive trigger
 - [x] Implement a lightweight local reference adapter, initially as a SQLite
   graph projection with stable node, hyperedge and provenance IDs, so tests and
   the default desktop profile require no additional database service.
-- [ ] Benchmark an optional [Neo4j](https://neo4j.com/docs/operations-manual/current/introduction/)
-  adapter on traversal, temporal/provenance queries, deletion propagation,
-  startup, backup, memory footprint and local operational/security cost before
-  choosing it for a production profile.
-- [ ] Prototype an [OpenCog AtomSpace](https://github.com/opencog/atomspace)
-  memory adapter and a separate
-  [Hyperon/MeTTa](https://github.com/trueagi-io/hyperon-experimental)
-  reasoning sidecar. Evaluate typed hypergraph representation, rule/query
-  expression, changing truth values and short-/long-term space overlays. Neither
-  executable atoms nor MeTTa rules run inside the trusted RAI process or bypass
-  its validation and policy boundary.
-- [ ] Evaluate [GraphRAG-style retrieval](https://microsoft.github.io/graphrag/)
-  as a family of indexing and query strategies, not as the memory database
-  itself. Compare bounded neighborhood, temporal, vector, hybrid and
-  community-summary retrieval. Indexing is incremental, budgeted and local by
-  default; all model-generated entities, relations and summaries remain derived
-  claims with provenance.
-- [ ] Record the storage/retrieval choice in an ADR based on representative RAI
-  workloads. SQLite, Neo4j and AtomSpace are replaceable storage candidates;
-  Hyperon/MeTTa is a separate reasoning experiment. None is an automatic runtime
+- [ ] Incorporate a bi-temporal edge model (transactional T' and real-world valid T
+  timelines) and a 3-tier subgraph hierarchy (episodic Ge, semantic entity Gs,
+  and community Gc) directly into the reference `SQLiteMemoryGraphStore`:
+  - Adopt 4 explicit timestamps per edge: t'_created and t'_expired on T' for
+    system audit/invalidation, and t_valid, t_invalid on T for real-world fact validity.
+  - Employ an incremental Label Propagation Algorithm (LPA) rather than full batch
+    re-clustering (Leiden) to maintain dynamic community summaries at O(1) per new node.
+  - Bind extracted facts bidirectionally to source Rich History `Episode` records for
+    lossless provenance and citation.
+- [ ] Benchmark an optional [FalkorDB](https://www.falkordb.com/) /
+  [Graphiti](https://github.com/getzep/graphiti) adapter (`GraphitiMemoryGraphStore`):
+  - Use FalkorDB (in-memory GraphBLAS module over Redis) for high-performance Cypher
+    traversal with a minimal desktop footprint compared to Neo4j.
+  - Bridge Graphiti's internal extraction and conflict resolution through a secure
+    `RAIGraphitiBridgeClient` that enforces the RAI Privacy Firewall (`DROP`/`REDACT`),
+    imposes hard `InferenceBudget` token limits, records usage in the `UsageLedger`,
+    and defaults extraction to a local SLM (`LocalTextEngine`, e.g. Qwen 2.5 3B).
+  - Buffer graph ingestion at consolidated `Episode` boundaries (Stage 3.8) or
+    high-salience turns (Stage 4.2), preventing synchronous per-message LLM extraction.
+- [ ] Implement Multi-Channel Retrieval with strategy-adaptive Weighted Reciprocal Rank
+  Fusion (RRF):
+  - Combine 4 candidate channels: local dense embeddings (`BGE-m3`), lexical FTS5 (BM25),
+    temporal validity window filtering (t_valid <= t_query < t_invalid), and
+    graph traversal / spreading activation (HippoRAG-style personalized PageRank).
+  - Apply an offline local cross-encoder (`bge-reranker-m3`) post-fusion before
+    context package assembly.
+- [ ] Research an [OpenCog AtomSpace](https://github.com/opencog/atomspace) memory adapter
+  and a separate [Hyperon/MeTTa](https://github.com/trueagi-io/hyperon-experimental)
+  reasoning sidecar:
+  - Do not force Cypher/LPG abstractions onto AtomSpace; express bi-temporal validity,
+    hyperedges and contradiction resolution as native MeTTa term-rewriting rules and
+    Probabilistic Logic Networks (PLN) inside the isolated reasoning sidecar.
+  - Ensure symbolic hypergraph evaluation runs outside the trusted RAI daemon and cannot
+    bypass data classification, budgeting or policy gates.
+- [ ] Record the storage, retrieval and reasoning choices in an ADR based on
+  representative RAI workloads. SQLite, FalkorDB and AtomSpace are replaceable storage
+  candidates; Hyperon/MeTTa is a separate reasoning experiment. None is an automatic runtime
   dependency.
+
+Primary memory and temporal graph references:
+
+- Preston Rasmussen, Pavlo Paliychuk, Travis Beauvais, Jack Ryan and Daniel Chalef,
+  [*Zep: A Temporal Knowledge Graph Architecture for Agent Memory*](https://arxiv.org/abs/2501.13956),
+  arXiv:2501.13956, 2025. Introduces bi-temporal validity windows (T, T'), 3-tier
+  subgraphs (Ge, Gs, Gc), incremental community updates via Label Propagation, and
+  parametric Cypher templates.
+- Varun Pratap Bhardwaj, Garima Singh and Arun Pratap Bhardwaj,
+  [*SuperLocalMemory 4.0: The Governed Memory Operating System for AI Agents*](https://arxiv.org/abs/2608.08253),
+  arXiv:2608.08253, 2026. Demonstrates a governed, local-first memory OS over managed SQLite
+  stores, multi-channel RRF retrieval, temporal candidate filtering, and strict falsifiable
+  reliability invariants.
+- Bernal Jiménez Gutiérrez et al.,
+  [*HippoRAG: Neurobiologically Inspired Long-Term Memory for Large Language Models*](https://arxiv.org/abs/2405.14831),
+  arXiv:2405.14831, accepted to NeurIPS 2024. Introduces personalized PageRank (PPR) over
+  knowledge graphs for zero-token multi-hop associative retrieval.
+- Darren Edge et al.,
+  [*From Local to Global: A Graph RAG Approach to Query-Focused Summarization*](https://arxiv.org/abs/2404.16130),
+  arXiv:2404.16130, 2024. Foundational architecture for hierarchical community summarization.
 - [x] Build every context from the current request, selected recent interaction
   records and relevant graph memories; reserve approved Rich History references
   for a later slice. Apply
