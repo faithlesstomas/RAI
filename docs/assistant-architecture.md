@@ -1,7 +1,7 @@
 # Rich Assistant architecture
- 
+
 ## Status and scope
- 
+
 Rich Assistant delivers Stage 4.7 work (Issue #34). The first graph-memory
 vertical slice is implemented in `rai.assistant`, providing transactional SQLite
 graph storage (`SQLiteMemoryGraphStore`), two-phase interaction execution
