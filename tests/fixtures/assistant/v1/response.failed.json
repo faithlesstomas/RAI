@@ -1,0 +1,21 @@
+{
+  "record_type": "assistant_response",
+  "schema_version": "1.0.0",
+  "record_id": "resp-failed-001",
+  "timestamp": "2026-09-14T12:00:05Z",
+  "producer": {
+    "producer_id": "assistant-service",
+    "kind": "service",
+    "version": "1.0.0"
+  },
+  "session_id": "session-test-001",
+  "turn_id": "turn-valid-001",
+  "user_turn_id": "turn-valid-001",
+  "request_id": "req-id-002",
+  "manifest_id": "man-valid-001",
+  "text": "",
+  "status": "FAILED",
+  "error_message": "Inference backend timed out after 10.0s",
+  "admitted_memory_ids": [],
+  "provenance": []
+}

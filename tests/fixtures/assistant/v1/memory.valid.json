@@ -1,0 +1,36 @@
+{
+  "record_type": "memory_record",
+  "schema_version": "1.0.0",
+  "record_id": "mem-valid-001",
+  "timestamp": "2026-09-14T12:00:02Z",
+  "producer": {
+    "producer_id": "assistant-service",
+    "kind": "service",
+    "version": "1.0.0"
+  },
+  "kind": "preference",
+  "topic": "code_examples",
+  "content": {
+    "topic": "code_examples",
+    "preference": "Guile",
+    "raw_statement": "Zapamiętaj, że w przykładach kodu preferuję Guile zamiast Pythona."
+  },
+  "source_turn_id": "turn-valid-001",
+  "data_class": "LOCAL",
+  "profile_scope": "default",
+  "valid_from": "2026-09-14T12:00:02Z",
+  "valid_until": null,
+  "provenance": [
+    {
+      "source_id": "turn-valid-001",
+      "source_type": "conversation_turn",
+      "source_version": "1.0.0",
+      "relation": "DERIVED_FROM",
+      "producer": {
+        "producer_id": "cli-test",
+        "kind": "test",
+        "version": "1.0.0"
+      }
+    }
+  ]
+}
