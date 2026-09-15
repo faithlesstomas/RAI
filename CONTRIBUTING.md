@@ -224,6 +224,11 @@ release channel before invoking `python-semantic-release`. The later tag
 pipeline publishes the prebuilt wheel and source distribution with `glab` via
 the GitLab generic package registry and links them to the existing release. It
 does not invoke branch-aware semantic-release commands from the detached tag.
+The generated `chore(release)` commit and its tag point at the same Git object,
+but GitLab normally treats their branch and tag updates as separate pipeline
+events. Top-level workflow rules suppress only the redundant branch pipeline
+when the commit title and author match the configured semantic-release bot; the
+tag pipeline remains the single post-release pipeline.
 
 The normal process is:
 
@@ -250,11 +255,17 @@ The normal process is:
    releasable Conventional Commit exists. It updates `pyproject.toml`,
    `src/rai/__init__.py` and `CHANGELOG.md`, creates and pushes the release
    commit and tag, and publishes the GitLab release notes. Package building is
-   deliberately skipped in this branch pipeline.
-7. The resulting tag pipeline builds the wheel and source archive exactly once
-   in `build/pypi/`. The automatic `publish_gitlab` job attaches those files to
-   the existing GitLab release; system packages under `dist/` remain outside
-   the Python release flow.
+   deliberately skipped in this branch pipeline. The push of the generated
+   release commit does not create another branch pipeline. A release resource
+   group serializes release jobs for the same branch so concurrent maintainers
+   cannot version one release channel at the same time.
+7. The resulting tag pipeline runs the focused version and release-configuration
+   checks instead of repeating the full Python matrix. It then builds the wheel
+   and source archive exactly once in `build/pypi/`. The automatic
+   `publish_gitlab` job attaches those files to the existing GitLab release;
+   system packages under `dist/` remain outside the Python release flow. A
+   stable tag also rebuilds GitLab Pages from the immutable release commit;
+   alpha tags do not replace the stable documentation site.
 8. Run `publish_testpypi` in that tag pipeline. It consumes the unchanged
    `package` job artifacts. Install that exact candidate in a clean environment
    and verify imports, CLI behavior and project links. The job uses GitLab OIDC

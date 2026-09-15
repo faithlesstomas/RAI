@@ -1,5 +1,11 @@
 image: python:3.11
 
+workflow:
+  rules:
+    - if: '$CI_PIPELINE_SOURCE == "push" && $CI_COMMIT_BRANCH =~ /^(main|alpha)$/ && $CI_COMMIT_AUTHOR =~ /^semantic-release-bot / && $CI_COMMIT_TITLE =~ /^chore\(release\): /'
+      when: never
+    - when: always
+
 stages:
   - lint
   - test
@@ -15,7 +21,12 @@ pages:
   artifacts:
     paths:
       - public
+  needs:
+    - job: package
+    - job: release_verify
+      optional: true
   rules:
+    - if: $CI_COMMIT_TAG =~ /^v\d+\.\d+\.\d+$/
     - if: $CI_COMMIT_BRANCH == "main"
 
 before_script:
@@ -23,6 +34,12 @@ before_script:
   - apt-get install -y libgirepository1.0-dev libcairo2-dev pkg-config python3-dev gir1.2-gtk-3.0
   - pip install uv
   - uv sync --frozen --extra dev --extra docs
+
+.branch_quality_job:
+  rules:
+    - if: $CI_COMMIT_TAG
+      when: never
+    - when: on_success
 
 .release_job:
   stage: release
@@ -48,37 +65,44 @@ release_plan:
 
 release:
   extends: .release_job
+  resource_group: release-$CI_COMMIT_REF_NAME
   script:
     - semantic-release --strict version --skip-build
 
 critical_lint:
+  extends: .branch_quality_job
   stage: lint
   script:
     - uv run pylint -E src/rai
 
 ruff_critical:
+  extends: .branch_quality_job
   stage: lint
   script:
     - uv run ruff check src tests --select E9,F63,F7,F82
 
 ruff_security:
+  extends: .branch_quality_job
   stage: lint
   script:
     - uv run ruff check src --select S
 
 ruff:
+  extends: .branch_quality_job
   stage: lint
   script:
     - uv run ruff check .
   allow_failure: true
 
 pylint:
+  extends: .branch_quality_job
   stage: lint
   script:
     - uv run pylint src
   allow_failure: true
 
 test:
+  extends: .branch_quality_job
   stage: test
   image: python:${PYTHON_VERSION}
   parallel:
@@ -86,6 +110,13 @@ test:
       - PYTHON_VERSION: ["3.10", "3.11", "3.12", "3.13", "3.14"]
   script:
     - uv run pytest --timeout=30 --cov=src/rai --cov-report=term
+
+release_verify:
+  stage: test
+  script:
+    - uv run pytest --timeout=30 tests/test_version.py tests/test_release_configuration.py
+  rules:
+    - if: $CI_COMMIT_TAG =~ /^v\d+\.\d+\.\d+((a|b|rc)\d+|-(alpha|beta|rc)\.\d+)?$/
 
 package:
   stage: build
@@ -103,6 +134,11 @@ package:
     paths:
       - build/pypi/
     expire_in: 30 days
+  rules:
+    - if: $CI_COMMIT_TAG =~ /^v\d+\.\d+\.\d+((a|b|rc)\d+|-(alpha|beta|rc)\.\d+)?$/
+    - if: $CI_COMMIT_TAG
+      when: never
+    - when: on_success
 
 publish_gitlab:
   stage: release

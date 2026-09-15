@@ -1,5 +1,6 @@
 """Distribution identity and version consistency tests."""
 
+import os
 from importlib.metadata import entry_points, requires, version
 from importlib.resources import files
 from pathlib import Path
@@ -14,6 +15,7 @@ from packaging.utils import canonicalize_name
 from packaging.version import Version
 
 from click.testing import CliRunner
+import pytest
 
 from rai import __version__
 from rai.cli import cli
@@ -23,6 +25,16 @@ def test_distribution_and_runtime_versions_match() -> None:
     """Installed metadata and the importable package expose one version."""
     # Build frontends normalize SemVer's ``-alpha.1`` to PEP 440's ``a1``.
     assert Version(version("rich-ai")) == Version(__version__)
+
+
+@pytest.mark.skipif("CI_COMMIT_TAG" not in os.environ, reason="requires a GitLab tag pipeline")
+def test_release_tag_matches_canonical_project_version() -> None:
+    """A release pipeline must build the version named by its immutable tag."""
+    with Path("pyproject.toml").open("rb") as stream:
+        project_version = tomllib.load(stream)["project"]["version"]
+
+    assert os.environ["CI_COMMIT_TAG"] == f"v{project_version}"
+    assert Version(project_version) == Version(__version__)
 
 
 def test_distribution_does_not_depend_on_foreign_rai_package() -> None:
