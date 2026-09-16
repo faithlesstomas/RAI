@@ -8,8 +8,10 @@ import json
 import logging
 import os
 from pathlib import Path
+import re
 import sqlite3
 from typing import Any
+import unicodedata
 
 from returns.result import Failure, Result, Success
 
@@ -24,11 +26,15 @@ from rai.kernel.records import (
 )
 from rai.paths import data_dir
 
-from .ports import MemoryGraphStore, MemoryQuery
+from .ports import AssistantSessionSummary, MemoryGraphStore, MemoryQuery
+from .query import domain_scope_matches, restrictive_domain_scopes
 from .records import (
     AssistantContextManifest,
+    AssistantContextPackage,
     AssistantResponse,
     ConversationTurn,
+    MemoryOperation,
+    MemoryOperationKind,
     MemoryRecord,
     MemoryRelation,
     MemoryRelationKind,
@@ -44,6 +50,129 @@ def _to_data_class_str(dc: DataClass | str) -> str:
 
 def _to_relation_kind_str(rk: MemoryRelationKind | str) -> str:
     return rk.value if isinstance(rk, MemoryRelationKind) else str(rk)
+
+
+def _searchable_text(value: str) -> str:
+    return (
+        unicodedata.normalize("NFKD", value)
+        .encode("ascii", "ignore")
+        .decode()
+        .casefold()
+    )
+
+
+def _fts_query(terms: tuple[str, ...]) -> str:
+    """Build a bounded FTS5 OR query from resolver-produced lexical terms."""
+    tokens = tuple(
+        dict.fromkeys(
+            token
+            for term in terms
+            for token in re.findall(r"[a-z0-9]+", _searchable_text(term))
+            if token
+        )
+    )
+    return " OR ".join(f'"{token}"' for token in tokens[:16])
+
+
+def _domain_sql_filter(
+    column: str, query_scopes: tuple[str, ...]
+) -> tuple[str, tuple[str, ...]]:
+    """Build a bounded SQL prefilter equivalent to domain_scope_matches()."""
+    restrictive = restrictive_domain_scopes(query_scopes)
+    if not restrictive:
+        return "", ()
+
+    exact = {"general"}
+    descendant_patterns: set[str] = set()
+    for scope in restrictive:
+        parts = scope.split(":")
+        exact.update(":".join(parts[:index]) for index in range(1, len(parts) + 1))
+        descendant_patterns.add(f"{scope}:%")
+    exact.update(
+        scope
+        for scope in query_scopes
+        if scope in {"conversation", "activity"}
+    )
+    ordered_exact = tuple(sorted(exact))
+    ordered_patterns = tuple(sorted(descendant_patterns))
+    clauses = []
+    params: list[str] = []
+    if ordered_exact:
+        placeholders = ",".join("?" for _ in ordered_exact)
+        clauses.append(f"{column} IN ({placeholders})")
+        params.extend(ordered_exact)
+    clauses.extend(f"{column} LIKE ?" for _ in ordered_patterns)
+    params.extend(ordered_patterns)
+    return f" AND ({' OR '.join(clauses)}) ", tuple(params)
+
+
+def _relation_metadata(relation: MemoryRelation) -> dict[str, Any]:
+    """Persist relation qualifiers inside its inspectable metadata payload."""
+    return {
+        **relation.metadata,
+        "confidence": relation.confidence,
+        "epistemic_status": relation.epistemic_status,
+        "provenance": [item.model_dump(mode="json") for item in relation.provenance],
+        "policy_outcome": str(relation.policy_outcome),
+        "eligible": relation.eligible,
+    }
+
+
+def _semantic_memory_content(content: dict[str, Any]) -> str:
+    keys = ("subject", "predicate", "value", "preference", "plan", "fact", "attribute")
+    semantic = {key: content[key] for key in keys if key in content}
+    return json.dumps(semantic or content, sort_keys=True, ensure_ascii=False)
+
+
+def _memory_from_row(row: sqlite3.Row) -> MemoryRecord:
+    provenance = tuple(
+        ProvenanceReference.model_validate(item)
+        for item in json.loads(row["provenance_json"])
+    )
+    return MemoryRecord(
+        record_id=row["memory_id"],
+        timestamp=datetime.fromisoformat(row["created_at"]),
+        producer=ProducerIdentity.model_validate_json(row["producer_json"]),
+        kind=row["kind"],
+        topic=row["topic"],
+        content=json.loads(row["content_json"]),
+        source_turn_id=row["source_turn_id"],
+        source_type=row["source_type"],
+        data_class=DataClass(row["data_class"]),
+        profile_scope=row["profile_scope"],
+        domain_scope=row["domain_scope"],
+        purpose=row["purpose"],
+        epistemic_status=row["epistemic_status"],
+        valid_from=datetime.fromisoformat(row["valid_from"]),
+        valid_until=(
+            datetime.fromisoformat(row["valid_until"]) if row["valid_until"] else None
+        ),
+        recorded_at=datetime.fromisoformat(row["recorded_at"]),
+        expired_at=(
+            datetime.fromisoformat(row["expired_at"]) if row["expired_at"] else None
+        ),
+        provenance=provenance,
+        correlation_id=row["correlation_id"],
+    )
+
+
+def _turn_from_row(row: sqlite3.Row) -> ConversationTurn:
+    """Restore one immutable turn from its SQLite representation."""
+    return ConversationTurn(
+        record_id=row["turn_id"],
+        timestamp=datetime.fromisoformat(row["timestamp"]),
+        producer=ProducerIdentity.model_validate_json(row["producer_json"]),
+        session_id=row["session_id"],
+        role=row["role"],
+        text=row["text"],
+        reply_to_turn_id=row["reply_to_turn_id"],
+        data_class=DataClass(row["data_class"]),
+        domain_scope=row["domain_scope"],
+        purpose=row["purpose"],
+        status=row["status"],
+        correlation_id=row["correlation_id"],
+        metadata=json.loads(row["metadata_json"] or "{}"),
+    )
 
 
 class SQLiteMemoryGraphStore:
@@ -101,6 +230,8 @@ class SQLiteMemoryGraphStore:
                     timestamp TEXT NOT NULL,
                     producer_json TEXT NOT NULL,
                     correlation_id TEXT,
+                    domain_scope TEXT NOT NULL DEFAULT 'general',
+                    purpose TEXT NOT NULL DEFAULT 'assistant',
                     metadata_json TEXT
                 );
                 """
@@ -113,10 +244,16 @@ class SQLiteMemoryGraphStore:
                     topic TEXT NOT NULL,
                     content_json TEXT NOT NULL,
                     source_turn_id TEXT REFERENCES nodes(node_id) ON DELETE SET NULL,
+                    source_type TEXT NOT NULL DEFAULT 'conversation_turn',
                     data_class TEXT NOT NULL,
                     profile_scope TEXT NOT NULL,
+                    domain_scope TEXT NOT NULL DEFAULT 'general',
+                    purpose TEXT NOT NULL DEFAULT 'assistant',
+                    epistemic_status TEXT NOT NULL DEFAULT 'asserted',
                     valid_from TEXT NOT NULL,
                     valid_until TEXT,
+                    recorded_at TEXT NOT NULL,
+                    expired_at TEXT,
                     created_at TEXT NOT NULL,
                     producer_json TEXT NOT NULL,
                     correlation_id TEXT,
@@ -182,10 +319,134 @@ class SQLiteMemoryGraphStore:
                     session_id TEXT NOT NULL,
                     turn_id TEXT NOT NULL REFERENCES nodes(node_id) ON DELETE CASCADE,
                     manifest_json TEXT NOT NULL,
+                    created_at TEXT NOT NULL,
+                    context_json TEXT
+                );
+                """
+            )
+            conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS memory_operations (
+                    operation_id TEXT PRIMARY KEY,
+                    profile_scope TEXT NOT NULL,
+                    operation TEXT NOT NULL,
+                    status TEXT NOT NULL,
+                    trigger_id TEXT NOT NULL,
+                    operation_json TEXT NOT NULL,
                     created_at TEXT NOT NULL
                 );
                 """
             )
+            conn.execute(
+                """
+                CREATE VIRTUAL TABLE IF NOT EXISTS turns_fts USING fts5(
+                    turn_id UNINDEXED,
+                    profile_scope UNINDEXED,
+                    text,
+                    tokenize = 'unicode61 remove_diacritics 2'
+                );
+                """
+            )
+            conn.execute(
+                """
+                CREATE VIRTUAL TABLE IF NOT EXISTS memories_fts USING fts5(
+                    memory_id UNINDEXED,
+                    profile_scope UNINDEXED,
+                    kind UNINDEXED,
+                    topic,
+                    content,
+                    tokenize = 'unicode61 remove_diacritics 2'
+                );
+                """
+            )
+            conn.execute(
+                """
+                INSERT INTO turns_fts (turn_id, profile_scope, text)
+                SELECT t.turn_id,
+                       COALESCE(json_extract(t.metadata_json, '$.profile_scope'), 'default'),
+                       t.text
+                FROM turns AS t
+                WHERE t.role = 'user' AND t.status = 'COMPLETED'
+                  AND NOT EXISTS (
+                    SELECT 1 FROM turns_fts AS f WHERE f.turn_id = t.turn_id
+                  )
+                """
+            )
+            conn.execute(
+                """
+                INSERT INTO memories_fts (
+                    memory_id, profile_scope, kind, topic, content
+                )
+                SELECT m.memory_id, m.profile_scope, m.kind, m.topic, m.content_json
+                FROM memories AS m
+                WHERE NOT EXISTS (
+                    SELECT 1 FROM memories_fts AS f
+                    WHERE f.memory_id = m.memory_id
+                )
+                """
+            )
+            conn.execute(
+                """
+                CREATE INDEX IF NOT EXISTS ix_memory_operations_profile_time
+                ON memory_operations(profile_scope, created_at, operation_id);
+                """
+            )
+            response_columns = {
+                str(row[1]) for row in conn.execute("PRAGMA table_info(responses)")
+            }
+            if "memory_operations_json" not in response_columns:
+                conn.execute(
+                    "ALTER TABLE responses ADD COLUMN memory_operations_json "
+                    "TEXT NOT NULL DEFAULT '[]'"
+                )
+            manifest_columns = {
+                str(row[1]) for row in conn.execute("PRAGMA table_info(manifests)")
+            }
+            if "context_json" not in manifest_columns:
+                conn.execute("ALTER TABLE manifests ADD COLUMN context_json TEXT")
+            turn_columns = {
+                str(row[1]) for row in conn.execute("PRAGMA table_info(turns)")
+            }
+            if "domain_scope" not in turn_columns:
+                conn.execute(
+                    "ALTER TABLE turns ADD COLUMN domain_scope TEXT NOT NULL "
+                    "DEFAULT 'general'"
+                )
+            if "purpose" not in turn_columns:
+                conn.execute(
+                    "ALTER TABLE turns ADD COLUMN purpose TEXT NOT NULL "
+                    "DEFAULT 'assistant'"
+                )
+            memory_columns = {
+                str(row[1]) for row in conn.execute("PRAGMA table_info(memories)")
+            }
+            if "source_type" not in memory_columns:
+                conn.execute(
+                    "ALTER TABLE memories ADD COLUMN source_type TEXT NOT NULL "
+                    "DEFAULT 'conversation_turn'"
+                )
+            if "epistemic_status" not in memory_columns:
+                conn.execute(
+                    "ALTER TABLE memories ADD COLUMN epistemic_status TEXT NOT NULL "
+                    "DEFAULT 'asserted'"
+                )
+            if "domain_scope" not in memory_columns:
+                conn.execute(
+                    "ALTER TABLE memories ADD COLUMN domain_scope TEXT NOT NULL "
+                    "DEFAULT 'general'"
+                )
+            if "purpose" not in memory_columns:
+                conn.execute(
+                    "ALTER TABLE memories ADD COLUMN purpose TEXT NOT NULL "
+                    "DEFAULT 'assistant'"
+                )
+            if "recorded_at" not in memory_columns:
+                conn.execute("ALTER TABLE memories ADD COLUMN recorded_at TEXT")
+                conn.execute(
+                    "UPDATE memories SET recorded_at = created_at WHERE recorded_at IS NULL"
+                )
+            if "expired_at" not in memory_columns:
+                conn.execute("ALTER TABLE memories ADD COLUMN expired_at TEXT")
         self._initialized = True
 
     async def start(self) -> Result[LifecycleState, ActionFailure]:
@@ -251,8 +512,8 @@ class SQLiteMemoryGraphStore:
                     INSERT INTO turns (
                         turn_id, session_id, role, text, reply_to_turn_id,
                         data_class, status, timestamp, producer_json,
-                        correlation_id, metadata_json
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        correlation_id, domain_scope, purpose, metadata_json
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """,
                     (
                         turn.record_id,
@@ -265,9 +526,23 @@ class SQLiteMemoryGraphStore:
                         turn.timestamp.isoformat(),
                         turn.producer.model_dump_json(),
                         turn.correlation_id,
+                        turn.domain_scope,
+                        turn.purpose,
                         json.dumps(turn.metadata),
                     ),
                 )
+                if turn.role == "user" and turn.status == "COMPLETED":
+                    conn.execute(
+                        "DELETE FROM turns_fts WHERE turn_id = ?", (turn.record_id,)
+                    )
+                    conn.execute(
+                        "INSERT INTO turns_fts (turn_id, profile_scope, text) VALUES (?, ?, ?)",
+                        (
+                            turn.record_id,
+                            str(turn.metadata.get("profile_scope", "default")),
+                            turn.text,
+                        ),
+                    )
             return Success(turn)
         except Exception as exc:  # noqa: BLE001
             return Failure(
@@ -280,13 +555,15 @@ class SQLiteMemoryGraphStore:
         finally:
             conn.close()
 
-    async def commit_terminal(
+    async def commit_terminal(  # noqa: PLR0913
         self,
         response: AssistantResponse,
         manifest: AssistantContextManifest,
         assistant_turn: ConversationTurn | None,
         memories: tuple[MemoryRecord, ...],
         relations: tuple[MemoryRelation, ...],
+        operations: tuple[MemoryOperation, ...] = (),
+        context: AssistantContextPackage | None = None,
     ) -> Result[AssistantResponse, ActionFailure]:
         async with self._lock:
             return await asyncio.to_thread(
@@ -296,15 +573,19 @@ class SQLiteMemoryGraphStore:
                 assistant_turn,
                 memories,
                 relations,
+                operations,
+                context,
             )
 
-    def _sync_commit_terminal(
+    def _sync_commit_terminal(  # noqa: PLR0912, PLR0913, PLR0915
         self,
         response: AssistantResponse,
         manifest: AssistantContextManifest,
         assistant_turn: ConversationTurn | None,
         memories: tuple[MemoryRecord, ...],
         relations: tuple[MemoryRelation, ...],
+        operations: tuple[MemoryOperation, ...] = (),
+        context: AssistantContextPackage | None = None,
     ) -> Result[AssistantResponse, ActionFailure]:
         conn = self._connect()
         try:
@@ -318,19 +599,23 @@ class SQLiteMemoryGraphStore:
                 return Success(response)
 
             now_iso = _utc_now().isoformat()
+            recorded_operations = list(operations)
             with conn:
                 if assistant_turn is not None:
                     conn.execute(
                         "INSERT OR IGNORE INTO nodes (node_id, node_type, created_at) VALUES (?, 'turn', ?)",
-                        (assistant_turn.record_id, assistant_turn.timestamp.isoformat()),
+                        (
+                            assistant_turn.record_id,
+                            assistant_turn.timestamp.isoformat(),
+                        ),
                     )
                     conn.execute(
                         """
                         INSERT OR REPLACE INTO turns (
                             turn_id, session_id, role, text, reply_to_turn_id,
                             data_class, status, timestamp, producer_json,
-                            correlation_id, metadata_json
-                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                            correlation_id, domain_scope, purpose, metadata_json
+                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                         """,
                         (
                             assistant_turn.record_id,
@@ -343,6 +628,8 @@ class SQLiteMemoryGraphStore:
                             assistant_turn.timestamp.isoformat(),
                             assistant_turn.producer.model_dump_json(),
                             assistant_turn.correlation_id,
+                            assistant_turn.domain_scope,
+                            assistant_turn.purpose,
                             json.dumps(assistant_turn.metadata),
                         ),
                     )
@@ -350,8 +637,9 @@ class SQLiteMemoryGraphStore:
                 conn.execute(
                     """
                     INSERT OR REPLACE INTO manifests (
-                        manifest_id, session_id, turn_id, manifest_json, created_at
-                    ) VALUES (?, ?, ?, ?, ?)
+                        manifest_id, session_id, turn_id, manifest_json, created_at,
+                        context_json
+                    ) VALUES (?, ?, ?, ?, ?, ?)
                     """,
                     (
                         manifest.record_id,
@@ -359,6 +647,7 @@ class SQLiteMemoryGraphStore:
                         manifest.turn_id,
                         manifest.model_dump_json(),
                         manifest.timestamp.isoformat(),
+                        context.model_dump_json() if context is not None else None,
                     ),
                 )
 
@@ -369,8 +658,11 @@ class SQLiteMemoryGraphStore:
                     )
                     cur.execute(
                         """
-                        SELECT memory_id FROM memory_lifecycle
-                        WHERE profile_scope = ? AND kind = ? AND topic = ? AND status = 'ACTIVE'
+                        SELECT l.memory_id, m.content_json
+                        FROM memory_lifecycle AS l
+                        JOIN memories AS m ON m.memory_id = l.memory_id
+                        WHERE l.profile_scope = ? AND l.kind = ? AND l.topic = ?
+                          AND l.status = 'ACTIVE'
                         """,
                         (memory.profile_scope, memory.kind, memory.topic),
                     )
@@ -387,6 +679,10 @@ class SQLiteMemoryGraphStore:
                             (memory.record_id, now_iso, supersedes_id),
                         )
                         conn.execute(
+                            "UPDATE memories SET expired_at = ? WHERE memory_id = ?",
+                            (now_iso, supersedes_id),
+                        )
+                        conn.execute(
                             """
                             INSERT OR REPLACE INTO relations (
                                 relation_id, source_id, target_id, kind, created_at, metadata_json
@@ -398,16 +694,93 @@ class SQLiteMemoryGraphStore:
                                 supersedes_id,
                                 MemoryRelationKind.SUPERSEDES.value,
                                 now_iso,
-                                json.dumps({}),
+                                json.dumps(
+                                    {
+                                        "confidence": memory.content.get(
+                                            "confidence", 1.0
+                                        ),
+                                        "epistemic_status": memory.epistemic_status,
+                                        "provenance": [
+                                            item.model_dump(mode="json")
+                                            for item in memory.provenance
+                                        ],
+                                        "policy_outcome": "ALLOW",
+                                        "eligible": True,
+                                    }
+                                ),
                             ),
                         )
+                        previous_content = json.loads(active_row["content_json"])
+                        if _semantic_memory_content(
+                            previous_content
+                        ) != _semantic_memory_content(memory.content):
+                            conn.execute(
+                                """
+                                INSERT OR REPLACE INTO relations (
+                                    relation_id, source_id, target_id, kind,
+                                    created_at, metadata_json
+                                ) VALUES (?, ?, ?, ?, ?, ?)
+                                """,
+                                (
+                                    _new_id(),
+                                    memory.record_id,
+                                    supersedes_id,
+                                    MemoryRelationKind.CONTRADICTS.value,
+                                    now_iso,
+                                    json.dumps(
+                                        {
+                                            "confidence": memory.content.get(
+                                                "confidence", 1.0
+                                            ),
+                                            "epistemic_status": "contested",
+                                            "provenance": [
+                                                item.model_dump(mode="json")
+                                                for item in memory.provenance
+                                            ],
+                                            "policy_outcome": "ALLOW",
+                                            "eligible": True,
+                                        }
+                                    ),
+                                ),
+                            )
+                        if memory.content.get("statement_type") == "correction":
+                            conn.execute(
+                                """
+                                INSERT OR REPLACE INTO relations (
+                                    relation_id, source_id, target_id, kind,
+                                    created_at, metadata_json
+                                ) VALUES (?, ?, ?, ?, ?, ?)
+                                """,
+                                (
+                                    _new_id(),
+                                    memory.record_id,
+                                    supersedes_id,
+                                    MemoryRelationKind.UPDATES.value,
+                                    now_iso,
+                                    json.dumps(
+                                        {
+                                            "confidence": memory.content.get(
+                                                "confidence", 1.0
+                                            ),
+                                            "epistemic_status": memory.epistemic_status,
+                                            "provenance": [
+                                                item.model_dump(mode="json")
+                                                for item in memory.provenance
+                                            ],
+                                            "policy_outcome": "ALLOW",
+                                            "eligible": True,
+                                        }
+                                    ),
+                                ),
+                            )
                     conn.execute(
                         """
                         INSERT OR REPLACE INTO memories (
-                            memory_id, kind, topic, content_json, source_turn_id,
-                            data_class, profile_scope, valid_from, valid_until,
+                            memory_id, kind, topic, content_json, source_turn_id, source_type,
+                            data_class, profile_scope, domain_scope, purpose, epistemic_status,
+                            valid_from, valid_until, recorded_at, expired_at,
                             created_at, producer_json, correlation_id, provenance_json
-                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                         """,
                         (
                             memory.record_id,
@@ -415,16 +788,84 @@ class SQLiteMemoryGraphStore:
                             memory.topic,
                             json.dumps(memory.content),
                             memory.source_turn_id,
+                            memory.source_type,
                             _to_data_class_str(memory.data_class),
                             memory.profile_scope,
+                            memory.domain_scope,
+                            memory.purpose,
+                            memory.epistemic_status,
                             memory.valid_from.isoformat(),
-                            memory.valid_until.isoformat() if memory.valid_until else None,
+                            memory.valid_until.isoformat()
+                            if memory.valid_until
+                            else None,
+                            now_iso,
+                            None,
                             memory.timestamp.isoformat(),
                             memory.producer.model_dump_json(),
                             memory.correlation_id,
-                            json.dumps([p.model_dump(mode="json") for p in memory.provenance]),
+                            json.dumps(
+                                [p.model_dump(mode="json") for p in memory.provenance]
+                            ),
                         ),
                     )
+                    conn.execute(
+                        "DELETE FROM memories_fts WHERE memory_id = ?",
+                        (memory.record_id,),
+                    )
+                    conn.execute(
+                        """
+                        INSERT INTO memories_fts (
+                            memory_id, profile_scope, kind, topic, content
+                        ) VALUES (?, ?, ?, ?, ?)
+                        """,
+                        (
+                            memory.record_id,
+                            memory.profile_scope,
+                            memory.kind,
+                            memory.topic,
+                            json.dumps(memory.content, ensure_ascii=False),
+                        ),
+                    )
+
+                    if not any(
+                        memory.record_id in operation.result_memory_ids
+                        for operation in recorded_operations
+                    ):
+                        before = (supersedes_id,) if supersedes_id else ()
+                        recorded_operations.append(
+                            MemoryOperation(
+                                record_id=_new_id(),
+                                timestamp=_utc_now(),
+                                producer=ProducerIdentity(
+                                    producer_id="assistant-store",
+                                    kind="store",
+                                    version="1.0.0",
+                                ),
+                                operation=(
+                                    MemoryOperationKind.SUPERSEDE
+                                    if supersedes_id
+                                    else MemoryOperationKind.REMEMBER
+                                ),
+                                trigger="conversation_turn",
+                                trigger_id=response.user_turn_id,
+                                profile_scope=memory.profile_scope,
+                                target_memory_ids=before,
+                                result_memory_ids=(memory.record_id,),
+                                active_memory_ids_before=before,
+                                active_memory_ids_after=(memory.record_id,),
+                                preconditions=("source_turn_exists", "policy_allowed"),
+                                policy_outcome="ALLOW",
+                                status="APPLIED",
+                                stage="UPDATE" if supersedes_id else "STORAGE",
+                                evidence=memory.provenance,
+                                proposal_id=memory.content.get("proposal_id"),
+                                source_span=memory.content.get("source_span"),
+                                span_start=memory.content.get("span_start"),
+                                span_end=memory.content.get("span_end"),
+                                modality=memory.content.get("modality"),
+                                confidence=memory.content.get("confidence"),
+                            )
+                        )
                     conn.execute(
                         """
                         INSERT OR REPLACE INTO memory_lifecycle (
@@ -454,7 +895,18 @@ class SQLiteMemoryGraphStore:
                             memory.source_turn_id,
                             MemoryRelationKind.DERIVED_FROM.value,
                             now_iso,
-                            json.dumps({}),
+                            json.dumps(
+                                {
+                                    "confidence": memory.content.get("confidence", 1.0),
+                                    "epistemic_status": memory.epistemic_status,
+                                    "provenance": [
+                                        item.model_dump(mode="json")
+                                        for item in memory.provenance
+                                    ],
+                                    "policy_outcome": "ALLOW",
+                                    "eligible": True,
+                                }
+                            ),
                         ),
                     )
 
@@ -471,7 +923,47 @@ class SQLiteMemoryGraphStore:
                             relation.target_id,
                             _to_relation_kind_str(relation.kind),
                             relation.created_at.isoformat(),
-                            json.dumps(relation.metadata),
+                            json.dumps(_relation_metadata(relation)),
+                        ),
+                    )
+
+                for operation in recorded_operations:
+                    if (
+                        operation.operation == MemoryOperationKind.FORGET.value
+                        and operation.status == "APPLIED"
+                    ):
+                        for memory_id in operation.target_memory_ids:
+                            conn.execute(
+                                """
+                                UPDATE memory_lifecycle
+                                SET status = 'DELETED', updated_at = ?
+                                WHERE memory_id = ? AND profile_scope = ? AND status = 'ACTIVE'
+                                """,
+                                (now_iso, memory_id, operation.profile_scope),
+                            )
+                            conn.execute(
+                                "UPDATE memories SET expired_at = ? WHERE memory_id = ?",
+                                (now_iso, memory_id),
+                            )
+                            conn.execute(
+                                "DELETE FROM memories_fts WHERE memory_id = ?",
+                                (memory_id,),
+                            )
+                    conn.execute(
+                        """
+                        INSERT OR IGNORE INTO memory_operations (
+                            operation_id, profile_scope, operation, status,
+                            trigger_id, operation_json, created_at
+                        ) VALUES (?, ?, ?, ?, ?, ?, ?)
+                        """,
+                        (
+                            operation.record_id,
+                            operation.profile_scope,
+                            str(operation.operation),
+                            operation.status,
+                            operation.trigger_id,
+                            operation.model_dump_json(),
+                            operation.timestamp.isoformat(),
                         ),
                     )
 
@@ -479,33 +971,64 @@ class SQLiteMemoryGraphStore:
                     "UPDATE turns SET status = ? WHERE turn_id = ?",
                     (response.status, response.user_turn_id),
                 )
+                if response.status == "COMPLETED":
+                    conn.execute(
+                        "DELETE FROM turns_fts WHERE turn_id = ?",
+                        (response.user_turn_id,),
+                    )
+                    conn.execute(
+                        """
+                        INSERT INTO turns_fts (turn_id, profile_scope, text)
+                        SELECT turn_id,
+                               COALESCE(json_extract(metadata_json, '$.profile_scope'), 'default'),
+                               text
+                        FROM turns
+                        WHERE turn_id = ? AND role = 'user'
+                        """,
+                        (response.user_turn_id,),
+                    )
 
+                response_to_store = response.model_copy(
+                    update={
+                        "memory_operation_ids": tuple(
+                            operation.record_id for operation in recorded_operations
+                        )
+                    }
+                )
                 conn.execute(
                     """
                     INSERT OR REPLACE INTO responses (
                         response_id, request_id, session_id, user_turn_id,
                         assistant_turn_id, manifest_id, status, text,
                         error_message, admitted_memories_json, provenance_json,
-                        created_at
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        created_at, memory_operations_json
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """,
                     (
-                        response.record_id,
-                        response.request_id,
-                        response.session_id,
-                        response.user_turn_id,
-                        assistant_turn.record_id if assistant_turn is not None else None,
+                        response_to_store.record_id,
+                        response_to_store.request_id,
+                        response_to_store.session_id,
+                        response_to_store.user_turn_id,
+                        assistant_turn.record_id
+                        if assistant_turn is not None
+                        else None,
                         manifest.record_id,
-                        response.status,
-                        response.text,
-                        response.error_message,
-                        json.dumps(list(response.admitted_memory_ids)),
-                        json.dumps([p.model_dump(mode="json") for p in response.provenance]),
-                        response.timestamp.isoformat(),
+                        response_to_store.status,
+                        response_to_store.text,
+                        response_to_store.error_message,
+                        json.dumps(list(response_to_store.admitted_memory_ids)),
+                        json.dumps(
+                            [
+                                p.model_dump(mode="json")
+                                for p in response_to_store.provenance
+                            ]
+                        ),
+                        response_to_store.timestamp.isoformat(),
+                        json.dumps(list(response_to_store.memory_operation_ids)),
                     ),
                 )
 
-            return Success(response)
+            return Success(response_to_store)
         except Exception as exc:  # noqa: BLE001
             logger.exception("commit_terminal failed")
             return Failure(
@@ -536,6 +1059,7 @@ class SQLiteMemoryGraphStore:
             if row is None:
                 return Success(None)
             admitted = tuple(json.loads(row["admitted_memories_json"]))
+            operation_ids = tuple(json.loads(row["memory_operations_json"] or "[]"))
             prov_raw = json.loads(row["provenance_json"])
             provenance = tuple(ProvenanceReference.model_validate(p) for p in prov_raw)
             resp = AssistantResponse(
@@ -553,6 +1077,7 @@ class SQLiteMemoryGraphStore:
                 status=row["status"],
                 error_message=row["error_message"],
                 admitted_memory_ids=admitted,
+                memory_operation_ids=operation_ids,
                 provenance=provenance,
             )
             return Success(resp)
@@ -602,6 +1127,77 @@ class SQLiteMemoryGraphStore:
         finally:
             conn.close()
 
+    async def get_context_package(
+        self, manifest_id: str
+    ) -> Result[AssistantContextPackage | None, ActionFailure]:
+        async with self._lock:
+            return await asyncio.to_thread(self._sync_get_context_package, manifest_id)
+
+    def _sync_get_context_package(
+        self, manifest_id: str
+    ) -> Result[AssistantContextPackage | None, ActionFailure]:
+        conn = self._connect()
+        try:
+            self._init_db(conn)
+            row = conn.execute(
+                "SELECT context_json FROM manifests WHERE manifest_id = ?",
+                (manifest_id,),
+            ).fetchone()
+            if row is None or not row["context_json"]:
+                return Success(None)
+            return Success(
+                AssistantContextPackage.model_validate_json(row["context_json"])
+            )
+        except Exception as exc:  # noqa: BLE001
+            return Failure(
+                make_assistant_failure(
+                    code="GET_CONTEXT_PACKAGE_FAILED",
+                    message=str(exc),
+                    request_id=manifest_id,
+                )
+            )
+        finally:
+            conn.close()
+
+    async def get_latest_manifest_for_session(
+        self, session_id: str
+    ) -> Result[AssistantContextManifest | None, ActionFailure]:
+        async with self._lock:
+            return await asyncio.to_thread(
+                self._sync_get_latest_manifest_for_session, session_id
+            )
+
+    def _sync_get_latest_manifest_for_session(
+        self, session_id: str
+    ) -> Result[AssistantContextManifest | None, ActionFailure]:
+        conn = self._connect()
+        try:
+            self._init_db(conn)
+            row = conn.execute(
+                """
+                SELECT manifest_json FROM manifests
+                WHERE session_id = ?
+                ORDER BY created_at DESC, manifest_id DESC
+                LIMIT 1
+                """,
+                (session_id,),
+            ).fetchone()
+            if row is None:
+                return Success(None)
+            return Success(
+                AssistantContextManifest.model_validate_json(row["manifest_json"])
+            )
+        except Exception as exc:  # noqa: BLE001
+            return Failure(
+                make_assistant_failure(
+                    code="GET_LATEST_MANIFEST_FAILED",
+                    message=str(exc),
+                    request_id=session_id,
+                )
+            )
+        finally:
+            conn.close()
+
     async def get_turn(
         self, turn_id: str
     ) -> Result[ConversationTurn | None, ActionFailure]:
@@ -619,28 +1215,48 @@ class SQLiteMemoryGraphStore:
             row = cur.fetchone()
             if row is None:
                 return Success(None)
-            producer = ProducerIdentity.model_validate_json(row["producer_json"])
-            metadata = json.loads(row["metadata_json"] or "{}")
-            turn = ConversationTurn(
-                record_id=row["turn_id"],
-                timestamp=datetime.fromisoformat(row["timestamp"]),
-                producer=producer,
-                session_id=row["session_id"],
-                role=row["role"],
-                text=row["text"],
-                reply_to_turn_id=row["reply_to_turn_id"],
-                data_class=DataClass(row["data_class"]),
-                status=row["status"],
-                correlation_id=row["correlation_id"],
-                metadata=metadata,
-            )
-            return Success(turn)
+            return Success(_turn_from_row(row))
         except Exception as exc:  # noqa: BLE001
             return Failure(
                 make_assistant_failure(
                     code="GET_TURN_FAILED",
                     message=str(exc),
                     request_id=turn_id,
+                )
+            )
+        finally:
+            conn.close()
+
+    async def get_memory(
+        self, memory_id: str
+    ) -> Result[tuple[MemoryRecord, str] | None, ActionFailure]:
+        async with self._lock:
+            return await asyncio.to_thread(self._sync_get_memory, memory_id)
+
+    def _sync_get_memory(
+        self, memory_id: str
+    ) -> Result[tuple[MemoryRecord, str] | None, ActionFailure]:
+        conn = self._connect()
+        try:
+            self._init_db(conn)
+            row = conn.execute(
+                """
+                SELECT m.*, l.status AS lifecycle_status
+                FROM memories AS m
+                JOIN memory_lifecycle AS l ON l.memory_id = m.memory_id
+                WHERE m.memory_id = ?
+                """,
+                (memory_id,),
+            ).fetchone()
+            if row is None:
+                return Success(None)
+            return Success((_memory_from_row(row), str(row["lifecycle_status"])))
+        except Exception as exc:  # noqa: BLE001
+            return Failure(
+                make_assistant_failure(
+                    code="GET_MEMORY_FAILED",
+                    message=str(exc),
+                    request_id=memory_id,
                 )
             )
         finally:
@@ -682,22 +1298,7 @@ class SQLiteMemoryGraphStore:
             cur.execute(query, params)
             rows = cur.fetchall()
             selected = rows[-limit:] if len(rows) > limit else rows
-            turns = []
-            for row in selected:
-                turn = ConversationTurn(
-                    record_id=row["turn_id"],
-                    timestamp=datetime.fromisoformat(row["timestamp"]),
-                    producer=ProducerIdentity.model_validate_json(row["producer_json"]),
-                    session_id=row["session_id"],
-                    role=row["role"],
-                    text=row["text"],
-                    reply_to_turn_id=row["reply_to_turn_id"],
-                    data_class=DataClass(row["data_class"]),
-                    status=row["status"],
-                    correlation_id=row["correlation_id"],
-                    metadata=json.loads(row["metadata_json"] or "{}"),
-                )
-                turns.append(turn)
+            turns = [_turn_from_row(row) for row in selected]
             return Success(tuple(turns))
         except Exception as exc:  # noqa: BLE001
             return Failure(
@@ -722,7 +1323,7 @@ class SQLiteMemoryGraphStore:
                 self._sync_retrieve_memories, profile_scope, query, data_classes, limit
             )
 
-    def _sync_retrieve_memories(
+    def _sync_retrieve_memories(  # noqa: PLR0912, PLR0915
         self,
         profile_scope: str = "default",
         query: MemoryQuery | None = None,
@@ -735,20 +1336,55 @@ class SQLiteMemoryGraphStore:
             cur = conn.cursor()
             allowed_classes = [_to_data_class_str(dc) for dc in data_classes]
             placeholders = ",".join("?" for _ in allowed_classes)
-            now_iso = datetime.now(timezone.utc).isoformat()
+            now = datetime.now(timezone.utc)
+            transaction_at = query.transaction_at if query else None
+            valid_at = query.valid_at if query else None
+            transaction_iso = (transaction_at or now).isoformat()
+            valid_iso = (valid_at or transaction_at or now).isoformat()
 
+            fts_query = _fts_query(query.keywords if query else ())
+            use_fts = bool(fts_query and not (query and query.topic))
+            select_prefix = (
+                "SELECT m.*, l.status AS lifecycle_status, "
+                "bm25(memories_fts) AS bm25_score "
+                "FROM memories_fts "
+                "JOIN memories m ON m.memory_id = memories_fts.memory_id "
+                if use_fts
+                else "SELECT m.*, l.status AS lifecycle_status, 0.0 AS bm25_score FROM memories m "
+            )
             sql = (
-                "SELECT m.*, l.status AS lifecycle_status "  # noqa: S608
-                "FROM memories m "
-                "JOIN memory_lifecycle l ON m.memory_id = l.memory_id "
-                "WHERE l.status = 'ACTIVE' "
-                "  AND m.profile_scope = ? "
+                select_prefix  # noqa: S608
+                + "JOIN memory_lifecycle l ON m.memory_id = l.memory_id "
+                "WHERE m.profile_scope = ? "
                 f"  AND m.data_class IN ({placeholders}) "
+                "  AND m.recorded_at <= ? "
+                "  AND (m.expired_at IS NULL OR m.expired_at > ?) "
                 "  AND m.valid_from <= ? "
                 "  AND (m.valid_until IS NULL OR m.valid_until > ?) "
-                "ORDER BY m.created_at DESC"
             )
-            params: list[Any] = [profile_scope, *allowed_classes, now_iso, now_iso]
+            params: list[Any] = [
+                profile_scope,
+                *allowed_classes,
+                transaction_iso,
+                transaction_iso,
+                valid_iso,
+                valid_iso,
+            ]
+            if query is not None:
+                if query.domain_scopes:
+                    domain_sql, domain_params = _domain_sql_filter(
+                        "m.domain_scope", query.domain_scopes
+                    )
+                    sql += domain_sql
+                    params.extend(domain_params)
+                sql += " AND m.purpose = ? "
+                params.append(query.purpose)
+            if use_fts:
+                sql += " AND memories_fts MATCH ? AND memories_fts.profile_scope = ? "
+                params.extend((fts_query, profile_scope))
+                sql += " ORDER BY bm25_score ASC, m.created_at DESC"
+            else:
+                sql += " ORDER BY m.created_at DESC"
             cur.execute(sql, params)
             rows = cur.fetchall()
 
@@ -757,31 +1393,12 @@ class SQLiteMemoryGraphStore:
             keywords = query.keywords if query else ()
 
             for row in rows:
-                content = json.loads(row["content_json"])
-                prov_raw = json.loads(row["provenance_json"])
-                provenance = tuple(
-                    ProvenanceReference.model_validate(p) for p in prov_raw
-                )
-                valid_until = (
-                    datetime.fromisoformat(row["valid_until"])
-                    if row["valid_until"]
-                    else None
-                )
-                record = MemoryRecord(
-                    record_id=row["memory_id"],
-                    timestamp=datetime.fromisoformat(row["created_at"]),
-                    producer=ProducerIdentity.model_validate_json(row["producer_json"]),
-                    kind=row["kind"],
-                    topic=row["topic"],
-                    content=content,
-                    source_turn_id=row["source_turn_id"],
-                    data_class=DataClass(row["data_class"]),
-                    profile_scope=row["profile_scope"],
-                    valid_from=datetime.fromisoformat(row["valid_from"]),
-                    valid_until=valid_until,
-                    provenance=provenance,
-                    correlation_id=row["correlation_id"],
-                )
+                record = _memory_from_row(row)
+                if query is not None and not domain_scope_matches(
+                    record.domain_scope, query.domain_scopes
+                ):
+                    continue
+                content = record.content
 
                 score = 0.0
                 reason = "active durable memory"
@@ -790,11 +1407,18 @@ class SQLiteMemoryGraphStore:
                     score = 1.0
                     reason = f"topic exact match: '{record.topic}' (score: 1.0)"
                 elif keywords:
-                    content_str = json.dumps(content).lower()
-                    matched = [kw for kw in keywords if kw.lower() in content_str]
+                    content_str = _searchable_text(
+                        f"{record.topic} {json.dumps(content, ensure_ascii=False)}"
+                    )
+                    matched = [
+                        kw for kw in keywords if _searchable_text(kw) in content_str
+                    ]
                     if matched:
                         score = 0.5 + 0.1 * len(matched)
-                        reason = f"lexical match on {matched} (score: {score:.1f})"
+                        reason = (
+                            f"FTS5/BM25 claim match on {matched} "
+                            f"(bm25: {float(row['bm25_score']):.4f})"
+                        )
 
                 if target_topic is None and not keywords:
                     score = 0.1
@@ -816,6 +1440,188 @@ class SQLiteMemoryGraphStore:
         finally:
             conn.close()
 
+    async def retrieve_relevant_turns(
+        self,
+        profile_scope: str,
+        query: MemoryQuery,
+        data_classes: tuple[DataClass, ...],
+        exclude_turn_ids: tuple[str, ...] = (),
+        limit: int = 5,
+    ) -> Result[tuple[tuple[ConversationTurn, str], ...], ActionFailure]:
+        """Retrieve source turns independently of the durable claim projection."""
+        async with self._lock:
+            return await asyncio.to_thread(
+                self._sync_retrieve_turns,
+                profile_scope,
+                query,
+                data_classes,
+                exclude_turn_ids,
+                limit,
+            )
+
+    def _sync_retrieve_turns(
+        self,
+        profile_scope: str,
+        query: MemoryQuery,
+        data_classes: tuple[DataClass, ...],
+        exclude_turn_ids: tuple[str, ...],
+        limit: int,
+    ) -> Result[tuple[tuple[ConversationTurn, str], ...], ActionFailure]:
+        conn = self._connect()
+        try:
+            self._init_db(conn)
+            allowed_classes = [_to_data_class_str(dc) for dc in data_classes]
+            placeholders = ",".join("?" for _ in allowed_classes)
+            fts_query = _fts_query(query.keywords)
+            excluded = set(exclude_turn_ids)
+            query_terms = tuple(
+                dict.fromkeys(_searchable_text(term) for term in query.keywords if term)
+            )
+            broad_recall = any(
+                marker in _searchable_text(query.raw_text)
+                for marker in (
+                    "co wiesz o mnie",
+                    "co pamietasz",
+                    "what do you know about me",
+                    "what do you remember",
+                )
+            )
+            domain_clause, domain_params = _domain_sql_filter(
+                "t.domain_scope", query.domain_scopes
+            )
+            if fts_query:
+                rows = conn.execute(
+                    (
+                        "SELECT t.*, bm25(turns_fts) AS bm25_score "  # noqa: S608
+                        "FROM turns_fts JOIN turns AS t "
+                        "ON t.turn_id = turns_fts.turn_id "
+                        "WHERE turns_fts MATCH ? AND turns_fts.profile_scope = ? "
+                        "AND t.role = 'user' AND t.status = 'COMPLETED' "
+                        f"AND t.data_class IN ({placeholders}) "
+                        + domain_clause
+                        + "AND t.purpose = ? "
+                        + "ORDER BY bm25_score ASC, t.timestamp DESC LIMIT 200"
+                    ),
+                    (
+                        fts_query,
+                        profile_scope,
+                        *allowed_classes,
+                        *domain_params,
+                        query.purpose,
+                    ),
+                ).fetchall()
+            elif broad_recall:
+                rows = conn.execute(
+                    (
+                        "SELECT t.*, 0.0 AS bm25_score FROM turns AS t "  # noqa: S608
+                        "WHERE t.role = 'user' AND t.status = 'COMPLETED' "
+                        f"AND t.data_class IN ({placeholders}) "
+                        + domain_clause
+                        + "AND t.purpose = ? "
+                        + "ORDER BY t.timestamp DESC LIMIT 200"
+                    ),
+                    (*allowed_classes, *domain_params, query.purpose),
+                ).fetchall()
+            else:
+                rows = []
+            scored: list[tuple[float, ConversationTurn, str]] = []
+            for recency, row in enumerate(rows):
+                turn = _turn_from_row(row)
+                if turn.record_id in excluded:
+                    continue
+                turn_scope = str(
+                    getattr(turn, "metadata", {}).get("profile_scope", "default")
+                )
+                if turn_scope != profile_scope:
+                    continue
+                if not domain_scope_matches(turn.domain_scope, query.domain_scopes):
+                    continue
+                searchable = _searchable_text(turn.text)
+                matched = tuple(term for term in query_terms if term in searchable)
+                if not matched and not broad_recall:
+                    continue
+                lexical = len(matched) / max(1, len(query_terms))
+                bm25_score = float(row["bm25_score"])
+                score = lexical + max(0.0, 0.1 - recency / 10_000)
+                reason = (
+                    "FTS5/BM25 source-turn match on "
+                    f"{list(matched)} (bm25: {bm25_score:.4f})"
+                    if matched
+                    else f"source-turn broad recall (score: {score:.2f})"
+                )
+                scored.append((score, turn, reason))
+            scored.sort(key=lambda item: (item[0], item[1].timestamp), reverse=True)
+            bounded_limit = max(1, min(limit, 50))
+            return Success(
+                tuple((turn, reason) for _, turn, reason in scored[:bounded_limit])
+            )
+        except Exception as exc:  # noqa: BLE001
+            return Failure(
+                make_assistant_failure(
+                    code="RETRIEVE_TURNS_FAILED",
+                    message=str(exc),
+                    request_id=profile_scope,
+                )
+            )
+        finally:
+            conn.close()
+
+    async def list_sessions(
+        self, limit: int = 50
+    ) -> Result[tuple[AssistantSessionSummary, ...], ActionFailure]:
+        async with self._lock:
+            return await asyncio.to_thread(self._sync_list_sessions, limit)
+
+    def _sync_list_sessions(
+        self, limit: int
+    ) -> Result[tuple[AssistantSessionSummary, ...], ActionFailure]:
+        conn = self._connect()
+        try:
+            self._init_db(conn)
+            bounded_limit = max(1, min(limit, 200))
+            rows = conn.execute(
+                """
+                SELECT latest.session_id, summary.started_at, summary.updated_at,
+                       summary.turn_count, latest.role, latest.text
+                FROM turns AS latest
+                JOIN (
+                    SELECT session_id, MIN(timestamp) AS started_at,
+                           MAX(timestamp) AS updated_at, COUNT(*) AS turn_count
+                    FROM turns
+                    WHERE status = 'COMPLETED'
+                    GROUP BY session_id
+                ) AS summary
+                  ON latest.session_id = summary.session_id
+                 AND latest.timestamp = summary.updated_at
+                WHERE latest.status = 'COMPLETED'
+                ORDER BY summary.updated_at DESC, latest.session_id ASC
+                LIMIT ?
+                """,
+                (bounded_limit,),
+            ).fetchall()
+            sessions = tuple(
+                AssistantSessionSummary(
+                    session_id=str(row["session_id"]),
+                    started_at=datetime.fromisoformat(row["started_at"]),
+                    updated_at=datetime.fromisoformat(row["updated_at"]),
+                    turn_count=int(row["turn_count"]),
+                    last_role=str(row["role"]),
+                    preview=str(row["text"])[:160],
+                )
+                for row in rows
+            )
+            return Success(sessions)
+        except Exception as exc:  # noqa: BLE001
+            return Failure(
+                make_assistant_failure(
+                    code="LIST_SESSIONS_FAILED",
+                    message=str(exc),
+                    request_id="sessions",
+                )
+            )
+        finally:
+            conn.close()
+
     async def delete_turn(self, turn_id: str) -> Result[int, ActionFailure]:
         async with self._lock:
             return await asyncio.to_thread(self._sync_delete_turn, turn_id)
@@ -832,19 +1638,78 @@ class SQLiteMemoryGraphStore:
             now_iso = _utc_now().isoformat()
             with conn:
                 cur.execute(
-                    "SELECT memory_id, status FROM memory_lifecycle WHERE memory_id IN (SELECT memory_id FROM memories WHERE source_turn_id = ?)",
+                    "SELECT memory_id, profile_scope, status FROM memory_lifecycle "
+                    "WHERE memory_id IN (SELECT memory_id FROM memories WHERE source_turn_id = ?)",
                     (turn_id,),
                 )
                 derived_memories = cur.fetchall()
+                deleted_by_profile: dict[str, list[str]] = {}
                 for row in derived_memories:
                     mem_id = row["memory_id"]
                     status = row["status"]
-                    if status != "SUPERSEDED":
+                    if status == "ACTIVE":
                         conn.execute(
                             "UPDATE memory_lifecycle SET status = 'DELETED', updated_at = ? WHERE memory_id = ?",
                             (now_iso, mem_id),
                         )
+                        deleted_by_profile.setdefault(
+                            str(row["profile_scope"]), []
+                        ).append(str(mem_id))
 
+                for profile_scope, memory_ids in deleted_by_profile.items():
+                    operation = MemoryOperation(
+                        record_id=_new_id(),
+                        timestamp=_utc_now(),
+                        producer=ProducerIdentity(
+                            producer_id="assistant-store",
+                            kind="store",
+                            version="1.0.0",
+                        ),
+                        operation=MemoryOperationKind.FORGET,
+                        trigger="source_deletion",
+                        trigger_id=turn_id,
+                        profile_scope=profile_scope,
+                        target_memory_ids=tuple(memory_ids),
+                        active_memory_ids_before=tuple(memory_ids),
+                        active_memory_ids_after=(),
+                        preconditions=("source_turn_exists",),
+                        policy_outcome="ALLOW",
+                        status="APPLIED",
+                        stage="DELETION",
+                        reason="source turn deleted",
+                    )
+                    conn.execute(
+                        """
+                        INSERT INTO memory_operations (
+                            operation_id, profile_scope, operation, status,
+                            trigger_id, operation_json, created_at
+                        ) VALUES (?, ?, ?, ?, ?, ?, ?)
+                        """,
+                        (
+                            operation.record_id,
+                            operation.profile_scope,
+                            str(operation.operation),
+                            operation.status,
+                            operation.trigger_id,
+                            operation.model_dump_json(),
+                            now_iso,
+                        ),
+                    )
+
+                # Source deletion is content deletion, not only retrieval invalidation.
+                # The operation log retains opaque IDs and the state transition, while
+                # the source-derived memory payload and graph edges are securely erased.
+                for row in derived_memories:
+                    conn.execute(
+                        "DELETE FROM memories_fts WHERE memory_id = ?",
+                        (str(row["memory_id"]),),
+                    )
+                    conn.execute(
+                        "DELETE FROM nodes WHERE node_id = ?",
+                        (str(row["memory_id"]),),
+                    )
+
+                conn.execute("DELETE FROM turns_fts WHERE turn_id = ?", (turn_id,))
                 conn.execute("DELETE FROM nodes WHERE node_id = ?", (turn_id,))
 
             return Success(1)
@@ -869,6 +1734,92 @@ class SQLiteMemoryGraphStore:
             return await asyncio.to_thread(
                 self._sync_get_relations, source_id, target_id, kind
             )
+
+    async def list_memory_operations(
+        self, profile_scope: str = "default", limit: int = 100
+    ) -> Result[tuple[MemoryOperation, ...], ActionFailure]:
+        """Return the latest operation records in chronological order."""
+        async with self._lock:
+            return await asyncio.to_thread(
+                self._sync_list_memory_operations, profile_scope, limit
+            )
+
+    def _sync_list_memory_operations(
+        self, profile_scope: str, limit: int
+    ) -> Result[tuple[MemoryOperation, ...], ActionFailure]:
+        conn = self._connect()
+        try:
+            self._init_db(conn)
+            bounded_limit = max(1, min(limit, 1000))
+            rows = conn.execute(
+                """
+                SELECT operation_json FROM memory_operations
+                WHERE profile_scope = ?
+                ORDER BY created_at DESC, operation_id DESC
+                LIMIT ?
+                """,
+                (profile_scope, bounded_limit),
+            ).fetchall()
+            operations = tuple(
+                MemoryOperation.model_validate_json(row["operation_json"])
+                for row in reversed(rows)
+            )
+            return Success(operations)
+        except Exception as exc:  # noqa: BLE001
+            return Failure(
+                make_assistant_failure(
+                    code="LIST_MEMORY_OPERATIONS_FAILED",
+                    message=str(exc),
+                    request_id=profile_scope,
+                )
+            )
+        finally:
+            conn.close()
+
+    async def replay_memory_projection(
+        self, profile_scope: str = "default"
+    ) -> Result[tuple[str, ...], ActionFailure]:
+        """Reconstruct active memory IDs exclusively from the operation log."""
+        async with self._lock:
+            return await asyncio.to_thread(
+                self._sync_replay_memory_projection, profile_scope
+            )
+
+    def _sync_replay_memory_projection(
+        self, profile_scope: str
+    ) -> Result[tuple[str, ...], ActionFailure]:
+        conn = self._connect()
+        try:
+            self._init_db(conn)
+            rows = conn.execute(
+                """
+                SELECT operation_json FROM memory_operations
+                WHERE profile_scope = ?
+                ORDER BY created_at ASC, operation_id ASC
+                """,
+                (profile_scope,),
+            ).fetchall()
+            active: dict[str, None] = {}
+            for row in rows:
+                operation = MemoryOperation.model_validate_json(row["operation_json"])
+                if operation.status != "APPLIED":
+                    continue
+                for memory_id in operation.target_memory_ids:
+                    active.pop(memory_id, None)
+                if operation.operation != MemoryOperationKind.FORGET.value:
+                    for memory_id in operation.result_memory_ids:
+                        active[memory_id] = None
+            return Success(tuple(active))
+        except Exception as exc:  # noqa: BLE001
+            return Failure(
+                make_assistant_failure(
+                    code="REPLAY_MEMORY_OPERATIONS_FAILED",
+                    message=str(exc),
+                    request_id=profile_scope,
+                )
+            )
+        finally:
+            conn.close()
 
     def _sync_get_relations(
         self,
@@ -898,17 +1849,28 @@ class SQLiteMemoryGraphStore:
             sql += " ORDER BY created_at ASC"
             cur.execute(sql, params)
             rows = cur.fetchall()
-            relations = [
-                MemoryRelation(
-                    relation_id=row["relation_id"],
-                    source_id=row["source_id"],
-                    target_id=row["target_id"],
-                    kind=MemoryRelationKind(row["kind"]),
-                    created_at=datetime.fromisoformat(row["created_at"]),
-                    metadata=json.loads(row["metadata_json"] or "{}"),
+            relations = []
+            for row in rows:
+                metadata = json.loads(row["metadata_json"] or "{}")
+                provenance = tuple(
+                    ProvenanceReference.model_validate(item)
+                    for item in metadata.pop("provenance", ())
                 )
-                for row in rows
-            ]
+                relations.append(
+                    MemoryRelation(
+                        relation_id=row["relation_id"],
+                        source_id=row["source_id"],
+                        target_id=row["target_id"],
+                        kind=MemoryRelationKind(row["kind"]),
+                        created_at=datetime.fromisoformat(row["created_at"]),
+                        confidence=float(metadata.pop("confidence", 1.0)),
+                        epistemic_status=metadata.pop("epistemic_status", "asserted"),
+                        provenance=provenance,
+                        policy_outcome=metadata.pop("policy_outcome", "ALLOW"),
+                        eligible=bool(metadata.pop("eligible", True)),
+                        metadata=metadata,
+                    )
+                )
             return Success(tuple(relations))
         except Exception as exc:  # noqa: BLE001
             return Failure(

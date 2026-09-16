@@ -1,0 +1,14 @@
+{
+  "record_type": "memory_operation",
+  "schema_version": "1.0.0",
+  "record_id": "memory-operation-invalid-001",
+  "timestamp": "2026-09-15T12:00:00Z",
+  "producer": {
+    "producer_id": "assistant-service",
+    "kind": "service",
+    "version": "1.0.0"
+  },
+  "operation": "REMEMBER",
+  "trigger_id": "turn-valid-001",
+  "profile_scope": "default"
+}

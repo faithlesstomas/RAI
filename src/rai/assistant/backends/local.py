@@ -95,7 +95,7 @@ class LocalAssistantBackend:
         self._state = LifecycleState.STOPPED
         return Success(self._state)
 
-    def _format_prompt(self, request: InferenceRequest) -> str:
+    def _format_prompt(self, request: InferenceRequest) -> str:  # noqa: PLR0912
         """Format an inspectable plain-text prompt bypassing chat template issues."""
         system_text = request.system_instruction or DEFAULT_SYSTEM_INSTRUCTION
         lines = [
@@ -114,6 +114,46 @@ class LocalAssistantBackend:
             for mem in durable_memories:
                 if isinstance(mem, dict):
                     lines.append(f"- {self._format_memory(mem)}")
+            lines.append("")
+
+        episodic_evidence = request.context.content.get("episodic_evidence", [])
+        if isinstance(episodic_evidence, (list, tuple)) and episodic_evidence:
+            lines.append(
+                "Wcześniejsze wypowiedzi użytkownika (materiał źródłowy, niezweryfikowane twierdzenia):"
+            )
+            for item in episodic_evidence:
+                if isinstance(item, dict):
+                    timestamp = str(item.get("timestamp", "unknown time"))
+                    text = str(item.get("text", ""))
+                    lines.append(f"- [{timestamp}] {text}")
+            lines.append("")
+
+        grounded_summaries = request.context.content.get("grounded_summaries", [])
+        if isinstance(grounded_summaries, (list, tuple)) and grounded_summaries:
+            lines.append(
+                "Zwięzłe projekcje pamięci (użyj tylko treści popartej wskazanymi źródłami):"
+            )
+            for item in grounded_summaries:
+                if not isinstance(item, dict):
+                    continue
+                content = item.get("content", {})
+                if isinstance(content, dict):
+                    summary = str(content.get("summary", ""))
+                    source_ids = content.get("source_memory_ids", ())
+                    lines.append(f"- {summary} [źródła: {source_ids}]")
+            lines.append("")
+
+        external_evidence = request.context.content.get("external_evidence", [])
+        if isinstance(external_evidence, (list, tuple)) and external_evidence:
+            lines.append(
+                "Zatwierdzone lokalne źródła zewnętrzne (obserwacje, nie twierdzenia użytkownika):"
+            )
+            for item in external_evidence:
+                if isinstance(item, dict):
+                    source_type = str(item.get("source_type", "local_source"))
+                    timestamp = str(item.get("timestamp", "unknown time"))
+                    content = item.get("content", {})
+                    lines.append(f"- [{source_type}; {timestamp}] {content}")
             lines.append("")
 
         recent_turns = request.context.content.get("recent_turns", [])

@@ -35,6 +35,7 @@ rich-history
 processor-supervisor
 bounded-local-tasks
 assistant-architecture
+assistant-user-mvp
 assistant-live-acceptance
 assistant-memory-roadmap
 assistant-memory-gcas-crosscheck

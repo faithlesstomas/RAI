@@ -2,13 +2,15 @@
 
 ## Status and scope
 
-Rich Assistant delivers Stage 4.7 work (Issue #34). The first graph-memory
-vertical slice is implemented in `rai.assistant`, providing transactional SQLite
+Rich Assistant delivers the Issue #34 graph-memory foundation and the first
+user-facing Issue #35 slice. It provides transactional SQLite
 graph storage (`SQLiteMemoryGraphStore`), two-phase interaction execution
 (`AssistantService`), inspectable context packages with `ContextManifest`,
 and direct local model inference (`LocalAssistantBackend`). The 8-step user-visible
 acceptance scenario passes deterministically offline, and the restart/recall/
 correction path has also been exercised with a pinned TinyLlama GGUF artifact.
+Users can resume and inspect sessions, history, exact context packages, active
+memory, operation traces and stage-specific diagnostics from CLI or API.
 
 The assistant is a continuous, local-first interaction surface with explicit,
 reconstructed context. It may conduct ordinary conversation, answer from RAI
@@ -58,7 +60,9 @@ cancellation, backend failure or invalid output produces one typed terminal
 failure and never commits a generated assistant turn as successful.
 
 The supported text surfaces are `rai assistant ask`, `rai assistant chat`,
-`POST /api/v1/assistant/turn` and `POST /api/v1/assistant/stream`. The default
+`POST /api/v1/assistant/turn`, `POST /api/v1/assistant/stream` and the native
+`/api/v1/assistant/ws` WebSocket. Read APIs expose sessions, turns, active
+memories, exact context packages, operation traces and memory diagnostics. The default
 standalone `rai`/`rai -p` path delegates to the same service. Legacy
 provider-owned `/api/v1/run`, `/api/v1/stream` and `/ws/v1/chat` behavior is
 disabled unless `legacy_chat.enabled` is explicitly set to `true`.
@@ -75,10 +79,13 @@ recent-dialogue window. Cross-session retrieval still passes the current
 client, privacy and data-class policy before a record can enter context.
 
 The durable graph distinguishes interaction records from semantic memory.
-Turn nodes use stable RAI IDs and `REPLIES_TO` edges. The first product slice
-also admits a minimal, separately represented class of explicit user statements
-and preferences. Later slices may add claims, summaries and richer relations
-such as `DERIVED_FROM`, `SUPPORTS`, `CONTRADICTS`, `ABOUT` and `SUPERSEDES`.
+Turn nodes use stable RAI IDs and `REPLIES_TO` edges. The current product slice
+admits separately represented personal, project, system and conversation claims
+from ordinary dialogue; explicit remember/forget requests are optional controls.
+Qualified `DERIVED_FROM`, `SUPPORTS`, `CONTRADICTS`, `UPDATES` and `SUPERSEDES`
+relations retain their evidence. A deterministic grounded-summary projection is
+available only as a rebuildable evaluation channel and is not durable truth or a
+default context route.
 Model output is only a proposal: deterministic policy owns admission,
 correction, expiry and deletion propagation.
 
@@ -146,11 +153,12 @@ to end. A turn-only chat is useful scaffolding but does not satisfy this slice:
    poisoned or superseded retrieval, source deletion and provider-state leakage
    with deterministic tests.
 
-This slice intentionally excludes proactive triggers, tool use, general
-conversation summarization, vector retrieval, external model APIs, Coconut
-recurrence and writable slots. It includes only enough governed semantic-memory
-admission and retrieval to demonstrate that durable graph memory materially
-changes a later answer.
+This slice intentionally excludes proactive triggers, tool use, durable or
+model-written lossy conversation summaries, vector retrieval, external model
+APIs, Coconut recurrence and writable slots. It now includes governed free-form
+candidate extraction, bitemporal claims, FTS5 raw-turn/claim retrieval, Rich
+History evidence and the query-time grounded-summary evaluation baseline, while
+keeping every model output outside the policy boundary.
 
 ## Local operation and observability
 
@@ -167,13 +175,34 @@ guard metadata. Each process reconstructs its prompt from those RAI-owned
 records; no provider conversation ID is resumed. `RAI_DATA_DIR` selects an
 isolated profile for A/B experiments.
 
-The MVP has a bounded deterministic admission and grounding policy for common
-personal facts (name, age and home location), explicit `remember`/`zapamiętaj`
-statements, and Guile/Python code-example preferences. The local model still
-runs for every response, but critical recall questions are answered from the
-selected active memory. RAI records `grounding_override=true` whenever that
-gate replaces model prose. This makes the intervention visible without
-allowing a small model to erase or hallucinate the accepted value.
+The runtime has a bounded deterministic admission and grounding policy for
+common personal facts, preferences, plans and optional explicit controls. A
+separate local schema-constrained extractor can propose arbitrary facts,
+preferences, plans, events, system state, relationships and conversation
+commitments from natural user turns. Quoted, hearsay, hedged and malformed
+candidates are retained as rejected operation evidence rather than silently
+becoming memory. The local model still runs for every response, but critical
+recall questions are answered from selected evidence. RAI records
+`grounding_override=true` whenever that gate replaces model prose.
+
+Context routing keeps recent interaction memory, FTS5/BM25 raw conversational
+evidence, Rich History observations and admitted claims separate. Compact
+memory above the configured sufficiency threshold avoids unnecessary raw
+disclosure; otherwise the router falls back to source evidence. The manifest
+records the route, alternatives, score, fallback, channel source IDs and exact
+budget. Real-world validity and transaction-time intervals support current and
+historical queries without rewriting old claims.
+
+Every attempted mutation has a versioned `MemoryOperation`. Its trace records
+the trigger, proposal/source span, policy outcome, before/after IDs and terminal
+status. Replaying applied operations must equal the active SQLite projection.
+`rai assistant diagnostics` reports extraction, admission, storage, update,
+retrieval and answer-use stages separately. The M4 harness seeds a versioned
+natural-conversation corpus with frozen admitted claims, invokes the same
+`AssistantModelBackend` boundary as the product, and judges required/forbidden
+answer content plus explicit abstention without model self-grading. Aggregates
+retain missing energy and provider-cost measurements as missing rather than
+silently treating them as zero.
 
 `rai`, `rai -p`, `rai assistant ask` and `rai assistant chat` instantiate this
 same service directly and do not require `rai serve`. The assistant HTTP routes

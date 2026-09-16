@@ -35,6 +35,7 @@ class AssistantAuditEntry(BaseModel):
     generation_metadata: dict[str, Any] = Field(default_factory=dict)
     admitted_memories: tuple[str, ...] = ()
     superseded_memories: tuple[str, ...] = ()
+    memory_operations: tuple[str, ...] = ()
 
 
 @runtime_checkable

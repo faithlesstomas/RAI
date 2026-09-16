@@ -108,7 +108,9 @@ async def test_reply_chain_and_limits(store: SQLiteMemoryGraphStore) -> None:
 
 
 @pytest.mark.asyncio
-async def test_supersession_and_neutral_retrieval(store: SQLiteMemoryGraphStore) -> None:
+async def test_supersession_and_neutral_retrieval(
+    store: SQLiteMemoryGraphStore,
+) -> None:
     await store.start()
 
     turn_1 = ConversationTurn(
@@ -155,6 +157,7 @@ async def test_supersession_and_neutral_retrieval(store: SQLiteMemoryGraphStore)
         relations=(),
     )
     assert isinstance(commit_1, Success)
+    historical_cutoff = _utc_now()
 
     # Query 1: Should retrieve Guile with topic exact match
     query = MemoryQuery(topic="code_examples")
@@ -227,6 +230,23 @@ async def test_supersession_and_neutral_retrieval(store: SQLiteMemoryGraphStore)
     rec_2, reason_2 = memories_2[0]
     assert rec_2.content["preference"] == "Python"
 
+    # Bitemporal query: reconstruct what the system knew before the correction.
+    historical = await store.retrieve_relevant_memories(
+        query=MemoryQuery(
+            topic="code_examples",
+            transaction_at=historical_cutoff,
+            valid_at=historical_cutoff,
+        )
+    )
+    assert isinstance(historical, Success)
+    assert [memory.record_id for memory, _ in historical.unwrap()] == ["mem-1"]
+    previous = await store.get_memory("mem-1")
+    assert isinstance(previous, Success)
+    previous_record = previous.unwrap()
+    assert previous_record is not None
+    assert previous_record[0].expired_at is not None
+    assert previous_record[0].recorded_at <= historical_cutoff
+
     # Source turn deletion cascading:
     # Delete turn-source-2 -> mem-2 should be DELETED, but mem-1 MUST NOT be revived!
     del_res = await store.delete_turn("turn-source-2")
@@ -238,10 +258,18 @@ async def test_supersession_and_neutral_retrieval(store: SQLiteMemoryGraphStore)
     assert isinstance(ret_3, Success)
     memories_3 = ret_3.unwrap()
     assert len(memories_3) == 0
+    deleted_memory = await store.get_memory("mem-2")
+    assert isinstance(deleted_memory, Success)
+    assert deleted_memory.unwrap() is None
+    replayed = await store.replay_memory_projection()
+    assert isinstance(replayed, Success)
+    assert replayed.unwrap() == ()
 
 
 @pytest.mark.asyncio
-async def test_exactly_once_idempotency_for_responses(store: SQLiteMemoryGraphStore) -> None:
+async def test_exactly_once_idempotency_for_responses(
+    store: SQLiteMemoryGraphStore,
+) -> None:
     await store.start()
     turn = ConversationTurn(
         record_id="turn-once-1",

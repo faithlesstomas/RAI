@@ -36,6 +36,12 @@ class AssistantRuntimeConfig:
     ollama_host: str = "http://127.0.0.1:11434"
     profile_scope: str = "default"
     system_instruction: str = DEFAULT_SYSTEM_INSTRUCTION
+    max_context_characters: int = 8_000
+    max_recent_turns: int = 10
+    max_memories: int = 5
+    max_episodic_turns: int = 5
+    max_external_evidence: int = 5
+    memory_sufficiency_threshold: float = 0.75
 
 
 def _discover_gguf(search_root: Path) -> Path | None:
@@ -106,6 +112,14 @@ def resolve_assistant_config(
                 or profile.get("system")
                 or DEFAULT_SYSTEM_INSTRUCTION
             ),
+            max_context_characters=int(assistant.get("max_context_characters", 8_000)),
+            max_recent_turns=int(assistant.get("max_recent_turns", 10)),
+            max_memories=int(assistant.get("max_memories", 5)),
+            max_episodic_turns=int(assistant.get("max_episodic_turns", 5)),
+            max_external_evidence=int(assistant.get("max_external_evidence", 5)),
+            memory_sufficiency_threshold=float(
+                assistant.get("memory_sufficiency_threshold", 0.75)
+            ),
         )
 
     if not model:
@@ -150,6 +164,14 @@ def resolve_assistant_config(
             assistant.get("system")
             or profile.get("system")
             or DEFAULT_SYSTEM_INSTRUCTION
+        ),
+        max_context_characters=int(assistant.get("max_context_characters", 8_000)),
+        max_recent_turns=int(assistant.get("max_recent_turns", 10)),
+        max_memories=int(assistant.get("max_memories", 5)),
+        max_episodic_turns=int(assistant.get("max_episodic_turns", 5)),
+        max_external_evidence=int(assistant.get("max_external_evidence", 5)),
+        memory_sufficiency_threshold=float(
+            assistant.get("memory_sufficiency_threshold", 0.75)
         ),
     )
 

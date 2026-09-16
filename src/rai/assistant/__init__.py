@@ -9,7 +9,40 @@ from .audit import (
 from .backends.deterministic import DeterministicAssistantBackend
 from .backends.local import LocalAssistantBackend
 from .context import AssistantContextBuilder
-from .ports import AssistantModelBackend, MemoryGraphStore, MemoryQuery
+from .diagnostics import MemoryDiagnosticReport, MemoryStageDiagnostic, diagnose_memory
+from .extraction import (
+    ExtractedClaimKind,
+    ExtractedMemoryCandidate,
+    MemoryExtractionOutput,
+    SchemaConstrainedMemoryExtractor,
+)
+from .evidence import RichHistoryEvidenceProvider
+from .evaluation import (
+    BackendRetrievalAnswerEvaluator,
+    RetrievalAnswerEvaluator,
+    RetrievalAnswerEvaluation,
+    RetrievalChannelAggregate,
+    RetrievalChannelMeasurement,
+    RetrievalChannel,
+    RetrievalCorpusClaim,
+    RetrievalCorpusTurn,
+    RetrievalEvaluationCase,
+    RetrievalEvaluationCorpus,
+    RetrievalEvaluationRun,
+    aggregate_retrieval_run,
+    evaluate_retrieval_floor,
+    load_retrieval_evaluation_corpus,
+    seed_retrieval_evaluation_corpus,
+)
+from .ports import (
+    AssistantModelBackend,
+    AssistantEvidence,
+    AssistantEvidenceProvider,
+    AssistantSessionSummary,
+    MemoryGraphStore,
+    MemoryProposalExtractor,
+    MemoryQuery,
+)
 from .query import MemoryQueryResolver
 from .records import (
     AnyAssistantRecord,
@@ -21,6 +54,8 @@ from .records import (
     AssistantSessionId,
     ConversationTurn,
     InferenceRequest,
+    MemoryOperation,
+    MemoryOperationKind,
     MemoryProposal,
     MemoryRecord,
     MemoryRelation,
@@ -29,6 +64,7 @@ from .records import (
 )
 from .service import AssistantService
 from .store import SQLiteMemoryGraphStore
+from .summary import GroundedClaimSummaryProvider, validate_grounded_summary
 
 __all__ = [
     "AnyAssistantRecord",
@@ -39,10 +75,14 @@ __all__ = [
     "AssistantContextManifest",
     "AssistantContextManifestItem",
     "AssistantContextPackage",
+    "AssistantEvidence",
+    "AssistantEvidenceProvider",
     "AssistantModelBackend",
     "AssistantResponse",
     "AssistantService",
+    "AssistantSessionSummary",
     "AssistantSessionId",
+    "BackendRetrievalAnswerEvaluator",
     "ConversationTurn",
     "DeterministicAssistantBackend",
     "InMemoryAssistantAuditLedger",
@@ -50,12 +90,39 @@ __all__ = [
     "JsonlAssistantAuditLedger",
     "LocalAssistantBackend",
     "MemoryGraphStore",
+    "MemoryProposalExtractor",
+    "MemoryExtractionOutput",
+    "ExtractedClaimKind",
+    "ExtractedMemoryCandidate",
+    "MemoryDiagnosticReport",
+    "MemoryOperation",
+    "MemoryOperationKind",
     "MemoryProposal",
     "MemoryQuery",
     "MemoryQueryResolver",
     "MemoryRecord",
     "MemoryRelation",
     "MemoryRelationKind",
+    "MemoryStageDiagnostic",
+    "RichHistoryEvidenceProvider",
+    "GroundedClaimSummaryProvider",
+    "RetrievalAnswerEvaluator",
+    "RetrievalAnswerEvaluation",
+    "RetrievalChannel",
+    "RetrievalChannelAggregate",
+    "RetrievalChannelMeasurement",
+    "RetrievalCorpusClaim",
+    "RetrievalCorpusTurn",
+    "RetrievalEvaluationCase",
+    "RetrievalEvaluationCorpus",
+    "RetrievalEvaluationRun",
     "SQLiteMemoryGraphStore",
+    "SchemaConstrainedMemoryExtractor",
     "parse_assistant_record",
+    "diagnose_memory",
+    "evaluate_retrieval_floor",
+    "load_retrieval_evaluation_corpus",
+    "seed_retrieval_evaluation_corpus",
+    "validate_grounded_summary",
+    "aggregate_retrieval_run",
 ]

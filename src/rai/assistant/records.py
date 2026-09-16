@@ -7,7 +7,7 @@ from enum import Enum
 import json
 from typing import Annotated, Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 from typing_extensions import TypeAliasType
 
 from rai.kernel.records import (
@@ -15,6 +15,7 @@ from rai.kernel.records import (
     DataClass,
     InferenceBudget,
     KernelRecord,
+    PolicyOutcome,
     ProducerIdentity,
     ProvenanceReference,
     _new_id,
@@ -48,6 +49,18 @@ class MemoryRelationKind(str, Enum):
     SUPERSEDES = "SUPERSEDES"
     SUPPORTS = "SUPPORTS"
     CONTRADICTS = "CONTRADICTS"
+    UPDATES = "UPDATES"
+
+
+class MemoryOperationKind(str, Enum):
+    """User-visible and internal operations over durable assistant memory."""
+
+    REMEMBER = "REMEMBER"
+    FORGET = "FORGET"
+    UPDATE = "UPDATE"
+    SUPERSEDE = "SUPERSEDE"
+    REFLECT = "REFLECT"
+    RECONSTRUCT = "RECONSTRUCT"
 
 
 class MemoryRelation(BaseModel):
@@ -60,6 +73,13 @@ class MemoryRelation(BaseModel):
     target_id: str = Field(min_length=1)
     kind: MemoryRelationKind
     created_at: datetime = Field(default_factory=_utc_now)
+    confidence: float = Field(default=1.0, ge=0.0, le=1.0)
+    epistemic_status: Literal[
+        "asserted", "observed", "inferred", "uncertain", "contested"
+    ] = "asserted"
+    provenance: tuple[ProvenanceReference, ...] = ()
+    policy_outcome: PolicyOutcome = PolicyOutcome.ALLOW
+    eligible: bool = True
     metadata: dict[str, Any] = Field(default_factory=dict)
 
 
@@ -72,6 +92,8 @@ class ConversationTurn(KernelRecord):
     text: str = Field(min_length=1, max_length=MAX_TURN_TEXT_BYTES)
     reply_to_turn_id: str | None = None
     data_class: DataClass = DataClass.LOCAL
+    domain_scope: str = Field(default="general", min_length=1, max_length=128)
+    purpose: str = Field(default="assistant", min_length=1, max_length=128)
     status: Literal["ACCEPTED", "COMPLETED", "FAILED", "CANCELLED"] = "ACCEPTED"
     provenance: tuple[ProvenanceReference, ...] = ()
     metadata: dict[str, Any] = Field(default_factory=dict)
@@ -90,11 +112,29 @@ class MemoryProposal(KernelRecord):
 
     record_type: Literal["memory_proposal"] = "memory_proposal"
     source_turn_id: str = Field(min_length=1)
+    operation: MemoryOperationKind = MemoryOperationKind.REMEMBER
     kind: str = Field(default="preference", min_length=1)
     topic: str = Field(min_length=1)
+    target_topic: str | None = None
     content: dict[str, Any]
     privacy_class: DataClass = DataClass.LOCAL
     confidence: float = Field(default=1.0, ge=0.0, le=1.0)
+    source_span: str | None = Field(default=None, min_length=1, max_length=1024)
+    span_start: int | None = Field(default=None, ge=0)
+    span_end: int | None = Field(default=None, ge=1)
+    statement_type: Literal[
+        "assertion", "preference", "plan", "correction", "request"
+    ] = "assertion"
+    modality: Literal["direct", "hedged", "quoted", "hearsay"] = "direct"
+    negated: bool = False
+    scope: str = Field(default="personal", min_length=1, max_length=128)
+    domain_scope: str = Field(default="general", min_length=1, max_length=128)
+    purpose: str = Field(default="assistant", min_length=1, max_length=128)
+    source_type: Literal[
+        "conversation_turn", "rich_history_episode", "system_observation"
+    ] = "conversation_turn"
+    valid_from: datetime | None = None
+    valid_until: datetime | None = None
     supersedes_memory_id: str | None = None
     relations: tuple[MemoryRelation, ...] = ()
 
@@ -116,6 +156,30 @@ class MemoryProposal(KernelRecord):
             )
         return value
 
+    @model_validator(mode="after")
+    def validate_source_offsets(self) -> MemoryProposal:
+        """Require source offsets to be present together and bound the source span."""
+        if (self.span_start is None) != (self.span_end is None):
+            raise ValueError("source span offsets must be provided together")
+        if self.span_start is not None and self.span_end is not None:
+            if self.span_end <= self.span_start:
+                raise ValueError("span_end must be greater than span_start")
+            if self.source_span is None:
+                raise ValueError("source_span is required when offsets are present")
+            if self.span_end - self.span_start != len(self.source_span):
+                raise ValueError("source span offsets do not match source_span length")
+        return self
+
+    @model_validator(mode="after")
+    def validate_validity_interval(self) -> MemoryProposal:
+        if (
+            self.valid_from is not None
+            and self.valid_until is not None
+            and self.valid_until < self.valid_from
+        ):
+            raise ValueError("valid_until must not precede valid_from")
+        return self
+
 
 class MemoryRecord(KernelRecord):
     """Immutable, policy-admitted durable memory payload."""
@@ -125,10 +189,20 @@ class MemoryRecord(KernelRecord):
     topic: str = Field(min_length=1)
     content: dict[str, Any]
     source_turn_id: str = Field(min_length=1)
+    source_type: Literal[
+        "conversation_turn", "rich_history_episode", "system_observation"
+    ] = "conversation_turn"
     data_class: DataClass = DataClass.LOCAL
     profile_scope: str = Field(default="default", min_length=1)
+    domain_scope: str = Field(default="general", min_length=1, max_length=128)
+    purpose: str = Field(default="assistant", min_length=1, max_length=128)
+    epistemic_status: Literal[
+        "asserted", "observed", "inferred", "uncertain", "contested"
+    ] = "asserted"
     valid_from: datetime = Field(default_factory=_utc_now)
     valid_until: datetime | None = None
+    recorded_at: datetime = Field(default_factory=_utc_now)
+    expired_at: datetime | None = None
     provenance: tuple[ProvenanceReference, ...] = ()
 
     @field_validator("data_class")
@@ -138,6 +212,61 @@ class MemoryRecord(KernelRecord):
         if raw in (DataClass.SECRET.value, DataClass.BLOCKED.value):
             raise ValueError(f"memory record cannot have {raw} data class")
         return value
+
+    @model_validator(mode="after")
+    def validate_time_intervals(self) -> MemoryRecord:
+        if self.valid_until is not None and self.valid_until < self.valid_from:
+            raise ValueError("valid_until must not precede valid_from")
+        if self.expired_at is not None and self.expired_at < self.recorded_at:
+            raise ValueError("expired_at must not precede recorded_at")
+        return self
+
+
+class MemoryOperation(KernelRecord):
+    """Immutable audit record for one attempted durable-memory operation."""
+
+    record_type: Literal["memory_operation"] = "memory_operation"
+    operation: MemoryOperationKind
+    trigger: Literal[
+        "conversation_turn", "user_command", "api", "source_deletion", "replay"
+    ]
+    trigger_id: str = Field(min_length=1)
+    profile_scope: str = Field(default="default", min_length=1)
+    proposal_id: str | None = None
+    source_span: str | None = None
+    span_start: int | None = Field(default=None, ge=0)
+    span_end: int | None = Field(default=None, ge=0)
+    modality: Literal["direct", "hedged", "quoted", "hearsay"] | None = None
+    confidence: float | None = Field(default=None, ge=0.0, le=1.0)
+    target_memory_ids: tuple[str, ...] = ()
+    result_memory_ids: tuple[str, ...] = ()
+    active_memory_ids_before: tuple[str, ...] = ()
+    active_memory_ids_after: tuple[str, ...] = ()
+    preconditions: tuple[str, ...] = ()
+    policy_outcome: PolicyOutcome = PolicyOutcome.ALLOW
+    status: Literal["APPLIED", "REJECTED", "NOOP"] = "APPLIED"
+    stage: Literal[
+        "EXTRACTION",
+        "ADMISSION",
+        "STORAGE",
+        "UPDATE",
+        "DELETION",
+        "RECONSTRUCTION",
+    ] = "STORAGE"
+    reason: str | None = None
+    evidence: tuple[ProvenanceReference, ...] = ()
+
+    @model_validator(mode="after")
+    def validate_source_span(self) -> MemoryOperation:
+        offsets = (self.span_start, self.span_end)
+        if any(value is not None for value in offsets):
+            if any(value is None for value in offsets):
+                raise ValueError("span_start and span_end must be provided together")
+            if self.source_span is None:
+                raise ValueError("source_span is required when offsets are present")
+            if self.span_end - self.span_start != len(self.source_span):  # type: ignore[operator]
+                raise ValueError("source span offsets do not match source_span length")
+        return self
 
 
 class AssistantContextManifestItem(BaseModel):
@@ -149,6 +278,8 @@ class AssistantContextManifestItem(BaseModel):
     source_type: str = Field(min_length=1)
     layer: str = Field(min_length=1)
     data_class: DataClass = DataClass.LOCAL
+    domain_scope: str = Field(default="general", min_length=1)
+    purpose: str = Field(default="assistant", min_length=1)
     ranking_reason: str | None = None
     fields: tuple[str, ...] = ()
     redactions: tuple[str, ...] = ()
@@ -161,10 +292,25 @@ class AssistantContextManifest(KernelRecord):
     session_id: AssistantSessionId
     turn_id: str = Field(min_length=1)
     recent_turn_ids: tuple[str, ...] = ()
+    episodic_turn_ids: tuple[str, ...] = ()
+    external_evidence_ids: tuple[str, ...] = ()
     durable_memory_ids: tuple[str, ...] = ()
     ranking_reasons: dict[str, str] = Field(default_factory=dict)
     exclusions: tuple[str, ...] = ()
     redactions: tuple[str, ...] = ()
+    routing_decision: Literal[
+        "recent_conversation",
+        "compact_memory",
+        "raw_evidence_fallback",
+        "no_evidence",
+    ] = "no_evidence"
+    route_candidates: tuple[str, ...] = ()
+    rejected_routes: tuple[str, ...] = ()
+    sufficiency_score: float = Field(default=0.0, ge=0.0, le=1.0)
+    sufficiency_factors: dict[str, float] = Field(default_factory=dict)
+    sufficiency_reasons: tuple[str, ...] = ()
+    fallback_used: bool = False
+    evidence_character_budget: int = Field(default=0, ge=0)
     retriever_version: str = Field(default="1.0.0", min_length=1)
     policy_version: str = Field(default="1.0.0", min_length=1)
     backend_name: str = Field(default="unknown", min_length=1)
@@ -237,6 +383,7 @@ class AssistantResponse(KernelRecord):
     status: Literal["COMPLETED", "FAILED", "CANCELLED"] = "COMPLETED"
     error_message: str | None = None
     admitted_memory_ids: tuple[str, ...] = ()
+    memory_operation_ids: tuple[str, ...] = ()
     provenance: tuple[ProvenanceReference, ...] = ()
 
 
@@ -244,6 +391,7 @@ AnyAssistantRecord = Annotated[
     ConversationTurn
     | MemoryProposal
     | MemoryRecord
+    | MemoryOperation
     | AssistantContextManifest
     | AssistantContextPackage
     | InferenceRequest
@@ -257,6 +405,7 @@ ASSISTANT_RECORD_TYPES: dict[str, type[KernelRecord]] = {
         ConversationTurn,
         MemoryProposal,
         MemoryRecord,
+        MemoryOperation,
         AssistantContextManifest,
         AssistantContextPackage,
         InferenceRequest,

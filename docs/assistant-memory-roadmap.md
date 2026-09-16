@@ -50,6 +50,9 @@ created it.
 
 ### M1 — memory operations and diagnostic evaluation
 
+Status: `[x]` for the SQLite reference MVP. Broader benchmark corpora remain
+part of the later reproducible evaluation work.
+
 Define versioned operations for `remember`, `forget`, `update`, `supersede`,
 `reflect` and `reconstruct`. Each operation records its trigger, target, scope,
 precondition, state transition, policy decision and evidence.
@@ -67,6 +70,12 @@ Exit evidence:
 - no regex or model output can directly commit durable memory.
 
 ### M2 — evidence-preserving candidate extraction
+
+Status: `[x]` for the local extraction/admission contract. Deterministic
+Polish/English controls and a separate schema-constrained local SLM extractor
+both emit untrusted proposals with exact source spans. Malformed, unsupported,
+uncertain, quoted and privacy-ineligible proposals fail closed and extraction
+failures are recorded independently from admission.
 
 Replace the narrow Issue #34 recognizers with a proposal pipeline that can find
 candidate preferences, personal statements, events, plans, corrections and
@@ -88,6 +97,11 @@ Exit evidence:
 
 ### M3 — bitemporal claim graph in SQLite
 
+Status: `[x]` for the SQLite reference. Claims carry real-world validity and
+transaction-time intervals; current and historical retrieval use both.
+Corrections preserve qualified `CONTRADICTS` and `SUPERSEDES` relations, and
+source deletion removes the raw FTS projection and dependent graph state.
+
 Add separate transaction and real-world validity intervals. Preserve previous
 states for historical questions while current-state queries exclude expired or
 superseded claims. Give relations their own provenance and eligibility instead
@@ -106,6 +120,22 @@ Exit evidence:
 
 ### M4 — reproducible retrieval floor
 
+Status: `[/]`. Cross-session raw user turns and durable claims use FTS5/BM25
+projections, while Rich History episodes are available through a bounded,
+privacy-aware evidence provider. A deterministic grounded-summary projection
+retains every contributing claim/source ID, modality, epistemic status and the
+minimum source confidence without becoming durable truth. The reproducible
+runner compares raw turns, claims and this summary projection with identical
+retrieval and character budgets. It reports retrieval quality, answer quality,
+retrieval/model abstention, retrieval/model latency, context size, token use and
+explicitly missing cost/energy samples. The versioned corpus covers personal,
+project, system, conversational commitment, correction, unsupported and
+privacy-isolation cases. Its answer evaluator invokes the product
+`AssistantModelBackend`; a deterministic phrase/abstention judge evaluates the
+answer independently instead of asking the answer model to grade itself. A
+recorded live-model run and energy integration remain open, so this stage is not
+complete.
+
 Implement raw-turn and raw-episode retrieval with FTS5/BM25 and query-driven
 pruning. Compare it against claim retrieval and summary retrieval before adding
 embedding or graph complexity. The harness fixes corpus, answerer, prompt,
@@ -121,6 +151,14 @@ Exit evidence:
   declared target workload.
 
 ### M5 — adaptive context router and verified fallback
+
+Status: `[/]`. The context builder now chooses compact claim memory when its
+configurable sufficiency threshold is met, otherwise falls back to raw turns
+and approved external evidence or records `no_evidence`. Manifests record
+candidate/rejected routes, inspectable sufficiency factors (query coverage,
+evidence quality, and maximum source confidence), reasons, fallback and
+evidence budget. Comparative short/long-history evaluation and verified
+derived write-back remain open.
 
 Select recent/full context for short histories when it is cheaper and at least
 as accurate. For longer histories, route through lexical or semantic memory.
@@ -157,6 +195,15 @@ Exit evidence:
 - quality gains survive multiple local models and are not judge-specific.
 
 ### M7 — scope, personalization and consolidation
+
+Status: `[/]`. Profile, domain and purpose isolation is enforced for claims,
+raw-turn retrieval and recent context, with hierarchical domain scope matching
+(`general` broad recall, parent/child project matching, and non-restrictive
+facets). Manifests expose the selected scope. Negative tests cover
+unrelated-domain and wrong-purpose retrieval. Broader leakage/sycophancy
+evaluation and persistent consolidation remain open. The M4 grounded-summary
+baseline is query-time and rebuildable: deleting its source turn removes the
+claim and therefore makes the projection disappear.
 
 Partition durable memory by user, profile, domain and purpose. Retrieve personal
 context only when the request and policy require it. Measure cross-domain

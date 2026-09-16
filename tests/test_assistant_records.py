@@ -20,6 +20,7 @@ from rai.assistant.records import (
     InferenceRequest,
     MemoryProposal,
     MemoryRecord,
+    MemoryOperation,
     parse_assistant_record,
 )
 from rai.assistant.schemas import assistant_json_schema
@@ -55,6 +56,24 @@ def test_parse_valid_memory_fixture() -> None:
     assert record.content["preference"] == "Guile"
     assert len(record.provenance) == 1
     assert record.provenance[0].relation == "DERIVED_FROM"
+
+
+def test_parse_valid_memory_operation_fixture() -> None:
+    data = json.loads(
+        (FIXTURE_ROOT / "memory-operation.valid.json").read_text(encoding="utf-8")
+    )
+    record = parse_assistant_record(data)
+    assert isinstance(record, MemoryOperation)
+    assert record.operation == "SUPERSEDE"
+    assert record.active_memory_ids_after == ("memory-new-001",)
+
+
+def test_memory_operation_requires_an_explicit_trigger() -> None:
+    data = json.loads(
+        (FIXTURE_ROOT / "memory-operation.invalid.json").read_text(encoding="utf-8")
+    )
+    with pytest.raises(ValidationError, match="trigger"):
+        parse_assistant_record(data)
 
 
 def test_parse_valid_manifest_fixture() -> None:

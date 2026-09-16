@@ -841,9 +841,16 @@ in the [canonical cross-project integration plan](https://gitlab.com/tk-lab1/ai/
 
 #### 4.7 Rich Assistant: graph-memory conversation and reasoning laboratory
 
-Status: `[/]` — the first local graph-memory preference slice and supported
-CLI/HTTP path are implemented and live-model verified. General semantic memory,
-Rich History grounding and later reasoning strategies remain planned.
+Status: `[/]` — the local graph-memory foundation plus a usable CLI,
+resumable/inspectable chat, exact context history and authenticated native
+REST/WebSocket surface are implemented. SQLite memory operations, replay and
+stage diagnostics form the Issue #35 M1 floor. Schema-constrained free-form
+extraction, bitemporal claims, FTS5 raw-turn/claim retrieval, adaptive context
+routing, Rich History evidence grounding and an equal-budget raw/claim/grounded-
+summary evaluation runner, a versioned representative corpus and a product-
+backend answer evaluator with an independent deterministic judge are
+implemented. A recorded live-model run, energy measurement, dense/graph
+channels, persistent consolidation and adapters remain planned.
 
 Purpose: provide a continuous, local-first desktop assistant whose durable
 memory and context policy belong to RAI while its LLM and reasoning strategy are
@@ -904,33 +911,45 @@ explicit ConversationTurn or policy-approved proactive trigger
 - [x] Implement a lightweight local reference adapter, initially as a SQLite
   graph projection with stable node, hyperedge and provenance IDs, so tests and
   the default desktop profile require no additional database service.
-- [ ] Make SQLite the authoritative evidence and memory-operation store before
+- [/] Make SQLite the authoritative evidence and memory-operation store before
   adding learned extraction or alternative graph engines:
-  - retain immutable, policy-approved source turns and Rich History episodes;
-  - store `MemoryProposal`, admission decision and resulting state transition
+  - [x] retain immutable, policy-approved source turns and reference approved
+    Rich History episodes through source IDs and observation provenance;
+  - [x] store `MemoryProposal` evidence, admission decision and resulting state transition
     separately rather than treating extraction output as durable truth;
-  - preserve source spans, speaker, channel, modality, confidence, privacy,
+  - [/] preserve source spans, speaker, channel, modality, confidence, privacy,
     domain scope and model/policy versions for every derived claim;
-  - make every projection rebuildable from admitted records and operation logs.
-- [ ] Extend `SQLiteMemoryGraphStore` with bi-temporal claims and relations:
-  - record transaction time (`recorded_at`, `expired_at`) separately from
+  - [x] make the active MVP projection rebuildable from admitted records and
+    operation logs;
+  - [/] add approved Rich History evidence; complete policy/model-version fields
+    remain open.
+- [x] Extend `SQLiteMemoryGraphStore` with bi-temporal claims and relations:
+  - [x] record transaction time (`recorded_at`, `expired_at`) separately from
     real-world validity (`valid_from`, `valid_until`);
-  - preserve obsolete facts for explicitly historical queries while excluding
+  - [x] preserve obsolete facts for explicitly historical queries while excluding
     them from current-state context;
-  - represent `SUPPORTS`, `CONTRADICTS`, `UPDATES` and `SUPERSEDES` with their
+  - [x] represent `SUPPORTS`, `CONTRADICTS`, `UPDATES` and `SUPERSEDES` with their
     own provenance and policy eligibility;
-  - bind derived facts bidirectionally to source turns or episodes.
-- [ ] Establish a simple, reproducible retrieval floor before graph traversal:
-  - index raw turns, episodes and admitted claims with SQLite FTS5/BM25;
-  - add query-driven pruning and independently bounded recent, raw-evidence and
+  - [x] bind derived facts to source turns and preserve episode observation IDs.
+- [/] Establish a simple, reproducible retrieval floor before graph traversal:
+  - [/] index raw turns and claims with SQLite FTS5/BM25; a persisted episode
+    projection remains open;
+  - [x] add query-driven pruning and independently bounded recent, raw-evidence and
     semantic-memory channels;
-  - compare raw chunks, extracted facts and summaries using the same retrieval
-    and context budgets.
-- [ ] Add a tiered context router which selects recent/full context for short
+  - [/] compare raw chunks, extracted facts and summaries using the same retrieval
+    and context budgets; the runner supports all three source-covered channels
+    and separates retrieval from answer-utilization failures. A versioned corpus
+    covers personal, project, system, commitment, correction, abstention and
+    privacy-isolation cases; the answerer uses the product backend contract and
+    an independent deterministic judge. A recorded live-model and energy run
+    remains open.
+- [/] Add a tiered context router which selects recent/full context for short
   histories and escalates from summaries or claims to raw evidence when the
   selected tier is insufficient. Record the route, sufficiency decision and
   fallbacks in `ContextManifest`; tune thresholds empirically per model and
-  workload rather than treating published thresholds as constants.
+  workload rather than treating published thresholds as constants. The
+  configurable deterministic routing/manifest contract is implemented; the
+  comparative tuning harness remains open.
 - [ ] After the retrieval floor and adaptive router are reproducible, evaluate
   optional GWT-inspired context processing: one or a few bounded rounds of
   candidate eligibility, competition, admission, broadcast and release before
