@@ -202,7 +202,11 @@ natural-conversation corpus with frozen admitted claims, invokes the same
 `AssistantModelBackend` boundary as the product, and judges required/forbidden
 answer content plus explicit abstention without model self-grading. Aggregates
 retain missing energy and provider-cost measurements as missing rather than
-silently treating them as zero.
+silently treating them as zero. `rai assistant benchmark-memory` compares raw
+turns, claims, grounded summaries, local dense feature hashing, weighted RRF and
+authenticated bounded graph paths under equal retrieval/context budgets. Two
+live manifests and the opt-in decision are recorded in
+[the M4–M6 evaluation](assistant-m4-m6-evaluation.md).
 
 `rai`, `rai -p`, `rai assistant ask` and `rai assistant chat` instantiate this
 same service directly and do not require `rai serve`. The assistant HTTP routes

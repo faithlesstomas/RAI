@@ -849,8 +849,12 @@ extraction, bitemporal claims, FTS5 raw-turn/claim retrieval, adaptive context
 routing, Rich History evidence grounding and an equal-budget raw/claim/grounded-
 summary evaluation runner, a versioned representative corpus and a product-
 backend answer evaluator with an independent deterministic judge are
-implemented. A recorded live-model run, energy measurement, dense/graph
-channels, persistent consolidation and adapters remain planned.
+implemented. M4–M6 now add two recorded live-model manifests, explicitly scoped
+energy readings, short/medium/long adaptive-router comparison, verified derived
+write-back, local dense and weighted-RRF baselines, and authenticated bounded
+graph traversal. The more complex retrieval channels remain opt-in after a
+negative benchmark result. Persistent consolidation and optional adapters
+remain planned.
 
 Purpose: provide a continuous, local-first desktop assistant whose durable
 memory and context policy belong to RAI while its LLM and reasoning strategy are
@@ -931,25 +935,26 @@ explicit ConversationTurn or policy-approved proactive trigger
   - [x] represent `SUPPORTS`, `CONTRADICTS`, `UPDATES` and `SUPERSEDES` with their
     own provenance and policy eligibility;
   - [x] bind derived facts to source turns and preserve episode observation IDs.
-- [/] Establish a simple, reproducible retrieval floor before graph traversal:
-  - [/] index raw turns and claims with SQLite FTS5/BM25; a persisted episode
-    projection remains open;
+- [x] Establish a simple, reproducible retrieval floor before graph traversal:
+  - [x] index raw turns and claims with SQLite FTS5/BM25 and retrieve approved
+    Rich History episodes through a bounded lexical evidence provider without
+    duplicating their sensitive persisted payload into assistant storage;
   - [x] add query-driven pruning and independently bounded recent, raw-evidence and
     semantic-memory channels;
-  - [/] compare raw chunks, extracted facts and summaries using the same retrieval
-    and context budgets; the runner supports all three source-covered channels
-    and separates retrieval from answer-utilization failures. A versioned corpus
+  - [x] compare raw chunks, extracted facts, summaries, dense retrieval, weighted
+    RRF and bounded graph paths using the same retrieval and context budgets;
+    the runner separates retrieval from answer-utilization failures. A versioned corpus
     covers personal, project, system, commitment, correction, abstention and
     privacy-isolation cases; the answerer uses the product backend contract and
-    an independent deterministic judge. A recorded live-model and energy run
-    remains open.
-- [/] Add a tiered context router which selects recent/full context for short
+    an independent deterministic judge. Two live local-model manifests record
+    sensor-scoped energy and the complete evaluation configuration.
+- [x] Add a tiered context router which selects recent/full context for short
   histories and escalates from summaries or claims to raw evidence when the
   selected tier is insufficient. Record the route, sufficiency decision and
   fallbacks in `ContextManifest`; tune thresholds empirically per model and
   workload rather than treating published thresholds as constants. The
-  configurable deterministic routing/manifest contract is implemented; the
-  comparative tuning harness remains open.
+  comparison covers short, medium and long histories against an always-memory
+  baseline, and verified write-back is source-covered and provenance-linked.
 - [ ] After the retrieval floor and adaptive router are reproducible, evaluate
   optional GWT-inspired context processing: one or a few bounded rounds of
   candidate eligibility, competition, admission, broadcast and release before
@@ -957,14 +962,15 @@ explicit ConversationTurn or policy-approved proactive trigger
   model and compute budgets; treat it as an attention/orchestration experiment,
   not a memory tier or a claim of GCAS conformance. See
   [Assistant memory, GCAS and GWT-inspired processing](docs/assistant-memory-gcas-crosscheck.md).
-- [ ] Add multi-channel retrieval incrementally:
-  - start with lexical FTS5/BM25 plus temporal and policy filters;
-  - benchmark a local dense embedding channel and Weighted Reciprocal Rank
+- [x] Add multi-channel retrieval incrementally:
+  - [x] start with lexical FTS5/BM25 plus temporal and policy filters;
+  - [x] benchmark a local dense embedding channel and Weighted Reciprocal Rank
     Fusion (RRF) before enabling either by default;
-  - benchmark a local cross-encoder only when its quality gain justifies its
-    latency, memory and energy cost;
-  - add graph traversal or HippoRAG-style personalized PageRank only over the
-    provenance-qualified subgraph and with adversarial selection-integrity tests.
+  - [x] defer a local cross-encoder because the cheaper hybrid channels show no
+    quality gain that could justify added latency, memory and energy cost;
+  - [x] add bounded graph traversal over the provenance-qualified subgraph with
+    adversarial selection-integrity tests. Personalized PageRank remains a later
+    experiment only if the bounded path baseline demonstrates a need.
 - [ ] Add community summaries only after representative corpus-size benchmarks
   show that raw/claim retrieval and bounded graph paths are insufficient.
   Treat the community graph as a derived projection; evaluate incremental LPA

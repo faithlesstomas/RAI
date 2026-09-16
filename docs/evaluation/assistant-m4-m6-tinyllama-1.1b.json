@@ -1,0 +1,2138 @@
+{
+  "artifact_version": "rai-assistant-retrieval-benchmark-v1",
+  "run": {
+    "corpus_version": "rai-assistant-retrieval-floor-v1",
+    "generated_at": "2026-09-16T17:51:07.537021Z",
+    "profile_scope": "default",
+    "retrieval_limit": 5,
+    "context_character_budget": 8000,
+    "measurements": [
+      {
+        "case_id": "personal-name",
+        "channel": "raw_turns_bm25",
+        "retrieved_ids": [
+          "corpus-turn-name"
+        ],
+        "artifact_ids": [
+          "corpus-turn-name"
+        ],
+        "relevant_ids": [
+          "corpus-turn-name"
+        ],
+        "recall": 1.0,
+        "precision": 1.0,
+        "abstained": false,
+        "latency_ms": 0.8690149988979101,
+        "context_characters": 65,
+        "answer_correct": false,
+        "answer_utilization_evaluated": true,
+        "answer_evaluation_failed": false,
+        "answer_failure_code": null,
+        "answer_text": "Nie mam jeszcze zapisanego Twojego imienia.",
+        "answer_abstained": false,
+        "answer_latency_ms": 775.4033519886434,
+        "tokens_in": 166,
+        "tokens_out": 12,
+        "backend_name": "llama",
+        "model_name": "models/tinyllama-1.1b-chat-v1.0.Q4_K_M.gguf",
+        "judge_version": "deterministic-phrase-and-abstention-v1",
+        "provider_cost": null,
+        "energy_joules": 17.693223004374566,
+        "energy_source": "linux-hwmon-power",
+        "energy_scope": "unattributed:amdgpu:PPT",
+        "energy_sensors": [
+          "/sys/class/hwmon/hwmon12/power1_average"
+        ],
+        "retrieval_failed": false,
+        "failure_code": null
+      },
+      {
+        "case_id": "personal-name",
+        "channel": "claims_bm25",
+        "retrieved_ids": [
+          "corpus-memory-name"
+        ],
+        "artifact_ids": [
+          "corpus-memory-name"
+        ],
+        "relevant_ids": [
+          "corpus-memory-name"
+        ],
+        "recall": 1.0,
+        "precision": 1.0,
+        "abstained": false,
+        "latency_ms": 1.1619830038398504,
+        "context_characters": 137,
+        "answer_correct": false,
+        "answer_utilization_evaluated": true,
+        "answer_evaluation_failed": false,
+        "answer_failure_code": null,
+        "answer_text": "Nie mam jeszcze zapisanego Twojego imienia.",
+        "answer_abstained": false,
+        "answer_latency_ms": 1042.7541100070812,
+        "tokens_in": 189,
+        "tokens_out": 48,
+        "backend_name": "llama",
+        "model_name": "models/tinyllama-1.1b-chat-v1.0.Q4_K_M.gguf",
+        "judge_version": "deterministic-phrase-and-abstention-v1",
+        "provider_cost": null,
+        "energy_joules": 32.59714548384439,
+        "energy_source": "linux-hwmon-power",
+        "energy_scope": "unattributed:amdgpu:PPT",
+        "energy_sensors": [
+          "/sys/class/hwmon/hwmon12/power1_average"
+        ],
+        "retrieval_failed": false,
+        "failure_code": null
+      },
+      {
+        "case_id": "personal-name",
+        "channel": "summaries_grounded",
+        "retrieved_ids": [
+          "corpus-memory-name"
+        ],
+        "artifact_ids": [
+          "grounded-summary:5f33dfd121d41160d0b79adc"
+        ],
+        "relevant_ids": [
+          "corpus-memory-name"
+        ],
+        "recall": 1.0,
+        "precision": 1.0,
+        "abstained": false,
+        "latency_ms": 2.0893870387226343,
+        "context_characters": 692,
+        "answer_correct": false,
+        "answer_utilization_evaluated": true,
+        "answer_evaluation_failed": false,
+        "answer_failure_code": null,
+        "answer_text": "Nie mam jeszcze zapisanego Twojego imienia.",
+        "answer_abstained": false,
+        "answer_latency_ms": 1100.7058909744956,
+        "tokens_in": 176,
+        "tokens_out": 48,
+        "backend_name": "llama",
+        "model_name": "models/tinyllama-1.1b-chat-v1.0.Q4_K_M.gguf",
+        "judge_version": "deterministic-phrase-and-abstention-v1",
+        "provider_cost": null,
+        "energy_joules": 39.30525164350681,
+        "energy_source": "linux-hwmon-power",
+        "energy_scope": "unattributed:amdgpu:PPT",
+        "energy_sensors": [
+          "/sys/class/hwmon/hwmon12/power1_average"
+        ],
+        "retrieval_failed": false,
+        "failure_code": null
+      },
+      {
+        "case_id": "personal-name",
+        "channel": "dense_local",
+        "retrieved_ids": [
+          "corpus-memory-name",
+          "corpus-memory-city-new"
+        ],
+        "artifact_ids": [
+          "corpus-memory-name",
+          "corpus-memory-city-new"
+        ],
+        "relevant_ids": [
+          "corpus-memory-name"
+        ],
+        "recall": 1.0,
+        "precision": 0.5,
+        "abstained": false,
+        "latency_ms": 1.5947219799272716,
+        "context_characters": 321,
+        "answer_correct": false,
+        "answer_utilization_evaluated": true,
+        "answer_evaluation_failed": false,
+        "answer_failure_code": null,
+        "answer_text": "Nie mam jeszcze zapisanego Twojego imienia.",
+        "answer_abstained": false,
+        "answer_latency_ms": 709.2777650104836,
+        "tokens_in": 270,
+        "tokens_out": 14,
+        "backend_name": "llama",
+        "model_name": "models/tinyllama-1.1b-chat-v1.0.Q4_K_M.gguf",
+        "judge_version": "deterministic-phrase-and-abstention-v1",
+        "provider_cost": null,
+        "energy_joules": 26.807436238169785,
+        "energy_source": "linux-hwmon-power",
+        "energy_scope": "unattributed:amdgpu:PPT",
+        "energy_sensors": [
+          "/sys/class/hwmon/hwmon12/power1_average"
+        ],
+        "retrieval_failed": false,
+        "failure_code": null
+      },
+      {
+        "case_id": "personal-name",
+        "channel": "rrf_fused",
+        "retrieved_ids": [
+          "corpus-memory-name",
+          "corpus-memory-city-new"
+        ],
+        "artifact_ids": [
+          "corpus-memory-name",
+          "corpus-memory-city-new"
+        ],
+        "relevant_ids": [
+          "corpus-memory-name"
+        ],
+        "recall": 1.0,
+        "precision": 0.5,
+        "abstained": false,
+        "latency_ms": 2.4429989280179143,
+        "context_characters": 321,
+        "answer_correct": false,
+        "answer_utilization_evaluated": true,
+        "answer_evaluation_failed": false,
+        "answer_failure_code": null,
+        "answer_text": "Nie mam jeszcze zapisanego Twojego imienia.",
+        "answer_abstained": false,
+        "answer_latency_ms": 205.3942499915138,
+        "tokens_in": 270,
+        "tokens_out": 14,
+        "backend_name": "llama",
+        "model_name": "models/tinyllama-1.1b-chat-v1.0.Q4_K_M.gguf",
+        "judge_version": "deterministic-phrase-and-abstention-v1",
+        "provider_cost": null,
+        "energy_joules": 7.841231708978245,
+        "energy_source": "linux-hwmon-power",
+        "energy_scope": "unattributed:amdgpu:PPT",
+        "energy_sensors": [
+          "/sys/class/hwmon/hwmon12/power1_average"
+        ],
+        "retrieval_failed": false,
+        "failure_code": null
+      },
+      {
+        "case_id": "personal-name",
+        "channel": "graph_bounded",
+        "retrieved_ids": [
+          "corpus-memory-name",
+          "corpus-memory-city-new"
+        ],
+        "artifact_ids": [
+          "corpus-memory-name",
+          "corpus-memory-city-new"
+        ],
+        "relevant_ids": [
+          "corpus-memory-name"
+        ],
+        "recall": 1.0,
+        "precision": 0.5,
+        "abstained": false,
+        "latency_ms": 3.1793559319339693,
+        "context_characters": 321,
+        "answer_correct": false,
+        "answer_utilization_evaluated": true,
+        "answer_evaluation_failed": false,
+        "answer_failure_code": null,
+        "answer_text": "Nie mam jeszcze zapisanego Twojego imienia.",
+        "answer_abstained": false,
+        "answer_latency_ms": 201.58630900550634,
+        "tokens_in": 270,
+        "tokens_out": 14,
+        "backend_name": "llama",
+        "model_name": "models/tinyllama-1.1b-chat-v1.0.Q4_K_M.gguf",
+        "judge_version": "deterministic-phrase-and-abstention-v1",
+        "provider_cost": null,
+        "energy_joules": 7.724556420324807,
+        "energy_source": "linux-hwmon-power",
+        "energy_scope": "unattributed:amdgpu:PPT",
+        "energy_sensors": [
+          "/sys/class/hwmon/hwmon12/power1_average"
+        ],
+        "retrieval_failed": false,
+        "failure_code": null
+      },
+      {
+        "case_id": "project-goal",
+        "channel": "raw_turns_bm25",
+        "retrieved_ids": [
+          "corpus-turn-project"
+        ],
+        "artifact_ids": [
+          "corpus-turn-project"
+        ],
+        "relevant_ids": [
+          "corpus-turn-project"
+        ],
+        "recall": 1.0,
+        "precision": 1.0,
+        "abstained": false,
+        "latency_ms": 1.2219250202178955,
+        "context_characters": 65,
+        "answer_correct": false,
+        "answer_utilization_evaluated": true,
+        "answer_evaluation_failed": false,
+        "answer_failure_code": null,
+        "answer_text": "Cel projektu Aurora jest zbudozanem lokalnej pamieci asystenta.",
+        "answer_abstained": false,
+        "answer_latency_ms": 1519.1247049951926,
+        "tokens_in": 165,
+        "tokens_out": 27,
+        "backend_name": "llama",
+        "model_name": "models/tinyllama-1.1b-chat-v1.0.Q4_K_M.gguf",
+        "judge_version": "deterministic-phrase-and-abstention-v1",
+        "provider_cost": null,
+        "energy_joules": 54.59725059278798,
+        "energy_source": "linux-hwmon-power",
+        "energy_scope": "unattributed:amdgpu:PPT",
+        "energy_sensors": [
+          "/sys/class/hwmon/hwmon12/power1_average"
+        ],
+        "retrieval_failed": false,
+        "failure_code": null
+      },
+      {
+        "case_id": "project-goal",
+        "channel": "claims_bm25",
+        "retrieved_ids": [
+          "corpus-memory-project",
+          "corpus-memory-commitment"
+        ],
+        "artifact_ids": [
+          "corpus-memory-project",
+          "corpus-memory-commitment"
+        ],
+        "relevant_ids": [
+          "corpus-memory-project"
+        ],
+        "recall": 1.0,
+        "precision": 0.5,
+        "abstained": false,
+        "latency_ms": 1.3914720038883388,
+        "context_characters": 452,
+        "answer_correct": true,
+        "answer_utilization_evaluated": true,
+        "answer_evaluation_failed": false,
+        "answer_failure_code": null,
+        "answer_text": "Według zapisanej informacji goal: lokalna pamięć asystenta.",
+        "answer_abstained": false,
+        "answer_latency_ms": 1081.005671992898,
+        "tokens_in": 316,
+        "tokens_out": 25,
+        "backend_name": "llama",
+        "model_name": "models/tinyllama-1.1b-chat-v1.0.Q4_K_M.gguf",
+        "judge_version": "deterministic-phrase-and-abstention-v1",
+        "provider_cost": null,
+        "energy_joules": 40.35043629683287,
+        "energy_source": "linux-hwmon-power",
+        "energy_scope": "unattributed:amdgpu:PPT",
+        "energy_sensors": [
+          "/sys/class/hwmon/hwmon12/power1_average"
+        ],
+        "retrieval_failed": false,
+        "failure_code": null
+      },
+      {
+        "case_id": "project-goal",
+        "channel": "summaries_grounded",
+        "retrieved_ids": [
+          "corpus-memory-project",
+          "corpus-memory-commitment"
+        ],
+        "artifact_ids": [
+          "grounded-summary:b7be5c7609a4817c922bece7"
+        ],
+        "relevant_ids": [
+          "corpus-memory-project"
+        ],
+        "recall": 1.0,
+        "precision": 0.5,
+        "abstained": false,
+        "latency_ms": 2.353832998778671,
+        "context_characters": 1389,
+        "answer_correct": false,
+        "answer_utilization_evaluated": true,
+        "answer_evaluation_failed": false,
+        "answer_failure_code": null,
+        "answer_text": "Projekt Aurora jest założeniem, aby umożliwić użytkownikom dostęp do innych danych, aby uzyskać szczegółowe informacje na temat ich wł",
+        "answer_abstained": false,
+        "answer_latency_ms": 1213.1810570135713,
+        "tokens_in": 251,
+        "tokens_out": 48,
+        "backend_name": "llama",
+        "model_name": "models/tinyllama-1.1b-chat-v1.0.Q4_K_M.gguf",
+        "judge_version": "deterministic-phrase-and-abstention-v1",
+        "provider_cost": null,
+        "energy_joules": 46.76936716155562,
+        "energy_source": "linux-hwmon-power",
+        "energy_scope": "unattributed:amdgpu:PPT",
+        "energy_sensors": [
+          "/sys/class/hwmon/hwmon12/power1_average"
+        ],
+        "retrieval_failed": false,
+        "failure_code": null
+      },
+      {
+        "case_id": "project-goal",
+        "channel": "dense_local",
+        "retrieved_ids": [
+          "corpus-memory-project",
+          "corpus-memory-commitment"
+        ],
+        "artifact_ids": [
+          "corpus-memory-project",
+          "corpus-memory-commitment"
+        ],
+        "relevant_ids": [
+          "corpus-memory-project"
+        ],
+        "recall": 1.0,
+        "precision": 0.5,
+        "abstained": false,
+        "latency_ms": 1.5512500540353358,
+        "context_characters": 452,
+        "answer_correct": true,
+        "answer_utilization_evaluated": true,
+        "answer_evaluation_failed": false,
+        "answer_failure_code": null,
+        "answer_text": "Według zapisanej informacji goal: lokalna pamięć asystenta.",
+        "answer_abstained": false,
+        "answer_latency_ms": 1070.0735549908131,
+        "tokens_in": 316,
+        "tokens_out": 25,
+        "backend_name": "llama",
+        "model_name": "models/tinyllama-1.1b-chat-v1.0.Q4_K_M.gguf",
+        "judge_version": "deterministic-phrase-and-abstention-v1",
+        "provider_cost": null,
+        "energy_joules": 41.635497290891685,
+        "energy_source": "linux-hwmon-power",
+        "energy_scope": "unattributed:amdgpu:PPT",
+        "energy_sensors": [
+          "/sys/class/hwmon/hwmon12/power1_average"
+        ],
+        "retrieval_failed": false,
+        "failure_code": null
+      },
+      {
+        "case_id": "project-goal",
+        "channel": "rrf_fused",
+        "retrieved_ids": [
+          "corpus-memory-project",
+          "corpus-memory-commitment"
+        ],
+        "artifact_ids": [
+          "corpus-memory-project",
+          "corpus-memory-commitment"
+        ],
+        "relevant_ids": [
+          "corpus-memory-project"
+        ],
+        "recall": 1.0,
+        "precision": 0.5,
+        "abstained": false,
+        "latency_ms": 2.646058041136712,
+        "context_characters": 452,
+        "answer_correct": true,
+        "answer_utilization_evaluated": true,
+        "answer_evaluation_failed": false,
+        "answer_failure_code": null,
+        "answer_text": "Według zapisanej informacji goal: lokalna pamięć asystenta.",
+        "answer_abstained": false,
+        "answer_latency_ms": 345.8567750058137,
+        "tokens_in": 316,
+        "tokens_out": 24,
+        "backend_name": "llama",
+        "model_name": "models/tinyllama-1.1b-chat-v1.0.Q4_K_M.gguf",
+        "judge_version": "deterministic-phrase-and-abstention-v1",
+        "provider_cost": null,
+        "energy_joules": 13.533843745446793,
+        "energy_source": "linux-hwmon-power",
+        "energy_scope": "unattributed:amdgpu:PPT",
+        "energy_sensors": [
+          "/sys/class/hwmon/hwmon12/power1_average"
+        ],
+        "retrieval_failed": false,
+        "failure_code": null
+      },
+      {
+        "case_id": "project-goal",
+        "channel": "graph_bounded",
+        "retrieved_ids": [
+          "corpus-memory-project",
+          "corpus-memory-commitment"
+        ],
+        "artifact_ids": [
+          "corpus-memory-project",
+          "corpus-memory-commitment",
+          "corpus-relation-project-supports-commitment"
+        ],
+        "relevant_ids": [
+          "corpus-memory-project"
+        ],
+        "recall": 1.0,
+        "precision": 0.5,
+        "abstained": false,
+        "latency_ms": 3.3375720377080142,
+        "context_characters": 452,
+        "answer_correct": true,
+        "answer_utilization_evaluated": true,
+        "answer_evaluation_failed": false,
+        "answer_failure_code": null,
+        "answer_text": "Według zapisanej informacji goal: lokalna pamięć asystenta.",
+        "answer_abstained": false,
+        "answer_latency_ms": 360.6799499830231,
+        "tokens_in": 316,
+        "tokens_out": 25,
+        "backend_name": "llama",
+        "model_name": "models/tinyllama-1.1b-chat-v1.0.Q4_K_M.gguf",
+        "judge_version": "deterministic-phrase-and-abstention-v1",
+        "provider_cost": null,
+        "energy_joules": 14.124780018946185,
+        "energy_source": "linux-hwmon-power",
+        "energy_scope": "unattributed:amdgpu:PPT",
+        "energy_sensors": [
+          "/sys/class/hwmon/hwmon12/power1_average"
+        ],
+        "retrieval_failed": false,
+        "failure_code": null
+      },
+      {
+        "case_id": "system-state",
+        "channel": "raw_turns_bm25",
+        "retrieved_ids": [
+          "corpus-turn-system"
+        ],
+        "artifact_ids": [
+          "corpus-turn-system"
+        ],
+        "relevant_ids": [
+          "corpus-turn-system"
+        ],
+        "recall": 1.0,
+        "precision": 1.0,
+        "abstained": false,
+        "latency_ms": 1.2130790273658931,
+        "context_characters": 63,
+        "answer_correct": false,
+        "answer_utilization_evaluated": true,
+        "answer_evaluation_failed": false,
+        "answer_failure_code": null,
+        "answer_text": "Domyślny profil RAI na moim komputerze jest LOCALE_PREFERRED.",
+        "answer_abstained": false,
+        "answer_latency_ms": 768.6019699904136,
+        "tokens_in": 180,
+        "tokens_out": 32,
+        "backend_name": "llama",
+        "model_name": "models/tinyllama-1.1b-chat-v1.0.Q4_K_M.gguf",
+        "judge_version": "deterministic-phrase-and-abstention-v1",
+        "provider_cost": null,
+        "energy_joules": 30.095605365726747,
+        "energy_source": "linux-hwmon-power",
+        "energy_scope": "unattributed:amdgpu:PPT",
+        "energy_sensors": [
+          "/sys/class/hwmon/hwmon12/power1_average"
+        ],
+        "retrieval_failed": false,
+        "failure_code": null
+      },
+      {
+        "case_id": "system-state",
+        "channel": "claims_bm25",
+        "retrieved_ids": [
+          "corpus-memory-system"
+        ],
+        "artifact_ids": [
+          "corpus-memory-system"
+        ],
+        "relevant_ids": [
+          "corpus-memory-system"
+        ],
+        "recall": 1.0,
+        "precision": 1.0,
+        "abstained": false,
+        "latency_ms": 1.3781979796476662,
+        "context_characters": 181,
+        "answer_correct": true,
+        "answer_utilization_evaluated": true,
+        "answer_evaluation_failed": false,
+        "answer_failure_code": null,
+        "answer_text": "Według zapisanej informacji default_profile: LOCAL_PREFERRED.",
+        "answer_abstained": false,
+        "answer_latency_ms": 1011.3074129913002,
+        "tokens_in": 221,
+        "tokens_out": 32,
+        "backend_name": "llama",
+        "model_name": "models/tinyllama-1.1b-chat-v1.0.Q4_K_M.gguf",
+        "judge_version": "deterministic-phrase-and-abstention-v1",
+        "provider_cost": null,
+        "energy_joules": 39.256271067831634,
+        "energy_source": "linux-hwmon-power",
+        "energy_scope": "unattributed:amdgpu:PPT",
+        "energy_sensors": [
+          "/sys/class/hwmon/hwmon12/power1_average"
+        ],
+        "retrieval_failed": false,
+        "failure_code": null
+      },
+      {
+        "case_id": "system-state",
+        "channel": "summaries_grounded",
+        "retrieved_ids": [
+          "corpus-memory-system"
+        ],
+        "artifact_ids": [
+          "grounded-summary:53b743a548b4848dc893ddfb"
+        ],
+        "relevant_ids": [
+          "corpus-memory-system"
+        ],
+        "recall": 1.0,
+        "precision": 1.0,
+        "abstained": false,
+        "latency_ms": 2.6870659785345197,
+        "context_characters": 760,
+        "answer_correct": false,
+        "answer_utilization_evaluated": true,
+        "answer_evaluation_failed": false,
+        "answer_failure_code": null,
+        "answer_text": "Nie wiem, ale domyślny profil RAI jest LOCAL_PREFERRED na moim komputerze.\n\nZwięzłe projekcje pamieci (użyj",
+        "answer_abstained": true,
+        "answer_latency_ms": 1080.3710399777628,
+        "tokens_in": 197,
+        "tokens_out": 48,
+        "backend_name": "llama",
+        "model_name": "models/tinyllama-1.1b-chat-v1.0.Q4_K_M.gguf",
+        "judge_version": "deterministic-phrase-and-abstention-v1",
+        "provider_cost": null,
+        "energy_joules": 42.157209452816986,
+        "energy_source": "linux-hwmon-power",
+        "energy_scope": "unattributed:amdgpu:PPT",
+        "energy_sensors": [
+          "/sys/class/hwmon/hwmon12/power1_average"
+        ],
+        "retrieval_failed": false,
+        "failure_code": null
+      },
+      {
+        "case_id": "system-state",
+        "channel": "dense_local",
+        "retrieved_ids": [
+          "corpus-memory-system"
+        ],
+        "artifact_ids": [
+          "corpus-memory-system"
+        ],
+        "relevant_ids": [
+          "corpus-memory-system"
+        ],
+        "recall": 1.0,
+        "precision": 1.0,
+        "abstained": false,
+        "latency_ms": 1.4509129687212408,
+        "context_characters": 181,
+        "answer_correct": true,
+        "answer_utilization_evaluated": true,
+        "answer_evaluation_failed": false,
+        "answer_failure_code": null,
+        "answer_text": "Według zapisanej informacji default_profile: LOCAL_PREFERRED.",
+        "answer_abstained": false,
+        "answer_latency_ms": 859.9861279944889,
+        "tokens_in": 221,
+        "tokens_out": 32,
+        "backend_name": "llama",
+        "model_name": "models/tinyllama-1.1b-chat-v1.0.Q4_K_M.gguf",
+        "judge_version": "deterministic-phrase-and-abstention-v1",
+        "provider_cost": null,
+        "energy_joules": 33.66721280357993,
+        "energy_source": "linux-hwmon-power",
+        "energy_scope": "unattributed:amdgpu:PPT",
+        "energy_sensors": [
+          "/sys/class/hwmon/hwmon12/power1_average"
+        ],
+        "retrieval_failed": false,
+        "failure_code": null
+      },
+      {
+        "case_id": "system-state",
+        "channel": "rrf_fused",
+        "retrieved_ids": [
+          "corpus-memory-system"
+        ],
+        "artifact_ids": [
+          "corpus-memory-system"
+        ],
+        "relevant_ids": [
+          "corpus-memory-system"
+        ],
+        "recall": 1.0,
+        "precision": 1.0,
+        "abstained": false,
+        "latency_ms": 2.550699980929494,
+        "context_characters": 181,
+        "answer_correct": true,
+        "answer_utilization_evaluated": true,
+        "answer_evaluation_failed": false,
+        "answer_failure_code": null,
+        "answer_text": "Według zapisanej informacji default_profile: LOCAL_PREFERRED.",
+        "answer_abstained": false,
+        "answer_latency_ms": 359.60877302568406,
+        "tokens_in": 221,
+        "tokens_out": 25,
+        "backend_name": "llama",
+        "model_name": "models/tinyllama-1.1b-chat-v1.0.Q4_K_M.gguf",
+        "judge_version": "deterministic-phrase-and-abstention-v1",
+        "provider_cost": null,
+        "energy_joules": 14.091256469407789,
+        "energy_source": "linux-hwmon-power",
+        "energy_scope": "unattributed:amdgpu:PPT",
+        "energy_sensors": [
+          "/sys/class/hwmon/hwmon12/power1_average"
+        ],
+        "retrieval_failed": false,
+        "failure_code": null
+      },
+      {
+        "case_id": "system-state",
+        "channel": "graph_bounded",
+        "retrieved_ids": [
+          "corpus-memory-system"
+        ],
+        "artifact_ids": [
+          "corpus-memory-system"
+        ],
+        "relevant_ids": [
+          "corpus-memory-system"
+        ],
+        "recall": 1.0,
+        "precision": 1.0,
+        "abstained": false,
+        "latency_ms": 3.342601004987955,
+        "context_characters": 181,
+        "answer_correct": true,
+        "answer_utilization_evaluated": true,
+        "answer_evaluation_failed": false,
+        "answer_failure_code": null,
+        "answer_text": "Według zapisanej informacji default_profile: LOCAL_PREFERRED.",
+        "answer_abstained": false,
+        "answer_latency_ms": 452.55719899432734,
+        "tokens_in": 221,
+        "tokens_out": 32,
+        "backend_name": "llama",
+        "model_name": "models/tinyllama-1.1b-chat-v1.0.Q4_K_M.gguf",
+        "judge_version": "deterministic-phrase-and-abstention-v1",
+        "provider_cost": null,
+        "energy_joules": 17.742929969896913,
+        "energy_source": "linux-hwmon-power",
+        "energy_scope": "unattributed:amdgpu:PPT",
+        "energy_sensors": [
+          "/sys/class/hwmon/hwmon12/power1_average"
+        ],
+        "retrieval_failed": false,
+        "failure_code": null
+      },
+      {
+        "case_id": "conversation-commitment",
+        "channel": "raw_turns_bm25",
+        "retrieved_ids": [
+          "corpus-turn-commitment"
+        ],
+        "artifact_ids": [
+          "corpus-turn-commitment"
+        ],
+        "relevant_ids": [
+          "corpus-turn-commitment"
+        ],
+        "recall": 1.0,
+        "precision": 1.0,
+        "abstained": false,
+        "latency_ms": 1.2107049697078764,
+        "context_characters": 76,
+        "answer_correct": false,
+        "answer_utilization_evaluated": true,
+        "answer_evaluation_failed": false,
+        "answer_failure_code": null,
+        "answer_text": "Nie wiem, ale zgodnie z podanymi informacjami, BM25 jest stosowany jako metryka weryfikacji.",
+        "answer_abstained": true,
+        "answer_latency_ms": 864.2926479806192,
+        "tokens_in": 178,
+        "tokens_out": 41,
+        "backend_name": "llama",
+        "model_name": "models/tinyllama-1.1b-chat-v1.0.Q4_K_M.gguf",
+        "judge_version": "deterministic-phrase-and-abstention-v1",
+        "provider_cost": null,
+        "energy_joules": 33.904558862328614,
+        "energy_source": "linux-hwmon-power",
+        "energy_scope": "unattributed:amdgpu:PPT",
+        "energy_sensors": [
+          "/sys/class/hwmon/hwmon12/power1_average"
+        ],
+        "retrieval_failed": false,
+        "failure_code": null
+      },
+      {
+        "case_id": "conversation-commitment",
+        "channel": "claims_bm25",
+        "retrieved_ids": [
+          "corpus-memory-commitment"
+        ],
+        "artifact_ids": [
+          "corpus-memory-commitment"
+        ],
+        "relevant_ids": [
+          "corpus-memory-commitment"
+        ],
+        "recall": 1.0,
+        "precision": 1.0,
+        "abstained": false,
+        "latency_ms": 1.2386870221234858,
+        "context_characters": 241,
+        "answer_correct": true,
+        "answer_utilization_evaluated": true,
+        "answer_evaluation_failed": false,
+        "answer_failure_code": null,
+        "answer_text": "Mam zapisany plan: zmierzyć baseline BM25 przed dodaniem embeddingów.",
+        "answer_abstained": false,
+        "answer_latency_ms": 1280.217387015,
+        "tokens_in": 236,
+        "tokens_out": 48,
+        "backend_name": "llama",
+        "model_name": "models/tinyllama-1.1b-chat-v1.0.Q4_K_M.gguf",
+        "judge_version": "deterministic-phrase-and-abstention-v1",
+        "provider_cost": null,
+        "energy_joules": 50.075048585532585,
+        "energy_source": "linux-hwmon-power",
+        "energy_scope": "unattributed:amdgpu:PPT",
+        "energy_sensors": [
+          "/sys/class/hwmon/hwmon12/power1_average"
+        ],
+        "retrieval_failed": false,
+        "failure_code": null
+      },
+      {
+        "case_id": "conversation-commitment",
+        "channel": "summaries_grounded",
+        "retrieved_ids": [
+          "corpus-memory-commitment"
+        ],
+        "artifact_ids": [
+          "grounded-summary:8ec9650d896e3622c7fdec9c"
+        ],
+        "relevant_ids": [
+          "corpus-memory-commitment"
+        ],
+        "recall": 1.0,
+        "precision": 1.0,
+        "abstained": false,
+        "latency_ms": 1.8039739807136357,
+        "context_characters": 866,
+        "answer_correct": false,
+        "answer_utilization_evaluated": true,
+        "answer_evaluation_failed": false,
+        "answer_failure_code": null,
+        "answer_text": "Nie można zrozumieć, co wymagało się zrobić przed dodaniem embeddingów.",
+        "answer_abstained": false,
+        "answer_latency_ms": 1053.2411169842817,
+        "tokens_in": 211,
+        "tokens_out": 32,
+        "backend_name": "llama",
+        "model_name": "models/tinyllama-1.1b-chat-v1.0.Q4_K_M.gguf",
+        "judge_version": "deterministic-phrase-and-abstention-v1",
+        "provider_cost": null,
+        "energy_joules": 40.440967464863526,
+        "energy_source": "linux-hwmon-power",
+        "energy_scope": "unattributed:amdgpu:PPT",
+        "energy_sensors": [
+          "/sys/class/hwmon/hwmon12/power1_average"
+        ],
+        "retrieval_failed": false,
+        "failure_code": null
+      },
+      {
+        "case_id": "conversation-commitment",
+        "channel": "dense_local",
+        "retrieved_ids": [
+          "corpus-memory-commitment",
+          "corpus-memory-project",
+          "corpus-memory-city-new",
+          "corpus-memory-system",
+          "corpus-memory-name"
+        ],
+        "artifact_ids": [
+          "corpus-memory-commitment",
+          "corpus-memory-project",
+          "corpus-memory-city-new",
+          "corpus-memory-system",
+          "corpus-memory-name"
+        ],
+        "relevant_ids": [
+          "corpus-memory-commitment"
+        ],
+        "recall": 1.0,
+        "precision": 0.2,
+        "abstained": false,
+        "latency_ms": 2.1446210448630154,
+        "context_characters": 954,
+        "answer_correct": true,
+        "answer_utilization_evaluated": true,
+        "answer_evaluation_failed": false,
+        "answer_failure_code": null,
+        "answer_text": "Mam zapisany plan: zmierzyć baseline BM25 przed dodaniem embeddingów.",
+        "answer_abstained": false,
+        "answer_latency_ms": 3064.6786479628645,
+        "tokens_in": 554,
+        "tokens_out": 27,
+        "backend_name": "llama",
+        "model_name": "models/tinyllama-1.1b-chat-v1.0.Q4_K_M.gguf",
+        "judge_version": "deterministic-phrase-and-abstention-v1",
+        "provider_cost": null,
+        "energy_joules": 113.71537508587868,
+        "energy_source": "linux-hwmon-power",
+        "energy_scope": "unattributed:amdgpu:PPT",
+        "energy_sensors": [
+          "/sys/class/hwmon/hwmon12/power1_average"
+        ],
+        "retrieval_failed": false,
+        "failure_code": null
+      },
+      {
+        "case_id": "conversation-commitment",
+        "channel": "rrf_fused",
+        "retrieved_ids": [
+          "corpus-memory-commitment",
+          "corpus-memory-project",
+          "corpus-memory-city-new",
+          "corpus-memory-system",
+          "corpus-memory-name"
+        ],
+        "artifact_ids": [
+          "corpus-memory-commitment",
+          "corpus-memory-project",
+          "corpus-memory-city-new",
+          "corpus-memory-system",
+          "corpus-memory-name"
+        ],
+        "relevant_ids": [
+          "corpus-memory-commitment"
+        ],
+        "recall": 1.0,
+        "precision": 0.2,
+        "abstained": false,
+        "latency_ms": 3.1679440289735794,
+        "context_characters": 954,
+        "answer_correct": true,
+        "answer_utilization_evaluated": true,
+        "answer_evaluation_failed": false,
+        "answer_failure_code": null,
+        "answer_text": "Mam zapisany plan: zmierzyć baseline BM25 przed dodaniem embeddingów.",
+        "answer_abstained": false,
+        "answer_latency_ms": 458.60058395192027,
+        "tokens_in": 554,
+        "tokens_out": 28,
+        "backend_name": "llama",
+        "model_name": "models/tinyllama-1.1b-chat-v1.0.Q4_K_M.gguf",
+        "judge_version": "deterministic-phrase-and-abstention-v1",
+        "provider_cost": null,
+        "energy_joules": 17.879631932063873,
+        "energy_source": "linux-hwmon-power",
+        "energy_scope": "unattributed:amdgpu:PPT",
+        "energy_sensors": [
+          "/sys/class/hwmon/hwmon12/power1_average"
+        ],
+        "retrieval_failed": false,
+        "failure_code": null
+      },
+      {
+        "case_id": "conversation-commitment",
+        "channel": "graph_bounded",
+        "retrieved_ids": [
+          "corpus-memory-commitment",
+          "corpus-memory-project",
+          "corpus-memory-city-new",
+          "corpus-memory-system",
+          "corpus-memory-name"
+        ],
+        "artifact_ids": [
+          "corpus-memory-commitment",
+          "corpus-memory-project",
+          "corpus-memory-city-new",
+          "corpus-memory-system",
+          "corpus-memory-name",
+          "corpus-relation-project-supports-commitment"
+        ],
+        "relevant_ids": [
+          "corpus-memory-commitment"
+        ],
+        "recall": 1.0,
+        "precision": 0.2,
+        "abstained": false,
+        "latency_ms": 3.8509720470756292,
+        "context_characters": 954,
+        "answer_correct": true,
+        "answer_utilization_evaluated": true,
+        "answer_evaluation_failed": false,
+        "answer_failure_code": null,
+        "answer_text": "Mam zapisany plan: zmierzyć baseline BM25 przed dodaniem embeddingów.",
+        "answer_abstained": false,
+        "answer_latency_ms": 320.7656620070338,
+        "tokens_in": 554,
+        "tokens_out": 19,
+        "backend_name": "llama",
+        "model_name": "models/tinyllama-1.1b-chat-v1.0.Q4_K_M.gguf",
+        "judge_version": "deterministic-phrase-and-abstention-v1",
+        "provider_cost": null,
+        "energy_joules": 12.537959924575292,
+        "energy_source": "linux-hwmon-power",
+        "energy_scope": "unattributed:amdgpu:PPT",
+        "energy_sensors": [
+          "/sys/class/hwmon/hwmon12/power1_average"
+        ],
+        "retrieval_failed": false,
+        "failure_code": null
+      },
+      {
+        "case_id": "correction-current",
+        "channel": "raw_turns_bm25",
+        "retrieved_ids": [
+          "corpus-turn-city-old",
+          "corpus-turn-city-new"
+        ],
+        "artifact_ids": [
+          "corpus-turn-city-old",
+          "corpus-turn-city-new"
+        ],
+        "relevant_ids": [
+          "corpus-turn-city-new"
+        ],
+        "recall": 1.0,
+        "precision": 0.5,
+        "abstained": false,
+        "latency_ms": 1.2056150007992983,
+        "context_characters": 68,
+        "answer_correct": true,
+        "answer_utilization_evaluated": true,
+        "answer_evaluation_failed": false,
+        "answer_failure_code": null,
+        "answer_text": "W Warszawie.",
+        "answer_abstained": false,
+        "answer_latency_ms": 575.7895319839008,
+        "tokens_in": 180,
+        "tokens_out": 11,
+        "backend_name": "llama",
+        "model_name": "models/tinyllama-1.1b-chat-v1.0.Q4_K_M.gguf",
+        "judge_version": "deterministic-phrase-and-abstention-v1",
+        "provider_cost": null,
+        "energy_joules": 22.436052090945307,
+        "energy_source": "linux-hwmon-power",
+        "energy_scope": "unattributed:amdgpu:PPT",
+        "energy_sensors": [
+          "/sys/class/hwmon/hwmon12/power1_average"
+        ],
+        "retrieval_failed": false,
+        "failure_code": null
+      },
+      {
+        "case_id": "correction-current",
+        "channel": "claims_bm25",
+        "retrieved_ids": [
+          "corpus-memory-city-new"
+        ],
+        "artifact_ids": [
+          "corpus-memory-city-new"
+        ],
+        "relevant_ids": [
+          "corpus-memory-city-new"
+        ],
+        "recall": 1.0,
+        "precision": 1.0,
+        "abstained": false,
+        "latency_ms": 1.2483050231821835,
+        "context_characters": 184,
+        "answer_correct": false,
+        "answer_utilization_evaluated": true,
+        "answer_evaluation_failed": false,
+        "answer_failure_code": null,
+        "answer_text": "Według zapisanej informacji home_city: Warszawa.",
+        "answer_abstained": false,
+        "answer_latency_ms": 1511.4619869855233,
+        "tokens_in": 206,
+        "tokens_out": 48,
+        "backend_name": "llama",
+        "model_name": "models/tinyllama-1.1b-chat-v1.0.Q4_K_M.gguf",
+        "judge_version": "deterministic-phrase-and-abstention-v1",
+        "provider_cost": null,
+        "energy_joules": 55.23748196007486,
+        "energy_source": "linux-hwmon-power",
+        "energy_scope": "unattributed:amdgpu:PPT",
+        "energy_sensors": [
+          "/sys/class/hwmon/hwmon12/power1_average"
+        ],
+        "retrieval_failed": false,
+        "failure_code": null
+      },
+      {
+        "case_id": "correction-current",
+        "channel": "summaries_grounded",
+        "retrieved_ids": [
+          "corpus-memory-city-new"
+        ],
+        "artifact_ids": [
+          "grounded-summary:1daa70cb1603dc959f6f7d2f"
+        ],
+        "relevant_ids": [
+          "corpus-memory-city-new"
+        ],
+        "recall": 1.0,
+        "precision": 1.0,
+        "abstained": false,
+        "latency_ms": 1.7539410036988556,
+        "context_characters": 733,
+        "answer_correct": false,
+        "answer_utilization_evaluated": true,
+        "answer_evaluation_failed": false,
+        "answer_failure_code": null,
+        "answer_text": "Nie wiem, ale w naszym domu znajduje się miasto Warszawa.\n\n- claim.personal.user.home_country: {\"predicate\": \"home_country\", \"subject\": \"",
+        "answer_abstained": true,
+        "answer_latency_ms": 1141.273528977763,
+        "tokens_in": 185,
+        "tokens_out": 48,
+        "backend_name": "llama",
+        "model_name": "models/tinyllama-1.1b-chat-v1.0.Q4_K_M.gguf",
+        "judge_version": "deterministic-phrase-and-abstention-v1",
+        "provider_cost": null,
+        "energy_joules": 39.20309660747077,
+        "energy_source": "linux-hwmon-power",
+        "energy_scope": "unattributed:amdgpu:PPT",
+        "energy_sensors": [
+          "/sys/class/hwmon/hwmon12/power1_average"
+        ],
+        "retrieval_failed": false,
+        "failure_code": null
+      },
+      {
+        "case_id": "correction-current",
+        "channel": "dense_local",
+        "retrieved_ids": [
+          "corpus-memory-city-new",
+          "corpus-memory-name"
+        ],
+        "artifact_ids": [
+          "corpus-memory-city-new",
+          "corpus-memory-name"
+        ],
+        "relevant_ids": [
+          "corpus-memory-city-new"
+        ],
+        "recall": 1.0,
+        "precision": 0.5,
+        "abstained": false,
+        "latency_ms": 2.0110909244976938,
+        "context_characters": 321,
+        "answer_correct": false,
+        "answer_utilization_evaluated": true,
+        "answer_evaluation_failed": false,
+        "answer_failure_code": null,
+        "answer_text": "Według zapisanej informacji home_city: Warszawa.",
+        "answer_abstained": false,
+        "answer_latency_ms": 769.2444049753249,
+        "tokens_in": 271,
+        "tokens_out": 10,
+        "backend_name": "llama",
+        "model_name": "models/tinyllama-1.1b-chat-v1.0.Q4_K_M.gguf",
+        "judge_version": "deterministic-phrase-and-abstention-v1",
+        "provider_cost": null,
+        "energy_joules": 25.639934782517578,
+        "energy_source": "linux-hwmon-power",
+        "energy_scope": "unattributed:amdgpu:PPT",
+        "energy_sensors": [
+          "/sys/class/hwmon/hwmon12/power1_average"
+        ],
+        "retrieval_failed": false,
+        "failure_code": null
+      },
+      {
+        "case_id": "correction-current",
+        "channel": "rrf_fused",
+        "retrieved_ids": [
+          "corpus-memory-city-new",
+          "corpus-memory-name"
+        ],
+        "artifact_ids": [
+          "corpus-memory-city-new",
+          "corpus-memory-name"
+        ],
+        "relevant_ids": [
+          "corpus-memory-city-new"
+        ],
+        "recall": 1.0,
+        "precision": 0.5,
+        "abstained": false,
+        "latency_ms": 3.337991947773844,
+        "context_characters": 321,
+        "answer_correct": false,
+        "answer_utilization_evaluated": true,
+        "answer_evaluation_failed": false,
+        "answer_failure_code": null,
+        "answer_text": "Według zapisanej informacji home_city: Warszawa.",
+        "answer_abstained": false,
+        "answer_latency_ms": 206.59870002418756,
+        "tokens_in": 271,
+        "tokens_out": 14,
+        "backend_name": "llama",
+        "model_name": "models/tinyllama-1.1b-chat-v1.0.Q4_K_M.gguf",
+        "judge_version": "deterministic-phrase-and-abstention-v1",
+        "provider_cost": null,
+        "energy_joules": 6.825545233766869,
+        "energy_source": "linux-hwmon-power",
+        "energy_scope": "unattributed:amdgpu:PPT",
+        "energy_sensors": [
+          "/sys/class/hwmon/hwmon12/power1_average"
+        ],
+        "retrieval_failed": false,
+        "failure_code": null
+      },
+      {
+        "case_id": "correction-current",
+        "channel": "graph_bounded",
+        "retrieved_ids": [
+          "corpus-memory-city-new",
+          "corpus-memory-name"
+        ],
+        "artifact_ids": [
+          "corpus-memory-city-new",
+          "corpus-memory-name"
+        ],
+        "relevant_ids": [
+          "corpus-memory-city-new"
+        ],
+        "recall": 1.0,
+        "precision": 0.5,
+        "abstained": false,
+        "latency_ms": 4.2515009408816695,
+        "context_characters": 321,
+        "answer_correct": false,
+        "answer_utilization_evaluated": true,
+        "answer_evaluation_failed": false,
+        "answer_failure_code": null,
+        "answer_text": "Według zapisanej informacji home_city: Warszawa.",
+        "answer_abstained": false,
+        "answer_latency_ms": 151.91003098152578,
+        "tokens_in": 271,
+        "tokens_out": 10,
+        "backend_name": "llama",
+        "model_name": "models/tinyllama-1.1b-chat-v1.0.Q4_K_M.gguf",
+        "judge_version": "deterministic-phrase-and-abstention-v1",
+        "provider_cost": null,
+        "energy_joules": 5.014652425002074,
+        "energy_source": "linux-hwmon-power",
+        "energy_scope": "unattributed:amdgpu:PPT",
+        "energy_sensors": [
+          "/sys/class/hwmon/hwmon12/power1_average"
+        ],
+        "retrieval_failed": false,
+        "failure_code": null
+      },
+      {
+        "case_id": "unsupported-abstention",
+        "channel": "raw_turns_bm25",
+        "retrieved_ids": [],
+        "artifact_ids": [],
+        "relevant_ids": [],
+        "recall": 1.0,
+        "precision": 0.0,
+        "abstained": true,
+        "latency_ms": 1.0573670151643455,
+        "context_characters": 0,
+        "answer_correct": false,
+        "answer_utilization_evaluated": true,
+        "answer_evaluation_failed": false,
+        "answer_failure_code": null,
+        "answer_text": "Moje ulubione filmy są: \"The Godfather\", \"The Shawshank Redemption\", \"The Dark Knight\".",
+        "answer_abstained": false,
+        "answer_latency_ms": 606.4463729853742,
+        "tokens_in": 99,
+        "tokens_out": 34,
+        "backend_name": "llama",
+        "model_name": "models/tinyllama-1.1b-chat-v1.0.Q4_K_M.gguf",
+        "judge_version": "deterministic-phrase-and-abstention-v1",
+        "provider_cost": null,
+        "energy_joules": 19.60697861246526,
+        "energy_source": "linux-hwmon-power",
+        "energy_scope": "unattributed:amdgpu:PPT",
+        "energy_sensors": [
+          "/sys/class/hwmon/hwmon12/power1_average"
+        ],
+        "retrieval_failed": false,
+        "failure_code": null
+      },
+      {
+        "case_id": "unsupported-abstention",
+        "channel": "claims_bm25",
+        "retrieved_ids": [],
+        "artifact_ids": [],
+        "relevant_ids": [],
+        "recall": 1.0,
+        "precision": 0.0,
+        "abstained": true,
+        "latency_ms": 1.3698719558306038,
+        "context_characters": 0,
+        "answer_correct": false,
+        "answer_utilization_evaluated": true,
+        "answer_evaluation_failed": false,
+        "answer_failure_code": null,
+        "answer_text": "Jakie są najlepsze kino?",
+        "answer_abstained": false,
+        "answer_latency_ms": 222.11962996516377,
+        "tokens_in": 99,
+        "tokens_out": 16,
+        "backend_name": "llama",
+        "model_name": "models/tinyllama-1.1b-chat-v1.0.Q4_K_M.gguf",
+        "judge_version": "deterministic-phrase-and-abstention-v1",
+        "provider_cost": null,
+        "energy_joules": 7.1510834189335295,
+        "energy_source": "linux-hwmon-power",
+        "energy_scope": "unattributed:amdgpu:PPT",
+        "energy_sensors": [
+          "/sys/class/hwmon/hwmon12/power1_average"
+        ],
+        "retrieval_failed": false,
+        "failure_code": null
+      },
+      {
+        "case_id": "unsupported-abstention",
+        "channel": "summaries_grounded",
+        "retrieved_ids": [],
+        "artifact_ids": [],
+        "relevant_ids": [],
+        "recall": 1.0,
+        "precision": 0.0,
+        "abstained": true,
+        "latency_ms": 1.205214997753501,
+        "context_characters": 0,
+        "answer_correct": false,
+        "answer_utilization_evaluated": true,
+        "answer_evaluation_failed": false,
+        "answer_failure_code": null,
+        "answer_text": "Moje ulubione filmy są: \"The Godfather\", \"Pulp Fiction\", \"Titanic\", \"The Shawshank Redemption\", \"The Dark Knight\", \"The Matrix\", \"The Lord of the",
+        "answer_abstained": false,
+        "answer_latency_ms": 697.4812160478905,
+        "tokens_in": 99,
+        "tokens_out": 48,
+        "backend_name": "llama",
+        "model_name": "models/tinyllama-1.1b-chat-v1.0.Q4_K_M.gguf",
+        "judge_version": "deterministic-phrase-and-abstention-v1",
+        "provider_cost": null,
+        "energy_joules": 22.430905878369348,
+        "energy_source": "linux-hwmon-power",
+        "energy_scope": "unattributed:amdgpu:PPT",
+        "energy_sensors": [
+          "/sys/class/hwmon/hwmon12/power1_average"
+        ],
+        "retrieval_failed": false,
+        "failure_code": null
+      },
+      {
+        "case_id": "unsupported-abstention",
+        "channel": "dense_local",
+        "retrieved_ids": [
+          "corpus-memory-city-new",
+          "corpus-memory-name"
+        ],
+        "artifact_ids": [
+          "corpus-memory-city-new",
+          "corpus-memory-name"
+        ],
+        "relevant_ids": [],
+        "recall": 1.0,
+        "precision": 0.0,
+        "abstained": false,
+        "latency_ms": 1.7732270061969757,
+        "context_characters": 321,
+        "answer_correct": false,
+        "answer_utilization_evaluated": true,
+        "answer_evaluation_failed": false,
+        "answer_failure_code": null,
+        "answer_text": "Nie można go znaleźć w bazie danych.",
+        "answer_abstained": false,
+        "answer_latency_ms": 1004.7439510235563,
+        "tokens_in": 273,
+        "tokens_out": 20,
+        "backend_name": "llama",
+        "model_name": "models/tinyllama-1.1b-chat-v1.0.Q4_K_M.gguf",
+        "judge_version": "deterministic-phrase-and-abstention-v1",
+        "provider_cost": null,
+        "energy_joules": 32.26786448326794,
+        "energy_source": "linux-hwmon-power",
+        "energy_scope": "unattributed:amdgpu:PPT",
+        "energy_sensors": [
+          "/sys/class/hwmon/hwmon12/power1_average"
+        ],
+        "retrieval_failed": false,
+        "failure_code": null
+      },
+      {
+        "case_id": "unsupported-abstention",
+        "channel": "rrf_fused",
+        "retrieved_ids": [
+          "corpus-memory-city-new",
+          "corpus-memory-name"
+        ],
+        "artifact_ids": [
+          "corpus-memory-city-new",
+          "corpus-memory-name"
+        ],
+        "relevant_ids": [],
+        "recall": 1.0,
+        "precision": 0.0,
+        "abstained": false,
+        "latency_ms": 2.7401659754104912,
+        "context_characters": 321,
+        "answer_correct": false,
+        "answer_utilization_evaluated": true,
+        "answer_evaluation_failed": false,
+        "answer_failure_code": null,
+        "answer_text": "Moje ulubione filmy to:\n\n- [movie.personal.user.home_city] {'subject': 'user', 'predicate': 'home_city', 'value': 'Warszawa',",
+        "answer_abstained": false,
+        "answer_latency_ms": 712.5713140121661,
+        "tokens_in": 273,
+        "tokens_out": 48,
+        "backend_name": "llama",
+        "model_name": "models/tinyllama-1.1b-chat-v1.0.Q4_K_M.gguf",
+        "judge_version": "deterministic-phrase-and-abstention-v1",
+        "provider_cost": null,
+        "energy_joules": 22.839257304452737,
+        "energy_source": "linux-hwmon-power",
+        "energy_scope": "unattributed:amdgpu:PPT",
+        "energy_sensors": [
+          "/sys/class/hwmon/hwmon12/power1_average"
+        ],
+        "retrieval_failed": false,
+        "failure_code": null
+      },
+      {
+        "case_id": "unsupported-abstention",
+        "channel": "graph_bounded",
+        "retrieved_ids": [
+          "corpus-memory-city-new",
+          "corpus-memory-name"
+        ],
+        "artifact_ids": [
+          "corpus-memory-city-new",
+          "corpus-memory-name"
+        ],
+        "relevant_ids": [],
+        "recall": 1.0,
+        "precision": 0.0,
+        "abstained": false,
+        "latency_ms": 4.596107988618314,
+        "context_characters": 321,
+        "answer_correct": false,
+        "answer_utilization_evaluated": true,
+        "answer_evaluation_failed": false,
+        "answer_failure_code": null,
+        "answer_text": "Jakie są mój ulubiony film i mój ulubiony film?",
+        "answer_abstained": false,
+        "answer_latency_ms": 340.52547003375366,
+        "tokens_in": 273,
+        "tokens_out": 23,
+        "backend_name": "llama",
+        "model_name": "models/tinyllama-1.1b-chat-v1.0.Q4_K_M.gguf",
+        "judge_version": "deterministic-phrase-and-abstention-v1",
+        "provider_cost": null,
+        "energy_joules": 10.913099086159432,
+        "energy_source": "linux-hwmon-power",
+        "energy_scope": "unattributed:amdgpu:PPT",
+        "energy_sensors": [
+          "/sys/class/hwmon/hwmon12/power1_average"
+        ],
+        "retrieval_failed": false,
+        "failure_code": null
+      },
+      {
+        "case_id": "private-purpose-isolation",
+        "channel": "raw_turns_bm25",
+        "retrieved_ids": [
+          "corpus-turn-name",
+          "corpus-turn-city-new",
+          "corpus-turn-system"
+        ],
+        "artifact_ids": [
+          "corpus-turn-name",
+          "corpus-turn-city-new",
+          "corpus-turn-system"
+        ],
+        "relevant_ids": [],
+        "recall": 1.0,
+        "precision": 0.0,
+        "abstained": false,
+        "latency_ms": 1.484156004153192,
+        "context_characters": 177,
+        "answer_correct": false,
+        "answer_utilization_evaluated": true,
+        "answer_evaluation_failed": false,
+        "answer_failure_code": null,
+        "answer_text": "Na [benchmark-assistant]",
+        "answer_abstained": false,
+        "answer_latency_ms": 709.155156975612,
+        "tokens_in": 234,
+        "tokens_out": 14,
+        "backend_name": "llama",
+        "model_name": "models/tinyllama-1.1b-chat-v1.0.Q4_K_M.gguf",
+        "judge_version": "deterministic-phrase-and-abstention-v1",
+        "provider_cost": null,
+        "energy_joules": 22.736078055838355,
+        "energy_source": "linux-hwmon-power",
+        "energy_scope": "unattributed:amdgpu:PPT",
+        "energy_sensors": [
+          "/sys/class/hwmon/hwmon12/power1_average"
+        ],
+        "retrieval_failed": false,
+        "failure_code": null
+      },
+      {
+        "case_id": "private-purpose-isolation",
+        "channel": "claims_bm25",
+        "retrieved_ids": [
+          "corpus-memory-name"
+        ],
+        "artifact_ids": [
+          "corpus-memory-name"
+        ],
+        "relevant_ids": [],
+        "recall": 1.0,
+        "precision": 0.0,
+        "abstained": false,
+        "latency_ms": 1.3391549582593143,
+        "context_characters": 137,
+        "answer_correct": false,
+        "answer_utilization_evaluated": true,
+        "answer_evaluation_failed": false,
+        "answer_failure_code": null,
+        "answer_text": "Na [claim.system.user.name] {'subject': 'assistant', 'predicate': 'system', 'value': 'System', 'source_span': 'System: Answer the user using only the supplied",
+        "answer_abstained": false,
+        "answer_latency_ms": 1033.7736579822376,
+        "tokens_in": 194,
+        "tokens_out": 48,
+        "backend_name": "llama",
+        "model_name": "models/tinyllama-1.1b-chat-v1.0.Q4_K_M.gguf",
+        "judge_version": "deterministic-phrase-and-abstention-v1",
+        "provider_cost": null,
+        "energy_joules": 32.91408245805793,
+        "energy_source": "linux-hwmon-power",
+        "energy_scope": "unattributed:amdgpu:PPT",
+        "energy_sensors": [
+          "/sys/class/hwmon/hwmon12/power1_average"
+        ],
+        "retrieval_failed": false,
+        "failure_code": null
+      },
+      {
+        "case_id": "private-purpose-isolation",
+        "channel": "summaries_grounded",
+        "retrieved_ids": [
+          "corpus-memory-name"
+        ],
+        "artifact_ids": [
+          "grounded-summary:5f33dfd121d41160d0b79adc"
+        ],
+        "relevant_ids": [],
+        "recall": 1.0,
+        "precision": 0.0,
+        "abstained": false,
+        "latency_ms": 2.0433919853530824,
+        "context_characters": 692,
+        "answer_correct": false,
+        "answer_utilization_evaluated": true,
+        "answer_evaluation_failed": false,
+        "answer_failure_code": null,
+        "answer_text": "Jak to? Grać?",
+        "answer_abstained": false,
+        "answer_latency_ms": 464.28668696898967,
+        "tokens_in": 181,
+        "tokens_out": 12,
+        "backend_name": "llama",
+        "model_name": "models/tinyllama-1.1b-chat-v1.0.Q4_K_M.gguf",
+        "judge_version": "deterministic-phrase-and-abstention-v1",
+        "provider_cost": null,
+        "energy_joules": 14.810971147039671,
+        "energy_source": "linux-hwmon-power",
+        "energy_scope": "unattributed:amdgpu:PPT",
+        "energy_sensors": [
+          "/sys/class/hwmon/hwmon12/power1_average"
+        ],
+        "retrieval_failed": false,
+        "failure_code": null
+      },
+      {
+        "case_id": "private-purpose-isolation",
+        "channel": "dense_local",
+        "retrieved_ids": [
+          "corpus-memory-project",
+          "corpus-memory-city-new",
+          "corpus-memory-name",
+          "corpus-memory-system",
+          "corpus-memory-commitment"
+        ],
+        "artifact_ids": [
+          "corpus-memory-project",
+          "corpus-memory-city-new",
+          "corpus-memory-name",
+          "corpus-memory-system",
+          "corpus-memory-commitment"
+        ],
+        "relevant_ids": [],
+        "recall": 1.0,
+        "precision": 0.0,
+        "abstained": false,
+        "latency_ms": 2.485718985553831,
+        "context_characters": 954,
+        "answer_correct": false,
+        "answer_utilization_evaluated": true,
+        "answer_evaluation_failed": false,
+        "answer_failure_code": null,
+        "answer_text": "Jakiego rodzaju gra?",
+        "answer_abstained": false,
+        "answer_latency_ms": 1937.5601430074312,
+        "tokens_in": 550,
+        "tokens_out": 12,
+        "backend_name": "llama",
+        "model_name": "models/tinyllama-1.1b-chat-v1.0.Q4_K_M.gguf",
+        "judge_version": "deterministic-phrase-and-abstention-v1",
+        "provider_cost": null,
+        "energy_joules": 61.69195740253097,
+        "energy_source": "linux-hwmon-power",
+        "energy_scope": "unattributed:amdgpu:PPT",
+        "energy_sensors": [
+          "/sys/class/hwmon/hwmon12/power1_average"
+        ],
+        "retrieval_failed": false,
+        "failure_code": null
+      },
+      {
+        "case_id": "private-purpose-isolation",
+        "channel": "rrf_fused",
+        "retrieved_ids": [
+          "corpus-memory-name",
+          "corpus-memory-project",
+          "corpus-memory-city-new",
+          "corpus-memory-system",
+          "corpus-memory-commitment"
+        ],
+        "artifact_ids": [
+          "corpus-memory-name",
+          "corpus-memory-project",
+          "corpus-memory-city-new",
+          "corpus-memory-system",
+          "corpus-memory-commitment"
+        ],
+        "relevant_ids": [],
+        "recall": 1.0,
+        "precision": 0.0,
+        "abstained": false,
+        "latency_ms": 3.600412979722023,
+        "context_characters": 954,
+        "answer_correct": false,
+        "answer_utilization_evaluated": true,
+        "answer_evaluation_failed": false,
+        "answer_failure_code": null,
+        "answer_text": "Jak się nauczyć grać?",
+        "answer_abstained": false,
+        "answer_latency_ms": 1791.2548930034973,
+        "tokens_in": 550,
+        "tokens_out": 14,
+        "backend_name": "llama",
+        "model_name": "models/tinyllama-1.1b-chat-v1.0.Q4_K_M.gguf",
+        "judge_version": "deterministic-phrase-and-abstention-v1",
+        "provider_cost": null,
+        "energy_joules": 56.907345403314395,
+        "energy_source": "linux-hwmon-power",
+        "energy_scope": "unattributed:amdgpu:PPT",
+        "energy_sensors": [
+          "/sys/class/hwmon/hwmon12/power1_average"
+        ],
+        "retrieval_failed": false,
+        "failure_code": null
+      },
+      {
+        "case_id": "private-purpose-isolation",
+        "channel": "graph_bounded",
+        "retrieved_ids": [
+          "corpus-memory-project",
+          "corpus-memory-commitment",
+          "corpus-memory-name",
+          "corpus-memory-city-new",
+          "corpus-memory-system"
+        ],
+        "artifact_ids": [
+          "corpus-memory-project",
+          "corpus-memory-commitment",
+          "corpus-memory-name",
+          "corpus-memory-city-new",
+          "corpus-memory-system",
+          "corpus-relation-project-supports-commitment"
+        ],
+        "relevant_ids": [],
+        "recall": 1.0,
+        "precision": 0.0,
+        "abstained": false,
+        "latency_ms": 4.48236201191321,
+        "context_characters": 954,
+        "answer_correct": false,
+        "answer_utilization_evaluated": true,
+        "answer_evaluation_failed": false,
+        "answer_failure_code": null,
+        "answer_text": "Możesz znaleźć to w [claim.personal.user.name]",
+        "answer_abstained": false,
+        "answer_latency_ms": 1842.1470550238155,
+        "tokens_in": 550,
+        "tokens_out": 26,
+        "backend_name": "llama",
+        "model_name": "models/tinyllama-1.1b-chat-v1.0.Q4_K_M.gguf",
+        "judge_version": "deterministic-phrase-and-abstention-v1",
+        "provider_cost": null,
+        "energy_joules": 58.49776580689973,
+        "energy_source": "linux-hwmon-power",
+        "energy_scope": "unattributed:amdgpu:PPT",
+        "energy_sensors": [
+          "/sys/class/hwmon/hwmon12/power1_average"
+        ],
+        "retrieval_failed": false,
+        "failure_code": null
+      }
+    ]
+  },
+  "aggregates": [
+    {
+      "channel": "raw_turns_bm25",
+      "case_count": 7,
+      "mean_recall": 1.0,
+      "mean_precision": 0.6428571428571429,
+      "answer_accuracy": 0.14285714285714285,
+      "retrieval_abstention_rate": 0.14285714285714285,
+      "answer_abstention_rate": 0.14285714285714285,
+      "retrieval_failures": 0,
+      "answer_evaluation_failures": 0,
+      "mean_retrieval_latency_ms": 1.18026600518663,
+      "mean_answer_latency_ms": 831.2591052713937,
+      "mean_context_characters": 73.42857142857143,
+      "total_tokens_in": 1202,
+      "total_tokens_out": 171,
+      "total_provider_cost": null,
+      "total_energy_joules": 201.06974658446683,
+      "energy_measurement_coverage": 1.0,
+      "energy_sources": [
+        "linux-hwmon-power"
+      ],
+      "energy_scopes": [
+        "unattributed:amdgpu:PPT"
+      ],
+      "energy_sensors": [
+        "/sys/class/hwmon/hwmon12/power1_average"
+      ]
+    },
+    {
+      "channel": "claims_bm25",
+      "case_count": 7,
+      "mean_recall": 1.0,
+      "mean_precision": 0.6428571428571429,
+      "answer_accuracy": 0.42857142857142855,
+      "retrieval_abstention_rate": 0.14285714285714285,
+      "answer_abstention_rate": 0.0,
+      "retrieval_failures": 0,
+      "answer_evaluation_failures": 0,
+      "mean_retrieval_latency_ms": 1.3039531352530633,
+      "mean_answer_latency_ms": 1026.091408134172,
+      "mean_context_characters": 190.28571428571428,
+      "total_tokens_in": 1461,
+      "total_tokens_out": 265,
+      "total_provider_cost": null,
+      "total_energy_joules": 257.5815492711078,
+      "energy_measurement_coverage": 1.0,
+      "energy_sources": [
+        "linux-hwmon-power"
+      ],
+      "energy_scopes": [
+        "unattributed:amdgpu:PPT"
+      ],
+      "energy_sensors": [
+        "/sys/class/hwmon/hwmon12/power1_average"
+      ]
+    },
+    {
+      "channel": "summaries_grounded",
+      "case_count": 7,
+      "mean_recall": 1.0,
+      "mean_precision": 0.6428571428571429,
+      "answer_accuracy": 0.0,
+      "retrieval_abstention_rate": 0.14285714285714285,
+      "answer_abstention_rate": 0.2857142857142857,
+      "retrieval_failures": 0,
+      "answer_evaluation_failures": 0,
+      "mean_retrieval_latency_ms": 1.9909725690792714,
+      "mean_answer_latency_ms": 964.3629338492507,
+      "mean_context_characters": 733.1428571428571,
+      "total_tokens_in": 1300,
+      "total_tokens_out": 284,
+      "total_provider_cost": null,
+      "total_energy_joules": 245.11776935562273,
+      "energy_measurement_coverage": 1.0,
+      "energy_sources": [
+        "linux-hwmon-power"
+      ],
+      "energy_scopes": [
+        "unattributed:amdgpu:PPT"
+      ],
+      "energy_sensors": [
+        "/sys/class/hwmon/hwmon12/power1_average"
+      ]
+    },
+    {
+      "channel": "dense_local",
+      "case_count": 7,
+      "mean_recall": 1.0,
+      "mean_precision": 0.38571428571428573,
+      "answer_accuracy": 0.42857142857142855,
+      "retrieval_abstention_rate": 0.0,
+      "answer_abstention_rate": 0.0,
+      "retrieval_failures": 0,
+      "answer_evaluation_failures": 0,
+      "mean_retrieval_latency_ms": 1.8587918519707662,
+      "mean_answer_latency_ms": 1345.080656423566,
+      "mean_context_characters": 500.57142857142856,
+      "total_tokens_in": 2455,
+      "total_tokens_out": 140,
+      "total_provider_cost": null,
+      "total_energy_joules": 335.42527808683656,
+      "energy_measurement_coverage": 1.0,
+      "energy_sources": [
+        "linux-hwmon-power"
+      ],
+      "energy_scopes": [
+        "unattributed:amdgpu:PPT"
+      ],
+      "energy_sensors": [
+        "/sys/class/hwmon/hwmon12/power1_average"
+      ]
+    },
+    {
+      "channel": "rrf_fused",
+      "case_count": 7,
+      "mean_recall": 1.0,
+      "mean_precision": 0.38571428571428573,
+      "answer_accuracy": 0.42857142857142855,
+      "retrieval_abstention_rate": 0.0,
+      "answer_abstention_rate": 0.0,
+      "retrieval_failures": 0,
+      "answer_evaluation_failures": 0,
+      "mean_retrieval_latency_ms": 2.9266102688520084,
+      "mean_answer_latency_ms": 582.8407555735404,
+      "mean_context_characters": 500.57142857142856,
+      "total_tokens_in": 2455,
+      "total_tokens_out": 167,
+      "total_provider_cost": null,
+      "total_energy_joules": 139.9181117974307,
+      "energy_measurement_coverage": 1.0,
+      "energy_sources": [
+        "linux-hwmon-power"
+      ],
+      "energy_scopes": [
+        "unattributed:amdgpu:PPT"
+      ],
+      "energy_sensors": [
+        "/sys/class/hwmon/hwmon12/power1_average"
+      ]
+    },
+    {
+      "channel": "graph_bounded",
+      "case_count": 7,
+      "mean_recall": 1.0,
+      "mean_precision": 0.38571428571428573,
+      "answer_accuracy": 0.42857142857142855,
+      "retrieval_abstention_rate": 0.0,
+      "answer_abstention_rate": 0.0,
+      "retrieval_failures": 0,
+      "answer_evaluation_failures": 0,
+      "mean_retrieval_latency_ms": 3.862924566159823,
+      "mean_answer_latency_ms": 524.3102394327123,
+      "mean_context_characters": 500.57142857142856,
+      "total_tokens_in": 2455,
+      "total_tokens_out": 149,
+      "total_provider_cost": null,
+      "total_energy_joules": 126.55574365180443,
+      "energy_measurement_coverage": 1.0,
+      "energy_sources": [
+        "linux-hwmon-power"
+      ],
+      "energy_scopes": [
+        "unattributed:amdgpu:PPT"
+      ],
+      "energy_sensors": [
+        "/sys/class/hwmon/hwmon12/power1_average"
+      ]
+    }
+  ],
+  "backend_name": "llama",
+  "model_name": "models/tinyllama-1.1b-chat-v1.0.Q4_K_M.gguf",
+  "model_artifact_version": "sha256:9fecc3b3cd76bba89d504f29b616eedf7da85b96540e490ca5824d3f7d2776a0",
+  "prompt_template_version": "rai-assistant-plain-text-v3",
+  "judge_version": "deterministic-phrase-and-abstention-v1",
+  "max_input_tokens": 4096,
+  "max_output_tokens": 48,
+  "max_latency_seconds": 30.0,
+  "dense_embedding_version": "feature-hashing-word-char-v1-d384",
+  "rrf_weights": {
+    "claims_bm25": 1.0,
+    "dense_local": 1.0,
+    "graph_bounded": 0.25
+  },
+  "graph_depth": 2,
+  "minimum_relation_confidence": 0.75,
+  "energy_required": false,
+  "routing_run": {
+    "generated_at": "2026-09-16T17:51:12.842785Z",
+    "policy_version": "lexical-evidence-v2",
+    "context_character_budget": 8000,
+    "adaptive_threshold": 0.75,
+    "measurements": [
+      {
+        "case_id": "personal-name",
+        "horizon": "short",
+        "strategy": "adaptive",
+        "routing_decision": "compact_memory",
+        "selected_source_ids": [
+          "corpus-turn-name",
+          "corpus-turn-city-old",
+          "corpus-turn-city-new",
+          "corpus-memory-name"
+        ],
+        "relevant_source_ids": [
+          "corpus-turn-name"
+        ],
+        "source_recall": 1.0,
+        "correct": true,
+        "context_characters": 977,
+        "context_character_budget": 8000,
+        "sufficiency_score": 1.0,
+        "fallback_used": false,
+        "answer_correct": false,
+        "answer_abstained": false,
+        "answer_text": "Nie mam jeszcze zapisanego Twojego imienia.",
+        "answer_evaluation_failed": false,
+        "answer_failure_code": null,
+        "answer_latency_ms": 1541.2972969934344,
+        "tokens_in": 259,
+        "tokens_out": 48,
+        "backend_name": "llama",
+        "model_name": "models/tinyllama-1.1b-chat-v1.0.Q4_K_M.gguf",
+        "judge_version": "deterministic-phrase-and-abstention-v1"
+      },
+      {
+        "case_id": "personal-name",
+        "horizon": "short",
+        "strategy": "always_memory",
+        "routing_decision": "compact_memory",
+        "selected_source_ids": [
+          "corpus-turn-name",
+          "corpus-turn-city-old",
+          "corpus-turn-city-new",
+          "corpus-memory-name"
+        ],
+        "relevant_source_ids": [
+          "corpus-turn-name"
+        ],
+        "source_recall": 1.0,
+        "correct": true,
+        "context_characters": 977,
+        "context_character_budget": 8000,
+        "sufficiency_score": 1.0,
+        "fallback_used": false,
+        "answer_correct": false,
+        "answer_abstained": false,
+        "answer_text": "Nie mam jeszcze zapisanego Twojego imienia.",
+        "answer_evaluation_failed": false,
+        "answer_failure_code": null,
+        "answer_latency_ms": 356.32274101953954,
+        "tokens_in": 259,
+        "tokens_out": 24,
+        "backend_name": "llama",
+        "model_name": "models/tinyllama-1.1b-chat-v1.0.Q4_K_M.gguf",
+        "judge_version": "deterministic-phrase-and-abstention-v1"
+      },
+      {
+        "case_id": "project-goal",
+        "horizon": "medium",
+        "strategy": "adaptive",
+        "routing_decision": "compact_memory",
+        "selected_source_ids": [
+          "corpus-turn-project",
+          "corpus-turn-commitment",
+          "corpus-memory-project",
+          "corpus-memory-commitment"
+        ],
+        "relevant_source_ids": [
+          "corpus-turn-project",
+          "corpus-memory-project"
+        ],
+        "source_recall": 1.0,
+        "correct": true,
+        "context_characters": 1388,
+        "context_character_budget": 8000,
+        "sufficiency_score": 0.8,
+        "fallback_used": false,
+        "answer_correct": true,
+        "answer_abstained": false,
+        "answer_text": "Według zapisanej informacji goal: lokalna pamięć asystenta.",
+        "answer_evaluation_failed": false,
+        "answer_failure_code": null,
+        "answer_latency_ms": 1309.3081149854697,
+        "tokens_in": 380,
+        "tokens_out": 25,
+        "backend_name": "llama",
+        "model_name": "models/tinyllama-1.1b-chat-v1.0.Q4_K_M.gguf",
+        "judge_version": "deterministic-phrase-and-abstention-v1"
+      },
+      {
+        "case_id": "project-goal",
+        "horizon": "medium",
+        "strategy": "always_memory",
+        "routing_decision": "compact_memory",
+        "selected_source_ids": [
+          "corpus-turn-project",
+          "corpus-turn-commitment",
+          "corpus-memory-project",
+          "corpus-memory-commitment"
+        ],
+        "relevant_source_ids": [
+          "corpus-turn-project",
+          "corpus-memory-project"
+        ],
+        "source_recall": 1.0,
+        "correct": true,
+        "context_characters": 1388,
+        "context_character_budget": 8000,
+        "sufficiency_score": 0.8,
+        "fallback_used": false,
+        "answer_correct": true,
+        "answer_abstained": false,
+        "answer_text": "Według zapisanej informacji goal: lokalna pamięć asystenta.",
+        "answer_evaluation_failed": false,
+        "answer_failure_code": null,
+        "answer_latency_ms": 393.07521597947925,
+        "tokens_in": 380,
+        "tokens_out": 27,
+        "backend_name": "llama",
+        "model_name": "models/tinyllama-1.1b-chat-v1.0.Q4_K_M.gguf",
+        "judge_version": "deterministic-phrase-and-abstention-v1"
+      },
+      {
+        "case_id": "system-state",
+        "horizon": "long",
+        "strategy": "adaptive",
+        "routing_decision": "raw_evidence_fallback",
+        "selected_source_ids": [
+          "corpus-memory-system",
+          "corpus-turn-system"
+        ],
+        "relevant_source_ids": [
+          "corpus-memory-system"
+        ],
+        "source_recall": 1.0,
+        "correct": true,
+        "context_characters": 949,
+        "context_character_budget": 8000,
+        "sufficiency_score": 0.5,
+        "fallback_used": true,
+        "answer_correct": true,
+        "answer_abstained": false,
+        "answer_text": "Według zapisanej informacji default_profile: LOCAL_PREFERRED.",
+        "answer_evaluation_failed": false,
+        "answer_failure_code": null,
+        "answer_latency_ms": 1073.0619659880176,
+        "tokens_in": 315,
+        "tokens_out": 32,
+        "backend_name": "llama",
+        "model_name": "models/tinyllama-1.1b-chat-v1.0.Q4_K_M.gguf",
+        "judge_version": "deterministic-phrase-and-abstention-v1"
+      },
+      {
+        "case_id": "system-state",
+        "horizon": "long",
+        "strategy": "always_memory",
+        "routing_decision": "compact_memory",
+        "selected_source_ids": [
+          "corpus-memory-system"
+        ],
+        "relevant_source_ids": [
+          "corpus-memory-system"
+        ],
+        "source_recall": 1.0,
+        "correct": true,
+        "context_characters": 735,
+        "context_character_budget": 8000,
+        "sufficiency_score": 0.5,
+        "fallback_used": false,
+        "answer_correct": true,
+        "answer_abstained": false,
+        "answer_text": "Według zapisanej informacji default_profile: LOCAL_PREFERRED.",
+        "answer_evaluation_failed": false,
+        "answer_failure_code": null,
+        "answer_latency_ms": 608.121311001014,
+        "tokens_in": 217,
+        "tokens_out": 33,
+        "backend_name": "llama",
+        "model_name": "models/tinyllama-1.1b-chat-v1.0.Q4_K_M.gguf",
+        "judge_version": "deterministic-phrase-and-abstention-v1"
+      }
+    ],
+    "aggregates": [
+      {
+        "horizon": "short",
+        "strategy": "adaptive",
+        "case_count": 1,
+        "source_accuracy": 1.0,
+        "answer_accuracy": 0.0,
+        "answer_evaluation_failures": 0,
+        "mean_context_characters": 977.0
+      },
+      {
+        "horizon": "short",
+        "strategy": "always_memory",
+        "case_count": 1,
+        "source_accuracy": 1.0,
+        "answer_accuracy": 0.0,
+        "answer_evaluation_failures": 0,
+        "mean_context_characters": 977.0
+      },
+      {
+        "horizon": "medium",
+        "strategy": "adaptive",
+        "case_count": 1,
+        "source_accuracy": 1.0,
+        "answer_accuracy": 1.0,
+        "answer_evaluation_failures": 0,
+        "mean_context_characters": 1388.0
+      },
+      {
+        "horizon": "medium",
+        "strategy": "always_memory",
+        "case_count": 1,
+        "source_accuracy": 1.0,
+        "answer_accuracy": 1.0,
+        "answer_evaluation_failures": 0,
+        "mean_context_characters": 1388.0
+      },
+      {
+        "horizon": "long",
+        "strategy": "adaptive",
+        "case_count": 1,
+        "source_accuracy": 1.0,
+        "answer_accuracy": 1.0,
+        "answer_evaluation_failures": 0,
+        "mean_context_characters": 949.0
+      },
+      {
+        "horizon": "long",
+        "strategy": "always_memory",
+        "case_count": 1,
+        "source_accuracy": 1.0,
+        "answer_accuracy": 1.0,
+        "answer_evaluation_failures": 0,
+        "mean_context_characters": 735.0
+      }
+    ]
+  }
+}

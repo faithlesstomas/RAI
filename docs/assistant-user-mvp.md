@@ -110,12 +110,15 @@ state without reactivating an older value.
 
 This is an evidence-first general-memory increment, not human-like memory.
 Quoted, hearsay, uncertain, malformed and source-less candidates fail closed.
-The current retrieval floor compares lexical raw turns and claims with a
-source-covered deterministic summary projection under equal budgets. Its
-versioned natural-conversation corpus includes corrections, unsupported
-questions and privacy isolation; answers pass through the product backend
-contract and are judged independently for required evidence and abstention.
-A recorded live-local-model run, energy measurement, local dense retrieval,
-domain-aware consolidation and optional graph-store adapters are still Issue
-#35 work. Interactive latency depends on the selected local model and hardware;
+The retrieval floor compares lexical raw turns and claims, a source-covered
+summary projection, local dense feature hashing, weighted RRF and bounded graph
+paths under equal budgets. Its versioned corpus includes corrections,
+unsupported questions, privacy isolation and a denied graph edge. Answers pass
+through the product backend contract and are judged independently for required
+evidence and abstention. Two live local-model manifests, including explicitly
+scoped energy readings, are documented in
+[the M4–M6 evaluation](assistant-m4-m6-evaluation.md). Dense, RRF and graph
+retrieval remain opt-in because they did not beat claim BM25. Domain-aware
+consolidation and optional graph-store adapters remain later Issue #35 work.
+Interactive latency depends on the selected local model and hardware;
 deterministic mode exists for conformance tests, not as a chat model.
