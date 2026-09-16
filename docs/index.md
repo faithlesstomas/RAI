@@ -39,6 +39,7 @@ assistant-user-mvp
 assistant-live-acceptance
 assistant-memory-roadmap
 assistant-memory-gcas-crosscheck
+emacs-client
 local-voice
 neural-sidecar
 reference/modules
