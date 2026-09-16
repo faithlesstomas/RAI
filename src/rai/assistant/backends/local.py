@@ -95,7 +95,7 @@ class LocalAssistantBackend:
         self._state = LifecycleState.STOPPED
         return Success(self._state)
 
-    def _format_prompt(self, request: InferenceRequest) -> str:
+    def _format_prompt(self, request: InferenceRequest) -> str:  # noqa: PLR0912
         """Format an inspectable plain-text prompt bypassing chat template issues."""
         system_text = request.system_instruction or DEFAULT_SYSTEM_INSTRUCTION
         lines = [
@@ -126,6 +126,21 @@ class LocalAssistantBackend:
                     timestamp = str(item.get("timestamp", "unknown time"))
                     text = str(item.get("text", ""))
                     lines.append(f"- [{timestamp}] {text}")
+            lines.append("")
+
+        grounded_summaries = request.context.content.get("grounded_summaries", [])
+        if isinstance(grounded_summaries, (list, tuple)) and grounded_summaries:
+            lines.append(
+                "Zwięzłe projekcje pamięci (użyj tylko treści popartej wskazanymi źródłami):"
+            )
+            for item in grounded_summaries:
+                if not isinstance(item, dict):
+                    continue
+                content = item.get("content", {})
+                if isinstance(content, dict):
+                    summary = str(content.get("summary", ""))
+                    source_ids = content.get("source_memory_ids", ())
+                    lines.append(f"- {summary} [źródła: {source_ids}]")
             lines.append("")
 
         external_evidence = request.context.content.get("external_evidence", [])

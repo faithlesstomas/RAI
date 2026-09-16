@@ -126,10 +126,15 @@ privacy-aware evidence provider. A deterministic grounded-summary projection
 retains every contributing claim/source ID, modality, epistemic status and the
 minimum source confidence without becoming durable truth. The reproducible
 runner compares raw turns, claims and this summary projection with identical
-retrieval and character budgets. It reports retrieval quality, abstention,
-latency and context size, and exposes a separate answer-utilization evaluator.
-A representative corpus, real answerer/judge runs and energy integration remain
-open, so this stage is not complete.
+retrieval and character budgets. It reports retrieval quality, answer quality,
+retrieval/model abstention, retrieval/model latency, context size, token use and
+explicitly missing cost/energy samples. The versioned corpus covers personal,
+project, system, conversational commitment, correction, unsupported and
+privacy-isolation cases. Its answer evaluator invokes the product
+`AssistantModelBackend`; a deterministic phrase/abstention judge evaluates the
+answer independently instead of asking the answer model to grade itself. A
+recorded live-model run and energy integration remain open, so this stage is not
+complete.
 
 Implement raw-turn and raw-episode retrieval with FTS5/BM25 and query-driven
 pruning. Compare it against claim retrieval and summary retrieval before adding

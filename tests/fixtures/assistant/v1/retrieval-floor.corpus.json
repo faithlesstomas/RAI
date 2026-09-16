@@ -1,0 +1,207 @@
+{
+  "corpus_version": "rai-assistant-retrieval-floor-v1",
+  "description": "Natural-conversation memory retrieval floor. Claims are frozen after extraction so retrieval and answer use are measured independently from extraction quality.",
+  "turns": [
+    {
+      "turn_id": "corpus-turn-name",
+      "session_id": "corpus-session-personal",
+      "text": "Mam na imię Tomasz i wolę, kiedy zwracasz się do mnie po imieniu.",
+      "domain_scope": "personal"
+    },
+    {
+      "turn_id": "corpus-turn-project",
+      "session_id": "corpus-session-project",
+      "text": "Celem projektu Aurora jest zbudowanie lokalnej pamięci asystenta.",
+      "domain_scope": "project:aurora"
+    },
+    {
+      "turn_id": "corpus-turn-system",
+      "session_id": "corpus-session-system",
+      "text": "Na moim komputerze domyślnym profilem RAI jest LOCAL_PREFERRED.",
+      "domain_scope": "system:rai"
+    },
+    {
+      "turn_id": "corpus-turn-commitment",
+      "session_id": "corpus-session-project",
+      "text": "Ustaliliśmy, że przed dodaniem embeddingów najpierw zmierzymy baseline BM25.",
+      "domain_scope": "project:aurora"
+    },
+    {
+      "turn_id": "corpus-turn-city-old",
+      "session_id": "corpus-session-personal",
+      "text": "Mieszkam w Gdańsku.",
+      "domain_scope": "personal"
+    },
+    {
+      "turn_id": "corpus-turn-city-new",
+      "session_id": "corpus-session-personal",
+      "text": "Przeprowadziłem się i teraz mieszkam w Warszawie.",
+      "domain_scope": "personal"
+    },
+    {
+      "turn_id": "corpus-turn-private-hobby",
+      "session_id": "corpus-session-personal",
+      "text": "Prywatnie uczę się gry na fortepianie.",
+      "data_class": "PRIVATE",
+      "domain_scope": "personal",
+      "purpose": "private-reflection"
+    }
+  ],
+  "claims": [
+    {
+      "memory_id": "corpus-memory-name",
+      "source_turn_id": "corpus-turn-name",
+      "topic": "claim.personal.user.name",
+      "content": {
+        "subject": "user",
+        "predicate": "name",
+        "value": "Tomasz",
+        "source_span": "Mam na imię Tomasz",
+        "modality": "direct",
+        "confidence": 1.0
+      },
+      "domain_scope": "personal"
+    },
+    {
+      "memory_id": "corpus-memory-project",
+      "source_turn_id": "corpus-turn-project",
+      "topic": "claim.project.aurora.goal",
+      "content": {
+        "subject": "project Aurora",
+        "predicate": "goal",
+        "value": "lokalna pamięć asystenta",
+        "source_span": "Celem projektu Aurora jest zbudowanie lokalnej pamięci asystenta",
+        "modality": "direct",
+        "confidence": 1.0
+      },
+      "domain_scope": "project:aurora"
+    },
+    {
+      "memory_id": "corpus-memory-system",
+      "source_turn_id": "corpus-turn-system",
+      "topic": "claim.system.rai.default_profile",
+      "content": {
+        "subject": "RAI",
+        "predicate": "default_profile",
+        "value": "LOCAL_PREFERRED",
+        "source_span": "domyślnym profilem RAI jest LOCAL_PREFERRED",
+        "modality": "direct",
+        "confidence": 1.0
+      },
+      "domain_scope": "system:rai"
+    },
+    {
+      "memory_id": "corpus-memory-commitment",
+      "source_turn_id": "corpus-turn-commitment",
+      "topic": "claim.project.aurora.commitment.retrieval_order",
+      "content": {
+        "subject": "project Aurora team",
+        "predicate": "commitment",
+        "plan": "zmierzyć baseline BM25 przed dodaniem embeddingów",
+        "source_span": "przed dodaniem embeddingów najpierw zmierzymy baseline BM25",
+        "modality": "direct",
+        "confidence": 1.0
+      },
+      "domain_scope": "project:aurora"
+    },
+    {
+      "memory_id": "corpus-memory-city-old",
+      "source_turn_id": "corpus-turn-city-old",
+      "topic": "claim.personal.user.home_city",
+      "content": {
+        "subject": "user",
+        "predicate": "home_city",
+        "value": "Gdańsk",
+        "source_span": "Mieszkam w Gdańsku",
+        "modality": "direct",
+        "confidence": 1.0
+      },
+      "domain_scope": "personal"
+    },
+    {
+      "memory_id": "corpus-memory-city-new",
+      "source_turn_id": "corpus-turn-city-new",
+      "topic": "claim.personal.user.home_city",
+      "content": {
+        "subject": "user",
+        "predicate": "home_city",
+        "value": "Warszawa",
+        "source_span": "teraz mieszkam w Warszawie",
+        "statement_type": "correction",
+        "modality": "direct",
+        "confidence": 1.0
+      },
+      "domain_scope": "personal"
+    },
+    {
+      "memory_id": "corpus-memory-private-hobby",
+      "source_turn_id": "corpus-turn-private-hobby",
+      "topic": "claim.personal.user.hobby",
+      "content": {
+        "subject": "user",
+        "predicate": "hobby",
+        "value": "gra na fortepianie",
+        "source_span": "Prywatnie uczę się gry na fortepianie",
+        "modality": "direct",
+        "confidence": 1.0
+      },
+      "data_class": "PRIVATE",
+      "domain_scope": "personal",
+      "purpose": "private-reflection"
+    }
+  ],
+  "cases": [
+    {
+      "case_id": "personal-name",
+      "query_text": "Jak mam na imię?",
+      "relevant_raw_turn_ids": ["corpus-turn-name"],
+      "relevant_claim_ids": ["corpus-memory-name"],
+      "relevant_summary_source_ids": ["corpus-memory-name"],
+      "expected_answer_phrases": ["Tomasz"]
+    },
+    {
+      "case_id": "project-goal",
+      "query_text": "Jaki jest cel projektu Aurora?",
+      "relevant_raw_turn_ids": ["corpus-turn-project"],
+      "relevant_claim_ids": ["corpus-memory-project"],
+      "relevant_summary_source_ids": ["corpus-memory-project"],
+      "expected_answer_phrases": ["lokalna pamięć asystenta"]
+    },
+    {
+      "case_id": "system-state",
+      "query_text": "Jaki jest domyślny profil RAI na moim komputerze?",
+      "relevant_raw_turn_ids": ["corpus-turn-system"],
+      "relevant_claim_ids": ["corpus-memory-system"],
+      "relevant_summary_source_ids": ["corpus-memory-system"],
+      "expected_answer_phrases": ["LOCAL_PREFERRED"]
+    },
+    {
+      "case_id": "conversation-commitment",
+      "query_text": "Co ustaliliśmy zrobić przed dodaniem embeddingów?",
+      "relevant_raw_turn_ids": ["corpus-turn-commitment"],
+      "relevant_claim_ids": ["corpus-memory-commitment"],
+      "relevant_summary_source_ids": ["corpus-memory-commitment"],
+      "expected_answer_phrases": ["BM25"]
+    },
+    {
+      "case_id": "correction-current",
+      "query_text": "Gdzie teraz mieszkam?",
+      "relevant_raw_turn_ids": ["corpus-turn-city-new"],
+      "relevant_claim_ids": ["corpus-memory-city-new"],
+      "relevant_summary_source_ids": ["corpus-memory-city-new"],
+      "expected_answer_phrases": ["Warszawie"],
+      "forbidden_answer_phrases": ["Gdańsku"]
+    },
+    {
+      "case_id": "unsupported-abstention",
+      "query_text": "Jaki jest mój ulubiony film?",
+      "expected_abstention": true
+    },
+    {
+      "case_id": "private-purpose-isolation",
+      "query_text": "Na jakim instrumencie uczę się grać?",
+      "expected_abstention": true,
+      "forbidden_answer_phrases": ["fortepianie"]
+    }
+  ]
+}

@@ -9,12 +9,18 @@ import pytest
 from returns.result import Failure, Result, Success
 
 from rai.assistant.backends.deterministic import DeterministicAssistantBackend
+from rai.assistant.backends.local import LocalAssistantBackend
 from rai.assistant.context import AssistantContextBuilder
 from rai.assistant.evidence import RichHistoryEvidenceProvider
 from rai.assistant.evaluation import (
+    BackendRetrievalAnswerEvaluator,
+    RetrievalAnswerEvaluation,
     RetrievalChannel,
     RetrievalEvaluationCase,
+    aggregate_retrieval_run,
     evaluate_retrieval_floor,
+    load_retrieval_evaluation_corpus,
+    seed_retrieval_evaluation_corpus,
 )
 from rai.assistant.extraction import SchemaConstrainedMemoryExtractor
 from rai.assistant.ports import MemoryQuery
@@ -43,6 +49,7 @@ PRODUCER = ProducerIdentity(
 )
 EVALUATION_CONTEXT_BUDGET = 4096
 EXTRACTED_CLAIM_CONFIDENCE = 0.94
+STATIC_EVALUATOR_TOKEN_COUNT = 2
 
 
 class _StaticEngine:
@@ -83,7 +90,7 @@ class _StaticAnswerEvaluator:
         case: RetrievalEvaluationCase,
         channel: RetrievalChannel,
         context_items: tuple[dict[str, object], ...],
-    ) -> Result[bool, ActionFailure]:
+    ) -> Result[RetrievalAnswerEvaluation, ActionFailure]:
         del case
         self.calls.append(channel)
         if channel == self.fail_channel:
@@ -93,7 +100,19 @@ class _StaticAnswerEvaluator:
                     message="test answer evaluator failure",
                 )
             )
-        return Success(bool(context_items))
+        return Success(
+            RetrievalAnswerEvaluation(
+                answer_text="context used" if context_items else "no context",
+                correct=bool(context_items),
+                abstained=not context_items,
+                tokens_in=STATIC_EVALUATOR_TOKEN_COUNT,
+                tokens_out=STATIC_EVALUATOR_TOKEN_COUNT,
+                latency_ms=1.0,
+                backend_name="static",
+                model_name="static",
+                judge_version="static-v1",
+            )
+        )
 
 
 def _turn(record_id: str, text: str) -> ConversationTurn:
@@ -420,7 +439,7 @@ async def test_conflict_requires_correction_then_preserves_qualified_relations(
 
 
 @pytest.mark.asyncio
-async def test_retrieval_floor_compares_raw_and_claim_bm25_under_equal_budgets(
+async def test_retrieval_floor_compares_raw_and_claim_bm25_under_equal_budgets(  # noqa: PLR0915
     tmp_path: Path,
 ) -> None:
     text = "Pracuję nad projektem Aurora i porządkuję testy."
@@ -491,6 +510,10 @@ async def test_retrieval_floor_compares_raw_and_claim_bm25_under_equal_budgets(
     assert all(item.answer_utilization_evaluated for item in run.measurements)
     assert all(item.answer_correct is True for item in run.measurements)
     assert all(not item.answer_evaluation_failed for item in run.measurements)
+    assert all(item.answer_text == "context used" for item in run.measurements)
+    assert all(
+        item.tokens_in == STATIC_EVALUATOR_TOKEN_COUNT for item in run.measurements
+    )
     assert set(evaluator.calls) == {
         "raw_turns_bm25",
         "claims_bm25",
@@ -527,6 +550,19 @@ async def test_retrieval_floor_compares_raw_and_claim_bm25_under_equal_budgets(
     assert not failed_claim_measurement.answer_utilization_evaluated
     assert failed_claim_measurement.answer_failure_code == "ANSWER_USE_FAILED"
 
+    aggregates = aggregate_retrieval_run(run)
+    assert {item.channel for item in aggregates} == {
+        "raw_turns_bm25",
+        "claims_bm25",
+        "summaries_grounded",
+    }
+    assert all(item.answer_accuracy == 1.0 for item in aggregates)
+    assert all(
+        item.total_tokens_in == STATIC_EVALUATOR_TOKEN_COUNT for item in aggregates
+    )
+    assert all(item.total_energy_joules is None for item in aggregates)
+    assert all(item.energy_measurement_coverage == 0.0 for item in aggregates)
+
     deleted = await store.delete_turn("turn-eval")
     assert isinstance(deleted, Success)
     after_delete = await summary_provider.retrieve(
@@ -536,6 +572,99 @@ async def test_retrieval_floor_compares_raw_and_claim_bm25_under_equal_budgets(
     )
     assert isinstance(after_delete, Success)
     assert after_delete.unwrap() == ()
+
+
+@pytest.mark.asyncio
+async def test_versioned_corpus_runs_through_backend_and_independent_judge(
+    tmp_path: Path,
+) -> None:
+    corpus_path = (
+        Path(__file__).parent
+        / "fixtures"
+        / "assistant"
+        / "v1"
+        / "retrieval-floor.corpus.json"
+    )
+    corpus = load_retrieval_evaluation_corpus(corpus_path)
+    assert corpus.corpus_version == "rai-assistant-retrieval-floor-v1"
+    assert {case.case_id for case in corpus.cases} >= {
+        "personal-name",
+        "project-goal",
+        "system-state",
+        "conversation-commitment",
+        "correction-current",
+        "unsupported-abstention",
+    }
+
+    store = SQLiteMemoryGraphStore(tmp_path / "corpus.sqlite3")
+    await store.start()
+    seeded = await seed_retrieval_evaluation_corpus(store, corpus)
+    assert isinstance(seeded, Success)
+
+    project_case = next(case for case in corpus.cases if case.case_id == "project-goal")
+    backend = LocalAssistantBackend(
+        engine=_StaticEngine("Celem projektu Aurora jest lokalna pamięć asystenta."),
+        model_name="evaluation-static-model",
+        backend_name="evaluation-local-adapter",
+    )
+    started = await backend.start()
+    assert isinstance(started, Success)
+    evaluated = await evaluate_retrieval_floor(
+        store,
+        (project_case,),
+        retrieval_limit=2,
+        context_character_budget=EVALUATION_CONTEXT_BUDGET,
+        summary_provider=GroundedClaimSummaryProvider(store),
+        answer_evaluator=BackendRetrievalAnswerEvaluator(backend),
+        corpus_version=corpus.corpus_version,
+    )
+
+    assert isinstance(evaluated, Success)
+    assert evaluated.unwrap().corpus_version == corpus.corpus_version
+    measurements = evaluated.unwrap().measurements
+    assert {item.channel for item in measurements} == {
+        "raw_turns_bm25",
+        "claims_bm25",
+        "summaries_grounded",
+    }
+    assert all(item.answer_utilization_evaluated for item in measurements)
+    assert all(item.answer_correct is True for item in measurements)
+    assert all(item.answer_text is not None for item in measurements)
+    assert all(item.backend_name == "evaluation-local-adapter" for item in measurements)
+    assert all(item.judge_version for item in measurements)
+    assert all(item.tokens_out is not None for item in measurements)
+    assert all(item.answer_latency_ms is not None for item in measurements)
+    assert all(item.energy_joules is None for item in measurements)
+
+    backend.engine.text = "Nie mam wystarczających źródeł, aby odpowiedzieć."
+    abstention_cases = tuple(
+        case
+        for case in corpus.cases
+        if case.case_id in {"unsupported-abstention", "private-purpose-isolation"}
+    )
+    abstention_run = await evaluate_retrieval_floor(
+        store,
+        abstention_cases,
+        retrieval_limit=2,
+        context_character_budget=EVALUATION_CONTEXT_BUDGET,
+        summary_provider=GroundedClaimSummaryProvider(store),
+        answer_evaluator=BackendRetrievalAnswerEvaluator(backend),
+    )
+    assert isinstance(abstention_run, Success)
+    assert all(
+        item.answer_correct is True and item.answer_abstained is True
+        for item in abstention_run.unwrap().measurements
+    )
+    private_measurements = tuple(
+        item
+        for item in abstention_run.unwrap().measurements
+        if item.case_id == "private-purpose-isolation"
+    )
+    assert all(not item.retrieved_ids for item in private_measurements)
+
+    stopped = await backend.stop()
+    assert isinstance(stopped, Success)
+    await store.stop()
 
 
 @pytest.mark.asyncio

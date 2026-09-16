@@ -847,9 +847,10 @@ REST/WebSocket surface are implemented. SQLite memory operations, replay and
 stage diagnostics form the Issue #35 M1 floor. Schema-constrained free-form
 extraction, bitemporal claims, FTS5 raw-turn/claim retrieval, adaptive context
 routing, Rich History evidence grounding and an equal-budget raw/claim/grounded-
-summary evaluation runner are implemented. Representative answer/judge runs,
-energy measurement, dense/graph channels, persistent consolidation and adapters
-remain planned.
+summary evaluation runner, a versioned representative corpus and a product-
+backend answer evaluator with an independent deterministic judge are
+implemented. A recorded live-model run, energy measurement, dense/graph
+channels, persistent consolidation and adapters remain planned.
 
 Purpose: provide a continuous, local-first desktop assistant whose durable
 memory and context policy belong to RAI while its LLM and reasoning strategy are
@@ -937,8 +938,11 @@ explicit ConversationTurn or policy-approved proactive trigger
     semantic-memory channels;
   - [/] compare raw chunks, extracted facts and summaries using the same retrieval
     and context budgets; the runner supports all three source-covered channels
-    and separates retrieval from answer-utilization failures, while representative
-    answer/judge and energy runs remain open.
+    and separates retrieval from answer-utilization failures. A versioned corpus
+    covers personal, project, system, commitment, correction, abstention and
+    privacy-isolation cases; the answerer uses the product backend contract and
+    an independent deterministic judge. A recorded live-model and energy run
+    remains open.
 - [/] Add a tiered context router which selects recent/full context for short
   histories and escalates from summaries or claims to raw evidence when the
   selected tier is insufficient. Record the route, sufficiency decision and

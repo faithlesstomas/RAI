@@ -197,7 +197,12 @@ Every attempted mutation has a versioned `MemoryOperation`. Its trace records
 the trigger, proposal/source span, policy outcome, before/after IDs and terminal
 status. Replaying applied operations must equal the active SQLite projection.
 `rai assistant diagnostics` reports extraction, admission, storage, update,
-retrieval and (when run by a test harness) answer-use stages separately.
+retrieval and answer-use stages separately. The M4 harness seeds a versioned
+natural-conversation corpus with frozen admitted claims, invokes the same
+`AssistantModelBackend` boundary as the product, and judges required/forbidden
+answer content plus explicit abstention without model self-grading. Aggregates
+retain missing energy and provider-cost measurements as missing rather than
+silently treating them as zero.
 
 `rai`, `rai -p`, `rai assistant ask` and `rai assistant chat` instantiate this
 same service directly and do not require `rai serve`. The assistant HTTP routes
