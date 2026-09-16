@@ -265,12 +265,17 @@ class SchemaConstrainedMemoryExtractor:
                     modality=candidate.modality,
                     negated=candidate.negated,
                     scope=candidate.scope,
-                    domain_scope={
-                        "personal": "personal",
-                        "system": "system",
-                        "conversation": "conversation",
-                        "project": "project",
-                    }[candidate.scope],
+                    domain_scope=(
+                        turn.domain_scope
+                        if turn.domain_scope == candidate.scope
+                        or turn.domain_scope.startswith(f"{candidate.scope}:")
+                        else {
+                            "personal": "personal",
+                            "system": "system",
+                            "conversation": "conversation",
+                            "project": "project",
+                        }[candidate.scope]
+                    ),
                     valid_from=candidate.valid_from,
                     valid_until=candidate.valid_until,
                 )

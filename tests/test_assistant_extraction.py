@@ -10,7 +10,10 @@ from returns.result import Failure, Result, Success
 
 from rai.assistant.backends.deterministic import DeterministicAssistantBackend
 from rai.assistant.backends.local import LocalAssistantBackend
-from rai.assistant.context import AssistantContextBuilder
+from rai.assistant.context import (
+    AssistantContextBuilder,
+    assess_memory_sufficiency,
+)
 from rai.assistant.evidence import RichHistoryEvidenceProvider
 from rai.assistant.evaluation import (
     BackendRetrievalAnswerEvaluator,
@@ -24,9 +27,10 @@ from rai.assistant.evaluation import (
 )
 from rai.assistant.extraction import SchemaConstrainedMemoryExtractor
 from rai.assistant.ports import MemoryQuery
-from rai.assistant.query import MemoryQueryResolver
+from rai.assistant.query import MemoryQueryResolver, domain_scope_matches
 from rai.assistant.records import (
     ConversationTurn,
+    MemoryRecord,
     MemoryRelationKind,
     make_assistant_failure,
 )
@@ -50,6 +54,10 @@ PRODUCER = ProducerIdentity(
 EVALUATION_CONTEXT_BUDGET = 4096
 EXTRACTED_CLAIM_CONFIDENCE = 0.94
 STATIC_EVALUATOR_TOKEN_COUNT = 2
+EVALUATION_CHANNEL_COUNT = 3
+MEMORY_SUFFICIENCY_THRESHOLD = 0.75
+MIN_EXPECTED_PROJECT_PRECISION = 0.5
+EXPECTED_PARTIAL_QUERY_COVERAGE = 0.5
 
 
 class _StaticEngine:
@@ -64,6 +72,33 @@ class _StaticEngine:
     async def generate(self, **kwargs):  # noqa: ANN003, ANN202
         del kwargs
         return Success(InferenceResult(text=self.text))
+
+    async def unload(self):  # noqa: ANN202
+        return Success(None)
+
+
+class _EvidenceBoundEngine:
+    """Return the supported answer only when its evidence reached the prompt."""
+
+    def __init__(self, expected_evidence: str, supported_answer: str) -> None:
+        self.expected_evidence = expected_evidence
+        self.supported_answer = supported_answer
+        self.model_name = "evidence-bound-test-model"
+        self.is_loaded = True
+        self.prompts: list[str] = []
+
+    async def load(self):  # noqa: ANN202
+        return Success(None)
+
+    async def generate(self, **kwargs):  # noqa: ANN003, ANN202
+        prompt = str(kwargs.get("prompt", ""))
+        self.prompts.append(prompt)
+        answer = (
+            self.supported_answer
+            if self.expected_evidence.casefold() in prompt.casefold()
+            else "Nie mam wystarczających źródeł, aby odpowiedzieć."
+        )
+        return Success(InferenceResult(text=answer))
 
     async def unload(self):  # noqa: ANN202
         return Success(None)
@@ -223,12 +258,66 @@ async def test_service_admits_model_extracted_claim_and_recalls_it_cross_session
     assert package is not None
     assert package.manifest.routing_decision == "compact_memory"
     assert package.manifest.episodic_turn_ids == ()
+    assert package.manifest.sufficiency_factors["query_coverage"] == 1.0
+    assert package.manifest.sufficiency_factors["evidence_quality"] == pytest.approx(
+        EXTRACTED_CLAIM_CONFIDENCE
+    )
+    assert package.manifest.sufficiency_reasons
     operations = await store.list_memory_operations()
     assert isinstance(operations, Success)
     assert [operation.operation for operation in operations.unwrap()] == [
         "REFLECT",
         "REMEMBER",
     ]
+
+
+@pytest.mark.asyncio
+async def test_partial_high_confidence_claim_does_not_suppress_raw_evidence(
+    tmp_path: Path,
+) -> None:
+    source_text = "Pracuję nad projektem Aurora."
+    extractor = SchemaConstrainedMemoryExtractor(
+        _StaticEngine(_extraction_json("turn-partial-source", source_text[:-1])),  # type: ignore[arg-type]
+        model_name="schema-test-model",
+    )
+    store = SQLiteMemoryGraphStore(tmp_path / "partial-sufficiency.sqlite3")
+    service = AssistantService(
+        store=store,
+        backend=DeterministicAssistantBackend(),
+        memory_extractor=extractor,
+    )
+    await service.start()
+    seeded = await service.accept_turn(_turn("turn-partial-source", source_text))
+    service.memory_extractor = None
+
+    recalled = await service.accept_turn(
+        ConversationTurn(
+            record_id="turn-partial-query",
+            producer=PRODUCER,
+            session_id="partial-query-session",
+            role="user",
+            text="Jaki jest budżet i termin projektu Aurora?",
+        )
+    )
+
+    assert isinstance(seeded, Success)
+    assert isinstance(recalled, Success)
+    context = await store.get_context_package(recalled.unwrap().manifest_id)
+    assert isinstance(context, Success)
+    package = context.unwrap()
+    assert package is not None
+    assert package.manifest.routing_decision == "raw_evidence_fallback"
+    assert package.manifest.fallback_used is True
+    assert package.manifest.sufficiency_score < MEMORY_SUFFICIENCY_THRESHOLD
+    assert (
+        package.manifest.sufficiency_factors["query_coverage"]
+        == EXPECTED_PARTIAL_QUERY_COVERAGE
+    )
+    assert package.manifest.episodic_turn_ids == ("turn-partial-source",)
+    assert any(
+        reason.startswith("compact_memory:insufficient(coverage=0.500")
+        for reason in package.manifest.rejected_routes
+    )
 
 
 @pytest.mark.asyncio
@@ -602,8 +691,12 @@ async def test_versioned_corpus_runs_through_backend_and_independent_judge(
     assert isinstance(seeded, Success)
 
     project_case = next(case for case in corpus.cases if case.case_id == "project-goal")
+    engine = _EvidenceBoundEngine(
+        expected_evidence="asystenta",
+        supported_answer="Celem projektu Aurora jest lokalna pamięć asystenta.",
+    )
     backend = LocalAssistantBackend(
-        engine=_StaticEngine("Celem projektu Aurora jest lokalna pamięć asystenta."),
+        engine=engine,
         model_name="evaluation-static-model",
         backend_name="evaluation-local-adapter",
     )
@@ -628,15 +721,33 @@ async def test_versioned_corpus_runs_through_backend_and_independent_judge(
         "summaries_grounded",
     }
     assert all(item.answer_utilization_evaluated for item in measurements)
-    assert all(item.answer_correct is True for item in measurements)
+    assert all(item.answer_correct is True for item in measurements), [
+        (
+            item.channel,
+            item.retrieved_ids,
+            item.answer_text,
+            item.answer_correct,
+            item.recall,
+            item.precision,
+        )
+        for item in measurements
+    ]
+    assert all(item.recall == 1.0 for item in measurements)
+    assert all(item.precision >= MIN_EXPECTED_PROJECT_PRECISION for item in measurements)
+    assert all(item.retrieved_ids for item in measurements)
     assert all(item.answer_text is not None for item in measurements)
     assert all(item.backend_name == "evaluation-local-adapter" for item in measurements)
     assert all(item.judge_version for item in measurements)
     assert all(item.tokens_out is not None for item in measurements)
     assert all(item.answer_latency_ms is not None for item in measurements)
     assert all(item.energy_joules is None for item in measurements)
+    assert len(engine.prompts) == EVALUATION_CHANNEL_COUNT
+    assert all(
+        engine.expected_evidence.casefold() in prompt.casefold()
+        for prompt in engine.prompts
+    )
 
-    backend.engine.text = "Nie mam wystarczających źródeł, aby odpowiedzieć."
+    engine.expected_evidence = "evidence-that-is-not-present"
     abstention_cases = tuple(
         case
         for case in corpus.cases
@@ -651,20 +762,107 @@ async def test_versioned_corpus_runs_through_backend_and_independent_judge(
         answer_evaluator=BackendRetrievalAnswerEvaluator(backend),
     )
     assert isinstance(abstention_run, Success)
-    assert all(
-        item.answer_correct is True and item.answer_abstained is True
-        for item in abstention_run.unwrap().measurements
-    )
+    for item in abstention_run.unwrap().measurements:
+        assert item.answer_correct is True and item.answer_abstained is True, (
+            item.case_id,
+            item.channel,
+            item.retrieved_ids,
+            item.answer_text,
+            item.answer_correct,
+            item.answer_abstained,
+        )
     private_measurements = tuple(
         item
         for item in abstention_run.unwrap().measurements
         if item.case_id == "private-purpose-isolation"
     )
-    assert all(not item.retrieved_ids for item in private_measurements)
+    private_source_ids = {
+        "corpus-turn-private-hobby",
+        "corpus-memory-private-hobby",
+    }
+    assert all(
+        private_source_ids.isdisjoint(item.retrieved_ids)
+        for item in private_measurements
+    )
 
     stopped = await backend.stop()
     assert isinstance(stopped, Success)
     await store.stop()
+
+
+def test_query_resolver_and_domain_policy_support_hierarchical_scopes() -> None:
+    project_query = MemoryQueryResolver.resolve("Jaki jest cel projektu Aurora?")
+    broad_query = MemoryQueryResolver.resolve("Co pamiętasz?")
+    conversation_query = MemoryQueryResolver.resolve(
+        "Co ustaliliśmy zrobić przed dodaniem embeddingów?"
+    )
+
+    assert project_query.domain_scopes == ("general", "project:aurora")
+    assert domain_scope_matches("project", project_query.domain_scopes)
+    assert domain_scope_matches("project:aurora", project_query.domain_scopes)
+    assert not domain_scope_matches("project:borealis", project_query.domain_scopes)
+    assert not domain_scope_matches("personal", project_query.domain_scopes)
+    assert domain_scope_matches("system:rai", broad_query.domain_scopes)
+    assert domain_scope_matches("project:aurora", conversation_query.domain_scopes)
+
+
+def test_memory_sufficiency_requires_query_coverage_and_evidence_quality() -> None:
+    query = MemoryQuery(
+        keywords=("Aurora", "budżet", "termin"),
+        raw_text="Jaki jest budżet i termin projektu Aurora?",
+        domain_scopes=("general", "project:aurora"),
+    )
+    partial = MemoryRecord(
+        producer=PRODUCER,
+        source_turn_id="turn-partial",
+        topic="claim.project.aurora.goal",
+        domain_scope="project:aurora",
+        content={
+            "value": "Aurora",
+            "source_span": "Projekt Aurora",
+            "confidence": 1.0,
+            "modality": "direct",
+        },
+    )
+    complete_without_confidence = partial.model_copy(
+        update={
+            "record_id": "memory-no-confidence",
+            "content": {
+                "value": "Aurora, budżet i termin",
+                "source_span": "Aurora ma budżet i termin",
+                "modality": "direct",
+            },
+        }
+    )
+    complete = complete_without_confidence.model_copy(
+        update={
+            "record_id": "memory-complete",
+            "content": {
+                **complete_without_confidence.content,
+                "confidence": 0.9,
+            },
+        }
+    )
+    contested = complete.model_copy(
+        update={"record_id": "memory-contested", "epistemic_status": "contested"}
+    )
+
+    partial_assessment = assess_memory_sufficiency(query, (partial,))
+    unknown_assessment = assess_memory_sufficiency(
+        query, (complete_without_confidence,)
+    )
+    complete_assessment = assess_memory_sufficiency(query, (complete,))
+    contested_assessment = assess_memory_sufficiency(query, (contested,))
+
+    assert partial_assessment.query_coverage == pytest.approx(1 / 3)
+    assert partial_assessment.score < MEMORY_SUFFICIENCY_THRESHOLD
+    assert unknown_assessment.query_coverage == 1.0
+    assert unknown_assessment.evidence_quality == 0.0
+    assert unknown_assessment.score < MEMORY_SUFFICIENCY_THRESHOLD
+    assert complete_assessment.query_coverage == 1.0
+    assert complete_assessment.score >= MEMORY_SUFFICIENCY_THRESHOLD
+    assert contested_assessment.evidence_quality == 0.0
+    assert contested_assessment.score < MEMORY_SUFFICIENCY_THRESHOLD
 
 
 @pytest.mark.asyncio
@@ -723,12 +921,12 @@ async def test_retrieval_isolated_by_domain_and_purpose(tmp_path: Path) -> None:
     )
 
     assert isinstance(project_memories, Success)
-    assert project_memories.unwrap()[0][0].domain_scope == "project"
+    assert project_memories.unwrap()[0][0].domain_scope == "project:aurora"
     assert isinstance(personal_memories, Success)
     assert personal_memories.unwrap() == ()
     assert isinstance(wrong_purpose_memories, Success)
     assert wrong_purpose_memories.unwrap() == ()
     assert isinstance(project_turns, Success)
-    assert project_turns.unwrap()[0][0].domain_scope == "project"
+    assert project_turns.unwrap()[0][0].domain_scope == "project:aurora"
     assert isinstance(personal_turns, Success)
     assert personal_turns.unwrap() == ()

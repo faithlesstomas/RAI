@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import re
 import unicodedata
 
@@ -112,6 +113,24 @@ _STOP_WORDS = {
     "my",
     "remember",
     "zapamiętaj",
+}
+_GROUNDING_STOP_WORDS = _STOP_WORDS | {
+    "czy",
+    "co",
+    "do",
+    "i",
+    "jak",
+    "jaki",
+    "jaka",
+    "jakie",
+    "jakim",
+    "me",
+    "na",
+    "o",
+    "sie",
+    "się",
+    "w",
+    "you",
 }
 
 
@@ -439,6 +458,32 @@ def memory_value(
     return None
 
 
+def _grounding_terms(value: str) -> set[str]:
+    normalized = unicodedata.normalize("NFKD", value).encode("ascii", "ignore").decode()
+    return {
+        word
+        for word in re.findall(r"[a-z0-9]+", normalized.casefold())
+        if len(word) > 1 and word not in _GROUNDING_STOP_WORDS
+    }
+
+
+def _relevant_generic_memory(
+    user_text: str, durable_memories: tuple[object, ...] | list[object]
+) -> dict[object, object] | None:
+    """Select a memory only when its semantic payload overlaps the question."""
+    query_terms = _grounding_terms(user_text)
+    ranked: list[tuple[int, dict[object, object]]] = []
+    for item in durable_memories:
+        if not isinstance(item, dict):
+            continue
+        content = item.get("content", {})
+        semantic_text = f"{item.get('topic', '')} {json.dumps(content, ensure_ascii=False)}"
+        overlap = query_terms & _grounding_terms(semantic_text)
+        if overlap:
+            ranked.append((len(overlap), item))
+    return max(ranked, key=lambda candidate: candidate[0])[1] if ranked else None
+
+
 def grounded_memory_response(  # noqa: PLR0911, PLR0912
     user_text: str,
     durable_memories: tuple[object, ...] | list[object],
@@ -525,9 +570,7 @@ def grounded_memory_response(  # noqa: PLR0911, PLR0912
     if durable_memories and (
         "?" in user_text or any(marker in lowered for marker in question_markers)
     ):
-        memory = next(
-            (item for item in durable_memories if isinstance(item, dict)), None
-        )
+        memory = _relevant_generic_memory(user_text, durable_memories)
         content = memory.get("content", {}) if memory else {}
         if isinstance(content, dict):
             if "attribute" in content and "value" in content:

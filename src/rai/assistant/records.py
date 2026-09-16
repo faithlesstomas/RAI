@@ -307,6 +307,8 @@ class AssistantContextManifest(KernelRecord):
     route_candidates: tuple[str, ...] = ()
     rejected_routes: tuple[str, ...] = ()
     sufficiency_score: float = Field(default=0.0, ge=0.0, le=1.0)
+    sufficiency_factors: dict[str, float] = Field(default_factory=dict)
+    sufficiency_reasons: tuple[str, ...] = ()
     fallback_used: bool = False
     evidence_character_budget: int = Field(default=0, ge=0)
     retriever_version: str = Field(default="1.0.0", min_length=1)

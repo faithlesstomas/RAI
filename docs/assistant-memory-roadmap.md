@@ -154,9 +154,11 @@ Exit evidence:
 
 Status: `[/]`. The context builder now chooses compact claim memory when its
 configurable sufficiency threshold is met, otherwise falls back to raw turns
-and approved external evidence or records `no_evidence`. The manifest records
-candidate/rejected routes, score, fallback and evidence budget. Comparative
-short/long-history evaluation and verified derived write-back remain open.
+and approved external evidence or records `no_evidence`. Manifests record
+candidate/rejected routes, inspectable sufficiency factors (query coverage,
+evidence quality, and maximum source confidence), reasons, fallback and
+evidence budget. Comparative short/long-history evaluation and verified
+derived write-back remain open.
 
 Select recent/full context for short histories when it is cheaper and at least
 as accurate. For longer histories, route through lexical or semantic memory.
@@ -195,11 +197,13 @@ Exit evidence:
 ### M7 — scope, personalization and consolidation
 
 Status: `[/]`. Profile, domain and purpose isolation is enforced for claims,
-raw-turn retrieval and recent context; manifests expose the selected scope.
-Negative tests cover unrelated-domain and wrong-purpose retrieval. Broader
-leakage/sycophancy evaluation and persistent consolidation remain open. The M4
-grounded-summary baseline is query-time and rebuildable: deleting its source
-turn removes the claim and therefore makes the projection disappear.
+raw-turn retrieval and recent context, with hierarchical domain scope matching
+(`general` broad recall, parent/child project matching, and non-restrictive
+facets). Manifests expose the selected scope. Negative tests cover
+unrelated-domain and wrong-purpose retrieval. Broader leakage/sycophancy
+evaluation and persistent consolidation remain open. The M4 grounded-summary
+baseline is query-time and rebuildable: deleting its source turn removes the
+claim and therefore makes the projection disappear.
 
 Partition durable memory by user, profile, domain and purpose. Retrieve personal
 context only when the request and policy require it. Measure cross-domain

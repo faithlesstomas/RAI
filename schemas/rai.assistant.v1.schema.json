@@ -138,6 +138,21 @@
           "title": "Sufficiency Score",
           "type": "number"
         },
+        "sufficiency_factors": {
+          "additionalProperties": {
+            "type": "number"
+          },
+          "title": "Sufficiency Factors",
+          "type": "object"
+        },
+        "sufficiency_reasons": {
+          "default": [],
+          "items": {
+            "type": "string"
+          },
+          "title": "Sufficiency Reasons",
+          "type": "array"
+        },
         "fallback_used": {
           "default": false,
           "title": "Fallback Used",

@@ -27,6 +27,7 @@ from rai.kernel.records import (
 from rai.paths import data_dir
 
 from .ports import AssistantSessionSummary, MemoryGraphStore, MemoryQuery
+from .query import domain_scope_matches, restrictive_domain_scopes
 from .records import (
     AssistantContextManifest,
     AssistantContextPackage,
@@ -71,6 +72,38 @@ def _fts_query(terms: tuple[str, ...]) -> str:
         )
     )
     return " OR ".join(f'"{token}"' for token in tokens[:16])
+
+
+def _domain_sql_filter(
+    column: str, query_scopes: tuple[str, ...]
+) -> tuple[str, tuple[str, ...]]:
+    """Build a bounded SQL prefilter equivalent to domain_scope_matches()."""
+    restrictive = restrictive_domain_scopes(query_scopes)
+    if not restrictive:
+        return "", ()
+
+    exact = {"general"}
+    descendant_patterns: set[str] = set()
+    for scope in restrictive:
+        parts = scope.split(":")
+        exact.update(":".join(parts[:index]) for index in range(1, len(parts) + 1))
+        descendant_patterns.add(f"{scope}:%")
+    exact.update(
+        scope
+        for scope in query_scopes
+        if scope in {"conversation", "activity"}
+    )
+    ordered_exact = tuple(sorted(exact))
+    ordered_patterns = tuple(sorted(descendant_patterns))
+    clauses = []
+    params: list[str] = []
+    if ordered_exact:
+        placeholders = ",".join("?" for _ in ordered_exact)
+        clauses.append(f"{column} IN ({placeholders})")
+        params.extend(ordered_exact)
+    clauses.extend(f"{column} LIKE ?" for _ in ordered_patterns)
+    params.extend(ordered_patterns)
+    return f" AND ({' OR '.join(clauses)}) ", tuple(params)
 
 
 def _relation_metadata(relation: MemoryRelation) -> dict[str, Any]:
@@ -1290,7 +1323,7 @@ class SQLiteMemoryGraphStore:
                 self._sync_retrieve_memories, profile_scope, query, data_classes, limit
             )
 
-    def _sync_retrieve_memories(  # noqa: PLR0915
+    def _sync_retrieve_memories(  # noqa: PLR0912, PLR0915
         self,
         profile_scope: str = "default",
         query: MemoryQuery | None = None,
@@ -1339,12 +1372,11 @@ class SQLiteMemoryGraphStore:
             ]
             if query is not None:
                 if query.domain_scopes:
-                    allowed_domains = query.domain_scopes
-                    domain_placeholders = ",".join("?" for _ in allowed_domains)
-                    sql += (  # noqa: S608
-                        f" AND m.domain_scope IN ({domain_placeholders}) "
+                    domain_sql, domain_params = _domain_sql_filter(
+                        "m.domain_scope", query.domain_scopes
                     )
-                    params.extend(allowed_domains)
+                    sql += domain_sql
+                    params.extend(domain_params)
                 sql += " AND m.purpose = ? "
                 params.append(query.purpose)
             if use_fts:
@@ -1362,6 +1394,10 @@ class SQLiteMemoryGraphStore:
 
             for row in rows:
                 record = _memory_from_row(row)
+                if query is not None and not domain_scope_matches(
+                    record.domain_scope, query.domain_scopes
+                ):
+                    continue
                 content = record.content
 
                 score = 0.0
@@ -1436,8 +1472,6 @@ class SQLiteMemoryGraphStore:
             self._init_db(conn)
             allowed_classes = [_to_data_class_str(dc) for dc in data_classes]
             placeholders = ",".join("?" for _ in allowed_classes)
-            allowed_domains = query.domain_scopes
-            domain_placeholders = ",".join("?" for _ in allowed_domains)
             fts_query = _fts_query(query.keywords)
             excluded = set(exclude_turn_ids)
             query_terms = tuple(
@@ -1452,12 +1486,9 @@ class SQLiteMemoryGraphStore:
                     "what do you remember",
                 )
             )
-            domain_clause = (
-                f"AND t.domain_scope IN ({domain_placeholders}) "  # noqa: S608
-                if allowed_domains
-                else ""
+            domain_clause, domain_params = _domain_sql_filter(
+                "t.domain_scope", query.domain_scopes
             )
-            domain_params = allowed_domains if allowed_domains else ()
             if fts_query:
                 rows = conn.execute(
                     (
@@ -1502,6 +1533,8 @@ class SQLiteMemoryGraphStore:
                     getattr(turn, "metadata", {}).get("profile_scope", "default")
                 )
                 if turn_scope != profile_scope:
+                    continue
+                if not domain_scope_matches(turn.domain_scope, query.domain_scopes):
                     continue
                 searchable = _searchable_text(turn.text)
                 matched = tuple(term for term in query_terms if term in searchable)

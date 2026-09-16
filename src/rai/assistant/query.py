@@ -96,6 +96,7 @@ _DOMAIN_MARKERS: dict[str, tuple[str, ...]] = {
     ),
     "project": (
         "projekt",
+        "projektu",
         "projekcie",
         "projektem",
         "project",
@@ -114,10 +115,24 @@ _DOMAIN_MARKERS: dict[str, tuple[str, ...]] = {
         "coding",
         "language",
     ),
-    "system": ("system", "linux", "komputer", "runtime", "daemon", "service"),
+    "system": (
+        "system",
+        "linux",
+        "komputer",
+        "komputerze",
+        "runtime",
+        "daemon",
+        "service",
+    ),
     "conversation": ("rozmowa", "ustaliliśmy", "conversation", "agreed"),
     "activity": ("wczoraj", "dzisiaj", "aktywność", "robiłem", "activity"),
 }
+
+_NON_RESTRICTIVE_QUERY_SCOPES = frozenset({"conversation", "activity"})
+_NAMED_PROJECT_PATTERN = re.compile(
+    r"\b(?:projektu|projekcie|projektem|projekt|project)\s+"
+    r"([A-ZĄĆĘŁŃÓŚŹŻ][\w-]*)"
+)
 
 
 def _normalized_words(text: str) -> tuple[str, ...]:
@@ -133,6 +148,47 @@ def _normalized_text(text: str) -> str:
     """Normalize text without discarding domain-bearing stop words."""
     normalized = unicodedata.normalize("NFKD", text).encode("ascii", "ignore").decode()
     return " ".join(re.findall(r"\b[a-z0-9]+\b", normalized.casefold()))
+
+
+def domain_scope_matches(
+    evidence_scope: str, query_scopes: tuple[str, ...]
+) -> bool:
+    """Match hierarchical evidence domains without treating broad recall as isolation.
+
+    ``general`` is the resolver's broad-recall sentinel. Conversation and activity
+    are query facets rather than isolation boundaries; a facet-only query may search
+    every assistant-purpose domain. Once a restrictive scope is present, general
+    evidence, matching ancestors and matching descendants remain eligible.
+    """
+    restrictive = tuple(
+        scope
+        for scope in query_scopes
+        if scope != "general" and scope not in _NON_RESTRICTIVE_QUERY_SCOPES
+    )
+    if not restrictive:
+        return True
+    if evidence_scope == "general":
+        return True
+    if (
+        evidence_scope in _NON_RESTRICTIVE_QUERY_SCOPES
+        and evidence_scope in query_scopes
+    ):
+        return True
+    return any(
+        evidence_scope == scope
+        or evidence_scope.startswith(f"{scope}:")
+        or scope.startswith(f"{evidence_scope}:")
+        for scope in restrictive
+    )
+
+
+def restrictive_domain_scopes(query_scopes: tuple[str, ...]) -> tuple[str, ...]:
+    """Return only scopes that impose a retrieval isolation boundary."""
+    return tuple(
+        scope
+        for scope in query_scopes
+        if scope != "general" and scope not in _NON_RESTRICTIVE_QUERY_SCOPES
+    )
 
 
 class MemoryQueryResolver:
@@ -160,12 +216,21 @@ class MemoryQueryResolver:
         normalized = _normalized_text(text)
         padded_normalized = f" {normalized} "
         domains = ["general"]
+        named_project = _NAMED_PROJECT_PATTERN.search(text)
+        named_scopes = {
+            "project": (
+                f"project:{_normalized_text(named_project.group(1))}"
+                if named_project is not None
+                else None
+            ),
+            "system": "system:rai" if re.search(r"\bRAI\b", text) else None,
+        }
         for domain, markers in _DOMAIN_MARKERS.items():
             if any(
                 f" {_normalized_text(marker)} " in padded_normalized
                 for marker in markers
             ):
-                domains.append(domain)
+                domains.append(named_scopes.get(domain) or domain)
 
         return MemoryQuery(
             topic=matched_topic,

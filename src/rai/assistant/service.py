@@ -273,7 +273,10 @@ class AssistantService:
                 query=MemoryQuery(
                     topic=proposal.topic,
                     profile_scope=self.profile_scope,
-                    domain_scopes=("general", proposal.domain_scope),
+                    domain_scopes=(
+                        "general",
+                        proposal.domain_scope.split(":", maxsplit=1)[0],
+                    ),
                     purpose=proposal.purpose,
                     data_classes=(
                         DataClass.PUBLIC,

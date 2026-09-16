@@ -2,8 +2,11 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 import json
 from datetime import datetime, timezone
+import re
+import unicodedata
 
 from returns.result import Failure, Result, Success
 
@@ -15,13 +18,14 @@ from rai.kernel.records import (
     _utc_now,
 )
 
-from .ports import AssistantEvidenceProvider, MemoryGraphStore
-from .query import MemoryQueryResolver
+from .ports import AssistantEvidenceProvider, MemoryGraphStore, MemoryQuery
+from .query import MemoryQueryResolver, domain_scope_matches
 from .records import (
     AssistantContextManifest,
     AssistantContextManifestItem,
     AssistantContextPackage,
     ConversationTurn,
+    MemoryRecord,
     make_assistant_failure,
 )
 
@@ -29,6 +33,159 @@ DEFAULT_SYSTEM_INSTRUCTION = (
     "You are Rich AI (RAI), an intelligent and secure local assistant for the GNU/Linux desktop. "
     "You respect user preferences stored in durable memory and provide concise, accurate answers."
 )
+
+_EPISTEMIC_QUALITY = {
+    "asserted": 1.0,
+    "observed": 1.0,
+    "inferred": 0.8,
+    "uncertain": 0.5,
+    "contested": 0.0,
+}
+_MODALITY_QUALITY = {
+    "direct": 1.0,
+    "hedged": 0.7,
+    "quoted": 0.0,
+    "hearsay": 0.0,
+}
+_SUFFICIENCY_STOP_WORDS = {
+    "czy",
+    "do",
+    "i",
+    "is",
+    "jak",
+    "jaki",
+    "jaka",
+    "jakie",
+    "jakim",
+    "jest",
+    "nad",
+    "o",
+    "the",
+    "w",
+    "what",
+}
+_SUFFICIENCY_CANONICAL_TERMS = {
+    "projekcie": "projekt",
+    "projektem": "projekt",
+    "projektu": "projekt",
+}
+
+
+@dataclass(frozen=True)
+class MemorySufficiencyAssessment:
+    """Inspectable evidence coverage and quality behind a context route."""
+
+    score: float
+    query_coverage: float
+    evidence_quality: float
+    maximum_confidence: float
+    matched_terms: tuple[str, ...]
+    missing_terms: tuple[str, ...]
+    reasons: tuple[str, ...]
+
+
+def _search_terms(value: str) -> tuple[str, ...]:
+    normalized = (
+        unicodedata.normalize("NFKD", value)
+        .encode("ascii", "ignore")
+        .decode()
+        .casefold()
+    )
+    return tuple(
+        dict.fromkeys(
+            _SUFFICIENCY_CANONICAL_TERMS.get(term, term)
+            for term in re.findall(r"[a-z0-9]+", normalized)
+            if term not in _SUFFICIENCY_STOP_WORDS
+        )
+    )
+
+
+def assess_memory_sufficiency(
+    query: MemoryQuery, memories: tuple[MemoryRecord, ...]
+) -> MemorySufficiencyAssessment:
+    """Score whether compact claims cover this query with trustworthy evidence."""
+    query_terms = tuple(
+        dict.fromkeys(
+            term
+            for keyword in query.keywords
+            for term in _search_terms(keyword)
+        )
+    )
+    if not memories:
+        return MemorySufficiencyAssessment(
+            score=0.0,
+            query_coverage=0.0,
+            evidence_quality=0.0,
+            maximum_confidence=0.0,
+            matched_terms=(),
+            missing_terms=query_terms,
+            reasons=("no eligible durable memory",),
+        )
+
+    matched: set[str] = set()
+    record_qualities: list[float] = []
+    confidences: list[float] = []
+    exact_topic = False
+    for memory in memories:
+        searchable = set(
+            _search_terms(
+                f"{memory.topic} {json.dumps(memory.content, ensure_ascii=False)}"
+            )
+        )
+        record_matches = {term for term in query_terms if term in searchable}
+        topic_matches = query.topic is not None and memory.topic == query.topic
+        if not record_matches and not topic_matches:
+            continue
+        matched.update(record_matches)
+        exact_topic = exact_topic or topic_matches
+        raw_confidence = memory.content.get("confidence")
+        confidence = (
+            float(raw_confidence)
+            if isinstance(raw_confidence, (float, int))
+            and not isinstance(raw_confidence, bool)
+            else 0.0
+        )
+        confidence = min(1.0, max(0.0, confidence))
+        confidences.append(confidence)
+        modality = str(memory.content.get("modality", "unknown"))
+        quality = (
+            confidence
+            * _MODALITY_QUALITY.get(modality, 0.0)
+            * _EPISTEMIC_QUALITY.get(memory.epistemic_status, 0.0)
+        )
+        record_qualities.append(quality)
+
+    coverage = (
+        1.0
+        if exact_topic
+        else len(matched) / len(query_terms)
+        if query_terms
+        else 0.0
+    )
+    quality = max(record_qualities, default=0.0)
+    maximum_confidence = max(confidences, default=0.0)
+    score = min(1.0, max(0.0, 0.6 * coverage + 0.4 * quality))
+    missing = tuple(term for term in query_terms if term not in matched)
+    reasons = (
+        f"query coverage={coverage:.3f}",
+        f"evidence quality={quality:.3f}",
+        f"maximum source confidence={maximum_confidence:.3f}",
+        (
+            "exact topic match"
+            if exact_topic
+            else f"matched terms={','.join(sorted(matched)) or 'none'}"
+        ),
+        f"missing terms={','.join(missing) or 'none'}",
+    )
+    return MemorySufficiencyAssessment(
+        score=score,
+        query_coverage=coverage,
+        evidence_quality=quality,
+        maximum_confidence=maximum_confidence,
+        matched_terms=tuple(sorted(matched)),
+        missing_terms=missing,
+        reasons=reasons,
+    )
 
 
 class AssistantContextBuilder:
@@ -83,7 +240,7 @@ class AssistantContextBuilder:
         recent_turns = tuple(
             item
             for item in all_recent_turns
-            if (not query.domain_scopes or item.domain_scope in query.domain_scopes)
+            if domain_scope_matches(item.domain_scope, query.domain_scopes)
             and item.purpose == query.purpose
         )
 
@@ -115,6 +272,7 @@ class AssistantContextBuilder:
             )
 
         durable_ids: list[str] = []
+        durable_memories: list[MemoryRecord] = []
         ranking_reasons: dict[str, str] = {}
         durable_content: list[dict[str, object]] = []
         exclusions: list[str] = []
@@ -129,7 +287,7 @@ class AssistantContextBuilder:
             invalid_reasons = []
             if mem.profile_scope != query.profile_scope:
                 invalid_reasons.append("profile_scope")
-            if query.domain_scopes and mem.domain_scope not in query.domain_scopes:
+            if not domain_scope_matches(mem.domain_scope, query.domain_scopes):
                 invalid_reasons.append("domain_scope")
             if mem.purpose != query.purpose:
                 invalid_reasons.append("purpose")
@@ -145,6 +303,7 @@ class AssistantContextBuilder:
                 exclusions.append(f"{mem.record_id}:{','.join(invalid_reasons)}")
                 continue
             durable_ids.append(mem.record_id)
+            durable_memories.append(mem)
             ranking_reasons[mem.record_id] = reason
             durable_content.append(
                 {
@@ -167,12 +326,8 @@ class AssistantContextBuilder:
                 )
             )
 
-        confidence_values = tuple(
-            float(item["content"].get("confidence", 1.0))
-            for item in durable_content
-            if isinstance(item.get("content"), dict)
-        )
-        sufficiency_score = max(confidence_values, default=0.0)
+        sufficiency = assess_memory_sufficiency(query, tuple(durable_memories))
+        sufficiency_score = sufficiency.score
         compact_memory_sufficient = (
             sufficiency_score >= self.memory_sufficiency_threshold
         )
@@ -182,7 +337,11 @@ class AssistantContextBuilder:
         if compact_memory_sufficient:
             rejected_routes.append("raw_evidence:not_needed")
         else:
-            rejected_routes.append("compact_memory:insufficient")
+            rejected_routes.append(
+                "compact_memory:insufficient"
+                f"(coverage={sufficiency.query_coverage:.3f},"
+                f"quality={sufficiency.evidence_quality:.3f})"
+            )
             episodic_res = await self.store.retrieve_relevant_turns(
                 profile_scope=self.profile_scope,
                 query=query,
@@ -242,7 +401,7 @@ class AssistantContextBuilder:
         external_ids: list[str] = []
         external_content: list[dict[str, object]] = []
         for evidence in external_evidence:
-            if query.domain_scopes and evidence.domain_scope not in query.domain_scopes:
+            if not domain_scope_matches(evidence.domain_scope, query.domain_scopes):
                 exclusions.append(f"{evidence.source_id}:domain_scope")
                 continue
             if evidence.purpose != query.purpose:
@@ -365,6 +524,12 @@ class AssistantContextBuilder:
             ),
             rejected_routes=tuple(rejected_routes),
             sufficiency_score=sufficiency_score,
+            sufficiency_factors={
+                "query_coverage": sufficiency.query_coverage,
+                "evidence_quality": sufficiency.evidence_quality,
+                "maximum_confidence": sufficiency.maximum_confidence,
+            },
+            sufficiency_reasons=sufficiency.reasons,
             fallback_used=routing_decision == "raw_evidence_fallback",
             evidence_character_budget=self.max_context_characters,
             retriever_version="2.0.0",
