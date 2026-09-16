@@ -18,7 +18,12 @@ from rai.kernel.records import (
     _utc_now,
 )
 
-from .ports import AssistantEvidenceProvider, MemoryGraphStore, MemoryQuery
+from .ports import (
+    AdvancedMemoryRetriever,
+    AssistantEvidenceProvider,
+    MemoryGraphStore,
+    MemoryQuery,
+)
 from .query import MemoryQueryResolver, domain_scope_matches
 from .records import (
     AssistantContextManifest,
@@ -65,10 +70,22 @@ _SUFFICIENCY_STOP_WORDS = {
     "what",
 }
 _SUFFICIENCY_CANONICAL_TERMS = {
+    "budzecie": "budzet",
+    "budzetu": "budzet",
+    "deadline": "termin",
+    "deadlines": "termin",
+    "embeddings": "embedding",
+    "embeddingow": "embedding",
+    "imie": "name",
+    "imienia": "name",
+    "nazywam": "name",
     "projekcie": "projekt",
     "projektem": "projekt",
     "projektu": "projekt",
+    "terminie": "termin",
+    "terminu": "termin",
 }
+SUFFICIENCY_POLICY_VERSION = "lexical-evidence-v2"
 
 
 @dataclass(frozen=True)
@@ -82,6 +99,7 @@ class MemorySufficiencyAssessment:
     matched_terms: tuple[str, ...]
     missing_terms: tuple[str, ...]
     reasons: tuple[str, ...]
+    policy_version: str = SUFFICIENCY_POLICY_VERSION
 
 
 def _search_terms(value: str) -> tuple[str, ...]:
@@ -123,7 +141,8 @@ def assess_memory_sufficiency(
         )
 
     matched: set[str] = set()
-    record_qualities: list[float] = []
+    term_qualities: dict[str, float] = {}
+    topic_qualities: list[float] = []
     confidences: list[float] = []
     exact_topic = False
     for memory in memories:
@@ -136,8 +155,6 @@ def assess_memory_sufficiency(
         topic_matches = query.topic is not None and memory.topic == query.topic
         if not record_matches and not topic_matches:
             continue
-        matched.update(record_matches)
-        exact_topic = exact_topic or topic_matches
         raw_confidence = memory.content.get("confidence")
         confidence = (
             float(raw_confidence)
@@ -153,16 +170,25 @@ def assess_memory_sufficiency(
             * _MODALITY_QUALITY.get(modality, 0.0)
             * _EPISTEMIC_QUALITY.get(memory.epistemic_status, 0.0)
         )
-        record_qualities.append(quality)
+        matched.update(record_matches)
+        exact_topic = exact_topic or topic_matches
+        for term in record_matches:
+            term_qualities[term] = max(term_qualities.get(term, 0.0), quality)
+        if topic_matches:
+            topic_qualities.append(quality)
 
-    coverage = (
-        1.0
-        if exact_topic
-        else len(matched) / len(query_terms)
-        if query_terms
+    if query_terms:
+        coverage = len(matched) / len(query_terms)
+        if exact_topic and query.topic_is_complete:
+            coverage = 1.0
+    else:
+        coverage = 1.0 if exact_topic else 0.0
+    supporting_qualities = tuple(term_qualities.values()) or tuple(topic_qualities)
+    quality = (
+        sum(supporting_qualities) / len(supporting_qualities)
+        if supporting_qualities
         else 0.0
     )
-    quality = max(record_qualities, default=0.0)
     maximum_confidence = max(confidences, default=0.0)
     score = min(1.0, max(0.0, 0.6 * coverage + 0.4 * quality))
     missing = tuple(term for term in query_terms if term not in matched)
@@ -170,6 +196,7 @@ def assess_memory_sufficiency(
         f"query coverage={coverage:.3f}",
         f"evidence quality={quality:.3f}",
         f"maximum source confidence={maximum_confidence:.3f}",
+        f"policy version={SUFFICIENCY_POLICY_VERSION}",
         (
             "exact topic match"
             if exact_topic
@@ -200,6 +227,7 @@ class AssistantContextBuilder:
         max_memories: int = 5,
         max_episodic_turns: int = 5,
         evidence_providers: tuple[AssistantEvidenceProvider, ...] = (),
+        advanced_retriever: AdvancedMemoryRetriever | None = None,
         max_external_evidence: int = 5,
         memory_sufficiency_threshold: float = 0.75,
         max_context_characters: int = 8_000,
@@ -213,6 +241,7 @@ class AssistantContextBuilder:
         self.max_memories = max_memories
         self.max_episodic_turns = max_episodic_turns
         self.evidence_providers = evidence_providers
+        self.advanced_retriever = advanced_retriever
         self.max_external_evidence = max_external_evidence
         if not 0.0 <= memory_sufficiency_threshold <= 1.0:
             raise ValueError("memory_sufficiency_threshold must be between 0 and 1")
@@ -244,12 +273,34 @@ class AssistantContextBuilder:
             and item.purpose == query.purpose
         )
 
-        mem_res = await self.store.retrieve_relevant_memories(
-            profile_scope=self.profile_scope,
-            query=query,
-            data_classes=query.data_classes,
-            limit=self.max_memories,
-        )
+        retrieval_channel_ids: dict[str, tuple[str, ...]] = {}
+        graph_paths: tuple[dict[str, object], ...] = ()
+        if self.advanced_retriever is None:
+            mem_res = await self.store.retrieve_relevant_memories(
+                profile_scope=self.profile_scope,
+                query=query,
+                data_classes=query.data_classes,
+                limit=self.max_memories,
+            )
+        else:
+            advanced_res = await self.advanced_retriever.retrieve(
+                query=query,
+                data_classes=query.data_classes,
+                limit=self.max_memories,
+            )
+            if isinstance(advanced_res, Failure):
+                return Failure(advanced_res.failure())
+            selection = advanced_res.unwrap()
+            retrieval_channel_ids = dict(selection.channel_ids)
+            graph_paths = tuple(
+                {
+                    "node_ids": path.node_ids,
+                    "relation_ids": path.relation_ids,
+                    "score": path.score,
+                }
+                for path in selection.graph_paths
+            )
+            mem_res = Success(selection.memories)
         if isinstance(mem_res, Failure):
             return Failure(mem_res.failure())
         memories_with_reasons = mem_res.unwrap()
@@ -531,6 +582,9 @@ class AssistantContextBuilder:
             },
             sufficiency_reasons=sufficiency.reasons,
             fallback_used=routing_decision == "raw_evidence_fallback",
+            evidence_required=query.evidence_required,
+            retrieval_channel_ids=retrieval_channel_ids,
+            graph_paths=graph_paths,
             evidence_character_budget=self.max_context_characters,
             retriever_version="2.0.0",
             policy_version="1.0.0",

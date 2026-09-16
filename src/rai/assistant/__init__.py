@@ -10,6 +10,7 @@ from .backends.deterministic import DeterministicAssistantBackend
 from .backends.local import LocalAssistantBackend
 from .context import AssistantContextBuilder
 from .diagnostics import MemoryDiagnosticReport, MemoryStageDiagnostic, diagnose_memory
+from .derived import VerifiedDerivedClaim, write_verified_derived_claim
 from .extraction import (
     ExtractedClaimKind,
     ExtractedMemoryCandidate,
@@ -25,6 +26,7 @@ from .evaluation import (
     RetrievalChannelMeasurement,
     RetrievalChannel,
     RetrievalCorpusClaim,
+    RetrievalCorpusRelation,
     RetrievalCorpusTurn,
     RetrievalEvaluationCase,
     RetrievalEvaluationCorpus,
@@ -44,6 +46,14 @@ from .ports import (
     MemoryQuery,
 )
 from .query import MemoryQueryResolver
+from .routing_evaluation import (
+    ContextRoutingEvaluationCase,
+    ContextRoutingEvaluationRun,
+    ContextRoutingAggregate,
+    ContextRoutingMeasurement,
+    aggregate_context_routing,
+    evaluate_context_routing,
+)
 from .records import (
     AnyAssistantRecord,
     AssistantCandidate,
@@ -84,6 +94,10 @@ __all__ = [
     "AssistantSessionId",
     "BackendRetrievalAnswerEvaluator",
     "ConversationTurn",
+    "ContextRoutingEvaluationCase",
+    "ContextRoutingEvaluationRun",
+    "ContextRoutingAggregate",
+    "ContextRoutingMeasurement",
     "DeterministicAssistantBackend",
     "InMemoryAssistantAuditLedger",
     "InferenceRequest",
@@ -112,6 +126,7 @@ __all__ = [
     "RetrievalChannelAggregate",
     "RetrievalChannelMeasurement",
     "RetrievalCorpusClaim",
+    "RetrievalCorpusRelation",
     "RetrievalCorpusTurn",
     "RetrievalEvaluationCase",
     "RetrievalEvaluationCorpus",
@@ -121,8 +136,12 @@ __all__ = [
     "parse_assistant_record",
     "diagnose_memory",
     "evaluate_retrieval_floor",
+    "evaluate_context_routing",
     "load_retrieval_evaluation_corpus",
     "seed_retrieval_evaluation_corpus",
     "validate_grounded_summary",
+    "VerifiedDerivedClaim",
+    "write_verified_derived_claim",
     "aggregate_retrieval_run",
+    "aggregate_context_routing",
 ]

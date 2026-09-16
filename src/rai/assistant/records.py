@@ -92,7 +92,7 @@ class ConversationTurn(KernelRecord):
     text: str = Field(min_length=1, max_length=MAX_TURN_TEXT_BYTES)
     reply_to_turn_id: str | None = None
     data_class: DataClass = DataClass.LOCAL
-    domain_scope: str = Field(default="general", min_length=1, max_length=128)
+    domain_scope: str = Field(default="unknown", min_length=1, max_length=128)
     purpose: str = Field(default="assistant", min_length=1, max_length=128)
     status: Literal["ACCEPTED", "COMPLETED", "FAILED", "CANCELLED"] = "ACCEPTED"
     provenance: tuple[ProvenanceReference, ...] = ()
@@ -128,7 +128,7 @@ class MemoryProposal(KernelRecord):
     modality: Literal["direct", "hedged", "quoted", "hearsay"] = "direct"
     negated: bool = False
     scope: str = Field(default="personal", min_length=1, max_length=128)
-    domain_scope: str = Field(default="general", min_length=1, max_length=128)
+    domain_scope: str = Field(default="unknown", min_length=1, max_length=128)
     purpose: str = Field(default="assistant", min_length=1, max_length=128)
     source_type: Literal[
         "conversation_turn", "rich_history_episode", "system_observation"
@@ -194,7 +194,7 @@ class MemoryRecord(KernelRecord):
     ] = "conversation_turn"
     data_class: DataClass = DataClass.LOCAL
     profile_scope: str = Field(default="default", min_length=1)
-    domain_scope: str = Field(default="general", min_length=1, max_length=128)
+    domain_scope: str = Field(default="unknown", min_length=1, max_length=128)
     purpose: str = Field(default="assistant", min_length=1, max_length=128)
     epistemic_status: Literal[
         "asserted", "observed", "inferred", "uncertain", "contested"
@@ -278,7 +278,7 @@ class AssistantContextManifestItem(BaseModel):
     source_type: str = Field(min_length=1)
     layer: str = Field(min_length=1)
     data_class: DataClass = DataClass.LOCAL
-    domain_scope: str = Field(default="general", min_length=1)
+    domain_scope: str = Field(default="unknown", min_length=1)
     purpose: str = Field(default="assistant", min_length=1)
     ranking_reason: str | None = None
     fields: tuple[str, ...] = ()
@@ -310,6 +310,9 @@ class AssistantContextManifest(KernelRecord):
     sufficiency_factors: dict[str, float] = Field(default_factory=dict)
     sufficiency_reasons: tuple[str, ...] = ()
     fallback_used: bool = False
+    evidence_required: bool = False
+    retrieval_channel_ids: dict[str, tuple[str, ...]] = Field(default_factory=dict)
+    graph_paths: tuple[dict[str, Any], ...] = ()
     evidence_character_budget: int = Field(default=0, ge=0)
     retriever_version: str = Field(default="1.0.0", min_length=1)
     policy_version: str = Field(default="1.0.0", min_length=1)

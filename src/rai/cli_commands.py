@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 from collections.abc import Awaitable, Callable
 import json
+from pathlib import Path
 from typing import Any
 
 import click
@@ -458,6 +459,74 @@ def _run_assistant_chat(  # noqa: PLR0913, PLR0915
     asyncio.run(_run_loop())
 
 
+def _run_assistant_benchmark(  # noqa: PLR0913
+    backend: str,
+    model: str | None,
+    profile: str | None,
+    corpus: Path,
+    output: Path,
+    energy: str,
+    require_energy: bool,
+    max_input_tokens: int,
+    max_output_tokens: int,
+    max_latency_seconds: float,
+) -> None:
+    """Run the isolated equal-budget memory benchmark and persist its manifest."""
+    from returns.result import Success  # noqa: PLC0415
+
+    from .assistant.benchmark import run_retrieval_benchmark  # noqa: PLC0415
+    from .assistant.energy import LinuxEnergyMeter  # noqa: PLC0415
+    from .assistant.runtime import (  # noqa: PLC0415
+        build_assistant_backend,
+        resolve_assistant_config,
+    )
+
+    try:
+        config = _assistant_config(backend, model, profile)
+        assistant_config = dict(config.get("assistant", {}))
+        assistant_config["max_output_tokens"] = max_output_tokens
+        config["assistant"] = assistant_config
+        runtime = resolve_assistant_config(config)
+        model_backend = build_assistant_backend(runtime)
+    except ValueError as exc:
+        raise click.ClickException(str(exc)) from exc
+    meter = LinuxEnergyMeter() if energy == "auto" else None
+
+    async def _run() -> None:
+        result = await run_retrieval_benchmark(
+            model_backend,
+            corpus_path=corpus,
+            output_path=output,
+            energy_meter=meter,
+            require_energy=require_energy,
+            max_input_tokens=max_input_tokens,
+            max_output_tokens=max_output_tokens,
+            max_latency_seconds=max_latency_seconds,
+        )
+        if not isinstance(result, Success):
+            failure = result.failure()
+            raise click.ClickException(f"[{failure.code}] {failure.message}")
+        artifact = result.unwrap()
+        click.echo(
+            json.dumps(
+                {
+                    "output": str(output),
+                    "backend": artifact.backend_name,
+                    "model": artifact.model_name,
+                    "corpus": artifact.run.corpus_version,
+                    "channels": [
+                        aggregate.model_dump(mode="json")
+                        for aggregate in artifact.aggregates
+                    ],
+                },
+                indent=2,
+                ensure_ascii=False,
+            )
+        )
+
+    asyncio.run(_run())
+
+
 def register_assistant_commands(root: click.Group) -> None:
     """Attach assistant commands to the root CLI."""
 
@@ -549,6 +618,83 @@ def register_assistant_commands(root: click.Group) -> None:
     def diagnostics_command(profile: str | None) -> None:
         """Check memory extraction, admission, storage, update and retrieval state."""
         _run_assistant_read(profile, _echo_memory_diagnostics)
+
+    @assistant.command(name="benchmark-memory")
+    @click.option(
+        "--backend",
+        type=click.Choice(["llama", "ollama", "deterministic"]),
+        default="deterministic",
+        show_default=True,
+    )
+    @click.option("--model", default=None, help="GGUF path or local Ollama model name.")
+    @click.option("--profile", default=None, help="Assistant profile configuration.")
+    @click.option(
+        "--corpus",
+        type=click.Path(path_type=Path, exists=True, dir_okay=False),
+        default=Path("tests/fixtures/assistant/v1/retrieval-floor.corpus.json"),
+        show_default=True,
+    )
+    @click.option(
+        "--output",
+        type=click.Path(path_type=Path, dir_okay=False),
+        default=Path("assistant-retrieval-benchmark.json"),
+        show_default=True,
+    )
+    @click.option(
+        "--energy",
+        type=click.Choice(["auto", "none"]),
+        default="auto",
+        show_default=True,
+        help="Measure readable Linux RAPL/hwmon sensors or disable measurement.",
+    )
+    @click.option(
+        "--require-energy",
+        is_flag=True,
+        help="Fail unless every evaluated answer has an energy measurement.",
+    )
+    @click.option(
+        "--max-input-tokens",
+        type=click.IntRange(min=128),
+        default=4096,
+        show_default=True,
+    )
+    @click.option(
+        "--max-output-tokens",
+        type=click.IntRange(min=1),
+        default=256,
+        show_default=True,
+    )
+    @click.option(
+        "--max-latency-seconds",
+        type=click.FloatRange(min=0.1),
+        default=60.0,
+        show_default=True,
+    )
+    def benchmark_memory_command(  # noqa: PLR0913
+        backend: str,
+        model: str | None,
+        profile: str | None,
+        corpus: Path,
+        output: Path,
+        energy: str,
+        require_energy: bool,
+        max_input_tokens: int,
+        max_output_tokens: int,
+        max_latency_seconds: float,
+    ) -> None:
+        """Compare lexical, summary, dense, RRF and graph memory channels."""
+        _run_assistant_benchmark(
+            backend,
+            model,
+            profile,
+            corpus,
+            output,
+            energy,
+            require_energy,
+            max_input_tokens,
+            max_output_tokens,
+            max_latency_seconds,
+        )
 
     @assistant.command(name="sessions")
     @click.option("--profile", default=None, help="Assistant profile and memory scope.")

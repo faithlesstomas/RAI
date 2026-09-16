@@ -27,7 +27,12 @@ from rai.kernel.records import (
 from rai.paths import data_dir
 
 from .ports import AssistantSessionSummary, MemoryGraphStore, MemoryQuery
-from .query import domain_scope_matches, restrictive_domain_scopes
+from .query import (
+    GLOBAL_DOMAIN_SCOPE,
+    UNKNOWN_DOMAIN_SCOPE,
+    domain_scope_matches,
+    restrictive_domain_scopes,
+)
 from .records import (
     AssistantContextManifest,
     AssistantContextPackage,
@@ -82,7 +87,7 @@ def _domain_sql_filter(
     if not restrictive:
         return "", ()
 
-    exact = {"general"}
+    exact = {GLOBAL_DOMAIN_SCOPE}
     descendant_patterns: set[str] = set()
     for scope in restrictive:
         parts = scope.split(":")
@@ -230,7 +235,7 @@ class SQLiteMemoryGraphStore:
                     timestamp TEXT NOT NULL,
                     producer_json TEXT NOT NULL,
                     correlation_id TEXT,
-                    domain_scope TEXT NOT NULL DEFAULT 'general',
+                    domain_scope TEXT NOT NULL DEFAULT 'unknown',
                     purpose TEXT NOT NULL DEFAULT 'assistant',
                     metadata_json TEXT
                 );
@@ -247,7 +252,7 @@ class SQLiteMemoryGraphStore:
                     source_type TEXT NOT NULL DEFAULT 'conversation_turn',
                     data_class TEXT NOT NULL,
                     profile_scope TEXT NOT NULL,
-                    domain_scope TEXT NOT NULL DEFAULT 'general',
+                    domain_scope TEXT NOT NULL DEFAULT 'unknown',
                     purpose TEXT NOT NULL DEFAULT 'assistant',
                     epistemic_status TEXT NOT NULL DEFAULT 'asserted',
                     valid_from TEXT NOT NULL,
@@ -339,6 +344,14 @@ class SQLiteMemoryGraphStore:
             )
             conn.execute(
                 """
+                CREATE TABLE IF NOT EXISTS assistant_schema_metadata (
+                    key TEXT PRIMARY KEY,
+                    value TEXT NOT NULL
+                );
+                """
+            )
+            conn.execute(
+                """
                 CREATE VIRTUAL TABLE IF NOT EXISTS turns_fts USING fts5(
                     turn_id UNINDEXED,
                     profile_scope UNINDEXED,
@@ -410,7 +423,7 @@ class SQLiteMemoryGraphStore:
             if "domain_scope" not in turn_columns:
                 conn.execute(
                     "ALTER TABLE turns ADD COLUMN domain_scope TEXT NOT NULL "
-                    "DEFAULT 'general'"
+                    "DEFAULT 'unknown'"
                 )
             if "purpose" not in turn_columns:
                 conn.execute(
@@ -433,7 +446,7 @@ class SQLiteMemoryGraphStore:
             if "domain_scope" not in memory_columns:
                 conn.execute(
                     "ALTER TABLE memories ADD COLUMN domain_scope TEXT NOT NULL "
-                    "DEFAULT 'general'"
+                    "DEFAULT 'unknown'"
                 )
             if "purpose" not in memory_columns:
                 conn.execute(
@@ -447,6 +460,23 @@ class SQLiteMemoryGraphStore:
                 )
             if "expired_at" not in memory_columns:
                 conn.execute("ALTER TABLE memories ADD COLUMN expired_at TEXT")
+            scope_migration = conn.execute(
+                "SELECT value FROM assistant_schema_metadata "
+                "WHERE key = 'domain_scope_semantics'"
+            ).fetchone()
+            if scope_migration is None:
+                conn.execute(
+                    "UPDATE turns SET domain_scope = ? WHERE domain_scope = 'general'",
+                    (UNKNOWN_DOMAIN_SCOPE,),
+                )
+                conn.execute(
+                    "UPDATE memories SET domain_scope = ? WHERE domain_scope = 'general'",
+                    (UNKNOWN_DOMAIN_SCOPE,),
+                )
+                conn.execute(
+                    "INSERT INTO assistant_schema_metadata (key, value) VALUES (?, ?)",
+                    ("domain_scope_semantics", "global-unknown-v1"),
+                )
         self._initialized = True
 
     async def start(self) -> Result[LifecycleState, ActionFailure]:

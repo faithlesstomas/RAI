@@ -58,6 +58,9 @@ _DATA_CLASS_RANK = {
     DataClass.PRIVATE.value: 2,
 }
 _AUTO_ADMISSION_CONFIDENCE = 0.75
+_MEMORY_ABSTENTION_TEXT = (
+    "Nie mam wystarczających, dopuszczonych dowodów w pamięci, aby odpowiedzieć."
+)
 
 
 def _data_class_value(value: DataClass | str) -> str:
@@ -274,7 +277,7 @@ class AssistantService:
                     topic=proposal.topic,
                     profile_scope=self.profile_scope,
                     domain_scopes=(
-                        "general",
+                        "global",
                         proposal.domain_scope.split(":", maxsplit=1)[0],
                     ),
                     purpose=proposal.purpose,
@@ -646,9 +649,9 @@ class AssistantService:
             (
                 domain
                 for domain in turn_query.domain_scopes
-                if domain != "general"
+                if domain != "global"
             ),
-            "general",
+            "global",
         )
         turn = turn.model_copy(
             update={
@@ -711,19 +714,28 @@ class AssistantService:
             model_name=str(getattr(self.backend, "model_name", "deterministic")),
         )
 
-        start_time = time.perf_counter()
-        backend_res = await self.backend.generate(inference_req, token)
-        latency_ms = (time.perf_counter() - start_time) * 1000
-        if isinstance(backend_res, Failure):
-            return await self._commit_failure(
-                turn=turn,
-                request_id=request_id,
-                manifest=manifest,
-                error=backend_res.failure(),
-                latency_ms=latency_ms,
+        if manifest.evidence_required and manifest.routing_decision == "no_evidence":
+            candidate = AssistantCandidate(
+                text=_MEMORY_ABSTENTION_TEXT,
+                metadata={
+                    "deterministic_abstention": True,
+                    "reason": "memory_evidence_required_but_unavailable",
+                },
             )
-
-        candidate = backend_res.unwrap()
+            latency_ms = 0.0
+        else:
+            start_time = time.perf_counter()
+            backend_res = await self.backend.generate(inference_req, token)
+            latency_ms = (time.perf_counter() - start_time) * 1000
+            if isinstance(backend_res, Failure):
+                return await self._commit_failure(
+                    turn=turn,
+                    request_id=request_id,
+                    manifest=manifest,
+                    error=backend_res.failure(),
+                    latency_ms=latency_ms,
+                )
+            candidate = backend_res.unwrap()
         if not isinstance(candidate, AssistantCandidate):
             error = make_assistant_failure(
                 code="INVALID_OUTPUT",

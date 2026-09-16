@@ -129,6 +129,35 @@ _DOMAIN_MARKERS: dict[str, tuple[str, ...]] = {
 }
 
 _NON_RESTRICTIVE_QUERY_SCOPES = frozenset({"conversation", "activity"})
+GLOBAL_DOMAIN_SCOPE = "global"
+UNKNOWN_DOMAIN_SCOPE = "unknown"
+LEGACY_GENERAL_SCOPE = "general"
+_MEMORY_INTENT_MARKERS = (
+    "czy pamiętasz",
+    "co pamiętasz",
+    "co wiesz o mnie",
+    "ustaliliśmy",
+    "wcześniej",
+    "ostatnio",
+    "do you remember",
+    "what do you remember",
+    "what do you know about me",
+    "we agreed",
+    "previously",
+)
+_QUESTION_PREFIXES = (
+    "czy ",
+    "co ",
+    "gdzie ",
+    "jak ",
+    "jaki ",
+    "jaka ",
+    "jakie ",
+    "what ",
+    "where ",
+    "which ",
+    "how ",
+)
 _NAMED_PROJECT_PATTERN = re.compile(
     r"\b(?:projektu|projekcie|projektem|projekt|project)\s+"
     r"([A-ZĄĆĘŁŃÓŚŹŻ][\w-]*)"
@@ -155,20 +184,24 @@ def domain_scope_matches(
 ) -> bool:
     """Match hierarchical evidence domains without treating broad recall as isolation.
 
-    ``general`` is the resolver's broad-recall sentinel. Conversation and activity
+    ``global`` is explicit cross-domain evidence. ``unknown`` and the legacy
+    ``general`` value fail closed for restrictive queries. Conversation and activity
     are query facets rather than isolation boundaries; a facet-only query may search
-    every assistant-purpose domain. Once a restrictive scope is present, general
+    every assistant-purpose domain. Once a restrictive scope is present, global
     evidence, matching ancestors and matching descendants remain eligible.
     """
     restrictive = tuple(
         scope
         for scope in query_scopes
-        if scope != "general" and scope not in _NON_RESTRICTIVE_QUERY_SCOPES
+        if scope != GLOBAL_DOMAIN_SCOPE
+        and scope not in _NON_RESTRICTIVE_QUERY_SCOPES
     )
     if not restrictive:
         return True
-    if evidence_scope == "general":
+    if evidence_scope == GLOBAL_DOMAIN_SCOPE:
         return True
+    if evidence_scope in {UNKNOWN_DOMAIN_SCOPE, LEGACY_GENERAL_SCOPE}:
+        return False
     if (
         evidence_scope in _NON_RESTRICTIVE_QUERY_SCOPES
         and evidence_scope in query_scopes
@@ -187,7 +220,8 @@ def restrictive_domain_scopes(query_scopes: tuple[str, ...]) -> tuple[str, ...]:
     return tuple(
         scope
         for scope in query_scopes
-        if scope != "general" and scope not in _NON_RESTRICTIVE_QUERY_SCOPES
+        if scope != GLOBAL_DOMAIN_SCOPE
+        and scope not in _NON_RESTRICTIVE_QUERY_SCOPES
     )
 
 
@@ -202,11 +236,13 @@ class MemoryQueryResolver:
 
         matched_topic: str | None = None
         matched_keywords: list[str] = []
+        matched_topics: set[str] = set()
 
         for topic, keywords in _TOPIC_KEYWORDS.items():
             for kw in keywords:
                 if kw in words or kw in lowered:
                     matched_topic = topic
+                    matched_topics.add(topic)
                     if kw not in matched_keywords:
                         matched_keywords.append(kw)
 
@@ -215,7 +251,7 @@ class MemoryQueryResolver:
 
         normalized = _normalized_text(text)
         padded_normalized = f" {normalized} "
-        domains = ["general"]
+        domains = [GLOBAL_DOMAIN_SCOPE]
         named_project = _NAMED_PROJECT_PATTERN.search(text)
         named_scopes = {
             "project": (
@@ -232,10 +268,25 @@ class MemoryQueryResolver:
             ):
                 domains.append(named_scopes.get(domain) or domain)
 
+        restrictive_domains = tuple(
+            domain
+            for domain in domains
+            if domain != GLOBAL_DOMAIN_SCOPE
+            and domain not in _NON_RESTRICTIVE_QUERY_SCOPES
+        )
+        question_like = "?" in text or any(
+            normalized.startswith(marker) for marker in _QUESTION_PREFIXES
+        )
+        evidence_required = any(
+            marker in lowered for marker in _MEMORY_INTENT_MARKERS
+        ) or (question_like and bool(restrictive_domains))
+
         return MemoryQuery(
             topic=matched_topic,
+            topic_is_complete=len(matched_topics) == 1,
             keywords=tuple(matched_keywords),
             profile_scope=profile_scope,
             raw_text=text,
             domain_scopes=tuple(dict.fromkeys(domains)),
+            evidence_required=evidence_required,
         )

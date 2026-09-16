@@ -150,6 +150,26 @@
       "purpose": "private-reflection"
     }
   ],
+  "relations": [
+    {
+      "relation_id": "corpus-relation-project-supports-commitment",
+      "source_id": "corpus-memory-project",
+      "target_id": "corpus-memory-commitment",
+      "kind": "SUPPORTS",
+      "confidence": 0.9,
+      "provenance_source_id": "corpus-turn-commitment"
+    },
+    {
+      "relation_id": "corpus-relation-poisoned-demo",
+      "source_id": "corpus-memory-project",
+      "target_id": "corpus-memory-commitment",
+      "kind": "SUPPORTS",
+      "confidence": 1.0,
+      "eligible": false,
+      "policy_outcome": "DENY",
+      "provenance_source_id": "corpus-turn-commitment"
+    }
+  ],
   "cases": [
     {
       "case_id": "personal-name",
@@ -157,7 +177,9 @@
       "relevant_raw_turn_ids": ["corpus-turn-name"],
       "relevant_claim_ids": ["corpus-memory-name"],
       "relevant_summary_source_ids": ["corpus-memory-name"],
-      "expected_answer_phrases": ["Tomasz"]
+      "expected_answer_phrases": ["Tomasz"],
+      "history_horizon": "short",
+      "routing_session_id": "corpus-session-personal"
     },
     {
       "case_id": "project-goal",
@@ -165,7 +187,9 @@
       "relevant_raw_turn_ids": ["corpus-turn-project"],
       "relevant_claim_ids": ["corpus-memory-project"],
       "relevant_summary_source_ids": ["corpus-memory-project"],
-      "expected_answer_phrases": ["lokalna pamięć asystenta"]
+      "expected_answer_phrases": ["lokalna pamięć asystenta"],
+      "history_horizon": "medium",
+      "routing_session_id": "corpus-session-project"
     },
     {
       "case_id": "system-state",
@@ -173,7 +197,9 @@
       "relevant_raw_turn_ids": ["corpus-turn-system"],
       "relevant_claim_ids": ["corpus-memory-system"],
       "relevant_summary_source_ids": ["corpus-memory-system"],
-      "expected_answer_phrases": ["LOCAL_PREFERRED"]
+      "expected_answer_phrases": ["LOCAL_PREFERRED"],
+      "history_horizon": "long",
+      "routing_session_id": "routing-long-system"
     },
     {
       "case_id": "conversation-commitment",

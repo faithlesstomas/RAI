@@ -31,6 +31,7 @@ class MemoryQuery:
     """Structured query for epistemically neutral memory retrieval."""
 
     topic: str | None = None
+    topic_is_complete: bool = False
     keywords: tuple[str, ...] = ()
     profile_scope: str = "default"
     data_classes: tuple[DataClass, ...] = (DataClass.PUBLIC, DataClass.LOCAL)
@@ -40,6 +41,7 @@ class MemoryQuery:
     transaction_at: datetime | None = None
     domain_scopes: tuple[str, ...] = ()
     purpose: str = "assistant"
+    evidence_required: bool = False
 
 
 @dataclass(frozen=True)
@@ -64,8 +66,39 @@ class AssistantEvidence:
     content: dict[str, Any]
     data_class: DataClass
     ranking_reason: str
-    domain_scope: str = "general"
+    domain_scope: str = "unknown"
     purpose: str = "assistant"
+
+
+@dataclass(frozen=True)
+class GraphEvidencePath:
+    """One authenticated bounded graph path supporting a retrieved memory."""
+
+    node_ids: tuple[str, ...]
+    relation_ids: tuple[str, ...]
+    score: float
+
+
+@dataclass(frozen=True)
+class MemoryRetrievalSelection:
+    """Multi-channel result with inspectable rankings and graph provenance."""
+
+    memories: tuple[tuple[MemoryRecord, str], ...]
+    channel_ids: tuple[tuple[str, tuple[str, ...]], ...]
+    channel_latency_ms: tuple[tuple[str, float], ...] = ()
+    graph_paths: tuple[GraphEvidencePath, ...] = ()
+
+
+@runtime_checkable
+class AdvancedMemoryRetriever(Protocol):
+    """Optional evaluated retriever kept behind the core memory-store contract."""
+
+    async def retrieve(
+        self,
+        query: MemoryQuery,
+        data_classes: tuple[DataClass, ...],
+        limit: int,
+    ) -> Result[MemoryRetrievalSelection, ActionFailure]: ...
 
 
 @runtime_checkable

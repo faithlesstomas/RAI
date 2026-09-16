@@ -797,7 +797,7 @@ def test_query_resolver_and_domain_policy_support_hierarchical_scopes() -> None:
         "Co ustaliliśmy zrobić przed dodaniem embeddingów?"
     )
 
-    assert project_query.domain_scopes == ("general", "project:aurora")
+    assert project_query.domain_scopes == ("global", "project:aurora")
     assert domain_scope_matches("project", project_query.domain_scopes)
     assert domain_scope_matches("project:aurora", project_query.domain_scopes)
     assert not domain_scope_matches("project:borealis", project_query.domain_scopes)
@@ -810,7 +810,7 @@ def test_memory_sufficiency_requires_query_coverage_and_evidence_quality() -> No
     query = MemoryQuery(
         keywords=("Aurora", "budżet", "termin"),
         raw_text="Jaki jest budżet i termin projektu Aurora?",
-        domain_scopes=("general", "project:aurora"),
+        domain_scopes=("global", "project:aurora"),
     )
     partial = MemoryRecord(
         producer=PRODUCER,
@@ -888,19 +888,19 @@ async def test_retrieval_isolated_by_domain_and_purpose(tmp_path: Path) -> None:
         topic=topic,
         keywords=("Aurora",),
         raw_text="Co pamiętasz o projekcie Aurora?",
-        domain_scopes=("general", "project"),
+        domain_scopes=("global", "project"),
     )
     personal_query = MemoryQuery(
         topic=topic,
         keywords=("Aurora",),
         raw_text="Co pamiętasz o projekcie Aurora?",
-        domain_scopes=("general", "personal"),
+        domain_scopes=("global", "personal"),
     )
     wrong_purpose_query = MemoryQuery(
         topic=topic,
         keywords=("Aurora",),
         raw_text="Co pamiętasz o projekcie Aurora?",
-        domain_scopes=("general", "project"),
+        domain_scopes=("global", "project"),
         purpose="analytics",
     )
 

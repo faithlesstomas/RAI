@@ -158,7 +158,7 @@ def _proposal(  # noqa: PLR0913
         if topic.startswith("project.")
         else "personal"
         if topic.startswith("user.")
-        else "general"
+        else "global"
     )
     return MemoryProposal(
         record_id=_new_id(),

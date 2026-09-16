@@ -67,7 +67,7 @@ async def test_summary_does_not_invent_confidence_or_downgrade_privacy() -> None
     result = await provider.retrieve(
         MemoryQuery(
             keywords=("harmonogram",),
-            domain_scopes=("general", "system"),
+            domain_scopes=("global", "system"),
         ),
         (DataClass.PRIVATE,),
         limit=1,
@@ -106,7 +106,7 @@ async def test_summary_disappears_when_its_source_is_missing() -> None:
     )
 
     result = await provider.retrieve(
-        MemoryQuery(keywords=("orphan",), domain_scopes=("general", "system")),
+        MemoryQuery(keywords=("orphan",), domain_scopes=("global", "system")),
         (DataClass.LOCAL,),
         limit=1,
     )
