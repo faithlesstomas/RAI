@@ -18,7 +18,7 @@ RELEASE_COMMIT_WORKFLOW_RULE = (
     "&& $CI_COMMIT_AUTHOR =~ /^semantic-release-bot / "
     r"&& $CI_COMMIT_TITLE =~ /^chore\(release\): /"
 )
-QUALITY_JOB_COUNT = 6
+QUALITY_JOB_COUNT = 7
 RELEASE_TAG_RULE_COUNT = 5
 
 
