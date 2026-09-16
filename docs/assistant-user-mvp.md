@@ -110,8 +110,9 @@ state without reactivating an older value.
 
 This is an evidence-first general-memory increment, not human-like memory.
 Quoted, hearsay, uncertain, malformed and source-less candidates fail closed.
-The current retrieval floor is lexical; local dense retrieval, equal-budget
-benchmarking, domain-aware consolidation and optional graph-store adapters are
-still Issue #35 work. Interactive latency depends on the selected local model
-and hardware; deterministic mode exists for conformance tests, not as a chat
-model.
+The current retrieval floor compares lexical raw turns and claims with a
+source-covered deterministic summary projection under equal budgets; local dense
+retrieval, representative answer/judge benchmarking, domain-aware consolidation
+and optional graph-store adapters are still Issue #35 work. Interactive latency
+depends on the selected local model and hardware; deterministic mode exists for
+conformance tests, not as a chat model.

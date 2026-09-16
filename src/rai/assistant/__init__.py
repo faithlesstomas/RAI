@@ -18,7 +18,9 @@ from .extraction import (
 )
 from .evidence import RichHistoryEvidenceProvider
 from .evaluation import (
+    RetrievalAnswerEvaluator,
     RetrievalChannelMeasurement,
+    RetrievalChannel,
     RetrievalEvaluationCase,
     RetrievalEvaluationRun,
     evaluate_retrieval_floor,
@@ -53,6 +55,7 @@ from .records import (
 )
 from .service import AssistantService
 from .store import SQLiteMemoryGraphStore
+from .summary import GroundedClaimSummaryProvider, validate_grounded_summary
 
 __all__ = [
     "AnyAssistantRecord",
@@ -92,6 +95,9 @@ __all__ = [
     "MemoryRelationKind",
     "MemoryStageDiagnostic",
     "RichHistoryEvidenceProvider",
+    "GroundedClaimSummaryProvider",
+    "RetrievalAnswerEvaluator",
+    "RetrievalChannel",
     "RetrievalChannelMeasurement",
     "RetrievalEvaluationCase",
     "RetrievalEvaluationRun",
@@ -100,4 +106,5 @@ __all__ = [
     "parse_assistant_record",
     "diagnose_memory",
     "evaluate_retrieval_floor",
+    "validate_grounded_summary",
 ]

@@ -6,20 +6,31 @@ from datetime import timedelta
 from pathlib import Path
 
 import pytest
-from returns.result import Failure, Success
+from returns.result import Failure, Result, Success
 
 from rai.assistant.backends.deterministic import DeterministicAssistantBackend
 from rai.assistant.context import AssistantContextBuilder
 from rai.assistant.evidence import RichHistoryEvidenceProvider
-from rai.assistant.evaluation import RetrievalEvaluationCase, evaluate_retrieval_floor
+from rai.assistant.evaluation import (
+    RetrievalChannel,
+    RetrievalEvaluationCase,
+    evaluate_retrieval_floor,
+)
 from rai.assistant.extraction import SchemaConstrainedMemoryExtractor
 from rai.assistant.ports import MemoryQuery
-from rai.assistant.records import ConversationTurn, MemoryRelationKind
+from rai.assistant.query import MemoryQueryResolver
+from rai.assistant.records import (
+    ConversationTurn,
+    MemoryRelationKind,
+    make_assistant_failure,
+)
 from rai.assistant.service import AssistantService
 from rai.assistant.store import SQLiteMemoryGraphStore
+from rai.assistant.summary import GroundedClaimSummaryProvider
 from rai.inference.protocols import InferenceResult
 from rai.kernel.ports import CancellationToken
 from rai.kernel.records import (
+    ActionFailure,
     DataClass,
     Episode,
     ProducerIdentity,
@@ -30,7 +41,8 @@ from rai.kernel.records import (
 PRODUCER = ProducerIdentity(
     producer_id="assistant-extraction-test", kind="test", version="1.0.0"
 )
-EVALUATION_CONTEXT_BUDGET = 512
+EVALUATION_CONTEXT_BUDGET = 4096
+EXTRACTED_CLAIM_CONFIDENCE = 0.94
 
 
 class _StaticEngine:
@@ -59,6 +71,29 @@ class _StaticRichHistory:
         del filters
         self.calls += 1
         return (self.episode,)
+
+
+class _StaticAnswerEvaluator:
+    def __init__(self, fail_channel: RetrievalChannel | None = None) -> None:
+        self.calls: list[RetrievalChannel] = []
+        self.fail_channel = fail_channel
+
+    async def evaluate(
+        self,
+        case: RetrievalEvaluationCase,
+        channel: RetrievalChannel,
+        context_items: tuple[dict[str, object], ...],
+    ) -> Result[bool, ActionFailure]:
+        del case
+        self.calls.append(channel)
+        if channel == self.fail_channel:
+            return Failure(
+                make_assistant_failure(
+                    code="ANSWER_USE_FAILED",
+                    message="test answer evaluator failure",
+                )
+            )
+        return Success(bool(context_items))
 
 
 def _turn(record_id: str, text: str) -> ConversationTurn:
@@ -404,6 +439,21 @@ async def test_retrieval_floor_compares_raw_and_claim_bm25_under_equal_budgets(
     admitted = await service.accept_turn(_turn("turn-eval", text))
     assert isinstance(admitted, Success)
     memory_id = admitted.unwrap().admitted_memory_ids[0]
+    summary_provider = GroundedClaimSummaryProvider(store)
+    evaluator = _StaticAnswerEvaluator()
+
+    summary_result = await summary_provider.retrieve(
+        MemoryQueryResolver.resolve("Co pamiętasz o projekcie Aurora?"),
+        (DataClass.PUBLIC, DataClass.LOCAL),
+        limit=1,
+    )
+    assert isinstance(summary_result, Success)
+    summary = summary_result.unwrap()[0]
+    assert summary.content["source_memory_ids"] == (memory_id,)
+    assert summary.content["source_turn_ids"] == ("turn-eval",)
+    assert summary.content["source_coverage"] == 1.0
+    assert summary.content["confidence"] == EXTRACTED_CLAIM_CONFIDENCE
+    assert summary.content["modalities"] == ("direct",)
 
     evaluated = await evaluate_retrieval_floor(
         store,
@@ -413,10 +463,13 @@ async def test_retrieval_floor_compares_raw_and_claim_bm25_under_equal_budgets(
                 query_text="Co pamiętasz o projekcie Aurora?",
                 relevant_raw_turn_ids=("turn-eval",),
                 relevant_claim_ids=(memory_id,),
+                relevant_summary_source_ids=(memory_id,),
             ),
         ),
         retrieval_limit=1,
         context_character_budget=EVALUATION_CONTEXT_BUDGET,
+        summary_provider=summary_provider,
+        answer_evaluator=evaluator,
     )
 
     assert isinstance(evaluated, Success)
@@ -426,6 +479,7 @@ async def test_retrieval_floor_compares_raw_and_claim_bm25_under_equal_budgets(
     assert {item.channel for item in run.measurements} == {
         "raw_turns_bm25",
         "claims_bm25",
+        "summaries_grounded",
     }
     assert all(item.recall == 1.0 for item in run.measurements)
     assert all(item.precision == 1.0 for item in run.measurements)
@@ -434,6 +488,54 @@ async def test_retrieval_floor_compares_raw_and_claim_bm25_under_equal_budgets(
         for item in run.measurements
     )
     assert all(not item.retrieval_failed for item in run.measurements)
+    assert all(item.answer_utilization_evaluated for item in run.measurements)
+    assert all(item.answer_correct is True for item in run.measurements)
+    assert all(not item.answer_evaluation_failed for item in run.measurements)
+    assert set(evaluator.calls) == {
+        "raw_turns_bm25",
+        "claims_bm25",
+        "summaries_grounded",
+    }
+    summary_measurement = next(
+        item for item in run.measurements if item.channel == "summaries_grounded"
+    )
+    assert summary_measurement.retrieved_ids == (memory_id,)
+    assert summary_measurement.artifact_ids[0].startswith("grounded-summary:")
+
+    failed_answer_run = await evaluate_retrieval_floor(
+        store,
+        (
+            RetrievalEvaluationCase(
+                case_id="answer-failure",
+                query_text="Co pamiętasz o projekcie Aurora?",
+                relevant_raw_turn_ids=("turn-eval",),
+                relevant_claim_ids=(memory_id,),
+            ),
+        ),
+        retrieval_limit=1,
+        context_character_budget=EVALUATION_CONTEXT_BUDGET,
+        answer_evaluator=_StaticAnswerEvaluator(fail_channel="claims_bm25"),
+    )
+    assert isinstance(failed_answer_run, Success)
+    failed_claim_measurement = next(
+        item
+        for item in failed_answer_run.unwrap().measurements
+        if item.channel == "claims_bm25"
+    )
+    assert not failed_claim_measurement.retrieval_failed
+    assert failed_claim_measurement.answer_evaluation_failed
+    assert not failed_claim_measurement.answer_utilization_evaluated
+    assert failed_claim_measurement.answer_failure_code == "ANSWER_USE_FAILED"
+
+    deleted = await store.delete_turn("turn-eval")
+    assert isinstance(deleted, Success)
+    after_delete = await summary_provider.retrieve(
+        MemoryQueryResolver.resolve("Co pamiętasz o projekcie Aurora?"),
+        (DataClass.PUBLIC, DataClass.LOCAL),
+        limit=1,
+    )
+    assert isinstance(after_delete, Success)
+    assert after_delete.unwrap() == ()
 
 
 @pytest.mark.asyncio

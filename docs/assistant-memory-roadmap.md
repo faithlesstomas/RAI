@@ -122,10 +122,14 @@ Exit evidence:
 
 Status: `[/]`. Cross-session raw user turns and durable claims use FTS5/BM25
 projections, while Rich History episodes are available through a bounded,
-privacy-aware evidence provider. The reproducible runner compares raw turns and
-claims with identical retrieval and character budgets and reports retrieval
-quality, abstention, latency and context size. Summary comparison, answer
-utilization and energy integration remain open, so this stage is not complete.
+privacy-aware evidence provider. A deterministic grounded-summary projection
+retains every contributing claim/source ID, modality, epistemic status and the
+minimum source confidence without becoming durable truth. The reproducible
+runner compares raw turns, claims and this summary projection with identical
+retrieval and character budgets. It reports retrieval quality, abstention,
+latency and context size, and exposes a separate answer-utilization evaluator.
+A representative corpus, real answerer/judge runs and energy integration remain
+open, so this stage is not complete.
 
 Implement raw-turn and raw-episode retrieval with FTS5/BM25 and query-driven
 pruning. Compare it against claim retrieval and summary retrieval before adding
@@ -188,7 +192,9 @@ Exit evidence:
 Status: `[/]`. Profile, domain and purpose isolation is enforced for claims,
 raw-turn retrieval and recent context; manifests expose the selected scope.
 Negative tests cover unrelated-domain and wrong-purpose retrieval. Broader
-leakage/sycophancy evaluation and consolidation remain open.
+leakage/sycophancy evaluation and persistent consolidation remain open. The M4
+grounded-summary baseline is query-time and rebuildable: deleting its source
+turn removes the claim and therefore makes the projection disappear.
 
 Partition durable memory by user, profile, domain and purpose. Retrieve personal
 context only when the request and policy require it. Measure cross-domain

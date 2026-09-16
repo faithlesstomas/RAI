@@ -80,10 +80,12 @@ client, privacy and data-class policy before a record can enter context.
 
 The durable graph distinguishes interaction records from semantic memory.
 Turn nodes use stable RAI IDs and `REPLIES_TO` edges. The current product slice
-admits a bounded, separately represented class of personal statements,
-preferences and plans, plus explicit remember/forget requests. Later slices may
-add external-world claims, summaries and richer relations
-such as `DERIVED_FROM`, `SUPPORTS`, `CONTRADICTS`, `ABOUT` and `SUPERSEDES`.
+admits separately represented personal, project, system and conversation claims
+from ordinary dialogue; explicit remember/forget requests are optional controls.
+Qualified `DERIVED_FROM`, `SUPPORTS`, `CONTRADICTS`, `UPDATES` and `SUPERSEDES`
+relations retain their evidence. A deterministic grounded-summary projection is
+available only as a rebuildable evaluation channel and is not durable truth or a
+default context route.
 Model output is only a proposal: deterministic policy owns admission,
 correction, expiry and deletion propagation.
 
@@ -151,11 +153,12 @@ to end. A turn-only chat is useful scaffolding but does not satisfy this slice:
    poisoned or superseded retrieval, source deletion and provider-state leakage
    with deterministic tests.
 
-This slice intentionally excludes proactive triggers, tool use, lossy general
-conversation summarization, vector retrieval, external model APIs, Coconut
-recurrence and writable slots. It now includes governed free-form candidate
-extraction, bitemporal claims, FTS5 raw-turn fallback and Rich History evidence,
-while keeping every model output outside the policy boundary.
+This slice intentionally excludes proactive triggers, tool use, durable or
+model-written lossy conversation summaries, vector retrieval, external model
+APIs, Coconut recurrence and writable slots. It now includes governed free-form
+candidate extraction, bitemporal claims, FTS5 raw-turn/claim retrieval, Rich
+History evidence and the query-time grounded-summary evaluation baseline, while
+keeping every model output outside the policy boundary.
 
 ## Local operation and observability
 
