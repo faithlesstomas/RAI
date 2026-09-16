@@ -111,6 +111,17 @@ test:
   script:
     - uv run pytest --timeout=30 --cov=src/rai --cov-report=term
 
+emacs_client:
+  extends: .branch_quality_job
+  stage: test
+  image: debian:bookworm-slim
+  before_script:
+    - apt-get update -y
+    - apt-get install -y --no-install-recommends emacs-nox make
+  script:
+    - make -C clients/emacs test
+    - make -C clients/emacs compile
+
 release_verify:
   stage: test
   script:
