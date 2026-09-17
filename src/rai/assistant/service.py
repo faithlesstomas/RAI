@@ -37,6 +37,7 @@ from .ports import (
 )
 from .query import MemoryQueryResolver
 from .records import (
+    MAX_PROPOSALS_PER_TURN,
     AssistantCandidate,
     AssistantContextManifest,
     AssistantContextPackage,
@@ -112,7 +113,27 @@ class AssistantService:
         )
         self.profile_scope = profile_scope
         self._state = LifecycleState.CREATED
-        self._request_locks: dict[str, asyncio.Lock] = {}
+        self._turn_locks: dict[str, asyncio.Lock] = {}
+        self._turn_lock_references: dict[str, int] = {}
+        self._turn_locks_guard = asyncio.Lock()
+
+    async def _retain_turn_lock(self, turn_id: str) -> asyncio.Lock:
+        """Keep one lock alive while owners hold it or wait in its queue."""
+        async with self._turn_locks_guard:
+            lock = self._turn_locks.setdefault(turn_id, asyncio.Lock())
+            self._turn_lock_references[turn_id] = (
+                self._turn_lock_references.get(turn_id, 0) + 1
+            )
+            return lock
+
+    async def _release_turn_lock(self, turn_id: str) -> None:
+        async with self._turn_locks_guard:
+            remaining = self._turn_lock_references.get(turn_id, 1) - 1
+            if remaining <= 0:
+                self._turn_lock_references.pop(turn_id, None)
+                self._turn_locks.pop(turn_id, None)
+            else:
+                self._turn_lock_references[turn_id] = remaining
 
     @staticmethod
     def _proposal_rejection_reason(  # noqa: PLR0911
@@ -236,6 +257,38 @@ class AssistantService:
                 targets = tuple(
                     memory.record_id for memory, _reason in target_res.unwrap()
                 )
+                dependent_res = await self.store.get_dependent_memory_ids(
+                    targets, profile_scope=self.profile_scope
+                )
+                if isinstance(dependent_res, Failure):
+                    operations.append(
+                        MemoryOperation(
+                            record_id=_new_id(),
+                            timestamp=_utc_now(),
+                            producer=self.producer,
+                            operation=MemoryOperationKind.FORGET,
+                            trigger="conversation_turn",
+                            trigger_id=turn.record_id,
+                            profile_scope=self.profile_scope,
+                            policy_outcome="DENY",
+                            status="REJECTED",
+                            stage="RETRIEVAL",
+                            reason=(
+                                "dependent-memory lookup failed: "
+                                f"{dependent_res.failure().code}"
+                            ),
+                            evidence=evidence,
+                            **self._proposal_trace(proposal),
+                        )
+                    )
+                    forget_message = (
+                        "Nie mogłem bezpiecznie sprawdzić zależności pamięci; "
+                        "niczego nie usunąłem."
+                    )
+                    continue
+                targets = tuple(
+                    dict.fromkeys((*targets, *dependent_res.unwrap()))
+                )
                 status = "APPLIED" if targets else "NOOP"
                 operations.append(
                     MemoryOperation(
@@ -254,7 +307,7 @@ class AssistantService:
                         status=status,
                         stage="DELETION",
                         reason=(
-                            f"matched memory query: {query_text}"
+                            f"matched memory query with dependent cascade: {query_text}"
                             if targets
                             else f"no active memory matched: {query_text}"
                         ),
@@ -479,9 +532,20 @@ class AssistantService:
         }
         for proposal in model_proposals:
             identity = (proposal.topic, proposal.span_start, proposal.span_end)
-            if identity not in seen:
+            if identity not in seen and len(merged) < MAX_PROPOSALS_PER_TURN:
                 merged.append(proposal)
                 seen.add(identity)
+
+        dropped_by_limit = max(
+            0,
+            len(
+                {
+                    (proposal.topic, proposal.span_start, proposal.span_end)
+                    for proposal in (*candidate_proposals, *model_proposals)
+                }
+            )
+            - len(merged),
+        )
 
         operation = MemoryOperation(
             record_id=_new_id(),
@@ -498,7 +562,11 @@ class AssistantService:
             policy_outcome="ALLOW",
             status="APPLIED" if model_proposals else "NOOP",
             stage="EXTRACTION",
-            reason=f"schema-valid candidates: {len(model_proposals)}",
+            reason=(
+                f"schema-valid candidates: {len(model_proposals)}; "
+                f"merged accepted: {len(merged)}; "
+                f"dropped by shared limit: {dropped_by_limit}"
+            ),
             evidence=evidence,
         )
         return tuple(merged), [operation]
@@ -626,17 +694,16 @@ class AssistantService:
     ) -> Result[AssistantResponse, ActionFailure]:
         """Execute the one-turn pipeline with in-process exactly-once inference."""
         req_id = request_id or turn.record_id
-        lock = self._request_locks.setdefault(req_id, asyncio.Lock())
+        lock = await self._retain_turn_lock(turn.record_id)
         try:
             async with lock:
                 return await self._accept_turn_locked(
                     turn, cancellation or CancellationToken(), req_id
                 )
         finally:
-            if not lock.locked():
-                self._request_locks.pop(req_id, None)
+            await self._release_turn_lock(turn.record_id)
 
-    async def _accept_turn_locked(  # noqa: PLR0911
+    async def _accept_turn_locked(  # noqa: PLR0911, PLR0912, PLR0915
         self,
         turn: ConversationTurn,
         token: CancellationToken,
@@ -665,7 +732,84 @@ class AssistantService:
             return Failure(existing_res.failure())
         existing = existing_res.unwrap()
         if existing is not None:
+            if existing.user_turn_id != turn.record_id:
+                return Failure(
+                    make_assistant_failure(
+                        code="ID_CONFLICT",
+                        message=(
+                            f"request id {request_id} belongs to another turn"
+                        ),
+                        request_id=request_id,
+                    )
+                )
             return Success(existing)
+
+        turn_response_res = await self.store.get_response_by_turn_id(turn.record_id)
+        if isinstance(turn_response_res, Failure):
+            return Failure(turn_response_res.failure())
+        turn_response = turn_response_res.unwrap()
+        if turn_response is not None:
+            return Success(turn_response)
+
+        stored_turn_res = await self.store.get_turn(turn.record_id)
+        if isinstance(stored_turn_res, Failure):
+            return Failure(stored_turn_res.failure())
+        stored_turn = stored_turn_res.unwrap()
+        if stored_turn is not None:
+            immutable_input_matches = (
+                stored_turn.session_id == turn.session_id
+                and stored_turn.role == turn.role
+                and stored_turn.text == turn.text
+                and stored_turn.data_class == turn.data_class
+                and stored_turn.timestamp == turn.timestamp
+                and stored_turn.producer == turn.producer
+                and stored_turn.correlation_id == turn.correlation_id
+                and stored_turn.domain_scope == turn.domain_scope
+                and stored_turn.purpose == turn.purpose
+                and stored_turn.metadata == turn.metadata
+                and (
+                    turn.reply_to_turn_id is None
+                    or stored_turn.reply_to_turn_id == turn.reply_to_turn_id
+                )
+            )
+            if not immutable_input_matches:
+                return Failure(
+                    make_assistant_failure(
+                        code="ID_CONFLICT",
+                        message=(
+                            f"turn id {turn.record_id} exists with differing content"
+                        ),
+                        request_id=turn.record_id,
+                    )
+                )
+            turn = stored_turn
+
+        if stored_turn is None and turn.reply_to_turn_id is None:
+            chain_res = await self.store.get_recent_reply_chain(
+                session_id=turn.session_id, limit=1
+            )
+            if isinstance(chain_res, Failure):
+                return Failure(chain_res.failure())
+            chain = chain_res.unwrap()
+            if chain:
+                turn = turn.model_copy(
+                    update={"reply_to_turn_id": chain[-1].record_id}
+                )
+        elif stored_turn is None:
+            parent_res = await self.store.get_turn(turn.reply_to_turn_id)
+            if isinstance(parent_res, Failure):
+                return Failure(parent_res.failure())
+            parent = parent_res.unwrap()
+            if parent is None or parent.session_id != turn.session_id:
+                return Failure(
+                    make_assistant_failure(
+                        code="INVALID_REPLY_TARGET",
+                        message=(
+                            "reply_to_turn_id must identify a turn in the same session"
+                        ),
+                        request_id=turn.record_id,
+                    )
+                )
 
         accepted_res = await self.store.accept_turn(turn)
         if isinstance(accepted_res, Failure):

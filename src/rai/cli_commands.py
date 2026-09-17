@@ -470,6 +470,7 @@ def _run_assistant_benchmark(  # noqa: PLR0913
     max_input_tokens: int,
     max_output_tokens: int,
     max_latency_seconds: float,
+    trials: int,
 ) -> None:
     """Run the isolated equal-budget memory benchmark and persist its manifest."""
     from returns.result import Success  # noqa: PLC0415
@@ -502,6 +503,7 @@ def _run_assistant_benchmark(  # noqa: PLR0913
             max_input_tokens=max_input_tokens,
             max_output_tokens=max_output_tokens,
             max_latency_seconds=max_latency_seconds,
+            trials=trials,
         )
         if not isinstance(result, Success):
             failure = result.failure()
@@ -670,6 +672,13 @@ def register_assistant_commands(root: click.Group) -> None:
         default=60.0,
         show_default=True,
     )
+    @click.option(
+        "--trials",
+        type=click.IntRange(min=1),
+        default=3,
+        show_default=True,
+        help="Repeat every answer/routing case to expose model variance.",
+    )
     def benchmark_memory_command(  # noqa: PLR0913
         backend: str,
         model: str | None,
@@ -681,6 +690,7 @@ def register_assistant_commands(root: click.Group) -> None:
         max_input_tokens: int,
         max_output_tokens: int,
         max_latency_seconds: float,
+        trials: int,
     ) -> None:
         """Compare lexical, summary, dense, RRF and graph memory channels."""
         _run_assistant_benchmark(
@@ -694,6 +704,7 @@ def register_assistant_commands(root: click.Group) -> None:
             max_input_tokens,
             max_output_tokens,
             max_latency_seconds,
+            trials,
         )
 
     @assistant.command(name="sessions")

@@ -19,7 +19,7 @@ from rai.kernel.records import (
 )
 
 from .context import AssistantContextBuilder, SUFFICIENCY_POLICY_VERSION
-from .judging import judge_answer
+from .judging import JUDGE_VERSION, judge_answer
 from .ports import AssistantModelBackend, MemoryGraphStore
 from .records import AssistantContextPackage, ConversationTurn, InferenceRequest
 
@@ -52,6 +52,7 @@ class ContextRoutingMeasurement(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid")
 
     case_id: str
+    trial_index: int = Field(default=1, ge=1)
     horizon: HistoryHorizon
     strategy: RoutingStrategy
     routing_decision: str
@@ -66,6 +67,10 @@ class ContextRoutingMeasurement(BaseModel):
     answer_correct: bool | None = None
     answer_abstained: bool | None = None
     answer_text: str | None = None
+    raw_model_text: str | None = None
+    grounding_override: bool = False
+    raw_answer_correct: bool | None = None
+    raw_answer_abstained: bool | None = None
     answer_evaluation_failed: bool = False
     answer_failure_code: str | None = None
     answer_latency_ms: float | None = Field(default=None, ge=0.0)
@@ -85,12 +90,13 @@ class ContextRoutingEvaluationRun(BaseModel):
     policy_version: str = SUFFICIENCY_POLICY_VERSION
     context_character_budget: int = Field(ge=1)
     adaptive_threshold: float = Field(ge=0.0, le=1.0)
+    trials: int = Field(default=1, ge=1)
     measurements: tuple[ContextRoutingMeasurement, ...]
     aggregates: tuple[ContextRoutingAggregate, ...] = ()
 
 
 class ContextRoutingAggregate(BaseModel):
-    """Horizon/strategy summary without treating missing model answers as wrong."""
+    """Horizon/strategy summary with headline and successful-answer accuracy."""
 
     model_config = ConfigDict(frozen=True, extra="forbid")
 
@@ -99,6 +105,8 @@ class ContextRoutingAggregate(BaseModel):
     case_count: int = Field(ge=1)
     source_accuracy: float = Field(ge=0.0, le=1.0)
     answer_accuracy: float | None = Field(default=None, ge=0.0, le=1.0)
+    evaluated_answer_accuracy: float | None = Field(default=None, ge=0.0, le=1.0)
+    raw_answer_accuracy: float | None = Field(default=None, ge=0.0, le=1.0)
     answer_evaluation_failures: int = Field(ge=0)
     mean_context_characters: float = Field(ge=0.0)
 
@@ -120,6 +128,10 @@ def aggregate_context_routing(
             answered = tuple(
                 item for item in selected if item.answer_correct is not None
             )
+            answer_evaluation_attempted = any(
+                item.answer_correct is not None or item.answer_evaluation_failed
+                for item in selected
+            )
             aggregates.append(
                 ContextRoutingAggregate(
                     horizon=horizon,
@@ -130,8 +142,20 @@ def aggregate_context_routing(
                     ),
                     answer_accuracy=(
                         sum(item.answer_correct is True for item in answered)
+                        / len(selected)
+                        if answer_evaluation_attempted
+                        else None
+                    ),
+                    evaluated_answer_accuracy=(
+                        sum(item.answer_correct is True for item in answered)
                         / len(answered)
                         if answered
+                        else None
+                    ),
+                    raw_answer_accuracy=(
+                        sum(item.raw_answer_correct is True for item in answered)
+                        / len(selected)
+                        if answer_evaluation_attempted
                         else None
                     ),
                     answer_evaluation_failures=sum(
@@ -251,17 +275,30 @@ async def _evaluate_answer(  # noqa: PLR0913
         forbidden_phrases=case.forbidden_answer_phrases,
         expected_abstention=case.expected_abstention,
     )
+    raw_model_text = candidate.metadata.get("raw_model_output")
+    if not isinstance(raw_model_text, str) or not raw_model_text.strip():
+        raw_model_text = candidate.text
+    raw_correct, raw_abstained = judge_answer(
+        raw_model_text,
+        expected_phrases=case.expected_answer_phrases,
+        forbidden_phrases=case.forbidden_answer_phrases,
+        expected_abstention=case.expected_abstention,
+    )
     return measurement.model_copy(
         update={
             "answer_correct": correct,
             "answer_abstained": abstained,
             "answer_text": candidate.text,
+            "raw_model_text": raw_model_text,
+            "grounding_override": candidate.metadata.get("grounding_override") is True,
+            "raw_answer_correct": raw_correct,
+            "raw_answer_abstained": raw_abstained,
             "answer_latency_ms": latency_ms,
             "tokens_in": candidate.tokens_in,
             "tokens_out": candidate.tokens_out,
             "backend_name": str(getattr(backend, "backend_name", "unknown")),
             "model_name": str(getattr(backend, "model_name", "unknown")),
-            "judge_version": "deterministic-phrase-and-abstention-v1",
+            "judge_version": JUDGE_VERSION,
         }
     )
 
@@ -299,6 +336,7 @@ async def evaluate_context_routing(  # noqa: PLR0913
         max_recent_turns=max_recent_turns,
         max_memories=max_memories,
         max_episodic_turns=max_episodic_turns,
+        enable_recent_route=False,
     )
     measurements: list[ContextRoutingMeasurement] = []
     for case in cases:

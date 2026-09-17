@@ -91,6 +91,130 @@ async def test_name_is_recalled_after_restart_and_corrected(tmp_path: Path) -> N
 
 
 @pytest.mark.asyncio
+async def test_recent_unpersisted_fact_can_ground_the_next_answer(
+    tmp_path: Path,
+) -> None:
+    service = AssistantService(
+        store=SQLiteMemoryGraphStore(tmp_path / "recent-grounding.sqlite3"),
+        backend=LocalAssistantBackend(_ChatEngine(), model_name="fake-chat"),
+    )
+    await service.start()
+    old_statement = ConversationTurn(
+        record_id="recent-old-name-statement",
+        producer=PRODUCER,
+        session_id="recent-session",
+        role="user",
+        text="Mam na imię Tomek.",
+        status="COMPLETED",
+        domain_scope="personal",
+        metadata={"profile_scope": "default"},
+    )
+    assert isinstance(await service.store.accept_turn(old_statement), Success)
+    recent_statement = ConversationTurn(
+        record_id="recent-name-statement",
+        producer=PRODUCER,
+        session_id="recent-session",
+        role="user",
+        text="Mam na imię Tomasz.",
+        status="COMPLETED",
+        domain_scope="personal",
+        metadata={"profile_scope": "default"},
+        reply_to_turn_id=old_statement.record_id,
+    )
+    assert isinstance(await service.store.accept_turn(recent_statement), Success)
+
+    recalled = await service.accept_turn(
+        _turn("recent-name-question", "recent-session", "Jak mam na imię?")
+    )
+
+    assert isinstance(recalled, Success)
+    assert recalled.unwrap().text == "Masz na imię Tomasz."
+    memories = await service.store.retrieve_relevant_memories(limit=10)
+    assert isinstance(memories, Success)
+    assert memories.unwrap() == ()
+    await service.stop()
+
+
+@pytest.mark.asyncio
+async def test_recent_location_correction_grounds_intervening_question_word(
+    tmp_path: Path,
+) -> None:
+    service = AssistantService(
+        store=SQLiteMemoryGraphStore(tmp_path / "recent-location-correction.sqlite3"),
+        backend=LocalAssistantBackend(_ChatEngine(), model_name="fake-chat"),
+    )
+    await service.start()
+    old_statement = ConversationTurn(
+        record_id="recent-old-location",
+        producer=PRODUCER,
+        session_id="recent-location-session",
+        role="user",
+        text="Mieszkam w Gdańsku.",
+        status="COMPLETED",
+        domain_scope="personal",
+        metadata={"profile_scope": "default"},
+    )
+    assert isinstance(await service.store.accept_turn(old_statement), Success)
+    correction = ConversationTurn(
+        record_id="recent-new-location",
+        producer=PRODUCER,
+        session_id="recent-location-session",
+        role="user",
+        text="Przeprowadziłem się i teraz mieszkam w Warszawie.",
+        status="COMPLETED",
+        domain_scope="personal",
+        metadata={"profile_scope": "default"},
+        reply_to_turn_id=old_statement.record_id,
+    )
+    assert isinstance(await service.store.accept_turn(correction), Success)
+
+    recalled = await service.accept_turn(
+        _turn(
+            "recent-location-question",
+            "recent-location-session",
+            "Gdzie teraz mieszkam?",
+        )
+    )
+
+    assert isinstance(recalled, Success)
+    assert recalled.unwrap().text == (
+        "Według zapisanej informacji mieszkasz w Warszawie."
+    )
+    assert "Gdańsk" not in recalled.unwrap().text
+    await service.stop()
+
+
+@pytest.mark.asyncio
+async def test_uncertain_recent_statement_does_not_become_grounding(
+    tmp_path: Path,
+) -> None:
+    service = AssistantService(
+        store=SQLiteMemoryGraphStore(tmp_path / "uncertain-grounding.sqlite3"),
+        backend=LocalAssistantBackend(_ChatEngine(), model_name="fake-chat"),
+    )
+    await service.start()
+    uncertain = ConversationTurn(
+        record_id="uncertain-name-statement",
+        producer=PRODUCER,
+        session_id="uncertain-session",
+        role="user",
+        text="Chyba mam na imię Tomasz.",
+        status="COMPLETED",
+        domain_scope="personal",
+        metadata={"profile_scope": "default"},
+    )
+    assert isinstance(await service.store.accept_turn(uncertain), Success)
+
+    recalled = await service.accept_turn(
+        _turn("uncertain-name-question", "uncertain-session", "Jak mam na imię?")
+    )
+
+    assert isinstance(recalled, Success)
+    assert recalled.unwrap().text == "Nie mam jeszcze zapisanego Twojego imienia."
+    await service.stop()
+
+
+@pytest.mark.asyncio
 async def test_location_age_and_explicit_fact_are_admitted(tmp_path: Path) -> None:
     service = AssistantService(
         store=SQLiteMemoryGraphStore(tmp_path / "assistant.sqlite3"),

@@ -12,6 +12,7 @@ import pytest
 from returns.result import Success
 
 from rai.assistant.backends.deterministic import DeterministicAssistantBackend
+from rai.assistant.derived import VerifiedDerivedClaim, write_verified_derived_claim
 from rai.assistant.diagnostics import diagnose_memory
 from rai.assistant.ports import MemoryQuery
 from rai.assistant.records import ConversationTurn, MemoryOperationKind
@@ -19,7 +20,7 @@ from rai.assistant.service import AssistantService
 from rai.assistant.store import SQLiteMemoryGraphStore
 from rai.cli import cli
 from rai.container import ApplicationContainer
-from rai.kernel.records import ProducerIdentity
+from rai.kernel.records import DataClass, ProducerIdentity
 from rai.routers.assistant import assistant_websocket
 from rai.server import create_app
 from conftest import ASGITestClient
@@ -42,7 +43,8 @@ def _turn(record_id: str, session_id: str, text: str) -> ConversationTurn:
 async def test_natural_memory_recall_context_inspection_forget_and_replay(
     tmp_path: Path,
 ) -> None:
-    store = SQLiteMemoryGraphStore(tmp_path / "assistant.sqlite3")
+    database = tmp_path / "assistant.sqlite3"
+    store = SQLiteMemoryGraphStore(database)
     service = AssistantService(store=store, backend=DeterministicAssistantBackend())
     await service.start()
 
@@ -81,12 +83,32 @@ async def test_natural_memory_recall_context_inspection_forget_and_replay(
         "ANSWER_USE"
     ] == "PASS"
 
+    derived = await write_verified_derived_claim(
+        store,
+        VerifiedDerivedClaim(
+            verification_id="verify-colour-derived",
+            verifier_id="user-mvp-test-verifier",
+            verifier_version="1.0.0",
+            policy_version="derived-writeback-v1",
+            topic="derived.personal.colour-summary",
+            content={"finding": "preferred colour is green"},
+            source_memory_ids=(remembered.unwrap().admitted_memory_ids[0],),
+            domain_scope="personal",
+        ),
+    )
+    assert isinstance(derived, Success)
+
     forgotten = await service.accept_turn(
         _turn("turn-forget", "session-c", "Zapomnij mój ulubiony kolor."),
         request_id="forget-colour",
     )
     assert isinstance(forgotten, Success)
-    assert "Usunąłem 1" in forgotten.unwrap().text
+    assert "Usunąłem 2" in forgotten.unwrap().text
+    removed_derived = await store.get_memory(derived.unwrap().record_id)
+    assert isinstance(removed_derived, Success)
+    removed_derived_record = removed_derived.unwrap()
+    assert removed_derived_record is not None
+    assert removed_derived_record[1] == "DELETED"
 
     active = await store.retrieve_relevant_memories(
         query=MemoryQuery(keywords=("ulubiony", "kolor"))
@@ -95,11 +117,59 @@ async def test_natural_memory_recall_context_inspection_forget_and_replay(
     operations = await store.list_memory_operations()
     assert isinstance(active, Success) and active.unwrap() == ()
     assert isinstance(replayed, Success) and replayed.unwrap() == ()
+    raw = await store.retrieve_relevant_turns(
+        "default",
+        MemoryQuery(keywords=("ulubiony", "kolor")),
+        (DataClass.PUBLIC, DataClass.LOCAL),
+    )
+    assert isinstance(raw, Success)
+    assert {
+        turn.record_id for turn, _reason in raw.unwrap()
+    }.isdisjoint({"turn-colour", remembered.unwrap().turn_id})
+    assert all("zielony" not in turn.text.casefold() for turn, _reason in raw.unwrap())
+    suppressed_recent = await store.get_recent_reply_chain(
+        "session-a", profile_scope="default"
+    )
+    assert isinstance(suppressed_recent, Success)
+    assert all(
+        turn.record_id
+        not in {"turn-colour", remembered.unwrap().turn_id}
+        for turn in suppressed_recent.unwrap()
+    )
     assert isinstance(operations, Success)
     assert [operation.operation for operation in operations.unwrap()] == [
         MemoryOperationKind.REMEMBER.value,
+        MemoryOperationKind.REFLECT.value,
         MemoryOperationKind.FORGET.value,
     ]
+
+    await service.stop()
+    store = SQLiteMemoryGraphStore(database)
+    service = AssistantService(
+        store=store, backend=DeterministicAssistantBackend()
+    )
+    await service.start()
+    raw_after_restart = await store.retrieve_relevant_turns(
+        "default",
+        MemoryQuery(keywords=("ulubiony", "kolor")),
+        (DataClass.PUBLIC, DataClass.LOCAL),
+    )
+    assert isinstance(raw_after_restart, Success)
+    assert {
+        turn.record_id for turn, _reason in raw_after_restart.unwrap()
+    }.isdisjoint({"turn-colour", remembered.unwrap().turn_id})
+    assert all(
+        "zielony" not in turn.text.casefold()
+        for turn, _reason in raw_after_restart.unwrap()
+    )
+
+    recalled_after_forget = await service.accept_turn(
+        _turn("turn-after-forget", "session-d", "Jaki jest mój ulubiony kolor?"),
+        request_id="recall-after-forget",
+    )
+    assert isinstance(recalled_after_forget, Success)
+    assert "zielony" not in recalled_after_forget.unwrap().text.casefold()
+    await service.stop()
 
 
 @pytest.mark.asyncio

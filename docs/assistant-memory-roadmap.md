@@ -120,9 +120,12 @@ Exit evidence:
 
 ### M4 — reproducible retrieval floor
 
-Status: `[x]`. Cross-session raw user turns and durable claims use FTS5/BM25
-projections, while Rich History episodes are available through a bounded,
-privacy-aware evidence provider. A deterministic grounded-summary projection
+Status: `[x]` for the scoped retrieval floor. Three repeated live-model
+manifests pass benchmark protocol v2 with judge v3; v1 manifests are historical
+only. Cross-session raw user turns and
+durable claims use FTS5/BM25 projections, while Rich History episodes are
+available through a bounded, privacy-aware evidence provider. A deterministic
+grounded-summary projection
 retains every contributing claim/source ID, modality, epistemic status and the
 minimum source confidence without becoming durable truth. The reproducible
 runner compares raw turns, claims and this summary projection with identical
@@ -132,9 +135,11 @@ explicitly missing cost/energy samples. The versioned corpus covers personal,
 project, system, conversational commitment, correction, unsupported and
 privacy-isolation cases. Its answer evaluator invokes the product
 `AssistantModelBackend`; a deterministic phrase/abstention judge evaluates the
-answer independently instead of asking the answer model to grade itself. Two
-recorded live-model runs include measured energy, explicit sensor scope and
-reproducible manifests; see
+answer independently instead of asking the answer model to grade itself. V2
+also records raw versus grounded answers, all-attempt denominators, exact
+serialized evidence size, model-artifact fingerprint and repeated trials.
+Qwen 3.5 2B, Qwen 3.5 4B and Gemma 4 E4B completed three trials with no
+retrieval or answer-evaluation failures; see
 [the M4–M6 evaluation](assistant-m4-m6-evaluation.md).
 
 Implement raw-turn and raw-episode retrieval with FTS5/BM25 and query-driven
@@ -153,15 +158,22 @@ Exit evidence:
 
 ### M5 — adaptive context router and verified fallback
 
-Status: `[x]`. The context builder now chooses compact claim memory when its
-configurable sufficiency threshold is met, otherwise falls back to raw turns
+Status: `[x]` for the scoped adaptive router and verified write-back. Runtime
+invariants, deterministic tests and repeated v2 live comparisons are complete.
+The context builder now chooses a
+relevant short reply chain first, compact claim memory when its configurable
+sufficiency threshold is met, otherwise falls back to raw turns
 and approved external evidence or records `no_evidence`. Manifests record
 candidate/rejected routes, inspectable sufficiency factors (query coverage,
 evidence quality, and maximum source confidence), reasons, fallback and
 evidence budget. The frozen comparison now covers short, medium and long
-histories against an always-memory baseline. Verified derived write-back
-requires active same-scope sources, full source coverage, verifier/policy
-identity and provenance-bearing `SUPPORTS` edges.
+histories against an always-memory baseline. The route is recomputed after
+budget pruning. Verified derived write-back requires active same-scope sources,
+known confidence for every source, full source coverage, verifier/policy
+identity and provenance-bearing `SUPPORTS` edges. Deletion follows every
+support edge recursively. Forgetting also records a profile-scoped suppression
+for the source exchange, removing it from raw FTS and recent inference context
+without conflating that projection with the separate audit transcript.
 
 Select recent/full context for short histories when it is cheaper and at least
 as accurate. For longer histories, route through lexical or semantic memory.
@@ -182,12 +194,17 @@ Exit evidence:
 
 ### M6 — hybrid and graph retrieval
 
-Status: `[x]` for the evaluated opt-in channels. A dependency-free local dense
+Status: `[x]` for the evaluated opt-in channels and activation decision. A
+dependency-free local dense
 baseline, weighted RRF and bounded graph traversal run under the same returned
 context budget. Traversal filters the authenticated policy-eligible subgraph
 before expansion, manifests expose node and edge IDs, and adversarial tests
 exclude a denied edge. Two local-model runs found no precision or answer-quality
-gain over claim BM25, so none of these channels is enabled by default.
+gain over claim BM25 under v1, so none of these channels is enabled by default.
+V2 reports how often each channel's selected IDs actually differ from claim
+BM25. Three repeated v2 live runs confirm that the advanced channels select
+different evidence frequently but do not improve answer quality or precision,
+so they remain disabled by default.
 
 Add a local dense channel and evaluate RRF against lexical retrieval. Evaluate
 cross-encoder reranking only after measuring its local resource cost. Add

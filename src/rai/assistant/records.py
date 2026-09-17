@@ -248,6 +248,7 @@ class MemoryOperation(KernelRecord):
     stage: Literal[
         "EXTRACTION",
         "ADMISSION",
+        "RETRIEVAL",
         "STORAGE",
         "UPDATE",
         "DELETION",

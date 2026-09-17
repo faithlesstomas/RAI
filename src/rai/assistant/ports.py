@@ -151,6 +151,10 @@ class MemoryGraphStore(Protocol):
         self, request_id: str
     ) -> Result[AssistantResponse | None, ActionFailure]: ...
 
+    async def get_response_by_turn_id(
+        self, turn_id: str
+    ) -> Result[AssistantResponse | None, ActionFailure]: ...
+
     async def get_manifest(
         self, manifest_id: str
     ) -> Result[AssistantContextManifest | None, ActionFailure]: ...
@@ -171,11 +175,16 @@ class MemoryGraphStore(Protocol):
         self, memory_id: str
     ) -> Result[tuple[MemoryRecord, str] | None, ActionFailure]: ...
 
+    async def get_dependent_memory_ids(
+        self, memory_ids: tuple[str, ...], profile_scope: str | None = None
+    ) -> Result[tuple[str, ...], ActionFailure]: ...
+
     async def get_recent_reply_chain(
         self,
         session_id: str,
         limit: int = 10,
         before_turn_id: str | None = None,
+        profile_scope: str | None = None,
     ) -> Result[tuple[ConversationTurn, ...], ActionFailure]: ...
 
     async def list_sessions(

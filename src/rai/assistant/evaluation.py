@@ -30,7 +30,7 @@ from .ports import (
     MemoryGraphStore,
 )
 from .energy import EnergyMeter
-from .judging import judge_answer
+from .judging import JUDGE_VERSION, judge_answer
 from .query import MemoryQueryResolver
 from .records import (
     AssistantContextManifest,
@@ -189,8 +189,12 @@ class RetrievalAnswerEvaluation(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid")
 
     answer_text: str = Field(min_length=1)
+    raw_model_text: str | None = None
+    grounding_override: bool = False
     correct: bool
+    raw_correct: bool | None = None
     abstained: bool
+    raw_abstained: bool | None = None
     tokens_in: int = Field(ge=0)
     tokens_out: int = Field(ge=0)
     latency_ms: float = Field(ge=0.0)
@@ -221,6 +225,7 @@ class RetrievalChannelMeasurement(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid")
 
     case_id: str
+    trial_index: int = Field(default=1, ge=1)
     channel: RetrievalChannel
     retrieved_ids: tuple[str, ...]
     artifact_ids: tuple[str, ...] = ()
@@ -235,7 +240,11 @@ class RetrievalChannelMeasurement(BaseModel):
     answer_evaluation_failed: bool = False
     answer_failure_code: str | None = None
     answer_text: str | None = None
+    raw_model_text: str | None = None
+    grounding_override: bool = False
+    raw_answer_correct: bool | None = None
     answer_abstained: bool | None = None
+    raw_answer_abstained: bool | None = None
     answer_latency_ms: float | None = Field(default=None, ge=0.0)
     tokens_in: int | None = Field(default=None, ge=0)
     tokens_out: int | None = Field(default=None, ge=0)
@@ -261,6 +270,7 @@ class RetrievalEvaluationRun(BaseModel):
     profile_scope: str
     retrieval_limit: int = Field(ge=1)
     context_character_budget: int = Field(ge=1)
+    trials: int = Field(default=1, ge=1)
     measurements: tuple[RetrievalChannelMeasurement, ...]
 
 
@@ -273,7 +283,10 @@ class RetrievalChannelAggregate(BaseModel):
     case_count: int = Field(ge=0)
     mean_recall: float = Field(ge=0.0, le=1.0)
     mean_precision: float = Field(ge=0.0, le=1.0)
+    distinct_from_claims_rate: float | None = Field(default=None, ge=0.0, le=1.0)
     answer_accuracy: float | None = Field(default=None, ge=0.0, le=1.0)
+    evaluated_answer_accuracy: float | None = Field(default=None, ge=0.0, le=1.0)
+    raw_answer_accuracy: float | None = Field(default=None, ge=0.0, le=1.0)
     retrieval_abstention_rate: float = Field(ge=0.0, le=1.0)
     answer_abstention_rate: float | None = Field(default=None, ge=0.0, le=1.0)
     retrieval_failures: int = Field(ge=0)
@@ -296,14 +309,14 @@ class RetrievalBenchmarkArtifact(BaseModel):
 
     model_config = ConfigDict(frozen=True, extra="forbid")
 
-    artifact_version: str = "rai-assistant-retrieval-benchmark-v1"
+    artifact_version: str = "rai-assistant-retrieval-benchmark-v2"
     run: RetrievalEvaluationRun
     aggregates: tuple[RetrievalChannelAggregate, ...]
     backend_name: str = Field(min_length=1)
     model_name: str = Field(min_length=1)
     model_artifact_version: str | None = None
     prompt_template_version: str = Field(min_length=1)
-    judge_version: str = "deterministic-phrase-and-abstention-v1"
+    judge_version: str = JUDGE_VERSION
     max_input_tokens: int = Field(ge=1)
     max_output_tokens: int = Field(ge=1)
     max_latency_seconds: float = Field(gt=0.0)
@@ -356,7 +369,9 @@ def _answer_context_content(
         content["episodic_evidence"] = tuple(
             {
                 "source_id": item["source_id"],
+                "record_id": item["source_id"],
                 "timestamp": "benchmark-source",
+                "role": "user",
                 "text": (
                     item.get("content", {}).get("text", "")
                     if isinstance(item.get("content"), dict)
@@ -376,6 +391,23 @@ def _answer_context_content(
     else:
         content["grounded_summaries"] = tuple(context_items)
     return content
+
+
+def _answer_evidence_characters(
+    case: RetrievalEvaluationCase,
+    channel: RetrievalChannel,
+    context_items: tuple[dict[str, object], ...],
+) -> int:
+    """Measure the final serialized evidence layer consumed by the backend."""
+    content = _answer_context_content(case, channel, context_items)
+    key = (
+        "episodic_evidence"
+        if channel == "raw_turns_bm25"
+        else "grounded_summaries"
+        if channel == "summaries_grounded"
+        else "durable_memories"
+    )
+    return len(json.dumps(content[key], ensure_ascii=False))
 
 
 class BackendRetrievalAnswerEvaluator:
@@ -414,11 +446,11 @@ class BackendRetrievalAnswerEvaluator:
                 if channel == "raw_turns_bm25"
                 else "compact_memory"
             ),
-            evidence_character_budget=sum(
-                len(json.dumps(item, ensure_ascii=False)) for item in context_items
+            evidence_character_budget=_answer_evidence_characters(
+                case, channel, context_items
             ),
-            actual_characters=sum(
-                len(json.dumps(item, ensure_ascii=False)) for item in context_items
+            actual_characters=_answer_evidence_characters(
+                case, channel, context_items
             ),
             items=tuple(
                 AssistantContextManifestItem(
@@ -515,19 +547,28 @@ class BackendRetrievalAnswerEvaluator:
             return Failure(generated.failure())
         candidate = generated.unwrap()
         correct, abstained = _judge_answer(case, candidate.text)
+        raw_model_text = candidate.metadata.get("raw_model_output")
+        if not isinstance(raw_model_text, str) or not raw_model_text.strip():
+            raw_model_text = candidate.text
+        raw_correct, raw_abstained = _judge_answer(case, raw_model_text)
+        grounding_override = candidate.metadata.get("grounding_override") is True
         energy = candidate.metadata.get("energy_joules")
         cost = candidate.metadata.get("provider_cost")
         return Success(
             RetrievalAnswerEvaluation(
                 answer_text=candidate.text,
+                raw_model_text=raw_model_text,
+                grounding_override=grounding_override,
                 correct=correct,
+                raw_correct=raw_correct,
                 abstained=abstained,
+                raw_abstained=raw_abstained,
                 tokens_in=candidate.tokens_in,
                 tokens_out=candidate.tokens_out,
                 latency_ms=latency_ms,
                 backend_name=str(getattr(self.backend, "backend_name", "unknown")),
                 model_name=str(getattr(self.backend, "model_name", "unknown")),
-                judge_version="deterministic-phrase-and-abstention-v1",
+                judge_version=JUDGE_VERSION,
                 energy_joules=(
                     measured_energy.joules
                     if measured_energy is not None
@@ -582,7 +623,11 @@ async def seed_retrieval_evaluation_corpus(
             )
         )
 
-    final_turn_id = corpus.turns[-1].turn_id
+    final_turn_id = next(
+        turn.turn_id
+        for turn in reversed(corpus.turns)
+        if turn.turn_id in claims_by_turn
+    )
     for source in corpus.turns:
         turn = ConversationTurn(
             record_id=source.turn_id,
@@ -721,53 +766,62 @@ def _metrics(  # noqa: PLR0913
 
 
 def _bounded_raw_items(
-    items: tuple[tuple[ConversationTurn, str], ...], character_budget: int
+    items: tuple[tuple[ConversationTurn, str], ...],
+    character_budget: int,
+    case: RetrievalEvaluationCase,
 ) -> tuple[tuple[str, ...], int, tuple[dict[str, object], ...]]:
     selected: list[str] = []
     context_items: list[dict[str, object]] = []
     used = 0
     for turn, _reason in items:
-        item_size = len(turn.text)
-        if used + item_size > character_budget:
+        item = {
+            "source_id": turn.record_id,
+            "source_type": "conversation_turn",
+            "data_class": turn.data_class,
+            "content": {"role": turn.role, "text": turn.text},
+        }
+        candidate = (*context_items, item)
+        candidate_size = _answer_evidence_characters(
+            case, "raw_turns_bm25", candidate
+        )
+        if candidate_size > character_budget:
             continue
         selected.append(turn.record_id)
-        context_items.append(
-            {
-                "source_id": turn.record_id,
-                "source_type": "conversation_turn",
-                "data_class": turn.data_class,
-                "content": {"role": turn.role, "text": turn.text},
-            }
-        )
-        used += item_size
+        context_items.append(item)
+        used = candidate_size
     return tuple(selected), used, tuple(context_items)
 
 
 def _bounded_claim_items(
-    items: tuple[tuple[MemoryRecord, str], ...], character_budget: int
+    items: tuple[tuple[MemoryRecord, str], ...],
+    character_budget: int,
+    case: RetrievalEvaluationCase,
+    channel: RetrievalChannel = "claims_bm25",
 ) -> tuple[tuple[str, ...], int, tuple[dict[str, object], ...]]:
     selected: list[str] = []
     context_items: list[dict[str, object]] = []
     used = 0
     for memory, _reason in items:
-        item_size = len(json.dumps(memory.content, ensure_ascii=False))
-        if used + item_size > character_budget:
+        item = {
+            "source_id": memory.record_id,
+            "source_type": "memory_record",
+            "data_class": memory.data_class,
+            "content": {"topic": memory.topic, "content": memory.content},
+        }
+        candidate = (*context_items, item)
+        candidate_size = _answer_evidence_characters(case, channel, candidate)
+        if candidate_size > character_budget:
             continue
         selected.append(memory.record_id)
-        context_items.append(
-            {
-                "source_id": memory.record_id,
-                "source_type": "memory_record",
-                "data_class": memory.data_class,
-                "content": {"topic": memory.topic, "content": memory.content},
-            }
-        )
-        used += item_size
+        context_items.append(item)
+        used = candidate_size
     return tuple(selected), used, tuple(context_items)
 
 
 def _bounded_summary_items(
-    items: tuple[AssistantEvidence, ...], character_budget: int
+    items: tuple[AssistantEvidence, ...],
+    character_budget: int,
+    case: RetrievalEvaluationCase,
 ) -> tuple[
     tuple[str, ...],
     tuple[str, ...],
@@ -783,22 +837,24 @@ def _bounded_summary_items(
         invalid = validate_grounded_summary(evidence)
         if invalid is not None:
             return (), (), 0, (), invalid.code
-        item_size = len(json.dumps(evidence.content, ensure_ascii=False))
-        if used + item_size > character_budget:
+        item = {
+            "source_id": evidence.source_id,
+            "source_type": evidence.source_type,
+            "data_class": evidence.data_class,
+            "content": evidence.content,
+        }
+        candidate = (*context_items, item)
+        candidate_size = _answer_evidence_characters(
+            case, "summaries_grounded", candidate
+        )
+        if candidate_size > character_budget:
             continue
         artifact_ids.append(evidence.source_id)
         covered_source_ids.extend(
             str(source_id) for source_id in evidence.content["source_memory_ids"]
         )
-        context_items.append(
-            {
-                "source_id": evidence.source_id,
-                "source_type": evidence.source_type,
-                "data_class": evidence.data_class,
-                "content": evidence.content,
-            }
-        )
-        used += item_size
+        context_items.append(item)
+        used = candidate_size
     return (
         tuple(dict.fromkeys(covered_source_ids)),
         tuple(artifact_ids),
@@ -838,7 +894,11 @@ async def _evaluate_answer_use(
             "answer_correct": evaluation.correct,
             "answer_utilization_evaluated": True,
             "answer_text": evaluation.answer_text,
+            "raw_model_text": evaluation.raw_model_text,
+            "grounding_override": evaluation.grounding_override,
+            "raw_answer_correct": evaluation.raw_correct,
             "answer_abstained": evaluation.abstained,
+            "raw_answer_abstained": evaluation.raw_abstained,
             "answer_latency_ms": evaluation.latency_ms,
             "tokens_in": evaluation.tokens_in,
             "tokens_out": evaluation.tokens_out,
@@ -859,6 +919,11 @@ def aggregate_retrieval_run(
 ) -> tuple[RetrievalChannelAggregate, ...]:
     """Aggregate quality and resource use without hiding missing measurements."""
     aggregates: list[RetrievalChannelAggregate] = []
+    claim_selections = {
+        (item.case_id, item.trial_index): item.retrieved_ids
+        for item in run.measurements
+        if item.channel == "claims_bm25"
+    }
     for channel in (
         "raw_turns_bm25",
         "claims_bm25",
@@ -871,6 +936,10 @@ def aggregate_retrieval_run(
         if not items:
             continue
         evaluated = tuple(item for item in items if item.answer_utilization_evaluated)
+        answer_evaluation_attempted = any(
+            item.answer_utilization_evaluated or item.answer_evaluation_failed
+            for item in items
+        )
         energy_values = tuple(
             item.energy_joules for item in evaluated if item.energy_joules is not None
         )
@@ -888,10 +957,32 @@ def aggregate_retrieval_run(
                 case_count=len(items),
                 mean_recall=sum(item.recall for item in items) / len(items),
                 mean_precision=sum(item.precision for item in items) / len(items),
+                distinct_from_claims_rate=(
+                    sum(
+                        item.retrieved_ids
+                        != claim_selections.get((item.case_id, item.trial_index), ())
+                        for item in items
+                    )
+                    / len(items)
+                    if channel != "claims_bm25"
+                    else None
+                ),
                 answer_accuracy=(
+                    sum(item.answer_correct is True for item in evaluated)
+                    / len(items)
+                    if answer_evaluation_attempted
+                    else None
+                ),
+                evaluated_answer_accuracy=(
                     sum(item.answer_correct is True for item in evaluated)
                     / len(evaluated)
                     if evaluated
+                    else None
+                ),
+                raw_answer_accuracy=(
+                    sum(item.raw_answer_correct is True for item in evaluated)
+                    / len(items)
+                    if answer_evaluation_attempted
                     else None
                 ),
                 retrieval_abstention_rate=(
@@ -923,7 +1014,7 @@ def aggregate_retrieval_run(
                 total_provider_cost=(sum(cost_values) if cost_values else None),
                 total_energy_joules=(sum(energy_values) if energy_values else None),
                 energy_measurement_coverage=(
-                    len(energy_values) / len(evaluated) if evaluated else 0.0
+                    len(energy_values) / len(items) if items else 0.0
                 ),
                 energy_sources=tuple(
                     sorted(
@@ -998,7 +1089,7 @@ async def evaluate_retrieval_floor(  # noqa: PLR0912, PLR0913, PLR0915
         else:
             raw_items = raw_result.unwrap()
             raw_ids, raw_characters, raw_context = _bounded_raw_items(
-                raw_items, context_character_budget
+                raw_items, context_character_budget, case
             )
             measurement = _metrics(
                 case_id=case.case_id,
@@ -1039,7 +1130,7 @@ async def evaluate_retrieval_floor(  # noqa: PLR0912, PLR0913, PLR0915
         else:
             claim_items = claim_result.unwrap()
             claim_ids, claim_characters, claim_context = _bounded_claim_items(
-                claim_items, context_character_budget
+                claim_items, context_character_budget, case
             )
             measurement = _metrics(
                 case_id=case.case_id,
@@ -1084,7 +1175,7 @@ async def evaluate_retrieval_floor(  # noqa: PLR0912, PLR0913, PLR0915
                     summary_context,
                     summary_failure,
                 ) = _bounded_summary_items(
-                    summary_result.unwrap(), context_character_budget
+                    summary_result.unwrap(), context_character_budget, case
                 )
                 measurement = _metrics(
                     case_id=case.case_id,
@@ -1152,7 +1243,10 @@ async def evaluate_retrieval_floor(  # noqa: PLR0912, PLR0913, PLR0915
                         if selected is not None:
                             channel_memories.append(selected)
                     selected_ids, characters, context_items = _bounded_claim_items(
-                        tuple(channel_memories), context_character_budget
+                        tuple(channel_memories),
+                        context_character_budget,
+                        case,
+                        channel,
                     )
                     artifacts = (
                         (*selected_ids, *graph_relation_ids)

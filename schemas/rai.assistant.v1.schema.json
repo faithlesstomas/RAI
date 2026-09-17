@@ -1118,6 +1118,7 @@
           "enum": [
             "EXTRACTION",
             "ADMISSION",
+            "RETRIEVAL",
             "STORAGE",
             "UPDATE",
             "DELETION",

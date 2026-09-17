@@ -132,6 +132,16 @@ _GROUNDING_STOP_WORDS = _STOP_WORDS | {
     "w",
     "you",
 }
+_RECENT_GROUNDING_MIN_CONFIDENCE = 0.8
+
+
+def _asks_for_home_location(text: str) -> bool:
+    """Recognize natural location questions without requiring adjacent words."""
+    lowered = text.casefold()
+    return any(question in lowered for question in _LOCATION_QUESTIONS) or bool(
+        re.search(r"\bgdzie\b.*\bmieszkam\b", lowered)
+        or re.search(r"\bwhere\b.*\blive\b", lowered)
+    )
 
 
 def _proposal(  # noqa: PLR0913
@@ -484,6 +494,74 @@ def _relevant_generic_memory(
     return max(ranked, key=lambda candidate: candidate[0])[1] if ranked else None
 
 
+def project_recent_turn_memories(
+    recent_turns: object, producer: ProducerIdentity
+) -> tuple[dict[str, object], ...]:
+    """Project explicit recent user statements for grounding without persisting them."""
+    if not isinstance(recent_turns, (list, tuple)):
+        return ()
+    projected_by_topic: dict[str, dict[str, object]] = {}
+    for item in recent_turns:
+        if not isinstance(item, dict) or item.get("role") != "user":
+            continue
+        text = item.get("text")
+        if not isinstance(text, str) or "?" in text:
+            continue
+        source_id = str(item.get("record_id") or item.get("source_id") or "recent-turn")
+        for proposal in extract_memory_proposals(text, source_id, producer):
+            if (
+                proposal.operation == MemoryOperationKind.FORGET.value
+                or proposal.modality != "direct"
+                or proposal.negated
+                or proposal.confidence < _RECENT_GROUNDING_MIN_CONFIDENCE
+            ):
+                continue
+            projected_by_topic[proposal.topic] = {
+                "topic": proposal.topic,
+                "content": proposal.content,
+            }
+    return tuple(projected_by_topic.values())
+
+
+def project_grounded_summary_memories(
+    grounded_summaries: object,
+) -> tuple[dict[str, object], ...]:
+    """Restore eligible semantic claims carried by source-covered summaries."""
+    if not isinstance(grounded_summaries, (list, tuple)):
+        return ()
+    projected_by_topic: dict[str, dict[str, object]] = {}
+    for item in grounded_summaries:
+        if not isinstance(item, dict):
+            continue
+        content = item.get("content")
+        if not isinstance(content, dict):
+            continue
+        source_claims = content.get("source_claims")
+        if not isinstance(source_claims, (list, tuple)):
+            continue
+        for claim in source_claims:
+            if not isinstance(claim, dict):
+                continue
+            topic = claim.get("topic")
+            semantic_content = claim.get("content")
+            confidence = claim.get("confidence")
+            if (
+                not isinstance(topic, str)
+                or not isinstance(semantic_content, dict)
+                or not isinstance(confidence, (int, float))
+                or isinstance(confidence, bool)
+                or float(confidence) < _RECENT_GROUNDING_MIN_CONFIDENCE
+                or claim.get("modality") != "direct"
+                or claim.get("epistemic_status") not in {"asserted", "observed"}
+            ):
+                continue
+            projected_by_topic[topic] = {
+                "topic": topic,
+                "content": semantic_content,
+            }
+    return tuple(projected_by_topic.values())
+
+
 def grounded_memory_response(  # noqa: PLR0911, PLR0912
     user_text: str,
     durable_memories: tuple[object, ...] | list[object],
@@ -529,7 +607,7 @@ def grounded_memory_response(  # noqa: PLR0911, PLR0912
             else "Nie mam jeszcze zapisanego Twojego imienia.",
             True,
         )
-    if any(question in lowered for question in _LOCATION_QUESTIONS):
+    if _asks_for_home_location(user_text):
         location = memory_value(durable_memories, "user.location.home")
         return (
             f"Według zapisanej informacji mieszkasz w {location}."
