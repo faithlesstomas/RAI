@@ -94,9 +94,7 @@ def _domain_sql_filter(
         exact.update(":".join(parts[:index]) for index in range(1, len(parts) + 1))
         descendant_patterns.add(f"{scope}:%")
     exact.update(
-        scope
-        for scope in query_scopes
-        if scope in {"conversation", "activity"}
+        scope for scope in query_scopes if scope in {"conversation", "activity"}
     )
     ordered_exact = tuple(sorted(exact))
     ordered_patterns = tuple(sorted(descendant_patterns))
@@ -113,12 +111,13 @@ def _domain_sql_filter(
 
 def _relation_metadata(relation: MemoryRelation) -> dict[str, Any]:
     """Persist relation qualifiers inside its inspectable metadata payload."""
+    policy_outcome = getattr(relation.policy_outcome, "value", relation.policy_outcome)
     return {
         **relation.metadata,
         "confidence": relation.confidence,
         "epistemic_status": relation.epistemic_status,
         "provenance": [item.model_dump(mode="json") for item in relation.provenance],
-        "policy_outcome": str(relation.policy_outcome),
+        "policy_outcome": str(policy_outcome),
         "eligible": relation.eligible,
     }
 
@@ -177,6 +176,34 @@ def _turn_from_row(row: sqlite3.Row) -> ConversationTurn:
         status=row["status"],
         correlation_id=row["correlation_id"],
         metadata=json.loads(row["metadata_json"] or "{}"),
+    )
+
+
+def _response_from_row(row: sqlite3.Row) -> AssistantResponse:
+    """Restore one terminal response from its authoritative store row."""
+    admitted = tuple(json.loads(row["admitted_memories_json"]))
+    operation_ids = tuple(json.loads(row["memory_operations_json"] or "[]"))
+    provenance = tuple(
+        ProvenanceReference.model_validate(item)
+        for item in json.loads(row["provenance_json"])
+    )
+    return AssistantResponse(
+        record_id=row["response_id"],
+        timestamp=datetime.fromisoformat(row["created_at"]),
+        producer=ProducerIdentity(
+            producer_id="assistant-store", kind="store", version="1.0.0"
+        ),
+        session_id=row["session_id"],
+        turn_id=row["assistant_turn_id"] or row["user_turn_id"],
+        user_turn_id=row["user_turn_id"],
+        request_id=row["request_id"],
+        manifest_id=row["manifest_id"],
+        text=row["text"],
+        status=row["status"],
+        error_message=row["error_message"],
+        admitted_memory_ids=admitted,
+        memory_operation_ids=operation_ids,
+        provenance=provenance,
     )
 
 
@@ -289,6 +316,17 @@ class SQLiteMemoryGraphStore:
             )
             conn.execute(
                 """
+                CREATE TABLE IF NOT EXISTS turn_retrieval_suppressions (
+                    turn_id TEXT NOT NULL REFERENCES nodes(node_id) ON DELETE CASCADE,
+                    profile_scope TEXT NOT NULL,
+                    operation_id TEXT NOT NULL,
+                    created_at TEXT NOT NULL,
+                    PRIMARY KEY (turn_id, profile_scope)
+                );
+                """
+            )
+            conn.execute(
+                """
                 CREATE TABLE IF NOT EXISTS relations (
                     relation_id TEXT PRIMARY KEY,
                     source_id TEXT NOT NULL REFERENCES nodes(node_id) ON DELETE CASCADE,
@@ -315,6 +353,19 @@ class SQLiteMemoryGraphStore:
                     provenance_json TEXT NOT NULL,
                     created_at TEXT NOT NULL
                 );
+                """
+            )
+            conn.execute(
+                """
+                CREATE TRIGGER IF NOT EXISTS one_terminal_response_per_turn
+                BEFORE INSERT ON responses
+                WHEN EXISTS (
+                    SELECT 1 FROM responses
+                    WHERE user_turn_id = NEW.user_turn_id
+                )
+                BEGIN
+                    SELECT RAISE(ABORT, 'terminal response already exists for turn');
+                END;
                 """
             )
             conn.execute(
@@ -382,6 +433,13 @@ class SQLiteMemoryGraphStore:
                 WHERE t.role = 'user' AND t.status = 'COMPLETED'
                   AND NOT EXISTS (
                     SELECT 1 FROM turns_fts AS f WHERE f.turn_id = t.turn_id
+                  )
+                  AND NOT EXISTS (
+                    SELECT 1 FROM turn_retrieval_suppressions AS suppression
+                    WHERE suppression.turn_id = t.turn_id
+                      AND suppression.profile_scope = COALESCE(
+                        json_extract(t.metadata_json, '$.profile_scope'), 'default'
+                      )
                   )
                 """
             )
@@ -522,8 +580,9 @@ class SQLiteMemoryGraphStore:
             cur.execute("SELECT * FROM turns WHERE turn_id = ?", (turn.record_id,))
             row = cur.fetchone()
             if row is not None:
-                if row["text"] == turn.text and row["session_id"] == turn.session_id:
-                    return Success(turn)
+                stored_turn = _turn_from_row(row)
+                if stored_turn == turn:
+                    return Success(stored_turn)
                 return Failure(
                     make_assistant_failure(
                         code="ID_CONFLICT",
@@ -566,11 +625,20 @@ class SQLiteMemoryGraphStore:
                         "DELETE FROM turns_fts WHERE turn_id = ?", (turn.record_id,)
                     )
                     conn.execute(
-                        "INSERT INTO turns_fts (turn_id, profile_scope, text) VALUES (?, ?, ?)",
+                        """
+                        INSERT INTO turns_fts (turn_id, profile_scope, text)
+                        SELECT ?, ?, ?
+                        WHERE NOT EXISTS (
+                            SELECT 1 FROM turn_retrieval_suppressions
+                            WHERE turn_id = ? AND profile_scope = ?
+                        )
+                        """,
                         (
                             turn.record_id,
                             str(turn.metadata.get("profile_scope", "default")),
                             turn.text,
+                            turn.record_id,
+                            str(turn.metadata.get("profile_scope", "default")),
                         ),
                     )
             return Success(turn)
@@ -622,11 +690,35 @@ class SQLiteMemoryGraphStore:
             self._init_db(conn)
             cur = conn.cursor()
             cur.execute(
-                "SELECT * FROM responses WHERE request_id = ?", (response.request_id,)
+                """
+                SELECT * FROM responses
+                WHERE request_id = ? OR user_turn_id = ?
+                ORDER BY CASE WHEN request_id = ? THEN 0 ELSE 1 END
+                LIMIT 1
+                """,
+                (
+                    response.request_id,
+                    response.user_turn_id,
+                    response.request_id,
+                ),
             )
             row = cur.fetchone()
             if row is not None:
-                return Success(response)
+                if (
+                    str(row["request_id"]) == response.request_id
+                    and str(row["user_turn_id"]) != response.user_turn_id
+                ):
+                    return Failure(
+                        make_assistant_failure(
+                            code="ID_CONFLICT",
+                            message=(
+                                f"request id {response.request_id} belongs to "
+                                "another turn"
+                            ),
+                            request_id=response.request_id,
+                        )
+                    )
+                return Success(_response_from_row(row))
 
             now_iso = _utc_now().isoformat()
             recorded_operations = list(operations)
@@ -962,6 +1054,59 @@ class SQLiteMemoryGraphStore:
                         operation.operation == MemoryOperationKind.FORGET.value
                         and operation.status == "APPLIED"
                     ):
+                        source_rows = conn.execute(
+                            """
+                            SELECT DISTINCT memories.source_turn_id
+                            FROM memories
+                            JOIN memory_lifecycle
+                              ON memory_lifecycle.memory_id = memories.memory_id
+                            WHERE memories.memory_id IN (
+                                SELECT value FROM json_each(?)
+                            )
+                              AND memory_lifecycle.profile_scope = ?
+                              AND memories.source_turn_id IS NOT NULL
+                            """,
+                            (
+                                json.dumps(operation.target_memory_ids),
+                                operation.profile_scope,
+                            ),
+                        ).fetchall()
+                        for source_row in source_rows:
+                            source_turn_id = str(source_row["source_turn_id"])
+                            response_rows = conn.execute(
+                                """
+                                SELECT assistant_turn_id FROM responses
+                                WHERE user_turn_id = ?
+                                  AND assistant_turn_id IS NOT NULL
+                                """,
+                                (source_turn_id,),
+                            ).fetchall()
+                            suppressed_turn_ids = (
+                                source_turn_id,
+                                *(
+                                    str(row["assistant_turn_id"])
+                                    for row in response_rows
+                                ),
+                            )
+                            for suppressed_turn_id in suppressed_turn_ids:
+                                conn.execute(
+                                    """
+                                    INSERT OR REPLACE INTO turn_retrieval_suppressions (
+                                        turn_id, profile_scope, operation_id, created_at
+                                    ) VALUES (?, ?, ?, ?)
+                                    """,
+                                    (
+                                        suppressed_turn_id,
+                                        operation.profile_scope,
+                                        operation.record_id,
+                                        now_iso,
+                                    ),
+                                )
+                                conn.execute(
+                                    "DELETE FROM turns_fts WHERE turn_id = ? "
+                                    "AND profile_scope = ?",
+                                    (suppressed_turn_id, operation.profile_scope),
+                                )
                         for memory_id in operation.target_memory_ids:
                             conn.execute(
                                 """
@@ -1014,6 +1159,14 @@ class SQLiteMemoryGraphStore:
                                text
                         FROM turns
                         WHERE turn_id = ? AND role = 'user'
+                          AND NOT EXISTS (
+                              SELECT 1 FROM turn_retrieval_suppressions AS suppression
+                              WHERE suppression.turn_id = turns.turn_id
+                                AND suppression.profile_scope = COALESCE(
+                                    json_extract(turns.metadata_json, '$.profile_scope'),
+                                    'default'
+                                )
+                          )
                         """,
                         (response.user_turn_id,),
                     )
@@ -1077,6 +1230,12 @@ class SQLiteMemoryGraphStore:
         async with self._lock:
             return await asyncio.to_thread(self._sync_get_response, request_id)
 
+    async def get_response_by_turn_id(
+        self, turn_id: str
+    ) -> Result[AssistantResponse | None, ActionFailure]:
+        async with self._lock:
+            return await asyncio.to_thread(self._sync_get_response_by_turn, turn_id)
+
     def _sync_get_response(
         self, request_id: str
     ) -> Result[AssistantResponse | None, ActionFailure]:
@@ -1088,35 +1247,36 @@ class SQLiteMemoryGraphStore:
             row = cur.fetchone()
             if row is None:
                 return Success(None)
-            admitted = tuple(json.loads(row["admitted_memories_json"]))
-            operation_ids = tuple(json.loads(row["memory_operations_json"] or "[]"))
-            prov_raw = json.loads(row["provenance_json"])
-            provenance = tuple(ProvenanceReference.model_validate(p) for p in prov_raw)
-            resp = AssistantResponse(
-                record_id=row["response_id"],
-                timestamp=datetime.fromisoformat(row["created_at"]),
-                producer=ProducerIdentity(
-                    producer_id="assistant-store", kind="store", version="1.0.0"
-                ),
-                session_id=row["session_id"],
-                turn_id=row["assistant_turn_id"] or row["user_turn_id"],
-                user_turn_id=row["user_turn_id"],
-                request_id=row["request_id"],
-                manifest_id=row["manifest_id"],
-                text=row["text"],
-                status=row["status"],
-                error_message=row["error_message"],
-                admitted_memory_ids=admitted,
-                memory_operation_ids=operation_ids,
-                provenance=provenance,
-            )
-            return Success(resp)
+            return Success(_response_from_row(row))
         except Exception as exc:  # noqa: BLE001
             return Failure(
                 make_assistant_failure(
                     code="GET_RESPONSE_FAILED",
                     message=str(exc),
                     request_id=request_id,
+                )
+            )
+        finally:
+            conn.close()
+
+    def _sync_get_response_by_turn(
+        self, turn_id: str
+    ) -> Result[AssistantResponse | None, ActionFailure]:
+        conn = self._connect()
+        try:
+            self._init_db(conn)
+            row = conn.execute(
+                "SELECT * FROM responses WHERE user_turn_id = ? "
+                "ORDER BY created_at ASC LIMIT 1",
+                (turn_id,),
+            ).fetchone()
+            return Success(_response_from_row(row) if row is not None else None)
+        except Exception as exc:  # noqa: BLE001
+            return Failure(
+                make_assistant_failure(
+                    code="GET_RESPONSE_FAILED",
+                    message=str(exc),
+                    request_id=turn_id,
                 )
             )
         finally:
@@ -1297,45 +1457,207 @@ class SQLiteMemoryGraphStore:
         session_id: str,
         limit: int = 10,
         before_turn_id: str | None = None,
+        profile_scope: str | None = None,
     ) -> Result[tuple[ConversationTurn, ...], ActionFailure]:
         async with self._lock:
             return await asyncio.to_thread(
-                self._sync_get_reply_chain, session_id, limit, before_turn_id
+                self._sync_get_reply_chain,
+                session_id,
+                limit,
+                before_turn_id,
+                profile_scope,
             )
 
-    def _sync_get_reply_chain(
+    def _sync_get_reply_chain(  # noqa: PLR0912
         self,
         session_id: str,
         limit: int = 10,
         before_turn_id: str | None = None,
+        profile_scope: str | None = None,
     ) -> Result[tuple[ConversationTurn, ...], ActionFailure]:
         conn = self._connect()
         try:
             self._init_db(conn)
-            cur = conn.cursor()
-            query = "SELECT * FROM turns WHERE session_id = ? AND status = 'COMPLETED'"
-            params: list[Any] = [session_id]
-            if before_turn_id:
-                cur.execute(
-                    "SELECT timestamp FROM turns WHERE turn_id = ?", (before_turn_id,)
-                )
-                ts_row = cur.fetchone()
-                if ts_row:
-                    query += " AND timestamp < ?"
-                    params.append(ts_row["timestamp"])
+            if limit <= 0:
+                return Success(())
 
-            query += " ORDER BY timestamp ASC"
-            cur.execute(query, params)
-            rows = cur.fetchall()
-            selected = rows[-limit:] if len(rows) > limit else rows
-            turns = [_turn_from_row(row) for row in selected]
-            return Success(tuple(turns))
+            current_id: str | None = None
+            before_timestamp: str | None = None
+            if before_turn_id:
+                before_row = conn.execute(
+                    "SELECT session_id, reply_to_turn_id, timestamp FROM turns "
+                    "WHERE turn_id = ?",
+                    (before_turn_id,),
+                ).fetchone()
+                if before_row is not None:
+                    if str(before_row["session_id"]) != session_id:
+                        return Failure(
+                            make_assistant_failure(
+                                code="REPLY_CHAIN_SESSION_MISMATCH",
+                                message="before_turn_id belongs to another session",
+                                request_id=before_turn_id,
+                            )
+                        )
+                    current_id = before_row["reply_to_turn_id"]
+                    before_timestamp = str(before_row["timestamp"])
+
+            if current_id is None:
+                if before_timestamp is None:
+                    latest = conn.execute(
+                        "SELECT turn_id FROM turns WHERE session_id = ? "
+                        "AND status = 'COMPLETED' ORDER BY timestamp DESC LIMIT 1",
+                        (session_id,),
+                    ).fetchone()
+                else:
+                    latest = conn.execute(
+                        "SELECT turn_id FROM turns WHERE session_id = ? "
+                        "AND status = 'COMPLETED' AND timestamp < ? "
+                        "ORDER BY timestamp DESC LIMIT 1",
+                        (session_id, before_timestamp),
+                    ).fetchone()
+                current_id = str(latest["turn_id"]) if latest is not None else None
+
+            rows: list[sqlite3.Row] = []
+            visited: set[str] = set()
+            while current_id is not None and len(rows) < limit:
+                if current_id in visited:
+                    break
+                visited.add(current_id)
+                row = conn.execute(
+                    "SELECT * FROM turns WHERE turn_id = ? AND session_id = ? "
+                    "AND status = 'COMPLETED'",
+                    (current_id, session_id),
+                ).fetchone()
+                if row is None:
+                    break
+                suppressed = False
+                if profile_scope is not None:
+                    suppressed = (
+                        conn.execute(
+                            """
+                            SELECT 1 FROM turn_retrieval_suppressions
+                            WHERE turn_id = ? AND profile_scope = ?
+                            """,
+                            (current_id, profile_scope),
+                        ).fetchone()
+                        is not None
+                    )
+                if not suppressed:
+                    rows.append(row)
+                parent_id = row["reply_to_turn_id"]
+                if parent_id is not None:
+                    current_id = str(parent_id)
+                    continue
+
+                # Legacy rows predate explicit reply links. Preserve a bounded,
+                # chronological fallback without affecting newly linked branches.
+                previous = conn.execute(
+                    "SELECT turn_id FROM turns WHERE session_id = ? "
+                    "AND status = 'COMPLETED' AND timestamp < ? "
+                    "ORDER BY timestamp DESC LIMIT 1",
+                    (session_id, row["timestamp"]),
+                ).fetchone()
+                current_id = str(previous["turn_id"]) if previous is not None else None
+
+            return Success(tuple(_turn_from_row(row) for row in reversed(rows)))
         except Exception as exc:  # noqa: BLE001
             return Failure(
                 make_assistant_failure(
                     code="GET_REPLY_CHAIN_FAILED",
                     message=str(exc),
                     request_id=session_id,
+                )
+            )
+        finally:
+            conn.close()
+
+    async def get_dependent_memory_ids(
+        self, memory_ids: tuple[str, ...], profile_scope: str | None = None
+    ) -> Result[tuple[str, ...], ActionFailure]:
+        async with self._lock:
+            return await asyncio.to_thread(
+                self._sync_get_dependent_memory_ids, memory_ids, profile_scope
+            )
+
+    @staticmethod
+    def _dependent_memory_ids(
+        conn: sqlite3.Connection,
+        memory_ids: tuple[str, ...],
+        profile_scope: str | None = None,
+    ) -> tuple[str, ...]:
+        if not memory_ids:
+            return ()
+        placeholders = ",".join("?" for _ in memory_ids)
+        profile_base = ""
+        profile_recursive = ""
+        profile_params: tuple[str, ...] = ()
+        if profile_scope is not None:
+            profile_base = "AND target_lifecycle.profile_scope = ?"
+            profile_recursive = "AND recursive_lifecycle.profile_scope = ?"
+            profile_params = (profile_scope, profile_scope)
+        query = f"""
+            WITH RECURSIVE dependent(memory_id) AS (
+                SELECT relation.target_id
+                FROM relations AS relation
+                JOIN memory_lifecycle AS target_lifecycle
+                  ON target_lifecycle.memory_id = relation.target_id
+                WHERE relation.source_id IN ({placeholders})
+                  AND relation.kind = ?
+                  AND json_extract(relation.metadata_json, '$.eligible') = 1
+                  AND json_extract(
+                        relation.metadata_json, '$.policy_outcome'
+                      ) = 'ALLOW'
+                  AND target_lifecycle.status = 'ACTIVE'
+                  {profile_base}
+                UNION
+                SELECT relation.target_id
+                FROM relations AS relation
+                JOIN dependent ON relation.source_id = dependent.memory_id
+                JOIN memory_lifecycle AS recursive_lifecycle
+                  ON recursive_lifecycle.memory_id = relation.target_id
+                WHERE relation.kind = ?
+                  AND json_extract(relation.metadata_json, '$.eligible') = 1
+                  AND json_extract(
+                        relation.metadata_json, '$.policy_outcome'
+                      ) = 'ALLOW'
+                  AND recursive_lifecycle.status = 'ACTIVE'
+                  {profile_recursive}
+            )
+            SELECT dependent.memory_id
+            FROM dependent
+            JOIN memories ON memories.memory_id = dependent.memory_id
+            ORDER BY dependent.memory_id
+            """  # noqa: S608 - placeholders cover every dynamic value
+        rows = conn.execute(
+            query,
+            (
+                *memory_ids,
+                MemoryRelationKind.SUPPORTS.value,
+                *profile_params[:1],
+                MemoryRelationKind.SUPPORTS.value,
+                *profile_params[1:],
+            ),
+        ).fetchall()
+        source_ids = set(memory_ids)
+        return tuple(
+            str(row["memory_id"])
+            for row in rows
+            if str(row["memory_id"]) not in source_ids
+        )
+
+    def _sync_get_dependent_memory_ids(
+        self, memory_ids: tuple[str, ...], profile_scope: str | None = None
+    ) -> Result[tuple[str, ...], ActionFailure]:
+        conn = self._connect()
+        try:
+            self._init_db(conn)
+            return Success(self._dependent_memory_ids(conn, memory_ids, profile_scope))
+        except Exception as exc:  # noqa: BLE001
+            return Failure(
+                make_assistant_failure(
+                    code="GET_DEPENDENT_MEMORIES_FAILED",
+                    message=str(exc),
+                    request_id="memory-dependencies",
                 )
             )
         finally:
@@ -1667,12 +1989,40 @@ class SQLiteMemoryGraphStore:
 
             now_iso = _utc_now().isoformat()
             with conn:
-                cur.execute(
-                    "SELECT memory_id, profile_scope, status FROM memory_lifecycle "
-                    "WHERE memory_id IN (SELECT memory_id FROM memories WHERE source_turn_id = ?)",
+                direct_rows = conn.execute(
+                    "SELECT memory_id, profile_scope FROM memories "
+                    "WHERE source_turn_id = ?",
                     (turn_id,),
-                )
-                derived_memories = cur.fetchall()
+                ).fetchall()
+                direct_ids = tuple(str(row["memory_id"]) for row in direct_rows)
+                dependent_ids: tuple[str, ...] = ()
+                profile_scopes = {str(row["profile_scope"]) for row in direct_rows}
+                for profile_scope in profile_scopes:
+                    profile_direct_ids = tuple(
+                        str(row["memory_id"])
+                        for row in direct_rows
+                        if str(row["profile_scope"]) == profile_scope
+                    )
+                    dependent_ids = (
+                        *dependent_ids,
+                        *self._dependent_memory_ids(
+                            conn, profile_direct_ids, profile_scope
+                        ),
+                    )
+                affected_ids = tuple(dict.fromkeys((*direct_ids, *dependent_ids)))
+                if affected_ids:
+                    placeholders = ",".join("?" for _ in affected_ids)
+                    query = f"""
+                        SELECT memory_id, profile_scope, status
+                        FROM memory_lifecycle
+                        WHERE memory_id IN ({placeholders})
+                    """  # noqa: S608
+                    derived_memories = conn.execute(
+                        query,
+                        affected_ids,
+                    ).fetchall()
+                else:
+                    derived_memories = []
                 deleted_by_profile: dict[str, list[str]] = {}
                 for row in derived_memories:
                     mem_id = row["memory_id"]

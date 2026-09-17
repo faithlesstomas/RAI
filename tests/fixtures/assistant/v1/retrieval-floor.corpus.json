@@ -1,5 +1,5 @@
 {
-  "corpus_version": "rai-assistant-retrieval-floor-v1",
+  "corpus_version": "rai-assistant-retrieval-floor-v2",
   "description": "Natural-conversation memory retrieval floor. Claims are frozen after extraction so retrieval and answer use are measured independently from extraction quality.",
   "turns": [
     {
@@ -45,13 +45,97 @@
       "data_class": "PRIVATE",
       "domain_scope": "personal",
       "purpose": "private-reflection"
+    },
+    {
+      "turn_id": "corpus-turn-project-filler-1",
+      "session_id": "corpus-session-project",
+      "text": "Zespół omówił kolejność następnych spotkań.",
+      "domain_scope": "project:aurora"
+    },
+    {
+      "turn_id": "corpus-turn-project-filler-2",
+      "session_id": "corpus-session-project",
+      "text": "Ustalono termin kolejnego przeglądu technicznego.",
+      "domain_scope": "project:aurora"
+    },
+    {
+      "turn_id": "corpus-turn-project-filler-3",
+      "session_id": "corpus-session-project",
+      "text": "Przegląd obejmie bieżące zadania zespołu.",
+      "domain_scope": "project:aurora"
+    },
+    {
+      "turn_id": "corpus-turn-project-filler-4",
+      "session_id": "corpus-session-project",
+      "text": "Notatki ze spotkania zostały uporządkowane.",
+      "domain_scope": "project:aurora"
+    },
+    {
+      "turn_id": "corpus-turn-system-filler-1",
+      "session_id": "corpus-session-system",
+      "text": "Zapisano stan pierwszej usługi testowej.",
+      "domain_scope": "system:rai"
+    },
+    {
+      "turn_id": "corpus-turn-system-filler-2",
+      "session_id": "corpus-session-system",
+      "text": "Zapisano stan drugiej usługi testowej.",
+      "domain_scope": "system:rai"
+    },
+    {
+      "turn_id": "corpus-turn-system-filler-3",
+      "session_id": "corpus-session-system",
+      "text": "Zapisano stan trzeciej usługi testowej.",
+      "domain_scope": "system:rai"
+    },
+    {
+      "turn_id": "corpus-turn-system-filler-4",
+      "session_id": "corpus-session-system",
+      "text": "Zapisano stan czwartej usługi testowej.",
+      "domain_scope": "system:rai"
+    },
+    {
+      "turn_id": "corpus-turn-system-filler-5",
+      "session_id": "corpus-session-system",
+      "text": "Zapisano stan piątej usługi testowej.",
+      "domain_scope": "system:rai"
+    },
+    {
+      "turn_id": "corpus-turn-system-filler-6",
+      "session_id": "corpus-session-system",
+      "text": "Zapisano stan szóstej usługi testowej.",
+      "domain_scope": "system:rai"
+    },
+    {
+      "turn_id": "corpus-turn-system-filler-7",
+      "session_id": "corpus-session-system",
+      "text": "Zapisano stan siódmej usługi testowej.",
+      "domain_scope": "system:rai"
+    },
+    {
+      "turn_id": "corpus-turn-system-filler-8",
+      "session_id": "corpus-session-system",
+      "text": "Zapisano stan ósmej usługi testowej.",
+      "domain_scope": "system:rai"
+    },
+    {
+      "turn_id": "corpus-turn-system-filler-9",
+      "session_id": "corpus-session-system",
+      "text": "Zapisano stan dziewiątej usługi testowej.",
+      "domain_scope": "system:rai"
+    },
+    {
+      "turn_id": "corpus-turn-system-filler-10",
+      "session_id": "corpus-session-system",
+      "text": "Zapisano stan dziesiątej usługi testowej.",
+      "domain_scope": "system:rai"
     }
   ],
   "claims": [
     {
       "memory_id": "corpus-memory-name",
       "source_turn_id": "corpus-turn-name",
-      "topic": "claim.personal.user.name",
+      "topic": "user.identity.name",
       "content": {
         "subject": "user",
         "predicate": "name",
@@ -107,7 +191,7 @@
     {
       "memory_id": "corpus-memory-city-old",
       "source_turn_id": "corpus-turn-city-old",
-      "topic": "claim.personal.user.home_city",
+      "topic": "user.location.home",
       "content": {
         "subject": "user",
         "predicate": "home_city",
@@ -121,7 +205,7 @@
     {
       "memory_id": "corpus-memory-city-new",
       "source_turn_id": "corpus-turn-city-new",
-      "topic": "claim.personal.user.home_city",
+      "topic": "user.location.home",
       "content": {
         "subject": "user",
         "predicate": "home_city",
@@ -199,7 +283,7 @@
       "relevant_summary_source_ids": ["corpus-memory-system"],
       "expected_answer_phrases": ["LOCAL_PREFERRED"],
       "history_horizon": "long",
-      "routing_session_id": "routing-long-system"
+      "routing_session_id": "corpus-session-system"
     },
     {
       "case_id": "conversation-commitment",
@@ -207,7 +291,14 @@
       "relevant_raw_turn_ids": ["corpus-turn-commitment"],
       "relevant_claim_ids": ["corpus-memory-commitment"],
       "relevant_summary_source_ids": ["corpus-memory-commitment"],
-      "expected_answer_phrases": ["BM25"]
+      "expected_answer_phrases": ["BM25"],
+      "forbidden_answer_phrases": [
+        "zmierzył baseline",
+        "zmierzyli baseline",
+        "zmierzono baseline"
+      ],
+      "history_horizon": "medium",
+      "routing_session_id": "corpus-session-project"
     },
     {
       "case_id": "correction-current",
@@ -216,7 +307,9 @@
       "relevant_claim_ids": ["corpus-memory-city-new"],
       "relevant_summary_source_ids": ["corpus-memory-city-new"],
       "expected_answer_phrases": ["Warszawie"],
-      "forbidden_answer_phrases": ["Gdańsku"]
+      "forbidden_answer_phrases": ["Gdańsk", "Gdańska", "Gdańsku"],
+      "history_horizon": "short",
+      "routing_session_id": "corpus-session-personal"
     },
     {
       "case_id": "unsupported-abstention",

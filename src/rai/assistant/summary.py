@@ -161,6 +161,7 @@ class GroundedClaimSummaryProvider:
                 {
                     "memory_id": memory.record_id,
                     "topic": memory.topic,
+                    "content": _semantic_content(memory),
                     "source_turn_id": memory.source_turn_id,
                     "source_span": memory.content.get("source_span"),
                     "modality": str(memory.content.get("modality", "unknown")),

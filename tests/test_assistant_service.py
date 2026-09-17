@@ -12,7 +12,12 @@ from returns.result import Failure, Success
 from rai.assistant.audit import InMemoryAssistantAuditLedger
 from rai.assistant.backends.deterministic import DeterministicAssistantBackend
 from rai.assistant.context import AssistantContextBuilder
-from rai.assistant.records import ConversationTurn, MemoryRecord
+from rai.assistant.records import (
+    AssistantContextManifest,
+    AssistantResponse,
+    ConversationTurn,
+    MemoryRecord,
+)
 from rai.assistant.service import AssistantService
 from rai.assistant.store import SQLiteMemoryGraphStore
 from rai.kernel.ports import CancellationToken
@@ -81,9 +86,61 @@ async def test_service_idempotent_retry(service: AssistantService) -> None:
     assert second_resp.record_id == first_resp.record_id
     assert second_resp.text == first_resp.text
 
+    # A turn has one terminal response even when a retry changes request_id.
+    third_res = await service.accept_turn(turn, request_id="req-idem-2")
+    assert isinstance(third_res, Success)
+    assert third_res.unwrap().record_id == first_resp.record_id
+
+    reused_request = await service.accept_turn(
+        turn.model_copy(update={"record_id": "turn-idem-other"}),
+        request_id="req-idem-1",
+    )
+    assert isinstance(reused_request, Failure)
+    assert reused_request.failure().code == "ID_CONFLICT"
+
     # Audit ledger should only have 1 entry
     entries = await service.audit_ledger.list_for_session("session-A")
     assert len(entries) == 1
+
+
+@pytest.mark.asyncio
+async def test_service_reuses_partially_persisted_turn_on_retry(
+    service: AssistantService,
+) -> None:
+    await service.start()
+    parent = ConversationTurn(
+        record_id="partial-parent",
+        producer=PRODUCER,
+        session_id="partial-session",
+        role="assistant",
+        text="Earlier response",
+        status="COMPLETED",
+    )
+    assert isinstance(await service.store.accept_turn(parent), Success)
+    original = ConversationTurn(
+        record_id="partial-user",
+        producer=PRODUCER,
+        session_id="partial-session",
+        role="user",
+        text="Continue after a partial write",
+    )
+    persisted = original.model_copy(
+        update={
+            "reply_to_turn_id": parent.record_id,
+            "metadata": {"profile_scope": "default"},
+            "domain_scope": "global",
+            "purpose": "assistant",
+        }
+    )
+    assert isinstance(await service.store.accept_turn(persisted), Success)
+
+    retried = await service.accept_turn(original, request_id="partial-retry")
+
+    assert isinstance(retried, Success)
+    stored = await service.store.get_turn(original.record_id)
+    assert isinstance(stored, Success)
+    assert stored.unwrap() is not None
+    assert stored.unwrap().reply_to_turn_id == parent.record_id
 
 
 @pytest.mark.asyncio
@@ -174,7 +231,7 @@ async def test_service_streaming(service: AssistantService) -> None:
 
 
 @pytest.mark.asyncio
-async def test_concurrent_duplicate_request_invokes_backend_once(
+async def test_concurrent_same_turn_invokes_backend_once(
     tmp_path: Path,
 ) -> None:
     backend = DeterministicAssistantBackend(delay_seconds=0.05)
@@ -193,8 +250,8 @@ async def test_concurrent_duplicate_request_invokes_backend_once(
     )
 
     first, second = await asyncio.gather(
-        service.accept_turn(turn, request_id="request-concurrent"),
-        service.accept_turn(turn, request_id="request-concurrent"),
+        service.accept_turn(turn, request_id="request-concurrent-a"),
+        service.accept_turn(turn, request_id="request-concurrent-b"),
     )
 
     assert isinstance(first, Success)
@@ -316,3 +373,105 @@ async def test_context_builder_fails_closed_when_current_turn_exceeds_budget(
 
     assert isinstance(result, Failure)
     assert result.failure().code == "CONTEXT_BUDGET_EXCEEDED"
+
+
+@pytest.mark.asyncio
+async def test_recent_context_enforces_query_privacy_classes(tmp_path: Path) -> None:
+    store = SQLiteMemoryGraphStore(path=tmp_path / "recent-privacy.sqlite3")
+    await store.start()
+    private_turn = ConversationTurn(
+        record_id="private-recent",
+        producer=PRODUCER,
+        session_id="privacy-session",
+        role="user",
+        text="Mam na imię Sekret.",
+        data_class=DataClass.PRIVATE,
+        domain_scope="personal",
+        status="COMPLETED",
+    )
+    assert isinstance(await store.accept_turn(private_turn), Success)
+    current = ConversationTurn(
+        record_id="privacy-query",
+        producer=PRODUCER,
+        session_id="privacy-session",
+        role="user",
+        text="Jak mam na imię?",
+        domain_scope="personal",
+    )
+    assert isinstance(await store.accept_turn(current), Success)
+
+    result = await AssistantContextBuilder(store=store).build_context(current)
+
+    assert isinstance(result, Success)
+    assert "private-recent" not in result.unwrap().manifest.recent_turn_ids
+    assert result.unwrap().manifest.routing_decision == "no_evidence"
+
+
+@pytest.mark.asyncio
+async def test_route_is_recomputed_after_budget_removes_compact_memory(
+    tmp_path: Path,
+) -> None:
+    store = SQLiteMemoryGraphStore(path=tmp_path / "route-budget.sqlite3")
+    await store.start()
+    source = ConversationTurn(
+        record_id="large-memory-source",
+        producer=PRODUCER,
+        session_id="source-session",
+        role="user",
+        text="Mam na imię Tomasz.",
+        domain_scope="personal",
+        status="COMPLETED",
+    )
+    assert isinstance(await store.accept_turn(source), Success)
+    memory = MemoryRecord(
+        record_id="large-memory",
+        producer=PRODUCER,
+        kind="claim",
+        topic="user.identity.name",
+        content={
+            "predicate": "name",
+            "value": "Tomasz",
+            "modality": "direct",
+            "confidence": 1.0,
+            "padding": "x" * 2_000,
+        },
+        source_turn_id=source.record_id,
+        domain_scope="personal",
+    )
+    manifest = AssistantContextManifest(
+        record_id="large-memory-manifest",
+        producer=PRODUCER,
+        session_id=source.session_id,
+        turn_id=source.record_id,
+    )
+    response = AssistantResponse(
+        record_id="large-memory-response",
+        producer=PRODUCER,
+        session_id=source.session_id,
+        turn_id="large-memory-assistant",
+        user_turn_id=source.record_id,
+        request_id="large-memory-request",
+        manifest_id=manifest.record_id,
+        text="stored",
+    )
+    assert isinstance(
+        await store.commit_terminal(response, manifest, None, (memory,), ()), Success
+    )
+    current = ConversationTurn(
+        record_id="large-memory-query",
+        producer=PRODUCER,
+        session_id="other-session",
+        role="user",
+        text="Jak mam na imię?",
+        domain_scope="personal",
+    )
+    builder = AssistantContextBuilder(store=store, max_context_characters=700)
+
+    result = await builder.build_context(current)
+
+    assert isinstance(result, Success)
+    assert result.unwrap().manifest.durable_memory_ids == ()
+    assert result.unwrap().manifest.routing_decision == "no_evidence"
+    assert "compact_memory:removed_by_character_budget" in (
+        result.unwrap().manifest.rejected_routes
+    )

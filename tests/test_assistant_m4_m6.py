@@ -20,7 +20,14 @@ from rai.assistant.evaluation import (
     seed_retrieval_evaluation_corpus,
 )
 from rai.assistant.query import MemoryQueryResolver, domain_scope_matches
-from rai.assistant.records import ConversationTurn, MemoryRelationKind
+from rai.assistant.judging import judge_answer
+from rai.assistant.records import (
+    AssistantContextManifest,
+    AssistantResponse,
+    ConversationTurn,
+    MemoryRecord,
+    MemoryRelationKind,
+)
 from rai.assistant.retrieval import (
     MultiChannelMemoryRetriever,
     weighted_reciprocal_rank_fusion,
@@ -40,6 +47,7 @@ EXPECTED_RAPL_SAMPLES = 2
 RETRIEVAL_LIMIT = 2
 ADVANCED_CHANNEL_COUNT = 3
 ROUTING_AGGREGATE_COUNT = 6
+BENCHMARK_TRIALS = 2
 CORPUS_PATH = (
     Path(__file__).parent
     / "fixtures"
@@ -178,7 +186,9 @@ async def test_advanced_channels_share_retrieval_and_context_budgets(
     )
     assert len(advanced) == ADVANCED_CHANNEL_COUNT
     assert all(len(item.retrieved_ids) <= run.retrieval_limit for item in advanced)
-    assert all(item.context_characters <= run.context_character_budget for item in advanced)
+    assert all(
+        item.context_characters <= run.context_character_budget for item in advanced
+    )
     graph = next(item for item in advanced if item.channel == "graph_bounded")
     assert "corpus-relation-project-supports-commitment" in graph.artifact_ids
     await store.stop()
@@ -228,19 +238,32 @@ async def test_router_compares_short_medium_and_long_histories(tmp_path: Path) -
     measurements = result.unwrap().measurements
     assert {item.horizon for item in measurements} == {"short", "medium", "long"}
     assert {item.strategy for item in measurements} == {"adaptive", "always_memory"}
-    for horizon in ("short", "medium", "long"):
+    assert all(
+        aggregate.answer_accuracy is None for aggregate in result.unwrap().aggregates
+    )
+    case_ids = {item.case_id for item in measurements}
+    for case_id in case_ids:
         adaptive = next(
             item
             for item in measurements
-            if item.horizon == horizon and item.strategy == "adaptive"
+            if item.case_id == case_id and item.strategy == "adaptive"
         )
         baseline = next(
             item
             for item in measurements
-            if item.horizon == horizon and item.strategy == "always_memory"
+            if item.case_id == case_id and item.strategy == "always_memory"
         )
         assert adaptive.source_recall >= baseline.source_recall
         assert adaptive.context_characters <= adaptive.context_character_budget
+    short_adaptive = tuple(
+        item
+        for item in measurements
+        if item.horizon == "short" and item.strategy == "adaptive"
+    )
+    assert len(short_adaptive) == BENCHMARK_TRIALS
+    assert all(
+        item.routing_decision == "recent_conversation" for item in short_adaptive
+    )
     await store.stop()
 
 
@@ -301,12 +324,106 @@ async def test_verified_writeback_is_source_covered_and_scope_preserving(
     assert isinstance(rejected, Failure)
     assert rejected.failure().code == "DERIVED_DOMAIN_MISMATCH"
 
-    deleted = await store.delete_turn("corpus-turn-project")
+    deleted = await store.delete_turn("corpus-turn-commitment")
     assert isinstance(deleted, Success)
     after_delete = await store.get_memory(memory.record_id)
     assert isinstance(after_delete, Success)
     assert after_delete.unwrap() is None
     await store.stop()
+
+
+@pytest.mark.asyncio
+async def test_derived_writeback_rejects_unknown_source_confidence(
+    tmp_path: Path,
+) -> None:
+    store = SQLiteMemoryGraphStore(tmp_path / "unknown-confidence.sqlite3")
+    await store.start()
+    turn = ConversationTurn(
+        record_id="unknown-confidence-turn",
+        producer=PRODUCER,
+        session_id="unknown-confidence-session",
+        role="user",
+        text="Jawnie podana informacja bez oceny pewności.",
+        status="COMPLETED",
+    )
+    assert isinstance(await store.accept_turn(turn), Success)
+    memory = MemoryRecord(
+        record_id="unknown-confidence-memory",
+        producer=PRODUCER,
+        kind="claim",
+        topic="claim.test.unknown-confidence",
+        content={"fact": "test"},
+        source_turn_id=turn.record_id,
+    )
+    manifest = AssistantContextManifest(
+        record_id="unknown-confidence-manifest",
+        producer=PRODUCER,
+        session_id=turn.session_id,
+        turn_id=turn.record_id,
+    )
+    response = AssistantResponse(
+        record_id="unknown-confidence-response",
+        producer=PRODUCER,
+        session_id=turn.session_id,
+        turn_id="unknown-confidence-assistant",
+        user_turn_id=turn.record_id,
+        request_id="unknown-confidence-request",
+        manifest_id=manifest.record_id,
+        text="stored",
+    )
+    assert isinstance(
+        await store.commit_terminal(response, manifest, None, (memory,), ()), Success
+    )
+
+    written = await write_verified_derived_claim(
+        store,
+        VerifiedDerivedClaim(
+            verification_id="unknown-confidence-verification",
+            verifier_id="test-verifier",
+            verifier_version="1.0.0",
+            policy_version="derived-writeback-v1",
+            topic="derived.test.unknown-confidence",
+            content={"finding": "unsafe without source confidence"},
+            source_memory_ids=(memory.record_id,),
+        ),
+    )
+
+    assert isinstance(written, Failure)
+    assert written.failure().code == "DERIVED_SOURCE_CONFIDENCE_UNKNOWN"
+
+
+def test_answer_judge_handles_polish_inflection_abstention_and_plan_modality() -> None:
+    correct, abstained = judge_answer(
+        "Celem jest zbudowanie lokalnej pamięci asystenta w Warszawie.",
+        expected_phrases=("lokalna pamięć asystenta", "Warszawa"),
+        forbidden_phrases=(),
+        expected_abstention=False,
+    )
+    assert correct and not abstained
+
+    correct, abstained = judge_answer(
+        "Nie mam informacji o ulubionym filmie.",
+        expected_phrases=(),
+        forbidden_phrases=(),
+        expected_abstention=True,
+    )
+    assert correct and abstained
+
+    correct, abstained = judge_answer(
+        "Nie ma informacji o instrumencie; brak jest danych w źródłach.",
+        expected_phrases=(),
+        forbidden_phrases=(),
+        expected_abstention=True,
+    )
+    assert correct and abstained
+
+    correct, _ = judge_answer(
+        "Zespół zmierzył baseline BM25.",
+        expected_phrases=("BM25",),
+        forbidden_phrases=("zmierzył baseline",),
+        expected_abstention=False,
+    )
+    assert not correct
 
 
 @pytest.mark.asyncio
@@ -365,8 +482,7 @@ async def test_legacy_general_rows_migrate_to_fail_closed_unknown(
             "WHERE memory_id = 'corpus-memory-project'"
         )
         connection.execute(
-            "DELETE FROM assistant_schema_metadata "
-            "WHERE key = 'domain_scope_semantics'"
+            "DELETE FROM assistant_schema_metadata WHERE key = 'domain_scope_semantics'"
         )
 
     migrated = SQLiteMemoryGraphStore(database)
@@ -393,11 +509,17 @@ async def test_benchmark_writes_six_channels_and_routing_manifest(
         retrieval_limit=RETRIEVAL_LIMIT,
         context_character_budget=4096,
         max_latency_seconds=5.0,
+        trials=BENCHMARK_TRIALS,
     )
 
     assert isinstance(result, Success)
     artifact = result.unwrap()
     assert output.exists()
+    assert artifact.artifact_version == "rai-assistant-retrieval-benchmark-v2"
+    assert artifact.judge_version == "deterministic-phrase-and-abstention-v3"
+    assert artifact.model_artifact_version == "1.0.0"
+    assert artifact.run.trials == BENCHMARK_TRIALS
+    assert {item.trial_index for item in artifact.run.measurements} == {1, 2}
     assert {aggregate.channel for aggregate in artifact.aggregates} == {
         "raw_turns_bm25",
         "claims_bm25",
@@ -407,14 +529,15 @@ async def test_benchmark_writes_six_channels_and_routing_manifest(
         "graph_bounded",
     }
     assert artifact.routing_run is not None
+    assert artifact.routing_run.trials == BENCHMARK_TRIALS
+    assert {item.trial_index for item in artifact.routing_run.measurements} == {1, 2}
     assert {item.horizon for item in artifact.routing_run.measurements} == {
         "short",
         "medium",
         "long",
     }
     assert all(
-        item.answer_correct is not None
-        for item in artifact.routing_run.measurements
+        item.answer_correct is not None for item in artifact.routing_run.measurements
     )
     assert len(artifact.routing_run.aggregates) == ROUTING_AGGREGATE_COUNT
 
@@ -437,4 +560,22 @@ async def test_benchmark_can_require_complete_energy_measurement(
 
     assert isinstance(result, Failure)
     assert result.failure().code == "ENERGY_MEASUREMENT_INCOMPLETE"
+    assert not output.exists()
+
+
+@pytest.mark.asyncio
+async def test_benchmark_requires_model_artifact_identity(tmp_path: Path) -> None:
+    output = tmp_path / "unidentified-model.json"
+    backend = DeterministicAssistantBackend()
+    backend.model_artifact_version = None  # type: ignore[assignment]
+
+    result = await run_retrieval_benchmark(
+        backend,
+        corpus_path=CORPUS_PATH,
+        output_path=output,
+        max_latency_seconds=5.0,
+    )
+
+    assert isinstance(result, Failure)
+    assert result.failure().code == "MODEL_ARTIFACT_VERSION_UNAVAILABLE"
     assert not output.exists()

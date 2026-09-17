@@ -13,6 +13,7 @@ from .energy import EnergyMeter
 from .evaluation import (
     BackendRetrievalAnswerEvaluator,
     RetrievalBenchmarkArtifact,
+    RetrievalEvaluationRun,
     aggregate_retrieval_run,
     evaluate_retrieval_floor,
     load_retrieval_evaluation_corpus,
@@ -21,7 +22,12 @@ from .evaluation import (
 from .ports import AssistantModelBackend
 from .records import ConversationTurn, make_assistant_failure
 from .retrieval import MultiChannelMemoryRetriever
-from .routing_evaluation import ContextRoutingEvaluationCase, evaluate_context_routing
+from .routing_evaluation import (
+    ContextRoutingEvaluationCase,
+    ContextRoutingEvaluationRun,
+    aggregate_context_routing,
+    evaluate_context_routing,
+)
 from .store import SQLiteMemoryGraphStore
 from .summary import GroundedClaimSummaryProvider
 
@@ -32,7 +38,7 @@ _BENCHMARK_PRODUCER = ProducerIdentity(
 )
 
 
-async def run_retrieval_benchmark(  # noqa: PLR0911, PLR0913
+async def run_retrieval_benchmark(  # noqa: PLR0911, PLR0912, PLR0913
     backend: AssistantModelBackend,
     *,
     corpus_path: Path,
@@ -44,6 +50,7 @@ async def run_retrieval_benchmark(  # noqa: PLR0911, PLR0913
     max_input_tokens: int = 4096,
     max_output_tokens: int = 256,
     max_latency_seconds: float = 60.0,
+    trials: int = 1,
 ) -> Result[RetrievalBenchmarkArtifact, ActionFailure]:
     """Run every retrieval channel against one frozen corpus and write JSON atomically."""
     try:
@@ -67,6 +74,17 @@ async def run_retrieval_benchmark(  # noqa: PLR0911, PLR0913
             await store.stop()
             return Failure(backend_started.failure())
         try:
+            if not getattr(backend, "model_artifact_version", None):
+                return Failure(
+                    make_assistant_failure(
+                        code="MODEL_ARTIFACT_VERSION_UNAVAILABLE",
+                        message=(
+                            "benchmark requires an inspectable model artifact version "
+                            "or digest"
+                        ),
+                        request_id=str(getattr(backend, "model_name", "unknown")),
+                    )
+                )
             seeded = await seed_retrieval_evaluation_corpus(store, corpus)
             if isinstance(seeded, Failure):
                 return Failure(seeded.failure())
@@ -78,23 +96,43 @@ async def run_retrieval_benchmark(  # noqa: PLR0911, PLR0913
                 max_latency_seconds=max_latency_seconds,
                 energy_meter=energy_meter,
             )
-            result = await evaluate_retrieval_floor(
-                store,
-                corpus.cases,
+            if trials < 1:
+                return Failure(
+                    make_assistant_failure(
+                        code="INVALID_BENCHMARK_TRIALS",
+                        message="benchmark trials must be at least 1",
+                        request_id=corpus.corpus_version,
+                    )
+                )
+            retrieval_measurements = []
+            for trial_index in range(1, trials + 1):
+                result = await evaluate_retrieval_floor(
+                    store,
+                    corpus.cases,
+                    retrieval_limit=retrieval_limit,
+                    context_character_budget=context_character_budget,
+                    summary_provider=GroundedClaimSummaryProvider(store),
+                    advanced_retriever=retriever,
+                    answer_evaluator=evaluator,
+                    corpus_version=corpus.corpus_version,
+                )
+                if isinstance(result, Failure):
+                    return Failure(result.failure())
+                retrieval_measurements.extend(
+                    measurement.model_copy(update={"trial_index": trial_index})
+                    for measurement in result.unwrap().measurements
+                )
+            run = RetrievalEvaluationRun(
+                corpus_version=corpus.corpus_version,
+                profile_scope="default",
                 retrieval_limit=retrieval_limit,
                 context_character_budget=context_character_budget,
-                summary_provider=GroundedClaimSummaryProvider(store),
-                advanced_retriever=retriever,
-                answer_evaluator=evaluator,
-                corpus_version=corpus.corpus_version,
+                trials=trials,
+                measurements=tuple(retrieval_measurements),
             )
-            if isinstance(result, Failure):
-                return Failure(result.failure())
-            run = result.unwrap()
             aggregates = aggregate_retrieval_run(run)
             if require_energy and any(
-                aggregate.energy_measurement_coverage < 1.0
-                for aggregate in aggregates
+                aggregate.energy_measurement_coverage < 1.0 for aggregate in aggregates
             ):
                 return Failure(
                     make_assistant_failure(
@@ -137,20 +175,33 @@ async def run_retrieval_benchmark(  # noqa: PLR0911, PLR0913
             )
             routing_run = None
             if routing_cases:
-                routing_result = await evaluate_context_routing(
-                    store,
-                    routing_cases,
+                routing_measurements = []
+                for trial_index in range(1, trials + 1):
+                    routing_result = await evaluate_context_routing(
+                        store,
+                        routing_cases,
+                        context_character_budget=context_character_budget,
+                        max_memories=retrieval_limit,
+                        max_episodic_turns=retrieval_limit,
+                        answer_backend=backend,
+                        max_input_tokens=max_input_tokens,
+                        max_output_tokens=max_output_tokens,
+                        max_latency_seconds=max_latency_seconds,
+                    )
+                    if isinstance(routing_result, Failure):
+                        return Failure(routing_result.failure())
+                    routing_measurements.extend(
+                        measurement.model_copy(update={"trial_index": trial_index})
+                        for measurement in routing_result.unwrap().measurements
+                    )
+                finalized_routing = tuple(routing_measurements)
+                routing_run = ContextRoutingEvaluationRun(
                     context_character_budget=context_character_budget,
-                    max_memories=retrieval_limit,
-                    max_episodic_turns=retrieval_limit,
-                    answer_backend=backend,
-                    max_input_tokens=max_input_tokens,
-                    max_output_tokens=max_output_tokens,
-                    max_latency_seconds=max_latency_seconds,
+                    adaptive_threshold=0.75,
+                    trials=trials,
+                    measurements=finalized_routing,
+                    aggregates=aggregate_context_routing(finalized_routing),
                 )
-                if isinstance(routing_result, Failure):
-                    return Failure(routing_result.failure())
-                routing_run = routing_result.unwrap()
             artifact = RetrievalBenchmarkArtifact(
                 run=run,
                 aggregates=aggregates,
@@ -176,9 +227,7 @@ async def run_retrieval_benchmark(  # noqa: PLR0911, PLR0913
             )
             output_path.parent.mkdir(parents=True, exist_ok=True)
             temporary = output_path.with_suffix(f"{output_path.suffix}.tmp")
-            temporary.write_text(
-                artifact.model_dump_json(indent=2), encoding="utf-8"
-            )
+            temporary.write_text(artifact.model_dump_json(indent=2), encoding="utf-8")
             temporary.replace(output_path)
             return Success(artifact)
         finally:

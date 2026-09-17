@@ -10,7 +10,12 @@ from returns.result import Failure, Result, Success
 from rai.kernel.ports import CancellationToken, LifecycleState
 from rai.kernel.records import ActionFailure, ProducerIdentity
 
-from ..memory import extract_memory_proposals, grounded_memory_response
+from ..memory import (
+    extract_memory_proposals,
+    grounded_memory_response,
+    project_grounded_summary_memories,
+    project_recent_turn_memories,
+)
 from ..records import (
     AssistantCandidate,
     InferenceRequest,
@@ -111,14 +116,29 @@ class DeterministicAssistantBackend:
         durable_memories = request.context.content.get("durable_memories", [])
         if not isinstance(durable_memories, (list, tuple)):
             durable_memories = []
+        recent_projection = project_recent_turn_memories(
+            request.context.content.get("recent_turns", ()), self.producer
+        )
+        episodic_projection = project_recent_turn_memories(
+            request.context.content.get("episodic_evidence", ()), self.producer
+        )
+        summary_projection = project_grounded_summary_memories(
+            request.context.content.get("grounded_summaries", ())
+        )
+        grounding_memories = (
+            *durable_memories,
+            *recent_projection,
+            *episodic_projection,
+            *summary_projection,
+        )
 
         response_text, proposals = self._resolve_preferences(
             user_text=user_text,
             turn_id=request.turn_id,
-            durable_memories=durable_memories,
+            durable_memories=grounding_memories,
         )
         has_evidence = bool(
-            durable_memories
+            grounding_memories
             or request.context.content.get("episodic_evidence", ())
             or request.context.content.get("external_evidence", ())
         )
@@ -132,6 +152,10 @@ class DeterministicAssistantBackend:
             proposals=tuple(proposals),
             tokens_in=len(user_text.split()),
             tokens_out=len(response_text.split()),
+            metadata={
+                "raw_model_output": "Rozumiem.",
+                "grounding_override": response_text != "Rozumiem.",
+            },
         )
         return Success(candidate)
 

@@ -144,17 +144,24 @@ async def write_verified_derived_claim(  # noqa: PLR0911
         (_data_class(source.data_class) for source in sources),
         key=_DATA_CLASS_RANK.__getitem__,
     )
-    source_confidences = tuple(
-        float(source.content.get("confidence", 0.0))
-        for source in sources
-        if isinstance(source.content.get("confidence"), (int, float))
-        and not isinstance(source.content.get("confidence"), bool)
-    )
-    bounded_confidence = min(
-        (finding.confidence, *source_confidences)
-        if source_confidences
-        else (finding.confidence,)
-    )
+    source_confidences: list[float] = []
+    for source in sources:
+        raw_confidence = source.content.get("confidence")
+        if not isinstance(raw_confidence, (int, float)) or isinstance(
+            raw_confidence, bool
+        ):
+            return Failure(
+                make_assistant_failure(
+                    code="DERIVED_SOURCE_CONFIDENCE_UNKNOWN",
+                    message=(
+                        f"source memory {source.record_id} has no numeric confidence; "
+                        "derived confidence cannot be bounded safely"
+                    ),
+                    request_id=finding.verification_id,
+                )
+            )
+        source_confidences.append(min(1.0, max(0.0, float(raw_confidence))))
+    bounded_confidence = min(finding.confidence, *source_confidences)
     memory = MemoryRecord(
         record_id=_new_id(),
         producer=producer,
@@ -207,6 +214,7 @@ async def write_verified_derived_claim(  # noqa: PLR0911
         preconditions=(
             "all_sources_active",
             "source_coverage_complete",
+            "all_source_confidences_known",
             "scope_not_broadened",
             f"verification_policy:{finding.policy_version}",
         ),
