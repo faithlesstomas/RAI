@@ -34,6 +34,8 @@ class AssistantRuntimeConfig:
     context_window: int = 2048
     model_artifact_version: str | None = None
     ollama_host: str = "http://127.0.0.1:11434"
+    lemonade_host: str = "http://127.0.0.1:13305"
+    lemonade_api_key: str | None = None
     profile_scope: str = "default"
     system_instruction: str = DEFAULT_SYSTEM_INSTRUCTION
     max_context_characters: int = 8_000
@@ -137,9 +139,9 @@ def resolve_assistant_config(
     model = str(model)
     if backend == "auto":
         backend = "llama" if Path(model).suffix.lower() == ".gguf" else "ollama"
-    if backend not in {"llama", "ollama"}:
+    if backend not in {"llama", "ollama", "lemonade"}:
         raise AssistantConfigurationError(
-            f"Unsupported assistant backend {backend!r}; choose llama or ollama."
+            f"Unsupported assistant backend {backend!r}; choose llama, ollama, or lemonade."
         )
 
     return AssistantRuntimeConfig(
@@ -158,6 +160,28 @@ def resolve_assistant_config(
             or local_ai.get("ollama_host")
             or profile.get("ollama_host")
             or "http://127.0.0.1:11434"
+        ),
+        lemonade_host=str(
+            assistant.get("lemonade_host")
+            or local_ai.get("lemonade_host")
+            or profile.get("lemonade_host")
+            or os.environ.get("LEMONADE_HOST")
+            or "http://127.0.0.1:13305"
+        ),
+        lemonade_api_key=(
+            str(
+                assistant.get("lemonade_api_key")
+                or local_ai.get("lemonade_api_key")
+                or profile.get("lemonade_api_key")
+                or os.environ.get("LEMONADE_API_KEY")
+            )
+            if (
+                assistant.get("lemonade_api_key")
+                or local_ai.get("lemonade_api_key")
+                or profile.get("lemonade_api_key")
+                or os.environ.get("LEMONADE_API_KEY")
+            )
+            else None
         ),
         profile_scope=profile_name,
         system_instruction=str(
@@ -190,6 +214,10 @@ def build_assistant_backend(runtime: AssistantRuntimeConfig) -> AssistantModelBa
         engine = AsyncLlamaEngine(engine, n_ctx=runtime.context_window)
     elif runtime.backend == "ollama":
         engine.host = runtime.ollama_host
+    elif runtime.backend == "lemonade":
+        engine.host = runtime.lemonade_host
+        if runtime.lemonade_api_key:
+            engine.api_key = runtime.lemonade_api_key
 
     return LocalAssistantBackend(
         engine=engine,

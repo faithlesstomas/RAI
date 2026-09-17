@@ -8,6 +8,20 @@ from .engines.iree import is_iree_available
 from .engines.llama import is_llama_cpp_available
 
 
+_HTTP_OK = 200
+
+
+def is_lemonade_available(host: str = "http://127.0.0.1:13305") -> bool:
+    """Check if the local Lemonade server daemon is responsive."""
+    try:
+        import httpx  # noqa: PLC0415
+
+        resp = httpx.get(f"{host.rstrip('/')}/api/v1/health", timeout=1.0)
+        return resp.status_code == _HTTP_OK and resp.json().get("status") == "ok"
+    except Exception:  # noqa: BLE001
+        return False
+
+
 def is_backend_available(backend: str) -> bool:
     """Check if a named local inference backend is operational."""
     b = backend.lower()
@@ -17,6 +31,8 @@ def is_backend_available(backend: str) -> bool:
             return True
         except ImportError:
             return False
+    elif b == "lemonade":
+        return is_lemonade_available()
     elif b == "llama":
         return is_llama_cpp_available()
     elif b == "iree":
@@ -29,7 +45,7 @@ def is_backend_available(backend: str) -> bool:
 def get_available_backends() -> tuple[str, ...]:
     """Return all currently operational local inference backends."""
     backends: list[str] = []
-    for candidate in ("ollama", "llama"):
+    for candidate in ("ollama", "llama", "lemonade"):
         if is_backend_available(candidate):
             backends.append(candidate)
     return tuple(backends)
@@ -52,10 +68,13 @@ def load_local_model(
     """
     Loads a local model and returns an engine instance.
     """
-    # If backend is explicitly ollama, we don't require model_path to be a local file path
+    # If backend is explicitly ollama or lemonade, we don't require model_path to be a local file path
     if backend and backend.lower() == "ollama":
         from .engines.ollama import OllamaEngine  # noqa: PLC0415
         return Success(OllamaEngine(model_name=model_path))
+    if backend and backend.lower() == "lemonade":
+        from .engines.lemonade import LemonadeEngine  # noqa: PLC0415
+        return Success(LemonadeEngine(model_name=model_path))
 
     # 1. Validate Path
     path_result = _validate_path(model_path)
@@ -100,6 +119,10 @@ def _load_local_model_cached(
         elif backend == "ollama":
             from .engines.ollama import OllamaEngine  # noqa: PLC0415
             return Success(OllamaEngine(model_name=model_path_str))
+
+        elif backend == "lemonade":
+            from .engines.lemonade import LemonadeEngine  # noqa: PLC0415
+            return Success(LemonadeEngine(model_name=model_path_str))
 
         elif backend == "iree":
             return Failure(

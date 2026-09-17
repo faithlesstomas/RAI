@@ -733,9 +733,9 @@ Status: `[/]` — the lifecycle-managed supervisor and its safety boundaries are
 implemented and tested, but live backend acceptance, operational discovery and
 host-capacity reporting remain open.
 
-- [/] Select one supported local text execution path first. Ollama is the
-  configured default and both Ollama and llama.cpp adapters have contract tests,
-  but neither has a repeatable live-model acceptance test in the current tree.
+- [/] Select supported local text execution paths. Ollama is the configured
+  default; Ollama, llama.cpp, and Lemonade Server (NPU/GPU/CPU via LemonadeEngine)
+  adapters have contract and lifecycle tests.
 - [/] Define processor discovery, model metadata, health, load/unload,
   concurrency, cancellation and resource reporting. The protocols and lifecycle
   are implemented; discovery currently reports importable adapters rather than
@@ -775,9 +775,9 @@ backends and voice enrollment are tracked by #23–#25 under umbrella #21.
 - [ ] Start with push-to-talk and local VAD/STT; add an optional local wake word
   only after false-activation evaluation.
 - [/] Implement `speech.synthesize` as a policy-controlled local `Actuator`.
-  The Piper implementation is registered in the default capability service and
-  exposed through MCP; user-configurable profile/device loading and
-  legacy-facade removal remain open.
+  Piper and Lemonade (Kokoro TTS) implementations are available; Piper is registered
+  in the default capability service and exposed through MCP; user-configurable
+  profile/device loading and legacy-facade removal remain open.
 - [x] Persist the typed result only after playback or its verifiable test
   substitute completes; device-unavailable and cancellation remain failures.
 - [/] Do not persist raw audio by default; retain transcript only under the active

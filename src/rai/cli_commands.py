@@ -543,12 +543,12 @@ def register_assistant_commands(root: click.Group) -> None:
     )
     @click.option(
         "--backend",
-        type=click.Choice(["auto", "llama", "ollama", "deterministic"]),
+        type=click.Choice(["auto", "llama", "ollama", "lemonade", "deterministic"]),
         default="auto",
         show_default=True,
         help="Local inference backend. Deterministic is only for conformance tests.",
     )
-    @click.option("--model", default=None, help="GGUF path or local Ollama model name.")
+    @click.option("--model", default=None, help="GGUF path or local Ollama/Lemonade model name.")
     @click.option("--profile", default=None, help="Assistant profile and memory scope.")
     @click.option(
         "--system", default=None, help="Override the profile system instruction."
@@ -576,12 +576,12 @@ def register_assistant_commands(root: click.Group) -> None:
     @click.option("--session-id", default=None, help="Session ID for the conversation.")
     @click.option(
         "--backend",
-        type=click.Choice(["auto", "llama", "ollama", "deterministic"]),
+        type=click.Choice(["auto", "llama", "ollama", "lemonade", "deterministic"]),
         default="auto",
         show_default=True,
         help="Local inference backend. Deterministic is only for conformance tests.",
     )
-    @click.option("--model", default=None, help="GGUF path or local Ollama model name.")
+    @click.option("--model", default=None, help="GGUF path or local Ollama/Lemonade model name.")
     @click.option("--profile", default=None, help="Assistant profile and memory scope.")
     @click.option(
         "--system", default=None, help="Override the profile system instruction."
@@ -624,7 +624,7 @@ def register_assistant_commands(root: click.Group) -> None:
     @assistant.command(name="benchmark-memory")
     @click.option(
         "--backend",
-        type=click.Choice(["llama", "ollama", "deterministic"]),
+        type=click.Choice(["llama", "ollama", "lemonade", "deterministic"]),
         default="deterministic",
         show_default=True,
     )
