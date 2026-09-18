@@ -9,7 +9,7 @@ import functools
 import importlib.util
 from pathlib import Path
 import time
-from typing import Any, List, Optional
+from typing import Any, Dict, List, Optional
 
 from returns.result import Failure, Result, Success, safe
 
@@ -85,12 +85,14 @@ class LlamaCppEngine:
 
     def generate(
         self,
-        prompt: str,
+        prompt: str = "",
         stop: Optional[List[str]] = None,
         max_tokens: int = 1024,
         temperature: float = 0.7,
+        *,
+        messages: Optional[List[Dict[str, str]]] = None,
     ) -> Result[InferenceResult, Exception]:
-        """Synchronously generates text from a prompt satisfying InferenceEngine."""
+        """Synchronously generates text from a prompt or messages satisfying InferenceEngine."""
         if not self.is_loaded:
             load_res = self.load()
             if isinstance(load_res, Failure):
@@ -98,15 +100,46 @@ class LlamaCppEngine:
 
         start_time = time.monotonic()
         try:
-            output = self.llm.create_completion(
-                prompt=prompt,
-                stop=stop or [],
-                max_tokens=max_tokens,
-                temperature=temperature,
-                echo=False,
-            )
+            if messages or hasattr(self.llm, "create_chat_completion"):
+                chat_messages = (
+                    list(messages)
+                    if messages
+                    else [{"role": "user", "content": prompt}]
+                )
+                try:
+                    output = self.llm.create_chat_completion(
+                        messages=chat_messages,
+                        stop=stop or [],
+                        max_tokens=max_tokens,
+                        temperature=temperature,
+                    )
+                    choice = output["choices"][0]
+                    text = choice.get("message", {}).get("content", "")
+                    finish_reason = choice.get("finish_reason", "stop")
+                except Exception:
+                    output = self.llm.create_completion(
+                        prompt=prompt,
+                        stop=stop or [],
+                        max_tokens=max_tokens,
+                        temperature=temperature,
+                        echo=False,
+                    )
+                    choice = output["choices"][0]
+                    text = choice.get("text", "")
+                    finish_reason = choice.get("finish_reason", "stop")
+            else:
+                output = self.llm.create_completion(
+                    prompt=prompt,
+                    stop=stop or [],
+                    max_tokens=max_tokens,
+                    temperature=temperature,
+                    echo=False,
+                )
+                choice = output["choices"][0]
+                text = choice.get("text", "")
+                finish_reason = choice.get("finish_reason", "stop")
+
             duration = time.monotonic() - start_time
-            text = output["choices"][0]["text"]
             usage = output.get("usage", {})
             prompt_tokens = usage.get("prompt_tokens", 0)
             completion_tokens = usage.get("completion_tokens", 0)
@@ -122,7 +155,7 @@ class LlamaCppEngine:
                 InferenceResult(
                     text=text,
                     stats=stats,
-                    finish_reason=output["choices"][0].get("finish_reason", "stop"),
+                    finish_reason=finish_reason,
                 )
             )
         except Exception as exc:

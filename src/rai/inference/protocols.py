@@ -88,10 +88,12 @@ class LocalTextEngine(Protocol):
 
     async def generate(
         self,
-        prompt: str,
+        prompt: str = "",
         stop: Optional[List[str]] = None,
         max_tokens: int = 1024,
         temperature: float = 0.7,
+        *,
+        messages: Optional[List[Dict[str, str]]] = None,
     ) -> Result[InferenceResult, Exception]:
         """Asynchronously generates text without blocking the main event loop."""
         ...
@@ -124,10 +126,12 @@ class InferenceEngine(Protocol):
 
     def generate(
         self, 
-        prompt: str, 
+        prompt: str = "", 
         stop: Optional[List[str]] = None, 
         max_tokens: int = 1024,
-        temperature: float = 0.7
+        temperature: float = 0.7,
+        *,
+        messages: Optional[List[Dict[str, str]]] = None,
     ) -> Result[InferenceResult, Exception]:
         ...
 
@@ -191,26 +195,31 @@ class AsyncEngineAdapter(LocalTextEngine):
 
     async def generate(
         self,
-        prompt: str,
+        prompt: str = "",
         stop: Optional[List[str]] = None,
         max_tokens: int = 1024,
         temperature: float = 0.7,
+        *,
+        messages: Optional[List[Dict[str, str]]] = None,
     ) -> Result[InferenceResult, Exception]:
         if not self.is_loaded:
             load_res = await self.load()
             if isinstance(load_res, Failure):
                 return load_res
 
+        kwargs: dict[str, Any] = {
+            "prompt": prompt,
+            "stop": stop,
+            "max_tokens": max_tokens,
+            "temperature": temperature,
+        }
+        if messages is not None:
+            kwargs["messages"] = messages
+
         gen_fn = self._engine.generate
         if asyncio.iscoroutinefunction(gen_fn):
-            return await gen_fn(prompt, stop, max_tokens, temperature)
-        return await asyncio.to_thread(
-            gen_fn,
-            prompt,
-            stop,
-            max_tokens,
-            temperature,
-        )
+            return await gen_fn(**kwargs)
+        return await asyncio.to_thread(gen_fn, **kwargs)
 
     async def stream(
         self,

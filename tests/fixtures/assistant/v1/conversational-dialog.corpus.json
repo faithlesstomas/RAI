@@ -1,0 +1,120 @@
+{
+  "corpus_version": "rai-assistant-conversational-dialog-v1",
+  "description": "Multi-turn conversational benchmark measuring dialog coherence, role stability, pronoun/context resolution, and absence of prompt parroting without deterministic grounding masks.",
+  "scenarios": [
+    {
+      "scenario_id": "chitchat-greeting",
+      "description": "General conversational greeting and self-introduction without memory abstention.",
+      "turns": [
+        {
+          "turn_id": "chitchat-1",
+          "user_text": "Cześć, jak się masz?",
+          "expected_phrases": ["cześć", "dzień dobry", "witaj", "dobrze", "pomóc", "asystent"],
+          "forbidden_phrases": ["nie wiem", "brak wystarczających", "nie mam informacji", "Użytkownik:", "System:"],
+          "forbidden_parroting": true
+        },
+        {
+          "turn_id": "chitchat-2",
+          "user_text": "W czym możesz mi pomóc na tym komputerze?",
+          "expected_phrases": ["pomóc", "system", "linux", "plik", "zadania", "program", "kod"],
+          "forbidden_phrases": ["nie wiem", "brak wystarczających", "nie mam informacji", "Użytkownik:", "System:"],
+          "forbidden_parroting": true
+        }
+      ]
+    },
+    {
+      "scenario_id": "preference-adaptation",
+      "description": "User sets a formatting/coding preference in turn 1 and requests a script in turn 2.",
+      "turns": [
+        {
+          "turn_id": "pref-1",
+          "user_text": "Gdy piszę skrypty w bashu, zawsze używam na początku set -euo pipefail.",
+          "expected_phrases": ["rozumiem", "dobrze", "będę", "pamiętać", "bash", "skrypt", "nawyk"],
+          "forbidden_phrases": ["nie wiem", "Użytkownik:", "System:"],
+          "forbidden_parroting": true
+        },
+        {
+          "turn_id": "pref-2",
+          "user_text": "Napisz prosty szablon skryptu w bashu wyświetlający 'Hello World'.",
+          "expected_phrases": ["set -euo pipefail", "hello world", "echo"],
+          "forbidden_phrases": ["nie wiem", "brak wystarczających", "Użytkownik:", "System:"],
+          "forbidden_parroting": true
+        }
+      ]
+    },
+    {
+      "scenario_id": "contextual-entity-resolution",
+      "description": "Entity introduced in turn 1 is referenced by pronoun in turn 2 and asked about in turn 3.",
+      "turns": [
+        {
+          "turn_id": "entity-1",
+          "user_text": "Mój pies to labrador i ma na imię Burek.",
+          "expected_phrases": ["pies", "burek", "labrador", "miło", "ładne"],
+          "forbidden_phrases": ["nie wiem", "Użytkownik:", "System:"],
+          "forbidden_parroting": true
+        },
+        {
+          "turn_id": "entity-2",
+          "user_text": "Ile lat zazwyczaj żyją psy tej rasy?",
+          "expected_phrases": ["lat", "labrador", "10", "12", "14"],
+          "forbidden_phrases": ["nie wiem", "brak wystarczających", "Użytkownik:", "System:"],
+          "forbidden_parroting": true
+        },
+        {
+          "turn_id": "entity-3",
+          "user_text": "A pamiętasz jak ma na imię mój pies?",
+          "expected_phrases": ["burek"],
+          "forbidden_phrases": ["nie wiem", "nie pamiętam", "Użytkownik:", "System:"],
+          "forbidden_parroting": true
+        }
+      ]
+    },
+    {
+      "scenario_id": "multi-turn-problem-solving",
+      "description": "Step-by-step problem refinement across multiple conversational turns.",
+      "turns": [
+        {
+          "turn_id": "step-1",
+          "user_text": "Chcę znaleźć pliki z logami w /var/log.",
+          "expected_phrases": ["find", "log", "ls"],
+          "forbidden_phrases": ["nie wiem", "Użytkownik:", "System:"],
+          "forbidden_parroting": true
+        },
+        {
+          "turn_id": "step-2",
+          "user_text": "Pokaż tylko te, które były modyfikowane w ciągu ostatnich 24 godzin.",
+          "expected_phrases": ["mtime", "find", "24", "-mtime -1", "-mtime 0"],
+          "forbidden_phrases": ["nie wiem", "Użytkownik:", "System:"],
+          "forbidden_parroting": true
+        },
+        {
+          "turn_id": "step-3",
+          "user_text": "Jak przekierować ten wynik do pliku raport.txt?",
+          "expected_phrases": [">", "raport.txt"],
+          "forbidden_phrases": ["nie wiem", "Użytkownik:", "System:"],
+          "forbidden_parroting": true
+        }
+      ]
+    },
+    {
+      "scenario_id": "chitchat-to-memory-switch",
+      "description": "Transition from casual humor to a specific memory recall and back to chitchat.",
+      "turns": [
+        {
+          "turn_id": "switch-1",
+          "user_text": "Opowiedz krótki żart informatyczny.",
+          "expected_phrases": ["programista", "kod", "bug", "komputer", "bit", "bajt", "żart"],
+          "forbidden_phrases": ["nie wiem", "Użytkownik:", "System:"],
+          "forbidden_parroting": true
+        },
+        {
+          "turn_id": "switch-2",
+          "user_text": "Dobre! A czy przed chwilą opowiedziałeś mi żart?",
+          "expected_phrases": ["tak", "żart"],
+          "forbidden_phrases": ["nie wiem", "Użytkownik:", "System:"],
+          "forbidden_parroting": true
+        }
+      ]
+    }
+  ]
+}

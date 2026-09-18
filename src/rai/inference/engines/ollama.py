@@ -8,7 +8,7 @@ import hashlib
 import json
 import logging
 import time
-from typing import Any, List, Optional
+from typing import Any, Dict, List, Optional
 
 from returns.result import Failure, Result, Success
 
@@ -75,12 +75,14 @@ class OllamaEngine:
 
     async def generate(
         self,
-        prompt: str,
+        prompt: str = "",
         stop: Optional[List[str]] = None,
         max_tokens: int = 1024,
         temperature: float = 0.7,
+        *,
+        messages: Optional[List[Dict[str, str]]] = None,
     ) -> Result[InferenceResult, Exception]:
-        """Asynchronously generates text from Ollama."""
+        """Asynchronously generates text from Ollama using native chat templating."""
         start_time = time.monotonic()
         try:
             client = self._get_client()
@@ -91,19 +93,32 @@ class OllamaEngine:
             if stop:
                 options["stop"] = stop
 
-            response = await client.generate(
-                model=self._model_name,
-                prompt=prompt,
-                # Reasoning-only output is not a user-visible assistant answer. Small
-                # reasoning models can otherwise consume the entire token budget in
-                # the hidden `thinking` field and return an empty `response`.
-                think=False,
-                options=options,
-            )
+            if messages is not None:
+                response = await client.chat(
+                    model=self._model_name,
+                    messages=list(messages),
+                    # Reasoning-only output is not a user-visible assistant answer. Small
+                    # reasoning models can otherwise consume the entire token budget in
+                    # the hidden `thinking` field and return an empty `response`.
+                    think=False,
+                    options=options,
+                )
+                message = response.get("message", {})
+                text = (
+                    message.get("content", "")
+                    if isinstance(message, dict)
+                    else response.get("response", "")
+                )
+            else:
+                response = await client.generate(
+                    model=self._model_name,
+                    prompt=prompt,
+                    think=False,
+                    options=options,
+                )
+                text = response.get("response", "")
             duration = time.monotonic() - start_time
             self._is_loaded = True
-
-            text = response.get("response", "")
             eval_count = response.get("eval_count", 0)
             prompt_eval_count = response.get("prompt_eval_count", 0)
             tps = eval_count / duration if duration > 0 else 0.0

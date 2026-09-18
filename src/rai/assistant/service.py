@@ -113,6 +113,7 @@ class AssistantService:
         )
         self.profile_scope = profile_scope
         self._state = LifecycleState.CREATED
+        self._last_candidate: AssistantCandidate | None = None
         self._turn_locks: dict[str, asyncio.Lock] = {}
         self._turn_lock_references: dict[str, int] = {}
         self._turn_locks_guard = asyncio.Lock()
@@ -710,6 +711,7 @@ class AssistantService:
         turn_query = MemoryQueryResolver.resolve(
             turn.text, profile_scope=self.profile_scope
         )
+        self._last_candidate = None
         turn_domain = next(
             (domain for domain in turn_query.domain_scopes if domain != "global"),
             "global",
@@ -856,6 +858,7 @@ class AssistantService:
                     "reason": "memory_evidence_required_but_unavailable",
                 },
             )
+            self._last_candidate = candidate
             latency_ms = 0.0
         else:
             start_time = time.perf_counter()
@@ -870,6 +873,7 @@ class AssistantService:
                     latency_ms=latency_ms,
                 )
             candidate = backend_res.unwrap()
+            self._last_candidate = candidate
         if not isinstance(candidate, AssistantCandidate):
             error = make_assistant_failure(
                 code="INVALID_OUTPUT",

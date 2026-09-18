@@ -49,9 +49,10 @@ class _FakeLocalEngine:
         return Success(None)
 
     async def generate(
-        self, prompt: str, **_kwargs: Any  # noqa: ANN401
+        self, prompt: str = "", messages: Any = None, **_kwargs: Any  # noqa: ANN401
     ) -> Result[InferenceResult, Exception]:
         self.prompt = prompt
+        self.messages = messages
         return Success(
             InferenceResult(
                 text="Zapamiętałem Guile.",
@@ -312,7 +313,11 @@ async def test_local_assistant_backend_text_completion_and_bypassing_chat_templa
     assert "Guile" in cand.text
     assert cand.text.startswith("Zapamiętałem:")
     assert len(cand.admitted_memory_ids) == 1
-    assert "Użytkownik:" in engine.prompt
+    assert engine.messages is not None
+    assert any(
+        m["role"] == "user" and "Guile" in m["content"] for m in engine.messages
+    )
+    assert "<|im_start|>" in engine.prompt
 
     # Streaming test
     turn_stream = ConversationTurn(

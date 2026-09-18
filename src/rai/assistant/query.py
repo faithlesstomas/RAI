@@ -16,7 +16,9 @@ _TOPIC_KEYWORDS: dict[str, tuple[str, ...]] = {
     ),
     "user.identity.age": (
         "wiek",
-        "lat",
+        "mam lat",
+        "ile mam lat",
+        "mój wiek",
         "old",
         "age",
     ),
@@ -82,7 +84,9 @@ _DOMAIN_MARKERS: dict[str, tuple[str, ...]] = {
         "nazywam",
         "mieszkam",
         "wiek",
-        "lat",
+        "mam lat",
+        "ile mam lat",
+        "mój wiek",
         "lubię",
         "wolę",
         "preferuję",
@@ -118,8 +122,7 @@ _DOMAIN_MARKERS: dict[str, tuple[str, ...]] = {
     "system": (
         "system",
         "linux",
-        "komputer",
-        "komputerze",
+        "system operacyjny",
         "runtime",
         "daemon",
         "service",
@@ -253,20 +256,16 @@ class MemoryQueryResolver:
         padded_normalized = f" {normalized} "
         domains = [GLOBAL_DOMAIN_SCOPE]
         named_project = _NAMED_PROJECT_PATTERN.search(text)
-        named_scopes = {
-            "project": (
-                f"project:{_normalized_text(named_project.group(1))}"
-                if named_project is not None
-                else None
-            ),
-            "system": "system:rai" if re.search(r"\bRAI\b", text) else None,
-        }
+        if named_project is not None:
+            domains.append(f"project:{_normalized_text(named_project.group(1))}")
+        if re.search(r"\bRAI\b", text):
+            domains.append("system:rai")
         for domain, markers in _DOMAIN_MARKERS.items():
             if any(
                 f" {_normalized_text(marker)} " in padded_normalized
                 for marker in markers
             ):
-                domains.append(named_scopes.get(domain) or domain)
+                domains.append(domain)
 
         restrictive_domains = tuple(
             domain

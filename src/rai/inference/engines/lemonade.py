@@ -9,7 +9,7 @@ import json
 import logging
 import re
 import time
-from typing import Any, List, Optional
+from typing import Any, Dict, List, Optional
 
 import httpx
 from returns.result import Failure, Result, Success
@@ -130,23 +130,30 @@ class LemonadeEngine(LocalTextEngine):
 
     async def generate(
         self,
-        prompt: str,
+        prompt: str = "",
         stop: Optional[List[str]] = None,
         max_tokens: int = 1024,
         temperature: float = 0.7,
+        *,
+        messages: Optional[List[Dict[str, str]]] = None,
     ) -> Result[InferenceResult, Exception]:
         """Asynchronously generates text from Lemonade server."""
         start_time = time.monotonic()
         try:
             client = self._get_client()
-            messages = self._parse_prompt_to_messages(prompt)
+            if messages:
+                chat_messages = [dict(m) for m in messages]
+            elif prompt:
+                chat_messages = self._parse_prompt_to_messages(prompt)
+            else:
+                chat_messages = []
+
             # For models with reasoning tokens (like Qwen 3.5), close thinking phase immediately
             # with an assistant prefix so the model does not exhaust output token budget inside <think>.
             is_thinking_model = any(
                 keyword in self._model_name.lower()
                 for keyword in ("qwen3.5", "qwen-3.5", "deepseek", "r1")
             )
-            chat_messages = list(messages)
             if is_thinking_model:
                 chat_messages.append(
                     {"role": "assistant", "content": "<think>\n</think>\n", "prefix": True}

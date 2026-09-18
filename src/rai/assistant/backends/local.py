@@ -48,7 +48,7 @@ class LocalAssistantBackend:
         self.max_output_tokens = max_output_tokens
         self.temperature = temperature
         self.model_artifact_version = model_artifact_version
-        self.prompt_template_version = "rai-assistant-plain-text-v3"
+        self.prompt_template_version = "rai-assistant-messages-v4"
         self._state = LifecycleState.CREATED
         self.producer = ProducerIdentity(
             producer_id=f"local-assistant-{self.backend_name}",
@@ -106,57 +106,51 @@ class LocalAssistantBackend:
         self._state = LifecycleState.STOPPED
         return Success(self._state)
 
-    def _format_prompt(self, request: InferenceRequest) -> str:  # noqa: PLR0912
-        """Format an inspectable plain-text prompt bypassing chat template issues."""
+    def _format_messages(  # noqa: PLR0912, PLR0915
+        self, request: InferenceRequest
+    ) -> list[dict[str, str]]:
+        """Format clean structured messages using native role abstractions."""
         system_text = request.system_instruction or DEFAULT_SYSTEM_INSTRUCTION
-        lines = [
-            f"System: {system_text}",
-            "Use only relevant conversation and memory evidence below. Durable memory contains "
-            "user-stated claims or preferences, not verified world facts. If evidence is missing "
-            "or conflicting, say that you do not know. Never invent missing details.",
-            "",
-        ]
+        manifest = getattr(request.context, "manifest", None)
+        evidence_required = getattr(manifest, "evidence_required", False)
 
+        evidence_lines: list[str] = []
         durable_memories = request.context.content.get("durable_memories", [])
         if isinstance(durable_memories, (list, tuple)) and durable_memories:
-            lines.append(
+            evidence_lines.append(
                 "Trwała pamięć grafowa (twierdzenia lub preferencje podane przez użytkownika):"
             )
             for mem in durable_memories:
                 if isinstance(mem, dict):
-                    lines.append(f"- {self._format_memory(mem)}")
-            lines.append("")
+                    evidence_lines.append(f"- {self._format_memory(mem)}")
 
         episodic_evidence = request.context.content.get("episodic_evidence", [])
         if isinstance(episodic_evidence, (list, tuple)) and episodic_evidence:
-            lines.append(
+            evidence_lines.append(
                 "Wcześniejsze wypowiedzi użytkownika (materiał źródłowy, niezweryfikowane twierdzenia):"
             )
             for item in episodic_evidence:
                 if isinstance(item, dict):
                     timestamp = str(item.get("timestamp", "unknown time"))
                     text = str(item.get("text", ""))
-                    lines.append(f"- [{timestamp}] {text}")
-            lines.append("")
+                    evidence_lines.append(f"- [{timestamp}] {text}")
 
         grounded_summaries = request.context.content.get("grounded_summaries", [])
         if isinstance(grounded_summaries, (list, tuple)) and grounded_summaries:
-            lines.append(
+            evidence_lines.append(
                 "Zwięzłe projekcje pamięci (użyj tylko treści popartej wskazanymi źródłami):"
             )
             for item in grounded_summaries:
-                if not isinstance(item, dict):
-                    continue
-                content = item.get("content", {})
-                if isinstance(content, dict):
-                    summary = str(content.get("summary", ""))
-                    source_ids = content.get("source_memory_ids", ())
-                    lines.append(f"- {summary} [źródła: {source_ids}]")
-            lines.append("")
+                if isinstance(item, dict):
+                    content = item.get("content", {})
+                    if isinstance(content, dict):
+                        summary = str(content.get("summary", ""))
+                        source_ids = content.get("source_memory_ids", ())
+                        evidence_lines.append(f"- {summary} [źródła: {source_ids}]")
 
         external_evidence = request.context.content.get("external_evidence", [])
         if isinstance(external_evidence, (list, tuple)) and external_evidence:
-            lines.append(
+            evidence_lines.append(
                 "Zatwierdzone lokalne źródła zewnętrzne (obserwacje, nie twierdzenia użytkownika):"
             )
             for item in external_evidence:
@@ -164,26 +158,59 @@ class LocalAssistantBackend:
                     source_type = str(item.get("source_type", "local_source"))
                     timestamp = str(item.get("timestamp", "unknown time"))
                     content = item.get("content", {})
-                    lines.append(f"- [{source_type}; {timestamp}] {content}")
-            lines.append("")
+                    evidence_lines.append(f"- [{source_type}; {timestamp}] {content}")
+
+        system_parts = [system_text]
+        if evidence_lines:
+            system_parts.append("\n" + "\n".join(evidence_lines))
+
+        if evidence_required:
+            system_parts.append(
+                "\nUse only relevant conversation and memory evidence above. Durable memory contains "
+                "user-stated claims or preferences, not verified world facts. If evidence is missing "
+                "or conflicting, say that you do not know. Never invent missing details."
+            )
+        else:
+            system_parts.append(
+                "\nProwadź naturalną, pomocną i uprzejmą rozmowę. Odpowiadaj zwięźle i rzeczowo. "
+                "Jeśli w kontekście znajdują się preferencje lub fakty podane przez użytkownika, "
+                "uwzględniaj je w odpowiedzi."
+            )
+
+        messages: list[dict[str, str]] = [
+            {"role": "system", "content": "\n".join(system_parts).strip()}
+        ]
 
         recent_turns = request.context.content.get("recent_turns", [])
         if isinstance(recent_turns, (list, tuple)) and recent_turns:
-            lines.append("Historia bieżącej rozmowy:")
             for turn in recent_turns:
                 if isinstance(turn, dict):
-                    role = str(turn.get("role", "")).capitalize()
-                    text = str(turn.get("text", ""))
-                    lines.append(f"{role}: {text}")
-            lines.append("")
+                    role = str(turn.get("role", "user")).lower()
+                    text = str(turn.get("text", "")).strip()
+                    if role not in ("user", "assistant", "system"):
+                        role = "user"
+                    if text:
+                        messages.append({"role": role, "content": text})
 
         current_turn = request.context.content.get("current_turn", {})
         user_text = (
-            str(current_turn.get("text", "")) if isinstance(current_turn, dict) else ""
+            str(current_turn.get("text", "")).strip()
+            if isinstance(current_turn, dict)
+            else ""
         )
-        lines.append(f"Użytkownik: {user_text}")
-        lines.append("Asystent:")
-        return "\n".join(lines)
+        if user_text:
+            messages.append({"role": "user", "content": user_text})
+
+        return messages
+
+    def _format_prompt(self, request: InferenceRequest) -> str:
+        """Render structured messages into ChatML plain-text fallback format."""
+        messages = self._format_messages(request)
+        rendered: list[str] = []
+        for msg in messages:
+            rendered.append(f"<|im_start|>{msg['role']}\n{msg['content']}<|im_end|>")
+        rendered.append("<|im_start|>assistant\n")
+        return "\n".join(rendered)
 
     @staticmethod
     def _format_memory(memory: dict[object, object]) -> str:
@@ -253,6 +280,7 @@ class LocalAssistantBackend:
                 )
             )
 
+        messages = self._format_messages(request)
         prompt = self._format_prompt(request)
         current_turn = request.context.content.get("current_turn", {})
         user_text = (
@@ -288,9 +316,18 @@ class LocalAssistantBackend:
         try:
             gen_res = await self.engine.generate(
                 prompt=prompt,
-                stop=["\nUżytkownik:", "\nSystem:", "\nAsystent:"],
+                stop=[
+                    "<|im_end|>",
+                    "<|im_start|>",
+                    "<|endoftext|>",
+                    "\nUżytkownik:",
+                    "\nUser:",
+                    "\nSystem:",
+                    "\nAsystent:",
+                ],
                 max_tokens=self.max_output_tokens,
                 temperature=self.temperature,
+                messages=messages,
             )
             if isinstance(gen_res, Failure):
                 return Failure(

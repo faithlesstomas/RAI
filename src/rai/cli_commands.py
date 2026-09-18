@@ -529,6 +529,68 @@ def _run_assistant_benchmark(  # noqa: PLR0913
     asyncio.run(_run())
 
 
+def _run_assistant_dialog_benchmark(  # noqa: PLR0913
+    backend: str,
+    model: str | None,
+    profile: str | None,
+    corpus: Path,
+    output: Path,
+    max_output_tokens: int,
+) -> None:
+    """Run the multi-turn conversational benchmark and persist its report."""
+    from returns.result import Success  # noqa: PLC0415
+
+    from .assistant.conversational_evaluation import (  # noqa: PLC0415
+        run_conversational_benchmark,
+    )
+    from .assistant.runtime import (  # noqa: PLC0415
+        build_assistant_backend,
+        resolve_assistant_config,
+    )
+
+    try:
+        config = _assistant_config(backend, model, profile)
+        assistant_config = dict(config.get("assistant", {}))
+        assistant_config["max_output_tokens"] = max_output_tokens
+        config["assistant"] = assistant_config
+        runtime = resolve_assistant_config(config)
+        model_backend = build_assistant_backend(runtime)
+    except ValueError as exc:
+        raise click.ClickException(str(exc)) from exc
+
+    async def _run() -> None:
+        result = await run_conversational_benchmark(
+            model_backend,
+            corpus_path=corpus,
+            output_path=output,
+        )
+        if not isinstance(result, Success):
+            failure = result.failure()
+            raise click.ClickException(f"[{failure.code}] {failure.message}")
+        report = result.unwrap()
+        click.echo(
+            json.dumps(
+                {
+                    "output": str(output),
+                    "backend": report.backend_name,
+                    "model": report.model_name,
+                    "corpus": report.corpus_version,
+                    "scenarios": report.scenario_count,
+                    "total_turns": report.total_turns,
+                    "mean_coherence": report.mean_coherence,
+                    "parroting_rate": report.parroting_rate,
+                    "repetition_rate": report.repetition_rate,
+                    "role_confusion_rate": report.role_confusion_rate,
+                    "mean_latency_ms": report.mean_latency_ms,
+                },
+                indent=2,
+                ensure_ascii=False,
+            )
+        )
+
+    asyncio.run(_run())
+
+
 def register_assistant_commands(root: click.Group) -> None:
     """Attach assistant commands to the root CLI."""
 
@@ -705,6 +767,53 @@ def register_assistant_commands(root: click.Group) -> None:
             max_output_tokens,
             max_latency_seconds,
             trials,
+        )
+
+    @assistant.command(name="benchmark-dialog")
+    @click.option(
+        "--backend",
+        type=click.Choice(["llama", "ollama", "lemonade", "deterministic"]),
+        default="deterministic",
+        show_default=True,
+    )
+    @click.option(
+        "--model", default=None, help="GGUF path or local Ollama/Lemonade model name."
+    )
+    @click.option("--profile", default=None, help="Assistant profile configuration.")
+    @click.option(
+        "--corpus",
+        type=click.Path(path_type=Path, exists=True, dir_okay=False),
+        default=Path("tests/fixtures/assistant/v1/conversational-dialog.corpus.json"),
+        show_default=True,
+    )
+    @click.option(
+        "--output",
+        type=click.Path(path_type=Path, dir_okay=False),
+        default=Path("assistant-dialog-benchmark.json"),
+        show_default=True,
+    )
+    @click.option(
+        "--max-output-tokens",
+        type=click.IntRange(min=1),
+        default=256,
+        show_default=True,
+    )
+    def benchmark_dialog_command(  # noqa: PLR0913
+        backend: str,
+        model: str | None,
+        profile: str | None,
+        corpus: Path,
+        output: Path,
+        max_output_tokens: int,
+    ) -> None:
+        """Run the multi-turn conversational benchmark and verify dialog coherence."""
+        _run_assistant_dialog_benchmark(
+            backend,
+            model,
+            profile,
+            corpus,
+            output,
+            max_output_tokens,
         )
 
     @assistant.command(name="sessions")

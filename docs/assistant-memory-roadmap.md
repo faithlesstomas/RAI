@@ -223,29 +223,33 @@ Exit evidence:
 
 ### M7 — scope, personalization, conversational templating and consolidation
 
-Status: `[/]`. Profile, domain and purpose isolation is enforced for claims,
+Status: `[x]` for native chat templating and conversational evaluation. Profile, domain and purpose isolation is enforced for claims,
 raw-turn retrieval and recent context, with hierarchical domain scope matching
 (`global` for intentional cross-domain evidence, fail-closed `unknown`,
 parent/child project matching, and non-restrictive facets). Manifests expose the
 selected scope. Negative tests cover
 unrelated-domain and wrong-purpose retrieval. Broader leakage/sycophancy
-evaluation and persistent consolidation remain open. The M4 grounded-summary
+evaluation and persistent consolidation remain open for M8. The M4 grounded-summary
 baseline is query-time and rebuildable: deleting its source turn removes the
 claim and therefore makes the projection disappear.
 
-Interactive evaluation exposed an architectural gap between single-turn retrieval
-metrics and conversational user experience:
-1. **Chat templating**: monolithic plain-text prompt formatting (`_format_prompt`)
-   without model-native control tokens (ChatML, Jinja) triggers prompt echoing
-   ("parrot" behavior) and role confusion on low-level completion endpoints like
-   Lemonade (`/api/v1/completions`). Backends must pass structured `messages`
-   to utilize model-native chat templates.
-2. **System prompt calibration**: the prompt must distinguish strict closed-book
-   memory tests from natural conversational desktop assistance.
-3. **Multi-turn evaluation**: the M4 benchmark evaluates isolated single-turn QA
-   masked by deterministic grounding overrides (`grounded_memory_response`). A
-   multi-turn conversational benchmark with raw-model scoring is required to
-   measure true dialog coherence and memory retention across conversational turns.
+Interactive evaluation and conversational chat templating implementation:
+1. **Chat templating**: Local inference protocols and engines (`OllamaEngine`,
+   `LemonadeEngine`, `LlamaCppEngine`) natively accept structured `messages`
+   and route through chat completion endpoints (`client.chat` in Ollama,
+   `/api/v1/chat/completions` in Lemonade, `create_chat_completion` in LlamaCpp)
+   using model-native templates (ChatML / Jinja). This completely eliminates prompt echoing
+   ("parrot" echoing) and repetition loops.
+2. **System prompt calibration**: The prompt distinguishes strict closed-book
+   memory tests (`evidence_required=True`) from open conversational desktop
+   assistance (`evidence_required=False`), preventing unwarranted abstentions
+   ("nie wiem") during ordinary conversation.
+3. **Multi-turn evaluation**: A versioned multi-turn conversational benchmark
+   (`tests/fixtures/assistant/v1/conversational-dialog.corpus.json`) and CLI
+   command (`rai assistant benchmark-dialog`) evaluates raw model generation
+   without deterministic grounding masks. Baseline run on Lemonade (`Qwen3.5-4B-GGUF`)
+   achieves 100% coherence with 0.0% parroting, 0.0% repetition, and 0.0% role confusion
+   (`docs/evaluation/assistant-m7-dialog-qwen3.5-4b-lemonade.json`).
 
 Partition durable memory by user, profile, domain and purpose. Retrieve personal
 context only when the request and policy require it. Measure cross-domain
