@@ -110,7 +110,7 @@ extension point for a future versioned RAI editor-event adapter."
   event
   buffer-name
   file-name
-  major-mode
+  major-mode-name
   project-root
   point
   line
@@ -164,7 +164,7 @@ This is a deterministic privacy gate; callers should fail closed."
             :buffer-name (buffer-name)
             :file-name (and buffer-file-name
                             (abbreviate-file-name buffer-file-name))
-            :major-mode (symbol-name major-mode)
+            :major-mode-name (symbol-name major-mode)
             :project-root (when-let ((root (rai-context--project-root)))
                             (abbreviate-file-name root))
             :point (point)
@@ -222,7 +222,7 @@ and it does not transmit events by default."
     ("event" . ,(rai-context-snapshot-event snapshot))
     ("buffer_name" . ,(rai-context-snapshot-buffer-name snapshot))
     ("file_name" . ,(rai-context-snapshot-file-name snapshot))
-    ("major_mode" . ,(rai-context-snapshot-major-mode snapshot))
+    ("major_mode" . ,(rai-context-snapshot-major-mode-name snapshot))
     ("project_root" . ,(rai-context-snapshot-project-root snapshot))
     ("point" . ,(rai-context-snapshot-point snapshot))
     ("line" . ,(rai-context-snapshot-line snapshot))

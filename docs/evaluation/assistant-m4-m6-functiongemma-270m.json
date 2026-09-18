@@ -1,0 +1,2128 @@
+{
+  "artifact_version": "rai-assistant-retrieval-benchmark-v1",
+  "run": {
+    "corpus_version": "rai-assistant-retrieval-floor-v1",
+    "generated_at": "2026-09-16T17:50:17.446975Z",
+    "profile_scope": "default",
+    "retrieval_limit": 5,
+    "context_character_budget": 8000,
+    "measurements": [
+      {
+        "case_id": "personal-name",
+        "channel": "raw_turns_bm25",
+        "retrieved_ids": [
+          "corpus-turn-name"
+        ],
+        "artifact_ids": [
+          "corpus-turn-name"
+        ],
+        "relevant_ids": [
+          "corpus-turn-name"
+        ],
+        "recall": 1.0,
+        "precision": 1.0,
+        "abstained": false,
+        "latency_ms": 0.9003329905681312,
+        "context_characters": 65,
+        "answer_correct": false,
+        "answer_utilization_evaluated": true,
+        "answer_evaluation_failed": false,
+        "answer_failure_code": null,
+        "answer_text": "Nie mam jeszcze zapisanego Twojego imienia.",
+        "answer_abstained": false,
+        "answer_latency_ms": 339.26795003935695,
+        "tokens_in": 141,
+        "tokens_out": 12,
+        "backend_name": "llama",
+        "model_name": "models/google_functiongemma-270m-it-Q4_K_M.gguf",
+        "judge_version": "deterministic-phrase-and-abstention-v1",
+        "provider_cost": null,
+        "energy_joules": 6.617186804126424,
+        "energy_source": "linux-hwmon-power",
+        "energy_scope": "unattributed:amdgpu:PPT",
+        "energy_sensors": [
+          "/sys/class/hwmon/hwmon12/power1_average"
+        ],
+        "retrieval_failed": false,
+        "failure_code": null
+      },
+      {
+        "case_id": "personal-name",
+        "channel": "claims_bm25",
+        "retrieved_ids": [
+          "corpus-memory-name"
+        ],
+        "artifact_ids": [
+          "corpus-memory-name"
+        ],
+        "relevant_ids": [
+          "corpus-memory-name"
+        ],
+        "recall": 1.0,
+        "precision": 1.0,
+        "abstained": false,
+        "latency_ms": 1.1129420017823577,
+        "context_characters": 137,
+        "answer_correct": false,
+        "answer_utilization_evaluated": true,
+        "answer_evaluation_failed": false,
+        "answer_failure_code": null,
+        "answer_text": "Nie mam jeszcze zapisanego Twojego imienia.",
+        "answer_abstained": false,
+        "answer_latency_ms": 142.87668897304684,
+        "tokens_in": 168,
+        "tokens_out": 5,
+        "backend_name": "llama",
+        "model_name": "models/google_functiongemma-270m-it-Q4_K_M.gguf",
+        "judge_version": "deterministic-phrase-and-abstention-v1",
+        "provider_cost": null,
+        "energy_joules": 3.2180527020835434,
+        "energy_source": "linux-hwmon-power",
+        "energy_scope": "unattributed:amdgpu:PPT",
+        "energy_sensors": [
+          "/sys/class/hwmon/hwmon12/power1_average"
+        ],
+        "retrieval_failed": false,
+        "failure_code": null
+      },
+      {
+        "case_id": "personal-name",
+        "channel": "summaries_grounded",
+        "retrieved_ids": [
+          "corpus-memory-name"
+        ],
+        "artifact_ids": [
+          "grounded-summary:5f33dfd121d41160d0b79adc"
+        ],
+        "relevant_ids": [
+          "corpus-memory-name"
+        ],
+        "recall": 1.0,
+        "precision": 1.0,
+        "abstained": false,
+        "latency_ms": 1.6685299924574792,
+        "context_characters": 692,
+        "answer_correct": false,
+        "answer_utilization_evaluated": true,
+        "answer_evaluation_failed": false,
+        "answer_failure_code": null,
+        "answer_text": "Nie mam jeszcze zapisanego Twojego imienia.",
+        "answer_abstained": false,
+        "answer_latency_ms": 117.2846169793047,
+        "tokens_in": 157,
+        "tokens_out": 10,
+        "backend_name": "llama",
+        "model_name": "models/google_functiongemma-270m-it-Q4_K_M.gguf",
+        "judge_version": "deterministic-phrase-and-abstention-v1",
+        "provider_cost": null,
+        "energy_joules": 2.8125851932307704,
+        "energy_source": "linux-hwmon-power",
+        "energy_scope": "unattributed:amdgpu:PPT",
+        "energy_sensors": [
+          "/sys/class/hwmon/hwmon12/power1_average"
+        ],
+        "retrieval_failed": false,
+        "failure_code": null
+      },
+      {
+        "case_id": "personal-name",
+        "channel": "dense_local",
+        "retrieved_ids": [
+          "corpus-memory-name",
+          "corpus-memory-city-new"
+        ],
+        "artifact_ids": [
+          "corpus-memory-name",
+          "corpus-memory-city-new"
+        ],
+        "relevant_ids": [
+          "corpus-memory-name"
+        ],
+        "recall": 1.0,
+        "precision": 0.5,
+        "abstained": false,
+        "latency_ms": 1.6248790198005736,
+        "context_characters": 321,
+        "answer_correct": false,
+        "answer_utilization_evaluated": true,
+        "answer_evaluation_failed": false,
+        "answer_failure_code": null,
+        "answer_text": "Nie mam jeszcze zapisanego Twojego imienia.",
+        "answer_abstained": false,
+        "answer_latency_ms": 225.42563203023747,
+        "tokens_in": 239,
+        "tokens_out": 17,
+        "backend_name": "llama",
+        "model_name": "models/google_functiongemma-270m-it-Q4_K_M.gguf",
+        "judge_version": "deterministic-phrase-and-abstention-v1",
+        "provider_cost": null,
+        "energy_joules": 5.858993783265149,
+        "energy_source": "linux-hwmon-power",
+        "energy_scope": "unattributed:amdgpu:PPT",
+        "energy_sensors": [
+          "/sys/class/hwmon/hwmon12/power1_average"
+        ],
+        "retrieval_failed": false,
+        "failure_code": null
+      },
+      {
+        "case_id": "personal-name",
+        "channel": "rrf_fused",
+        "retrieved_ids": [
+          "corpus-memory-name",
+          "corpus-memory-city-new"
+        ],
+        "artifact_ids": [
+          "corpus-memory-name",
+          "corpus-memory-city-new"
+        ],
+        "relevant_ids": [
+          "corpus-memory-name"
+        ],
+        "recall": 1.0,
+        "precision": 0.5,
+        "abstained": false,
+        "latency_ms": 2.677678072359413,
+        "context_characters": 321,
+        "answer_correct": false,
+        "answer_utilization_evaluated": true,
+        "answer_evaluation_failed": false,
+        "answer_failure_code": null,
+        "answer_text": "Nie mam jeszcze zapisanego Twojego imienia.",
+        "answer_abstained": false,
+        "answer_latency_ms": 75.50415804143995,
+        "tokens_in": 239,
+        "tokens_out": 11,
+        "backend_name": "llama",
+        "model_name": "models/google_functiongemma-270m-it-Q4_K_M.gguf",
+        "judge_version": "deterministic-phrase-and-abstention-v1",
+        "provider_cost": null,
+        "energy_joules": 2.0930960645175363,
+        "energy_source": "linux-hwmon-power",
+        "energy_scope": "unattributed:amdgpu:PPT",
+        "energy_sensors": [
+          "/sys/class/hwmon/hwmon12/power1_average"
+        ],
+        "retrieval_failed": false,
+        "failure_code": null
+      },
+      {
+        "case_id": "personal-name",
+        "channel": "graph_bounded",
+        "retrieved_ids": [
+          "corpus-memory-name",
+          "corpus-memory-city-new"
+        ],
+        "artifact_ids": [
+          "corpus-memory-name",
+          "corpus-memory-city-new"
+        ],
+        "relevant_ids": [
+          "corpus-memory-name"
+        ],
+        "recall": 1.0,
+        "precision": 0.5,
+        "abstained": false,
+        "latency_ms": 3.476402082014829,
+        "context_characters": 321,
+        "answer_correct": false,
+        "answer_utilization_evaluated": true,
+        "answer_evaluation_failed": false,
+        "answer_failure_code": null,
+        "answer_text": "Nie mam jeszcze zapisanego Twojego imienia.",
+        "answer_abstained": false,
+        "answer_latency_ms": 69.7182469884865,
+        "tokens_in": 239,
+        "tokens_out": 11,
+        "backend_name": "llama",
+        "model_name": "models/google_functiongemma-270m-it-Q4_K_M.gguf",
+        "judge_version": "deterministic-phrase-and-abstention-v1",
+        "provider_cost": null,
+        "energy_joules": 1.9699236233909323,
+        "energy_source": "linux-hwmon-power",
+        "energy_scope": "unattributed:amdgpu:PPT",
+        "energy_sensors": [
+          "/sys/class/hwmon/hwmon12/power1_average"
+        ],
+        "retrieval_failed": false,
+        "failure_code": null
+      },
+      {
+        "case_id": "project-goal",
+        "channel": "raw_turns_bm25",
+        "retrieved_ids": [
+          "corpus-turn-project"
+        ],
+        "artifact_ids": [
+          "corpus-turn-project"
+        ],
+        "relevant_ids": [
+          "corpus-turn-project"
+        ],
+        "recall": 1.0,
+        "precision": 1.0,
+        "abstained": false,
+        "latency_ms": 1.1392299784347415,
+        "context_characters": 65,
+        "answer_correct": false,
+        "answer_utilization_evaluated": true,
+        "answer_evaluation_failed": false,
+        "answer_failure_code": null,
+        "answer_text": "Zbudowanie lokalnej pamięci asystenta.",
+        "answer_abstained": false,
+        "answer_latency_ms": 138.72165797511116,
+        "tokens_in": 137,
+        "tokens_out": 17,
+        "backend_name": "llama",
+        "model_name": "models/google_functiongemma-270m-it-Q4_K_M.gguf",
+        "judge_version": "deterministic-phrase-and-abstention-v1",
+        "provider_cost": null,
+        "energy_joules": 4.058684973722993,
+        "energy_source": "linux-hwmon-power",
+        "energy_scope": "unattributed:amdgpu:PPT",
+        "energy_sensors": [
+          "/sys/class/hwmon/hwmon12/power1_average"
+        ],
+        "retrieval_failed": false,
+        "failure_code": null
+      },
+      {
+        "case_id": "project-goal",
+        "channel": "claims_bm25",
+        "retrieved_ids": [
+          "corpus-memory-project",
+          "corpus-memory-commitment"
+        ],
+        "artifact_ids": [
+          "corpus-memory-project",
+          "corpus-memory-commitment"
+        ],
+        "relevant_ids": [
+          "corpus-memory-project"
+        ],
+        "recall": 1.0,
+        "precision": 0.5,
+        "abstained": false,
+        "latency_ms": 1.3206000439822674,
+        "context_characters": 452,
+        "answer_correct": true,
+        "answer_utilization_evaluated": true,
+        "answer_evaluation_failed": false,
+        "answer_failure_code": null,
+        "answer_text": "Według zapisanej informacji goal: lokalna pamięć asystenta.",
+        "answer_abstained": false,
+        "answer_latency_ms": 375.64872100483626,
+        "tokens_in": 273,
+        "tokens_out": 34,
+        "backend_name": "llama",
+        "model_name": "models/google_functiongemma-270m-it-Q4_K_M.gguf",
+        "judge_version": "deterministic-phrase-and-abstention-v1",
+        "provider_cost": null,
+        "energy_joules": 11.669704674929351,
+        "energy_source": "linux-hwmon-power",
+        "energy_scope": "unattributed:amdgpu:PPT",
+        "energy_sensors": [
+          "/sys/class/hwmon/hwmon12/power1_average"
+        ],
+        "retrieval_failed": false,
+        "failure_code": null
+      },
+      {
+        "case_id": "project-goal",
+        "channel": "summaries_grounded",
+        "retrieved_ids": [
+          "corpus-memory-project",
+          "corpus-memory-commitment"
+        ],
+        "artifact_ids": [
+          "grounded-summary:b7be5c7609a4817c922bece7"
+        ],
+        "relevant_ids": [
+          "corpus-memory-project"
+        ],
+        "recall": 1.0,
+        "precision": 0.5,
+        "abstained": false,
+        "latency_ms": 2.5907650124281645,
+        "context_characters": 1389,
+        "answer_correct": false,
+        "answer_utilization_evaluated": true,
+        "answer_evaluation_failed": false,
+        "answer_failure_code": null,
+        "answer_text": "Jaki jest cel projektu Aurora?",
+        "answer_abstained": false,
+        "answer_latency_ms": 171.8053719960153,
+        "tokens_in": 219,
+        "tokens_out": 7,
+        "backend_name": "llama",
+        "model_name": "models/google_functiongemma-270m-it-Q4_K_M.gguf",
+        "judge_version": "deterministic-phrase-and-abstention-v1",
+        "provider_cost": null,
+        "energy_joules": 5.65541161850607,
+        "energy_source": "linux-hwmon-power",
+        "energy_scope": "unattributed:amdgpu:PPT",
+        "energy_sensors": [
+          "/sys/class/hwmon/hwmon12/power1_average"
+        ],
+        "retrieval_failed": false,
+        "failure_code": null
+      },
+      {
+        "case_id": "project-goal",
+        "channel": "dense_local",
+        "retrieved_ids": [
+          "corpus-memory-project",
+          "corpus-memory-commitment"
+        ],
+        "artifact_ids": [
+          "corpus-memory-project",
+          "corpus-memory-commitment"
+        ],
+        "relevant_ids": [
+          "corpus-memory-project"
+        ],
+        "recall": 1.0,
+        "precision": 0.5,
+        "abstained": false,
+        "latency_ms": 1.5909450012259185,
+        "context_characters": 452,
+        "answer_correct": true,
+        "answer_utilization_evaluated": true,
+        "answer_evaluation_failed": false,
+        "answer_failure_code": null,
+        "answer_text": "Według zapisanej informacji goal: lokalna pamięć asystenta.",
+        "answer_abstained": false,
+        "answer_latency_ms": 442.20458599738777,
+        "tokens_in": 273,
+        "tokens_out": 47,
+        "backend_name": "llama",
+        "model_name": "models/google_functiongemma-270m-it-Q4_K_M.gguf",
+        "judge_version": "deterministic-phrase-and-abstention-v1",
+        "provider_cost": null,
+        "energy_joules": 15.072554926017272,
+        "energy_source": "linux-hwmon-power",
+        "energy_scope": "unattributed:amdgpu:PPT",
+        "energy_sensors": [
+          "/sys/class/hwmon/hwmon12/power1_average"
+        ],
+        "retrieval_failed": false,
+        "failure_code": null
+      },
+      {
+        "case_id": "project-goal",
+        "channel": "rrf_fused",
+        "retrieved_ids": [
+          "corpus-memory-project",
+          "corpus-memory-commitment"
+        ],
+        "artifact_ids": [
+          "corpus-memory-project",
+          "corpus-memory-commitment"
+        ],
+        "relevant_ids": [
+          "corpus-memory-project"
+        ],
+        "recall": 1.0,
+        "precision": 0.5,
+        "abstained": false,
+        "latency_ms": 2.7130820089951158,
+        "context_characters": 452,
+        "answer_correct": true,
+        "answer_utilization_evaluated": true,
+        "answer_evaluation_failed": false,
+        "answer_failure_code": null,
+        "answer_text": "Według zapisanej informacji goal: lokalna pamięć asystenta.",
+        "answer_abstained": false,
+        "answer_latency_ms": 54.47267601266503,
+        "tokens_in": 273,
+        "tokens_out": 7,
+        "backend_name": "llama",
+        "model_name": "models/google_functiongemma-270m-it-Q4_K_M.gguf",
+        "judge_version": "deterministic-phrase-and-abstention-v1",
+        "provider_cost": null,
+        "energy_joules": 1.9118313571521428,
+        "energy_source": "linux-hwmon-power",
+        "energy_scope": "unattributed:amdgpu:PPT",
+        "energy_sensors": [
+          "/sys/class/hwmon/hwmon12/power1_average"
+        ],
+        "retrieval_failed": false,
+        "failure_code": null
+      },
+      {
+        "case_id": "project-goal",
+        "channel": "graph_bounded",
+        "retrieved_ids": [
+          "corpus-memory-project",
+          "corpus-memory-commitment"
+        ],
+        "artifact_ids": [
+          "corpus-memory-project",
+          "corpus-memory-commitment",
+          "corpus-relation-project-supports-commitment"
+        ],
+        "relevant_ids": [
+          "corpus-memory-project"
+        ],
+        "recall": 1.0,
+        "precision": 0.5,
+        "abstained": false,
+        "latency_ms": 3.4806470503099263,
+        "context_characters": 452,
+        "answer_correct": true,
+        "answer_utilization_evaluated": true,
+        "answer_evaluation_failed": false,
+        "answer_failure_code": null,
+        "answer_text": "Według zapisanej informacji goal: lokalna pamięć asystenta.",
+        "answer_abstained": false,
+        "answer_latency_ms": 53.432009008247405,
+        "tokens_in": 273,
+        "tokens_out": 7,
+        "backend_name": "llama",
+        "model_name": "models/google_functiongemma-270m-it-Q4_K_M.gguf",
+        "judge_version": "deterministic-phrase-and-abstention-v1",
+        "provider_cost": null,
+        "energy_joules": 1.878349818364484,
+        "energy_source": "linux-hwmon-power",
+        "energy_scope": "unattributed:amdgpu:PPT",
+        "energy_sensors": [
+          "/sys/class/hwmon/hwmon12/power1_average"
+        ],
+        "retrieval_failed": false,
+        "failure_code": null
+      },
+      {
+        "case_id": "system-state",
+        "channel": "raw_turns_bm25",
+        "retrieved_ids": [
+          "corpus-turn-system"
+        ],
+        "artifact_ids": [
+          "corpus-turn-system"
+        ],
+        "relevant_ids": [
+          "corpus-turn-system"
+        ],
+        "recall": 1.0,
+        "precision": 1.0,
+        "abstained": false,
+        "latency_ms": 1.2900319998152554,
+        "context_characters": 63,
+        "answer_correct": null,
+        "answer_utilization_evaluated": false,
+        "answer_evaluation_failed": true,
+        "answer_failure_code": "INVALID_OUTPUT",
+        "answer_text": null,
+        "answer_abstained": null,
+        "answer_latency_ms": null,
+        "tokens_in": null,
+        "tokens_out": null,
+        "backend_name": null,
+        "model_name": null,
+        "judge_version": null,
+        "provider_cost": null,
+        "energy_joules": null,
+        "energy_source": null,
+        "energy_scope": null,
+        "energy_sensors": [],
+        "retrieval_failed": false,
+        "failure_code": null
+      },
+      {
+        "case_id": "system-state",
+        "channel": "claims_bm25",
+        "retrieved_ids": [
+          "corpus-memory-system"
+        ],
+        "artifact_ids": [
+          "corpus-memory-system"
+        ],
+        "relevant_ids": [
+          "corpus-memory-system"
+        ],
+        "recall": 1.0,
+        "precision": 1.0,
+        "abstained": false,
+        "latency_ms": 1.5305529814213514,
+        "context_characters": 181,
+        "answer_correct": null,
+        "answer_utilization_evaluated": false,
+        "answer_evaluation_failed": true,
+        "answer_failure_code": "INVALID_OUTPUT",
+        "answer_text": null,
+        "answer_abstained": null,
+        "answer_latency_ms": null,
+        "tokens_in": null,
+        "tokens_out": null,
+        "backend_name": null,
+        "model_name": null,
+        "judge_version": null,
+        "provider_cost": null,
+        "energy_joules": null,
+        "energy_source": null,
+        "energy_scope": null,
+        "energy_sensors": [],
+        "retrieval_failed": false,
+        "failure_code": null
+      },
+      {
+        "case_id": "system-state",
+        "channel": "summaries_grounded",
+        "retrieved_ids": [
+          "corpus-memory-system"
+        ],
+        "artifact_ids": [
+          "grounded-summary:53b743a548b4848dc893ddfb"
+        ],
+        "relevant_ids": [
+          "corpus-memory-system"
+        ],
+        "recall": 1.0,
+        "precision": 1.0,
+        "abstained": false,
+        "latency_ms": 2.447797975037247,
+        "context_characters": 760,
+        "answer_correct": false,
+        "answer_utilization_evaluated": true,
+        "answer_evaluation_failed": false,
+        "answer_failure_code": null,
+        "answer_text": "Jaki jest domyślny profil RAI na moim komputerze?",
+        "answer_abstained": false,
+        "answer_latency_ms": 222.4270770093426,
+        "tokens_in": 171,
+        "tokens_out": 14,
+        "backend_name": "llama",
+        "model_name": "models/google_functiongemma-270m-it-Q4_K_M.gguf",
+        "judge_version": "deterministic-phrase-and-abstention-v1",
+        "provider_cost": null,
+        "energy_joules": 7.951240012701484,
+        "energy_source": "linux-hwmon-power",
+        "energy_scope": "unattributed:amdgpu:PPT",
+        "energy_sensors": [
+          "/sys/class/hwmon/hwmon12/power1_average"
+        ],
+        "retrieval_failed": false,
+        "failure_code": null
+      },
+      {
+        "case_id": "system-state",
+        "channel": "dense_local",
+        "retrieved_ids": [
+          "corpus-memory-system"
+        ],
+        "artifact_ids": [
+          "corpus-memory-system"
+        ],
+        "relevant_ids": [
+          "corpus-memory-system"
+        ],
+        "recall": 1.0,
+        "precision": 1.0,
+        "abstained": false,
+        "latency_ms": 1.3869249960407615,
+        "context_characters": 181,
+        "answer_correct": null,
+        "answer_utilization_evaluated": false,
+        "answer_evaluation_failed": true,
+        "answer_failure_code": "INVALID_OUTPUT",
+        "answer_text": null,
+        "answer_abstained": null,
+        "answer_latency_ms": null,
+        "tokens_in": null,
+        "tokens_out": null,
+        "backend_name": null,
+        "model_name": null,
+        "judge_version": null,
+        "provider_cost": null,
+        "energy_joules": null,
+        "energy_source": null,
+        "energy_scope": null,
+        "energy_sensors": [],
+        "retrieval_failed": false,
+        "failure_code": null
+      },
+      {
+        "case_id": "system-state",
+        "channel": "rrf_fused",
+        "retrieved_ids": [
+          "corpus-memory-system"
+        ],
+        "artifact_ids": [
+          "corpus-memory-system"
+        ],
+        "relevant_ids": [
+          "corpus-memory-system"
+        ],
+        "recall": 1.0,
+        "precision": 1.0,
+        "abstained": false,
+        "latency_ms": 2.535412961151451,
+        "context_characters": 181,
+        "answer_correct": null,
+        "answer_utilization_evaluated": false,
+        "answer_evaluation_failed": true,
+        "answer_failure_code": "INVALID_OUTPUT",
+        "answer_text": null,
+        "answer_abstained": null,
+        "answer_latency_ms": null,
+        "tokens_in": null,
+        "tokens_out": null,
+        "backend_name": null,
+        "model_name": null,
+        "judge_version": null,
+        "provider_cost": null,
+        "energy_joules": null,
+        "energy_source": null,
+        "energy_scope": null,
+        "energy_sensors": [],
+        "retrieval_failed": false,
+        "failure_code": null
+      },
+      {
+        "case_id": "system-state",
+        "channel": "graph_bounded",
+        "retrieved_ids": [
+          "corpus-memory-system"
+        ],
+        "artifact_ids": [
+          "corpus-memory-system"
+        ],
+        "relevant_ids": [
+          "corpus-memory-system"
+        ],
+        "recall": 1.0,
+        "precision": 1.0,
+        "abstained": false,
+        "latency_ms": 3.6670899717137218,
+        "context_characters": 181,
+        "answer_correct": null,
+        "answer_utilization_evaluated": false,
+        "answer_evaluation_failed": true,
+        "answer_failure_code": "INVALID_OUTPUT",
+        "answer_text": null,
+        "answer_abstained": null,
+        "answer_latency_ms": null,
+        "tokens_in": null,
+        "tokens_out": null,
+        "backend_name": null,
+        "model_name": null,
+        "judge_version": null,
+        "provider_cost": null,
+        "energy_joules": null,
+        "energy_source": null,
+        "energy_scope": null,
+        "energy_sensors": [],
+        "retrieval_failed": false,
+        "failure_code": null
+      },
+      {
+        "case_id": "conversation-commitment",
+        "channel": "raw_turns_bm25",
+        "retrieved_ids": [
+          "corpus-turn-commitment"
+        ],
+        "artifact_ids": [
+          "corpus-turn-commitment"
+        ],
+        "relevant_ids": [
+          "corpus-turn-commitment"
+        ],
+        "recall": 1.0,
+        "precision": 1.0,
+        "abstained": false,
+        "latency_ms": 1.0383520275354385,
+        "context_characters": 76,
+        "answer_correct": false,
+        "answer_utilization_evaluated": true,
+        "answer_evaluation_failed": false,
+        "answer_failure_code": null,
+        "answer_text": "Ustalamy, że minimalizujemy koszt obliczeni.",
+        "answer_abstained": false,
+        "answer_latency_ms": 222.59308700449765,
+        "tokens_in": 146,
+        "tokens_out": 18,
+        "backend_name": "llama",
+        "model_name": "models/google_functiongemma-270m-it-Q4_K_M.gguf",
+        "judge_version": "deterministic-phrase-and-abstention-v1",
+        "provider_cost": null,
+        "energy_joules": 8.092252919874184,
+        "energy_source": "linux-hwmon-power",
+        "energy_scope": "unattributed:amdgpu:PPT",
+        "energy_sensors": [
+          "/sys/class/hwmon/hwmon12/power1_average"
+        ],
+        "retrieval_failed": false,
+        "failure_code": null
+      },
+      {
+        "case_id": "conversation-commitment",
+        "channel": "claims_bm25",
+        "retrieved_ids": [
+          "corpus-memory-commitment"
+        ],
+        "artifact_ids": [
+          "corpus-memory-commitment"
+        ],
+        "relevant_ids": [
+          "corpus-memory-commitment"
+        ],
+        "recall": 1.0,
+        "precision": 1.0,
+        "abstained": false,
+        "latency_ms": 1.23052200069651,
+        "context_characters": 241,
+        "answer_correct": true,
+        "answer_utilization_evaluated": true,
+        "answer_evaluation_failed": false,
+        "answer_failure_code": null,
+        "answer_text": "Mam zapisany plan: zmierzyć baseline BM25 przed dodaniem embeddingów.",
+        "answer_abstained": false,
+        "answer_latency_ms": 177.10084602003917,
+        "tokens_in": 202,
+        "tokens_out": 10,
+        "backend_name": "llama",
+        "model_name": "models/google_functiongemma-270m-it-Q4_K_M.gguf",
+        "judge_version": "deterministic-phrase-and-abstention-v1",
+        "provider_cost": null,
+        "energy_joules": 6.5620393211232155,
+        "energy_source": "linux-hwmon-power",
+        "energy_scope": "unattributed:amdgpu:PPT",
+        "energy_sensors": [
+          "/sys/class/hwmon/hwmon12/power1_average"
+        ],
+        "retrieval_failed": false,
+        "failure_code": null
+      },
+      {
+        "case_id": "conversation-commitment",
+        "channel": "summaries_grounded",
+        "retrieved_ids": [
+          "corpus-memory-commitment"
+        ],
+        "artifact_ids": [
+          "grounded-summary:8ec9650d896e3622c7fdec9c"
+        ],
+        "relevant_ids": [
+          "corpus-memory-commitment"
+        ],
+        "recall": 1.0,
+        "precision": 1.0,
+        "abstained": false,
+        "latency_ms": 1.8619620241224766,
+        "context_characters": 866,
+        "answer_correct": false,
+        "answer_utilization_evaluated": true,
+        "answer_evaluation_failed": false,
+        "answer_failure_code": null,
+        "answer_text": "Zwięzłe projekcje pamięci (użyj tylko treści popartej wskazanymi źródłami):\n- claim.project.aurora.commitment.retrieval_order: {\"plan\": \"zmierzyć",
+        "answer_abstained": false,
+        "answer_latency_ms": 547.6378119783476,
+        "tokens_in": 180,
+        "tokens_out": 48,
+        "backend_name": "llama",
+        "model_name": "models/google_functiongemma-270m-it-Q4_K_M.gguf",
+        "judge_version": "deterministic-phrase-and-abstention-v1",
+        "provider_cost": null,
+        "energy_joules": 20.595098219246022,
+        "energy_source": "linux-hwmon-power",
+        "energy_scope": "unattributed:amdgpu:PPT",
+        "energy_sensors": [
+          "/sys/class/hwmon/hwmon12/power1_average"
+        ],
+        "retrieval_failed": false,
+        "failure_code": null
+      },
+      {
+        "case_id": "conversation-commitment",
+        "channel": "dense_local",
+        "retrieved_ids": [
+          "corpus-memory-commitment",
+          "corpus-memory-project",
+          "corpus-memory-city-new",
+          "corpus-memory-system",
+          "corpus-memory-name"
+        ],
+        "artifact_ids": [
+          "corpus-memory-commitment",
+          "corpus-memory-project",
+          "corpus-memory-city-new",
+          "corpus-memory-system",
+          "corpus-memory-name"
+        ],
+        "relevant_ids": [
+          "corpus-memory-commitment"
+        ],
+        "recall": 1.0,
+        "precision": 0.2,
+        "abstained": false,
+        "latency_ms": 2.3115829681046307,
+        "context_characters": 954,
+        "answer_correct": true,
+        "answer_utilization_evaluated": true,
+        "answer_evaluation_failed": false,
+        "answer_failure_code": null,
+        "answer_text": "Mam zapisany plan: zmierzyć baseline BM25 przed dodaniem embeddingów.",
+        "answer_abstained": false,
+        "answer_latency_ms": 405.5056649958715,
+        "tokens_in": 474,
+        "tokens_out": 18,
+        "backend_name": "llama",
+        "model_name": "models/google_functiongemma-270m-it-Q4_K_M.gguf",
+        "judge_version": "deterministic-phrase-and-abstention-v1",
+        "provider_cost": null,
+        "energy_joules": 15.461729496657208,
+        "energy_source": "linux-hwmon-power",
+        "energy_scope": "unattributed:amdgpu:PPT",
+        "energy_sensors": [
+          "/sys/class/hwmon/hwmon12/power1_average"
+        ],
+        "retrieval_failed": false,
+        "failure_code": null
+      },
+      {
+        "case_id": "conversation-commitment",
+        "channel": "rrf_fused",
+        "retrieved_ids": [
+          "corpus-memory-commitment",
+          "corpus-memory-project",
+          "corpus-memory-city-new",
+          "corpus-memory-system",
+          "corpus-memory-name"
+        ],
+        "artifact_ids": [
+          "corpus-memory-commitment",
+          "corpus-memory-project",
+          "corpus-memory-city-new",
+          "corpus-memory-system",
+          "corpus-memory-name"
+        ],
+        "relevant_ids": [
+          "corpus-memory-commitment"
+        ],
+        "recall": 1.0,
+        "precision": 0.2,
+        "abstained": false,
+        "latency_ms": 3.813881950918585,
+        "context_characters": 954,
+        "answer_correct": true,
+        "answer_utilization_evaluated": true,
+        "answer_evaluation_failed": false,
+        "answer_failure_code": null,
+        "answer_text": "Mam zapisany plan: zmierzyć baseline BM25 przed dodaniem embeddingów.",
+        "answer_abstained": false,
+        "answer_latency_ms": 207.20842498121783,
+        "tokens_in": 474,
+        "tokens_out": 20,
+        "backend_name": "llama",
+        "model_name": "models/google_functiongemma-270m-it-Q4_K_M.gguf",
+        "judge_version": "deterministic-phrase-and-abstention-v1",
+        "provider_cost": null,
+        "energy_joules": 7.915633670030075,
+        "energy_source": "linux-hwmon-power",
+        "energy_scope": "unattributed:amdgpu:PPT",
+        "energy_sensors": [
+          "/sys/class/hwmon/hwmon12/power1_average"
+        ],
+        "retrieval_failed": false,
+        "failure_code": null
+      },
+      {
+        "case_id": "conversation-commitment",
+        "channel": "graph_bounded",
+        "retrieved_ids": [
+          "corpus-memory-commitment",
+          "corpus-memory-project",
+          "corpus-memory-city-new",
+          "corpus-memory-system",
+          "corpus-memory-name"
+        ],
+        "artifact_ids": [
+          "corpus-memory-commitment",
+          "corpus-memory-project",
+          "corpus-memory-city-new",
+          "corpus-memory-system",
+          "corpus-memory-name",
+          "corpus-relation-project-supports-commitment"
+        ],
+        "relevant_ids": [
+          "corpus-memory-commitment"
+        ],
+        "recall": 1.0,
+        "precision": 0.2,
+        "abstained": false,
+        "latency_ms": 4.974462906830013,
+        "context_characters": 954,
+        "answer_correct": true,
+        "answer_utilization_evaluated": true,
+        "answer_evaluation_failed": false,
+        "answer_failure_code": null,
+        "answer_text": "Mam zapisany plan: zmierzyć baseline BM25 przed dodaniem embeddingów.",
+        "answer_abstained": false,
+        "answer_latency_ms": 177.6373910252005,
+        "tokens_in": 474,
+        "tokens_out": 16,
+        "backend_name": "llama",
+        "model_name": "models/google_functiongemma-270m-it-Q4_K_M.gguf",
+        "judge_version": "deterministic-phrase-and-abstention-v1",
+        "provider_cost": null,
+        "energy_joules": 6.829052822177241,
+        "energy_source": "linux-hwmon-power",
+        "energy_scope": "unattributed:amdgpu:PPT",
+        "energy_sensors": [
+          "/sys/class/hwmon/hwmon12/power1_average"
+        ],
+        "retrieval_failed": false,
+        "failure_code": null
+      },
+      {
+        "case_id": "correction-current",
+        "channel": "raw_turns_bm25",
+        "retrieved_ids": [
+          "corpus-turn-city-old",
+          "corpus-turn-city-new"
+        ],
+        "artifact_ids": [
+          "corpus-turn-city-old",
+          "corpus-turn-city-new"
+        ],
+        "relevant_ids": [
+          "corpus-turn-city-new"
+        ],
+        "recall": 1.0,
+        "precision": 0.5,
+        "abstained": false,
+        "latency_ms": 1.1475260253064334,
+        "context_characters": 68,
+        "answer_correct": false,
+        "answer_utilization_evaluated": true,
+        "answer_evaluation_failed": false,
+        "answer_failure_code": null,
+        "answer_text": "Gdzie teraz mieszkam? **Asystent:** Gdzie teraz mieszkam?",
+        "answer_abstained": false,
+        "answer_latency_ms": 523.2653130078688,
+        "tokens_in": 151,
+        "tokens_out": 48,
+        "backend_name": "llama",
+        "model_name": "models/google_functiongemma-270m-it-Q4_K_M.gguf",
+        "judge_version": "deterministic-phrase-and-abstention-v1",
+        "provider_cost": null,
+        "energy_joules": 20.408278876731433,
+        "energy_source": "linux-hwmon-power",
+        "energy_scope": "unattributed:amdgpu:PPT",
+        "energy_sensors": [
+          "/sys/class/hwmon/hwmon12/power1_average"
+        ],
+        "retrieval_failed": false,
+        "failure_code": null
+      },
+      {
+        "case_id": "correction-current",
+        "channel": "claims_bm25",
+        "retrieved_ids": [
+          "corpus-memory-city-new"
+        ],
+        "artifact_ids": [
+          "corpus-memory-city-new"
+        ],
+        "relevant_ids": [
+          "corpus-memory-city-new"
+        ],
+        "recall": 1.0,
+        "precision": 1.0,
+        "abstained": false,
+        "latency_ms": 1.1161870206706226,
+        "context_characters": 184,
+        "answer_correct": false,
+        "answer_utilization_evaluated": true,
+        "answer_evaluation_failed": false,
+        "answer_failure_code": null,
+        "answer_text": "Według zapisanej informacji home_city: Warszawa.",
+        "answer_abstained": false,
+        "answer_latency_ms": 156.12071100622416,
+        "tokens_in": 183,
+        "tokens_out": 10,
+        "backend_name": "llama",
+        "model_name": "models/google_functiongemma-270m-it-Q4_K_M.gguf",
+        "judge_version": "deterministic-phrase-and-abstention-v1",
+        "provider_cost": null,
+        "energy_joules": 6.10139208020593,
+        "energy_source": "linux-hwmon-power",
+        "energy_scope": "unattributed:amdgpu:PPT",
+        "energy_sensors": [
+          "/sys/class/hwmon/hwmon12/power1_average"
+        ],
+        "retrieval_failed": false,
+        "failure_code": null
+      },
+      {
+        "case_id": "correction-current",
+        "channel": "summaries_grounded",
+        "retrieved_ids": [
+          "corpus-memory-city-new"
+        ],
+        "artifact_ids": [
+          "grounded-summary:1daa70cb1603dc959f6f7d2f"
+        ],
+        "relevant_ids": [
+          "corpus-memory-city-new"
+        ],
+        "recall": 1.0,
+        "precision": 1.0,
+        "abstained": false,
+        "latency_ms": 1.8602589843794703,
+        "context_characters": 733,
+        "answer_correct": false,
+        "answer_utilization_evaluated": true,
+        "answer_evaluation_failed": false,
+        "answer_failure_code": null,
+        "answer_text": "Użytkarko.\nUżytkarko: Użytkarko.",
+        "answer_abstained": false,
+        "answer_latency_ms": 224.19535502558574,
+        "tokens_in": 164,
+        "tokens_out": 16,
+        "backend_name": "llama",
+        "model_name": "models/google_functiongemma-270m-it-Q4_K_M.gguf",
+        "judge_version": "deterministic-phrase-and-abstention-v1",
+        "provider_cost": null,
+        "energy_joules": 8.76716903129479,
+        "energy_source": "linux-hwmon-power",
+        "energy_scope": "unattributed:amdgpu:PPT",
+        "energy_sensors": [
+          "/sys/class/hwmon/hwmon12/power1_average"
+        ],
+        "retrieval_failed": false,
+        "failure_code": null
+      },
+      {
+        "case_id": "correction-current",
+        "channel": "dense_local",
+        "retrieved_ids": [
+          "corpus-memory-city-new",
+          "corpus-memory-name"
+        ],
+        "artifact_ids": [
+          "corpus-memory-city-new",
+          "corpus-memory-name"
+        ],
+        "relevant_ids": [
+          "corpus-memory-city-new"
+        ],
+        "recall": 1.0,
+        "precision": 0.5,
+        "abstained": false,
+        "latency_ms": 1.404265989549458,
+        "context_characters": 321,
+        "answer_correct": false,
+        "answer_utilization_evaluated": true,
+        "answer_evaluation_failed": false,
+        "answer_failure_code": null,
+        "answer_text": "Według zapisanej informacji home_city: Warszawa.",
+        "answer_abstained": false,
+        "answer_latency_ms": 198.892303975299,
+        "tokens_in": 240,
+        "tokens_out": 10,
+        "backend_name": "llama",
+        "model_name": "models/google_functiongemma-270m-it-Q4_K_M.gguf",
+        "judge_version": "deterministic-phrase-and-abstention-v1",
+        "provider_cost": null,
+        "energy_joules": 7.779221171823302,
+        "energy_source": "linux-hwmon-power",
+        "energy_scope": "unattributed:amdgpu:PPT",
+        "energy_sensors": [
+          "/sys/class/hwmon/hwmon12/power1_average"
+        ],
+        "retrieval_failed": false,
+        "failure_code": null
+      },
+      {
+        "case_id": "correction-current",
+        "channel": "rrf_fused",
+        "retrieved_ids": [
+          "corpus-memory-city-new",
+          "corpus-memory-name"
+        ],
+        "artifact_ids": [
+          "corpus-memory-city-new",
+          "corpus-memory-name"
+        ],
+        "relevant_ids": [
+          "corpus-memory-city-new"
+        ],
+        "recall": 1.0,
+        "precision": 0.5,
+        "abstained": false,
+        "latency_ms": 2.187812002375722,
+        "context_characters": 321,
+        "answer_correct": false,
+        "answer_utilization_evaluated": true,
+        "answer_evaluation_failed": false,
+        "answer_failure_code": null,
+        "answer_text": "Według zapisanej informacji home_city: Warszawa.",
+        "answer_abstained": false,
+        "answer_latency_ms": 106.63421999197453,
+        "tokens_in": 240,
+        "tokens_out": 10,
+        "backend_name": "llama",
+        "model_name": "models/google_functiongemma-270m-it-Q4_K_M.gguf",
+        "judge_version": "deterministic-phrase-and-abstention-v1",
+        "provider_cost": null,
+        "energy_joules": 4.17033555748174,
+        "energy_source": "linux-hwmon-power",
+        "energy_scope": "unattributed:amdgpu:PPT",
+        "energy_sensors": [
+          "/sys/class/hwmon/hwmon12/power1_average"
+        ],
+        "retrieval_failed": false,
+        "failure_code": null
+      },
+      {
+        "case_id": "correction-current",
+        "channel": "graph_bounded",
+        "retrieved_ids": [
+          "corpus-memory-city-new",
+          "corpus-memory-name"
+        ],
+        "artifact_ids": [
+          "corpus-memory-city-new",
+          "corpus-memory-name"
+        ],
+        "relevant_ids": [
+          "corpus-memory-city-new"
+        ],
+        "recall": 1.0,
+        "precision": 0.5,
+        "abstained": false,
+        "latency_ms": 2.839491004124284,
+        "context_characters": 321,
+        "answer_correct": false,
+        "answer_utilization_evaluated": true,
+        "answer_evaluation_failed": false,
+        "answer_failure_code": null,
+        "answer_text": "Według zapisanej informacji home_city: Warszawa.",
+        "answer_abstained": false,
+        "answer_latency_ms": 105.67628900753334,
+        "tokens_in": 240,
+        "tokens_out": 10,
+        "backend_name": "llama",
+        "model_name": "models/google_functiongemma-270m-it-Q4_K_M.gguf",
+        "judge_version": "deterministic-phrase-and-abstention-v1",
+        "provider_cost": null,
+        "energy_joules": 4.134366521814751,
+        "energy_source": "linux-hwmon-power",
+        "energy_scope": "unattributed:amdgpu:PPT",
+        "energy_sensors": [
+          "/sys/class/hwmon/hwmon12/power1_average"
+        ],
+        "retrieval_failed": false,
+        "failure_code": null
+      },
+      {
+        "case_id": "unsupported-abstention",
+        "channel": "raw_turns_bm25",
+        "retrieved_ids": [],
+        "artifact_ids": [],
+        "relevant_ids": [],
+        "recall": 1.0,
+        "precision": 0.0,
+        "abstained": true,
+        "latency_ms": 0.9395069791935384,
+        "context_characters": 0,
+        "answer_correct": false,
+        "answer_utilization_evaluated": true,
+        "answer_evaluation_failed": false,
+        "answer_failure_code": null,
+        "answer_text": "Jaki film?",
+        "answer_abstained": false,
+        "answer_latency_ms": 70.234905986581,
+        "tokens_in": 93,
+        "tokens_out": 4,
+        "backend_name": "llama",
+        "model_name": "models/google_functiongemma-270m-it-Q4_K_M.gguf",
+        "judge_version": "deterministic-phrase-and-abstention-v1",
+        "provider_cost": null,
+        "energy_joules": 2.748495576615853,
+        "energy_source": "linux-hwmon-power",
+        "energy_scope": "unattributed:amdgpu:PPT",
+        "energy_sensors": [
+          "/sys/class/hwmon/hwmon12/power1_average"
+        ],
+        "retrieval_failed": false,
+        "failure_code": null
+      },
+      {
+        "case_id": "unsupported-abstention",
+        "channel": "claims_bm25",
+        "retrieved_ids": [],
+        "artifact_ids": [],
+        "relevant_ids": [],
+        "recall": 1.0,
+        "precision": 0.0,
+        "abstained": true,
+        "latency_ms": 1.0344750480726361,
+        "context_characters": 0,
+        "answer_correct": false,
+        "answer_utilization_evaluated": true,
+        "answer_evaluation_failed": false,
+        "answer_failure_code": null,
+        "answer_text": "Jaki film?",
+        "answer_abstained": false,
+        "answer_latency_ms": 53.52054495597258,
+        "tokens_in": 93,
+        "tokens_out": 4,
+        "backend_name": "llama",
+        "model_name": "models/google_functiongemma-270m-it-Q4_K_M.gguf",
+        "judge_version": "deterministic-phrase-and-abstention-v1",
+        "provider_cost": null,
+        "energy_joules": 2.0935412424795214,
+        "energy_source": "linux-hwmon-power",
+        "energy_scope": "unattributed:amdgpu:PPT",
+        "energy_sensors": [
+          "/sys/class/hwmon/hwmon12/power1_average"
+        ],
+        "retrieval_failed": false,
+        "failure_code": null
+      },
+      {
+        "case_id": "unsupported-abstention",
+        "channel": "summaries_grounded",
+        "retrieved_ids": [],
+        "artifact_ids": [],
+        "relevant_ids": [],
+        "recall": 1.0,
+        "precision": 0.0,
+        "abstained": true,
+        "latency_ms": 1.0958299972116947,
+        "context_characters": 0,
+        "answer_correct": false,
+        "answer_utilization_evaluated": true,
+        "answer_evaluation_failed": false,
+        "answer_failure_code": null,
+        "answer_text": "Jaki film?",
+        "answer_abstained": false,
+        "answer_latency_ms": 53.09715395560488,
+        "tokens_in": 93,
+        "tokens_out": 4,
+        "backend_name": "llama",
+        "model_name": "models/google_functiongemma-270m-it-Q4_K_M.gguf",
+        "judge_version": "deterministic-phrase-and-abstention-v1",
+        "provider_cost": null,
+        "energy_joules": 2.0762294551121308,
+        "energy_source": "linux-hwmon-power",
+        "energy_scope": "unattributed:amdgpu:PPT",
+        "energy_sensors": [
+          "/sys/class/hwmon/hwmon12/power1_average"
+        ],
+        "retrieval_failed": false,
+        "failure_code": null
+      },
+      {
+        "case_id": "unsupported-abstention",
+        "channel": "dense_local",
+        "retrieved_ids": [
+          "corpus-memory-city-new",
+          "corpus-memory-name"
+        ],
+        "artifact_ids": [
+          "corpus-memory-city-new",
+          "corpus-memory-name"
+        ],
+        "relevant_ids": [],
+        "recall": 1.0,
+        "precision": 0.0,
+        "abstained": false,
+        "latency_ms": 1.754159980919212,
+        "context_characters": 321,
+        "answer_correct": false,
+        "answer_utilization_evaluated": true,
+        "answer_evaluation_failed": false,
+        "answer_failure_code": null,
+        "answer_text": "Użytkownik: Jaki jest mój ulubiony film?",
+        "answer_abstained": false,
+        "answer_latency_ms": 305.41531601920724,
+        "tokens_in": 242,
+        "tokens_out": 20,
+        "backend_name": "llama",
+        "model_name": "models/google_functiongemma-270m-it-Q4_K_M.gguf",
+        "judge_version": "deterministic-phrase-and-abstention-v1",
+        "provider_cost": null,
+        "energy_joules": 11.945190445418062,
+        "energy_source": "linux-hwmon-power",
+        "energy_scope": "unattributed:amdgpu:PPT",
+        "energy_sensors": [
+          "/sys/class/hwmon/hwmon12/power1_average"
+        ],
+        "retrieval_failed": false,
+        "failure_code": null
+      },
+      {
+        "case_id": "unsupported-abstention",
+        "channel": "rrf_fused",
+        "retrieved_ids": [
+          "corpus-memory-city-new",
+          "corpus-memory-name"
+        ],
+        "artifact_ids": [
+          "corpus-memory-city-new",
+          "corpus-memory-name"
+        ],
+        "relevant_ids": [],
+        "recall": 1.0,
+        "precision": 0.0,
+        "abstained": false,
+        "latency_ms": 2.60717497440055,
+        "context_characters": 321,
+        "answer_correct": false,
+        "answer_utilization_evaluated": true,
+        "answer_evaluation_failed": false,
+        "answer_failure_code": null,
+        "answer_text": "Użytkownik: Jaki jest mój ulubiony film?",
+        "answer_abstained": false,
+        "answer_latency_ms": 221.6819869936444,
+        "tokens_in": 242,
+        "tokens_out": 20,
+        "backend_name": "llama",
+        "model_name": "models/google_functiongemma-270m-it-Q4_K_M.gguf",
+        "judge_version": "deterministic-phrase-and-abstention-v1",
+        "provider_cost": null,
+        "energy_joules": 8.675918354060617,
+        "energy_source": "linux-hwmon-power",
+        "energy_scope": "unattributed:amdgpu:PPT",
+        "energy_sensors": [
+          "/sys/class/hwmon/hwmon12/power1_average"
+        ],
+        "retrieval_failed": false,
+        "failure_code": null
+      },
+      {
+        "case_id": "unsupported-abstention",
+        "channel": "graph_bounded",
+        "retrieved_ids": [
+          "corpus-memory-city-new",
+          "corpus-memory-name"
+        ],
+        "artifact_ids": [
+          "corpus-memory-city-new",
+          "corpus-memory-name"
+        ],
+        "relevant_ids": [],
+        "recall": 1.0,
+        "precision": 0.0,
+        "abstained": false,
+        "latency_ms": 3.338531998451799,
+        "context_characters": 321,
+        "answer_correct": false,
+        "answer_utilization_evaluated": true,
+        "answer_evaluation_failed": false,
+        "answer_failure_code": null,
+        "answer_text": "- Urodzi się z Polski, żyję w Warszawie, mieszam dom.\n- Jestem w Warsaw, Warszawa, Warszawa, Warszawa, Warszawa, Warszawa, Warszawa, Warszawa, Warszawa, Warszawa, Warszawa, Warszawa, Warszawa",
+        "answer_abstained": false,
+        "answer_latency_ms": 540.090715046972,
+        "tokens_in": 242,
+        "tokens_out": 48,
+        "backend_name": "llama",
+        "model_name": "models/google_functiongemma-270m-it-Q4_K_M.gguf",
+        "judge_version": "deterministic-phrase-and-abstention-v1",
+        "provider_cost": null,
+        "energy_joules": 21.154484624173726,
+        "energy_source": "linux-hwmon-power",
+        "energy_scope": "unattributed:amdgpu:PPT",
+        "energy_sensors": [
+          "/sys/class/hwmon/hwmon12/power1_average"
+        ],
+        "retrieval_failed": false,
+        "failure_code": null
+      },
+      {
+        "case_id": "private-purpose-isolation",
+        "channel": "raw_turns_bm25",
+        "retrieved_ids": [
+          "corpus-turn-name",
+          "corpus-turn-city-new",
+          "corpus-turn-system"
+        ],
+        "artifact_ids": [
+          "corpus-turn-name",
+          "corpus-turn-city-new",
+          "corpus-turn-system"
+        ],
+        "relevant_ids": [],
+        "recall": 1.0,
+        "precision": 0.0,
+        "abstained": false,
+        "latency_ms": 1.6435040161013603,
+        "context_characters": 177,
+        "answer_correct": true,
+        "answer_utilization_evaluated": true,
+        "answer_evaluation_failed": false,
+        "answer_failure_code": null,
+        "answer_text": "Nie wiem, ale ja znasz kilka popularnych instrumencie.",
+        "answer_abstained": true,
+        "answer_latency_ms": 270.26841399492696,
+        "tokens_in": 191,
+        "tokens_out": 21,
+        "backend_name": "llama",
+        "model_name": "models/google_functiongemma-270m-it-Q4_K_M.gguf",
+        "judge_version": "deterministic-phrase-and-abstention-v1",
+        "provider_cost": null,
+        "energy_joules": 10.589396114528556,
+        "energy_source": "linux-hwmon-power",
+        "energy_scope": "unattributed:amdgpu:PPT",
+        "energy_sensors": [
+          "/sys/class/hwmon/hwmon12/power1_average"
+        ],
+        "retrieval_failed": false,
+        "failure_code": null
+      },
+      {
+        "case_id": "private-purpose-isolation",
+        "channel": "claims_bm25",
+        "retrieved_ids": [
+          "corpus-memory-name"
+        ],
+        "artifact_ids": [
+          "corpus-memory-name"
+        ],
+        "relevant_ids": [],
+        "recall": 1.0,
+        "precision": 0.0,
+        "abstained": false,
+        "latency_ms": 1.2467610067687929,
+        "context_characters": 137,
+        "answer_correct": true,
+        "answer_utilization_evaluated": true,
+        "answer_evaluation_failed": false,
+        "answer_failure_code": null,
+        "answer_text": "'Nie wiem'",
+        "answer_abstained": true,
+        "answer_latency_ms": 101.95291601121426,
+        "tokens_in": 173,
+        "tokens_out": 4,
+        "backend_name": "llama",
+        "model_name": "models/google_functiongemma-270m-it-Q4_K_M.gguf",
+        "judge_version": "deterministic-phrase-and-abstention-v1",
+        "provider_cost": null,
+        "energy_joules": 3.994286169961182,
+        "energy_source": "linux-hwmon-power",
+        "energy_scope": "unattributed:amdgpu:PPT",
+        "energy_sensors": [
+          "/sys/class/hwmon/hwmon12/power1_average"
+        ],
+        "retrieval_failed": false,
+        "failure_code": null
+      },
+      {
+        "case_id": "private-purpose-isolation",
+        "channel": "summaries_grounded",
+        "retrieved_ids": [
+          "corpus-memory-name"
+        ],
+        "artifact_ids": [
+          "grounded-summary:5f33dfd121d41160d0b79adc"
+        ],
+        "relevant_ids": [],
+        "recall": 1.0,
+        "precision": 0.0,
+        "abstained": false,
+        "latency_ms": 1.95562798762694,
+        "context_characters": 692,
+        "answer_correct": false,
+        "answer_utilization_evaluated": true,
+        "answer_evaluation_failed": false,
+        "answer_failure_code": null,
+        "answer_text": "Wyszczę informacje o instrumencie uczę się gry.",
+        "answer_abstained": false,
+        "answer_latency_ms": 254.22686396632344,
+        "tokens_in": 162,
+        "tokens_out": 19,
+        "backend_name": "llama",
+        "model_name": "models/google_functiongemma-270m-it-Q4_K_M.gguf",
+        "judge_version": "deterministic-phrase-and-abstention-v1",
+        "provider_cost": null,
+        "energy_joules": 9.959938377020794,
+        "energy_source": "linux-hwmon-power",
+        "energy_scope": "unattributed:amdgpu:PPT",
+        "energy_sensors": [
+          "/sys/class/hwmon/hwmon12/power1_average"
+        ],
+        "retrieval_failed": false,
+        "failure_code": null
+      },
+      {
+        "case_id": "private-purpose-isolation",
+        "channel": "dense_local",
+        "retrieved_ids": [
+          "corpus-memory-project",
+          "corpus-memory-city-new",
+          "corpus-memory-name",
+          "corpus-memory-system",
+          "corpus-memory-commitment"
+        ],
+        "artifact_ids": [
+          "corpus-memory-project",
+          "corpus-memory-city-new",
+          "corpus-memory-name",
+          "corpus-memory-system",
+          "corpus-memory-commitment"
+        ],
+        "relevant_ids": [],
+        "recall": 1.0,
+        "precision": 0.0,
+        "abstained": false,
+        "latency_ms": 2.3238860303536057,
+        "context_characters": 954,
+        "answer_correct": true,
+        "answer_utilization_evaluated": true,
+        "answer_evaluation_failed": false,
+        "answer_failure_code": null,
+        "answer_text": "Nie wiem. Nie mam instrumencie uczącego grania.",
+        "answer_abstained": true,
+        "answer_latency_ms": 367.3716620542109,
+        "tokens_in": 475,
+        "tokens_out": 14,
+        "backend_name": "llama",
+        "model_name": "models/google_functiongemma-270m-it-Q4_K_M.gguf",
+        "judge_version": "deterministic-phrase-and-abstention-v1",
+        "provider_cost": null,
+        "energy_joules": 14.389709965204382,
+        "energy_source": "linux-hwmon-power",
+        "energy_scope": "unattributed:amdgpu:PPT",
+        "energy_sensors": [
+          "/sys/class/hwmon/hwmon12/power1_average"
+        ],
+        "retrieval_failed": false,
+        "failure_code": null
+      },
+      {
+        "case_id": "private-purpose-isolation",
+        "channel": "rrf_fused",
+        "retrieved_ids": [
+          "corpus-memory-name",
+          "corpus-memory-project",
+          "corpus-memory-city-new",
+          "corpus-memory-system",
+          "corpus-memory-commitment"
+        ],
+        "artifact_ids": [
+          "corpus-memory-name",
+          "corpus-memory-project",
+          "corpus-memory-city-new",
+          "corpus-memory-system",
+          "corpus-memory-commitment"
+        ],
+        "relevant_ids": [],
+        "recall": 1.0,
+        "precision": 0.0,
+        "abstained": false,
+        "latency_ms": 3.458858991507441,
+        "context_characters": 954,
+        "answer_correct": true,
+        "answer_utilization_evaluated": true,
+        "answer_evaluation_failed": false,
+        "answer_failure_code": null,
+        "answer_text": "Nie wiem. Nie mam instrumentu uczącego grania.",
+        "answer_abstained": true,
+        "answer_latency_ms": 356.9423059816472,
+        "tokens_in": 475,
+        "tokens_out": 14,
+        "backend_name": "llama",
+        "model_name": "models/google_functiongemma-270m-it-Q4_K_M.gguf",
+        "judge_version": "deterministic-phrase-and-abstention-v1",
+        "provider_cost": null,
+        "energy_joules": 13.986348327652726,
+        "energy_source": "linux-hwmon-power",
+        "energy_scope": "unattributed:amdgpu:PPT",
+        "energy_sensors": [
+          "/sys/class/hwmon/hwmon12/power1_average"
+        ],
+        "retrieval_failed": false,
+        "failure_code": null
+      },
+      {
+        "case_id": "private-purpose-isolation",
+        "channel": "graph_bounded",
+        "retrieved_ids": [
+          "corpus-memory-project",
+          "corpus-memory-commitment",
+          "corpus-memory-name",
+          "corpus-memory-city-new",
+          "corpus-memory-system"
+        ],
+        "artifact_ids": [
+          "corpus-memory-project",
+          "corpus-memory-commitment",
+          "corpus-memory-name",
+          "corpus-memory-city-new",
+          "corpus-memory-system",
+          "corpus-relation-project-supports-commitment"
+        ],
+        "relevant_ids": [],
+        "recall": 1.0,
+        "precision": 0.0,
+        "abstained": false,
+        "latency_ms": 4.654554999433458,
+        "context_characters": 954,
+        "answer_correct": true,
+        "answer_utilization_evaluated": true,
+        "answer_evaluation_failed": false,
+        "answer_failure_code": null,
+        "answer_text": "Nie wiem. Nie mam doświadczenia z graczami.",
+        "answer_abstained": true,
+        "answer_latency_ms": 337.31347700813785,
+        "tokens_in": 475,
+        "tokens_out": 12,
+        "backend_name": "llama",
+        "model_name": "models/google_functiongemma-270m-it-Q4_K_M.gguf",
+        "judge_version": "deterministic-phrase-and-abstention-v1",
+        "provider_cost": null,
+        "energy_joules": 13.219599372341648,
+        "energy_source": "linux-hwmon-power",
+        "energy_scope": "unattributed:amdgpu:PPT",
+        "energy_sensors": [
+          "/sys/class/hwmon/hwmon12/power1_average"
+        ],
+        "retrieval_failed": false,
+        "failure_code": null
+      }
+    ]
+  },
+  "aggregates": [
+    {
+      "channel": "raw_turns_bm25",
+      "case_count": 7,
+      "mean_recall": 1.0,
+      "mean_precision": 0.6428571428571429,
+      "answer_accuracy": 0.16666666666666666,
+      "retrieval_abstention_rate": 0.14285714285714285,
+      "answer_abstention_rate": 0.16666666666666666,
+      "retrieval_failures": 0,
+      "answer_evaluation_failures": 1,
+      "mean_retrieval_latency_ms": 1.1569262881364142,
+      "mean_answer_latency_ms": 260.72522133472376,
+      "mean_context_characters": 73.42857142857143,
+      "total_tokens_in": 859,
+      "total_tokens_out": 120,
+      "total_provider_cost": null,
+      "total_energy_joules": 52.51429526559944,
+      "energy_measurement_coverage": 1.0,
+      "energy_sources": [
+        "linux-hwmon-power"
+      ],
+      "energy_scopes": [
+        "unattributed:amdgpu:PPT"
+      ],
+      "energy_sensors": [
+        "/sys/class/hwmon/hwmon12/power1_average"
+      ]
+    },
+    {
+      "channel": "claims_bm25",
+      "case_count": 7,
+      "mean_recall": 1.0,
+      "mean_precision": 0.6428571428571429,
+      "answer_accuracy": 0.5,
+      "retrieval_abstention_rate": 0.14285714285714285,
+      "answer_abstention_rate": 0.16666666666666666,
+      "retrieval_failures": 0,
+      "answer_evaluation_failures": 1,
+      "mean_retrieval_latency_ms": 1.227434300484934,
+      "mean_answer_latency_ms": 167.87007132855555,
+      "mean_context_characters": 190.28571428571428,
+      "total_tokens_in": 1092,
+      "total_tokens_out": 67,
+      "total_provider_cost": null,
+      "total_energy_joules": 33.63901619078274,
+      "energy_measurement_coverage": 1.0,
+      "energy_sources": [
+        "linux-hwmon-power"
+      ],
+      "energy_scopes": [
+        "unattributed:amdgpu:PPT"
+      ],
+      "energy_sensors": [
+        "/sys/class/hwmon/hwmon12/power1_average"
+      ]
+    },
+    {
+      "channel": "summaries_grounded",
+      "case_count": 7,
+      "mean_recall": 1.0,
+      "mean_precision": 0.6428571428571429,
+      "answer_accuracy": 0.0,
+      "retrieval_abstention_rate": 0.14285714285714285,
+      "answer_abstention_rate": 0.0,
+      "retrieval_failures": 0,
+      "answer_evaluation_failures": 0,
+      "mean_retrieval_latency_ms": 1.9258245676090675,
+      "mean_answer_latency_ms": 227.23917870150348,
+      "mean_context_characters": 733.1428571428571,
+      "total_tokens_in": 1146,
+      "total_tokens_out": 118,
+      "total_provider_cost": null,
+      "total_energy_joules": 57.817671907112064,
+      "energy_measurement_coverage": 1.0,
+      "energy_sources": [
+        "linux-hwmon-power"
+      ],
+      "energy_scopes": [
+        "unattributed:amdgpu:PPT"
+      ],
+      "energy_sensors": [
+        "/sys/class/hwmon/hwmon12/power1_average"
+      ]
+    },
+    {
+      "channel": "dense_local",
+      "case_count": 7,
+      "mean_recall": 1.0,
+      "mean_precision": 0.38571428571428573,
+      "answer_accuracy": 0.5,
+      "retrieval_abstention_rate": 0.0,
+      "answer_abstention_rate": 0.16666666666666666,
+      "retrieval_failures": 0,
+      "answer_evaluation_failures": 1,
+      "mean_retrieval_latency_ms": 1.7709491408563085,
+      "mean_answer_latency_ms": 324.135860845369,
+      "mean_context_characters": 500.57142857142856,
+      "total_tokens_in": 1943,
+      "total_tokens_out": 126,
+      "total_provider_cost": null,
+      "total_energy_joules": 70.50739978838537,
+      "energy_measurement_coverage": 1.0,
+      "energy_sources": [
+        "linux-hwmon-power"
+      ],
+      "energy_scopes": [
+        "unattributed:amdgpu:PPT"
+      ],
+      "energy_sensors": [
+        "/sys/class/hwmon/hwmon12/power1_average"
+      ]
+    },
+    {
+      "channel": "rrf_fused",
+      "case_count": 7,
+      "mean_recall": 1.0,
+      "mean_precision": 0.38571428571428573,
+      "answer_accuracy": 0.5,
+      "retrieval_abstention_rate": 0.0,
+      "answer_abstention_rate": 0.16666666666666666,
+      "retrieval_failures": 0,
+      "answer_evaluation_failures": 1,
+      "mean_retrieval_latency_ms": 2.8562715659583255,
+      "mean_answer_latency_ms": 170.40729533376484,
+      "mean_context_characters": 500.57142857142856,
+      "total_tokens_in": 1943,
+      "total_tokens_out": 82,
+      "total_provider_cost": null,
+      "total_energy_joules": 38.753163330894836,
+      "energy_measurement_coverage": 1.0,
+      "energy_sources": [
+        "linux-hwmon-power"
+      ],
+      "energy_scopes": [
+        "unattributed:amdgpu:PPT"
+      ],
+      "energy_sensors": [
+        "/sys/class/hwmon/hwmon12/power1_average"
+      ]
+    },
+    {
+      "channel": "graph_bounded",
+      "case_count": 7,
+      "mean_recall": 1.0,
+      "mean_precision": 0.38571428571428573,
+      "answer_accuracy": 0.5,
+      "retrieval_abstention_rate": 0.0,
+      "answer_abstention_rate": 0.16666666666666666,
+      "retrieval_failures": 0,
+      "answer_evaluation_failures": 1,
+      "mean_retrieval_latency_ms": 3.775882858982576,
+      "mean_answer_latency_ms": 213.9780213474296,
+      "mean_context_characters": 500.57142857142856,
+      "total_tokens_in": 1943,
+      "total_tokens_out": 104,
+      "total_provider_cost": null,
+      "total_energy_joules": 49.185776782262785,
+      "energy_measurement_coverage": 1.0,
+      "energy_sources": [
+        "linux-hwmon-power"
+      ],
+      "energy_scopes": [
+        "unattributed:amdgpu:PPT"
+      ],
+      "energy_sensors": [
+        "/sys/class/hwmon/hwmon12/power1_average"
+      ]
+    }
+  ],
+  "backend_name": "llama",
+  "model_name": "models/google_functiongemma-270m-it-Q4_K_M.gguf",
+  "model_artifact_version": "sha256:321e83ac555d43b7d045f563413acef9e094ba26290360e656e7fd9ae6c6bb94",
+  "prompt_template_version": "rai-assistant-plain-text-v3",
+  "judge_version": "deterministic-phrase-and-abstention-v1",
+  "max_input_tokens": 4096,
+  "max_output_tokens": 48,
+  "max_latency_seconds": 30.0,
+  "dense_embedding_version": "feature-hashing-word-char-v1-d384",
+  "rrf_weights": {
+    "claims_bm25": 1.0,
+    "dense_local": 1.0,
+    "graph_bounded": 0.25
+  },
+  "graph_depth": 2,
+  "minimum_relation_confidence": 0.75,
+  "energy_required": false,
+  "routing_run": {
+    "generated_at": "2026-09-16T17:50:19.187084Z",
+    "policy_version": "lexical-evidence-v2",
+    "context_character_budget": 8000,
+    "adaptive_threshold": 0.75,
+    "measurements": [
+      {
+        "case_id": "personal-name",
+        "horizon": "short",
+        "strategy": "adaptive",
+        "routing_decision": "compact_memory",
+        "selected_source_ids": [
+          "corpus-turn-name",
+          "corpus-turn-city-old",
+          "corpus-turn-city-new",
+          "corpus-memory-name"
+        ],
+        "relevant_source_ids": [
+          "corpus-turn-name"
+        ],
+        "source_recall": 1.0,
+        "correct": true,
+        "context_characters": 977,
+        "context_character_budget": 8000,
+        "sufficiency_score": 1.0,
+        "fallback_used": false,
+        "answer_correct": false,
+        "answer_abstained": false,
+        "answer_text": "Nie mam jeszcze zapisanego Twojego imienia.",
+        "answer_evaluation_failed": false,
+        "answer_failure_code": null,
+        "answer_latency_ms": 233.72429999290034,
+        "tokens_in": 220,
+        "tokens_out": 10,
+        "backend_name": "llama",
+        "model_name": "models/google_functiongemma-270m-it-Q4_K_M.gguf",
+        "judge_version": "deterministic-phrase-and-abstention-v1"
+      },
+      {
+        "case_id": "personal-name",
+        "horizon": "short",
+        "strategy": "always_memory",
+        "routing_decision": "compact_memory",
+        "selected_source_ids": [
+          "corpus-turn-name",
+          "corpus-turn-city-old",
+          "corpus-turn-city-new",
+          "corpus-memory-name"
+        ],
+        "relevant_source_ids": [
+          "corpus-turn-name"
+        ],
+        "source_recall": 1.0,
+        "correct": true,
+        "context_characters": 977,
+        "context_character_budget": 8000,
+        "sufficiency_score": 1.0,
+        "fallback_used": false,
+        "answer_correct": false,
+        "answer_abstained": false,
+        "answer_text": "Nie mam jeszcze zapisanego Twojego imienia.",
+        "answer_evaluation_failed": false,
+        "answer_failure_code": null,
+        "answer_latency_ms": 356.6076120478101,
+        "tokens_in": 220,
+        "tokens_out": 33,
+        "backend_name": "llama",
+        "model_name": "models/google_functiongemma-270m-it-Q4_K_M.gguf",
+        "judge_version": "deterministic-phrase-and-abstention-v1"
+      },
+      {
+        "case_id": "project-goal",
+        "horizon": "medium",
+        "strategy": "adaptive",
+        "routing_decision": "compact_memory",
+        "selected_source_ids": [
+          "corpus-turn-project",
+          "corpus-turn-commitment",
+          "corpus-memory-project",
+          "corpus-memory-commitment"
+        ],
+        "relevant_source_ids": [
+          "corpus-turn-project",
+          "corpus-memory-project"
+        ],
+        "source_recall": 1.0,
+        "correct": true,
+        "context_characters": 1388,
+        "context_character_budget": 8000,
+        "sufficiency_score": 0.8,
+        "fallback_used": false,
+        "answer_correct": true,
+        "answer_abstained": false,
+        "answer_text": "Według zapisanej informacji goal: lokalna pamięć asystenta.",
+        "answer_evaluation_failed": false,
+        "answer_failure_code": null,
+        "answer_latency_ms": 511.44366402877495,
+        "tokens_in": 316,
+        "tokens_out": 31,
+        "backend_name": "llama",
+        "model_name": "models/google_functiongemma-270m-it-Q4_K_M.gguf",
+        "judge_version": "deterministic-phrase-and-abstention-v1"
+      },
+      {
+        "case_id": "project-goal",
+        "horizon": "medium",
+        "strategy": "always_memory",
+        "routing_decision": "compact_memory",
+        "selected_source_ids": [
+          "corpus-turn-project",
+          "corpus-turn-commitment",
+          "corpus-memory-project",
+          "corpus-memory-commitment"
+        ],
+        "relevant_source_ids": [
+          "corpus-turn-project",
+          "corpus-memory-project"
+        ],
+        "source_recall": 1.0,
+        "correct": true,
+        "context_characters": 1388,
+        "context_character_budget": 8000,
+        "sufficiency_score": 0.8,
+        "fallback_used": false,
+        "answer_correct": true,
+        "answer_abstained": false,
+        "answer_text": "Według zapisanej informacji goal: lokalna pamięć asystenta.",
+        "answer_evaluation_failed": false,
+        "answer_failure_code": null,
+        "answer_latency_ms": 331.07753604417667,
+        "tokens_in": 316,
+        "tokens_out": 31,
+        "backend_name": "llama",
+        "model_name": "models/google_functiongemma-270m-it-Q4_K_M.gguf",
+        "judge_version": "deterministic-phrase-and-abstention-v1"
+      },
+      {
+        "case_id": "system-state",
+        "horizon": "long",
+        "strategy": "adaptive",
+        "routing_decision": "raw_evidence_fallback",
+        "selected_source_ids": [
+          "corpus-memory-system",
+          "corpus-turn-system"
+        ],
+        "relevant_source_ids": [
+          "corpus-memory-system"
+        ],
+        "source_recall": 1.0,
+        "correct": true,
+        "context_characters": 949,
+        "context_character_budget": 8000,
+        "sufficiency_score": 0.5,
+        "fallback_used": true,
+        "answer_correct": true,
+        "answer_abstained": false,
+        "answer_text": "Według zapisanej informacji default_profile: LOCAL_PREFERRED.",
+        "answer_evaluation_failed": false,
+        "answer_failure_code": null,
+        "answer_latency_ms": 240.57962402002886,
+        "tokens_in": 259,
+        "tokens_out": 14,
+        "backend_name": "llama",
+        "model_name": "models/google_functiongemma-270m-it-Q4_K_M.gguf",
+        "judge_version": "deterministic-phrase-and-abstention-v1"
+      },
+      {
+        "case_id": "system-state",
+        "horizon": "long",
+        "strategy": "always_memory",
+        "routing_decision": "compact_memory",
+        "selected_source_ids": [
+          "corpus-memory-system"
+        ],
+        "relevant_source_ids": [
+          "corpus-memory-system"
+        ],
+        "source_recall": 1.0,
+        "correct": true,
+        "context_characters": 735,
+        "context_character_budget": 8000,
+        "sufficiency_score": 0.5,
+        "fallback_used": false,
+        "answer_correct": null,
+        "answer_abstained": null,
+        "answer_text": null,
+        "answer_evaluation_failed": true,
+        "answer_failure_code": "INVALID_OUTPUT",
+        "answer_latency_ms": 40.041296975687146,
+        "tokens_in": null,
+        "tokens_out": null,
+        "backend_name": null,
+        "model_name": null,
+        "judge_version": null
+      }
+    ],
+    "aggregates": [
+      {
+        "horizon": "short",
+        "strategy": "adaptive",
+        "case_count": 1,
+        "source_accuracy": 1.0,
+        "answer_accuracy": 0.0,
+        "answer_evaluation_failures": 0,
+        "mean_context_characters": 977.0
+      },
+      {
+        "horizon": "short",
+        "strategy": "always_memory",
+        "case_count": 1,
+        "source_accuracy": 1.0,
+        "answer_accuracy": 0.0,
+        "answer_evaluation_failures": 0,
+        "mean_context_characters": 977.0
+      },
+      {
+        "horizon": "medium",
+        "strategy": "adaptive",
+        "case_count": 1,
+        "source_accuracy": 1.0,
+        "answer_accuracy": 1.0,
+        "answer_evaluation_failures": 0,
+        "mean_context_characters": 1388.0
+      },
+      {
+        "horizon": "medium",
+        "strategy": "always_memory",
+        "case_count": 1,
+        "source_accuracy": 1.0,
+        "answer_accuracy": 1.0,
+        "answer_evaluation_failures": 0,
+        "mean_context_characters": 1388.0
+      },
+      {
+        "horizon": "long",
+        "strategy": "adaptive",
+        "case_count": 1,
+        "source_accuracy": 1.0,
+        "answer_accuracy": 1.0,
+        "answer_evaluation_failures": 0,
+        "mean_context_characters": 949.0
+      },
+      {
+        "horizon": "long",
+        "strategy": "always_memory",
+        "case_count": 1,
+        "source_accuracy": 1.0,
+        "answer_accuracy": null,
+        "answer_evaluation_failures": 1,
+        "mean_context_characters": 735.0
+      }
+    ]
+  }
+}

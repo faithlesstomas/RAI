@@ -4,6 +4,8 @@ Ollama implementation of LocalTextEngine.
 
 from __future__ import annotations
 
+import hashlib
+import json
 import logging
 import time
 from typing import Any, List, Optional
@@ -30,6 +32,7 @@ class OllamaEngine:
         self.host = host
         self._client: Any = None
         self._is_loaded = False
+        self.model_artifact_version: str | None = None
 
     @property
     def model_name(self) -> str:
@@ -39,7 +42,7 @@ class OllamaEngine:
     def is_loaded(self) -> bool:
         return self._is_loaded
 
-    def _get_client(self) -> Any:
+    def _get_client(self) -> Any:  # noqa: ANN401 - optional SDK has no stable protocol
         if self._client is None:
             import ollama  # noqa: PLC0415
 
@@ -51,7 +54,19 @@ class OllamaEngine:
         try:
             client = self._get_client()
             # Test model availability via show
-            await client.show(model=self._model_name)
+            model_description = await client.show(model=self._model_name)
+            if hasattr(model_description, "model_dump"):
+                model_description = model_description.model_dump(mode="json")
+            serialized = json.dumps(
+                model_description,
+                ensure_ascii=False,
+                sort_keys=True,
+                separators=(",", ":"),
+                default=str,
+            ).encode("utf-8")
+            self.model_artifact_version = (
+                "ollama-show-sha256:" + hashlib.sha256(serialized).hexdigest()
+            )
             self._is_loaded = True
             return Success(None)
         except Exception as exc:

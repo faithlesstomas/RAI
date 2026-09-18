@@ -849,8 +849,14 @@ extraction, bitemporal claims, FTS5 raw-turn/claim retrieval, adaptive context
 routing, Rich History evidence grounding and an equal-budget raw/claim/grounded-
 summary evaluation runner, a versioned representative corpus and a product-
 backend answer evaluator with an independent deterministic judge are
-implemented. A recorded live-model run, energy measurement, dense/graph
-channels, persistent consolidation and adapters remain planned.
+implemented. M4–M6 add short/medium/long adaptive-router comparison, verified
+derived write-back, local dense and weighted-RRF baselines, and authenticated
+bounded graph traversal. Two v1 manifests remain historical evidence. Three
+repeated v2 manifests (Qwen 3.5 2B/4B and Gemma 4 E4B) close the M4–M6 merge
+gate: all final answers and routing cases pass, while raw-answer fields retain
+model variability. The more complex retrieval channels remain opt-in because
+they do not improve quality or precision over claim BM25. Persistent
+consolidation and optional adapters remain planned.
 
 Purpose: provide a continuous, local-first desktop assistant whose durable
 memory and context policy belong to RAI while its LLM and reasoning strategy are
@@ -931,25 +937,33 @@ explicit ConversationTurn or policy-approved proactive trigger
   - [x] represent `SUPPORTS`, `CONTRADICTS`, `UPDATES` and `SUPERSEDES` with their
     own provenance and policy eligibility;
   - [x] bind derived facts to source turns and preserve episode observation IDs.
-- [/] Establish a simple, reproducible retrieval floor before graph traversal:
-  - [/] index raw turns and claims with SQLite FTS5/BM25; a persisted episode
-    projection remains open;
+- [x] Establish a simple, reproducible retrieval floor before graph traversal:
+  - [x] index raw turns and claims with SQLite FTS5/BM25 and retrieve approved
+    Rich History episodes through a bounded lexical evidence provider without
+    duplicating their sensitive persisted payload into assistant storage;
   - [x] add query-driven pruning and independently bounded recent, raw-evidence and
     semantic-memory channels;
-  - [/] compare raw chunks, extracted facts and summaries using the same retrieval
-    and context budgets; the runner supports all three source-covered channels
-    and separates retrieval from answer-utilization failures. A versioned corpus
+  - [x] make explicit forgetting suppress the source exchange from raw FTS and
+    recent inference context while retaining the separate audit record;
+  - [x] compare raw chunks, extracted facts, summaries, dense retrieval, weighted
+    RRF and bounded graph paths using the same retrieval and context budgets;
+    the runner separates retrieval from answer-utilization failures. A versioned corpus
     covers personal, project, system, commitment, correction, abstention and
     privacy-isolation cases; the answerer uses the product backend contract and
-    an independent deterministic judge. A recorded live-model and energy run
-    remains open.
-- [/] Add a tiered context router which selects recent/full context for short
+    an independent deterministic judge. Benchmark protocol v2 records raw and
+    grounded answers separately, counts all attempts, fingerprints the model
+    artifact and repeats each case. The two v1 live local-model manifests are
+    retained as historical evidence; three repeated v2 local-model manifests
+    now satisfy this acceptance gate.
+- [x] Add a tiered context router which selects a relevant, privacy-eligible
+  reply chain for short
   histories and escalates from summaries or claims to raw evidence when the
   selected tier is insufficient. Record the route, sufficiency decision and
-  fallbacks in `ContextManifest`; tune thresholds empirically per model and
-  workload rather than treating published thresholds as constants. The
-  configurable deterministic routing/manifest contract is implemented; the
-  comparative tuning harness remains open.
+  fallbacks in `ContextManifest`, recomputing them after budget pruning; tune
+  thresholds empirically per model and workload rather than treating published
+  thresholds as constants. The
+  comparison covers short, medium and long histories against an always-memory
+  baseline, and verified write-back is source-covered and provenance-linked.
 - [ ] After the retrieval floor and adaptive router are reproducible, evaluate
   optional GWT-inspired context processing: one or a few bounded rounds of
   candidate eligibility, competition, admission, broadcast and release before
@@ -957,14 +971,18 @@ explicit ConversationTurn or policy-approved proactive trigger
   model and compute budgets; treat it as an attention/orchestration experiment,
   not a memory tier or a claim of GCAS conformance. See
   [Assistant memory, GCAS and GWT-inspired processing](docs/assistant-memory-gcas-crosscheck.md).
-- [ ] Add multi-channel retrieval incrementally:
-  - start with lexical FTS5/BM25 plus temporal and policy filters;
-  - benchmark a local dense embedding channel and Weighted Reciprocal Rank
+- [x] Add multi-channel retrieval incrementally:
+  - [x] start with lexical FTS5/BM25 plus temporal and policy filters;
+  - [x] benchmark a local dense embedding channel and Weighted Reciprocal Rank
     Fusion (RRF) before enabling either by default;
-  - benchmark a local cross-encoder only when its quality gain justifies its
-    latency, memory and energy cost;
-  - add graph traversal or HippoRAG-style personalized PageRank only over the
-    provenance-qualified subgraph and with adversarial selection-integrity tests.
+  - [x] defer a local cross-encoder because the cheaper hybrid channels show no
+    quality gain that could justify added latency, memory and energy cost;
+  - [x] add bounded graph traversal over the provenance-qualified subgraph with
+    adversarial selection-integrity tests. Personalized PageRank remains a later
+    experiment only if the bounded path baseline demonstrates a need. Protocol
+    v2 additionally reports whether channel selections differ from claim BM25;
+    repeated v2 results show no quality or precision gain, so the channels stay
+    opt-in.
 - [ ] Add community summaries only after representative corpus-size benchmarks
   show that raw/claim retrieval and bounded graph paths are insufficient.
   Treat the community graph as a derived projection; evaluate incremental LPA

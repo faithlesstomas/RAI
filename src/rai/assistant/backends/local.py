@@ -16,7 +16,12 @@ from rai.kernel.ports import CancellationToken, LifecycleState
 from rai.kernel.records import ActionFailure, ProducerIdentity
 
 from ..context import DEFAULT_SYSTEM_INSTRUCTION
-from ..memory import extract_memory_proposals, grounded_memory_response
+from ..memory import (
+    extract_memory_proposals,
+    grounded_memory_response,
+    project_grounded_summary_memories,
+    project_recent_turn_memories,
+)
 from ..records import (
     AssistantCandidate,
     InferenceRequest,
@@ -75,6 +80,12 @@ class LocalAssistantBackend:
                             message=f"failed to load engine: {load_res.failure()}",
                         )
                     )
+                if self.model_artifact_version is None:
+                    engine_artifact_version = getattr(
+                        self.engine, "model_artifact_version", None
+                    )
+                    if engine_artifact_version:
+                        self.model_artifact_version = str(engine_artifact_version)
             except Exception as exc:  # noqa: BLE001
                 self._state = LifecycleState.FAILED
                 return Failure(
@@ -250,6 +261,21 @@ class LocalAssistantBackend:
         durable_memories = request.context.content.get("durable_memories", [])
         if not isinstance(durable_memories, (list, tuple)):
             durable_memories = []
+        recent_projection = project_recent_turn_memories(
+            request.context.content.get("recent_turns", ()), self.producer
+        )
+        episodic_projection = project_recent_turn_memories(
+            request.context.content.get("episodic_evidence", ()), self.producer
+        )
+        summary_projection = project_grounded_summary_memories(
+            request.context.content.get("grounded_summaries", ())
+        )
+        grounding_memories = (
+            *durable_memories,
+            *recent_projection,
+            *episodic_projection,
+            *summary_projection,
+        )
 
         if self.engine is None or not hasattr(self.engine, "generate"):
             return Failure(
@@ -299,7 +325,7 @@ class LocalAssistantBackend:
         response_text, repetition_truncated = self._truncate_repetition(response_text)
         proposals = self._extract_proposals(user_text, request.turn_id)
         grounded_text, grounding_override = self._ground_memory_response(
-            user_text, durable_memories, proposals, response_text
+            user_text, grounding_memories, proposals, response_text
         )
         candidate = AssistantCandidate(
             text=grounded_text,

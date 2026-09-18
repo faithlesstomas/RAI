@@ -95,27 +95,36 @@ model-written summary:
 3. admitted claims with exact source spans, modality, confidence, scope,
    provenance and separate real-world and transaction-time intervals.
 
-For each answer the adaptive router first checks whether a compact claim is
-sufficient. If it is not, it falls back to raw evidence. If neither route has
-support, the answerer is instructed to abstain. The persisted context manifest
+For each answer the adaptive router first checks a short, relevant and
+privacy-eligible reply chain, then whether a compact claim is sufficient. If it
+is not, it falls back to raw evidence. If neither route has support, the
+answerer is instructed to abstain. Route sufficiency is recomputed after
+budget pruning. The persisted context manifest
 records the selected route, rejected routes, sufficiency score, fallback,
 ranking reasons, source IDs and character budget.
 
 Corrections retain their earlier state for historical queries and create both
 `CONTRADICTS` and `SUPERSEDES` relations. Ambiguous conflicts cannot silently
 replace a claim. Deleting a source removes its raw retrieval entry and derived
-state without reactivating an older value.
+state without reactivating an older value. `FORGET` also suppresses the source
+user turn and its immediate assistant reply from future raw or recent context;
+the separate audit transcript remains inspectable but is no longer eligible as
+model evidence.
 
 ## Current boundary
 
 This is an evidence-first general-memory increment, not human-like memory.
 Quoted, hearsay, uncertain, malformed and source-less candidates fail closed.
-The current retrieval floor compares lexical raw turns and claims with a
-source-covered deterministic summary projection under equal budgets. Its
-versioned natural-conversation corpus includes corrections, unsupported
-questions and privacy isolation; answers pass through the product backend
-contract and are judged independently for required evidence and abstention.
-A recorded live-local-model run, energy measurement, local dense retrieval,
-domain-aware consolidation and optional graph-store adapters are still Issue
-#35 work. Interactive latency depends on the selected local model and hardware;
+The retrieval floor compares lexical raw turns and claims, a source-covered
+summary projection, local dense feature hashing, weighted RRF and bounded graph
+paths under equal budgets. Its versioned corpus includes corrections,
+unsupported questions, privacy isolation and a denied graph edge. Answers pass
+through the product backend contract and are judged independently for required
+evidence and abstention. Protocol v2 separates raw model text from grounding
+overrides and includes failed attempts in headline accuracy. Three repeated
+live-model manifests and the historical v1 limitations are documented in
+[the M4–M6 evaluation](assistant-m4-m6-evaluation.md). Dense, RRF and graph
+retrieval remain opt-in because they did not beat claim BM25. Domain-aware
+consolidation and optional graph-store adapters remain later Issue #35 work.
+Interactive latency depends on the selected local model and hardware;
 deterministic mode exists for conformance tests, not as a chat model.

@@ -5,7 +5,6 @@ from __future__ import annotations
 import asyncio
 import json
 import time
-import unicodedata
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any, Literal, Protocol
@@ -24,11 +23,14 @@ from rai.kernel.records import (
 )
 
 from .ports import (
+    AdvancedMemoryRetriever,
     AssistantEvidence,
     AssistantEvidenceProvider,
     AssistantModelBackend,
     MemoryGraphStore,
 )
+from .energy import EnergyMeter
+from .judging import JUDGE_VERSION, judge_answer
 from .query import MemoryQueryResolver
 from .records import (
     AssistantContextManifest,
@@ -38,14 +40,20 @@ from .records import (
     ConversationTurn,
     InferenceRequest,
     MemoryRecord,
+    MemoryRelation,
+    MemoryRelationKind,
     make_assistant_failure,
 )
 from .summary import validate_grounded_summary
+from .routing_evaluation import ContextRoutingEvaluationRun
 
 RetrievalChannel = Literal[
     "raw_turns_bm25",
     "claims_bm25",
     "summaries_grounded",
+    "dense_local",
+    "rrf_fused",
+    "graph_bounded",
 ]
 
 
@@ -63,6 +71,16 @@ class RetrievalEvaluationCase(BaseModel):
     expected_answer_phrases: tuple[str, ...] = ()
     forbidden_answer_phrases: tuple[str, ...] = ()
     expected_abstention: bool = False
+    history_horizon: Literal["short", "medium", "long"] | None = None
+    routing_session_id: str | None = None
+
+    @model_validator(mode="after")
+    def validate_routing_metadata(self) -> RetrievalEvaluationCase:
+        if (self.history_horizon is None) != (self.routing_session_id is None):
+            raise ValueError(
+                "history_horizon and routing_session_id must be supplied together"
+            )
+        return self
 
 
 class RetrievalCorpusTurn(BaseModel):
@@ -74,7 +92,7 @@ class RetrievalCorpusTurn(BaseModel):
     session_id: str = Field(min_length=1)
     text: str = Field(min_length=1)
     data_class: DataClass = DataClass.LOCAL
-    domain_scope: str = Field(default="general", min_length=1)
+    domain_scope: str = Field(default="global", min_length=1)
     purpose: str = Field(default="assistant", min_length=1)
 
 
@@ -89,11 +107,26 @@ class RetrievalCorpusClaim(BaseModel):
     topic: str = Field(min_length=1)
     content: dict[str, Any]
     data_class: DataClass = DataClass.LOCAL
-    domain_scope: str = Field(default="general", min_length=1)
+    domain_scope: str = Field(default="global", min_length=1)
     purpose: str = Field(default="assistant", min_length=1)
     epistemic_status: Literal[
         "asserted", "observed", "inferred", "uncertain", "contested"
     ] = "asserted"
+
+
+class RetrievalCorpusRelation(BaseModel):
+    """Frozen graph edge used to test traversal selection integrity."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    relation_id: str = Field(min_length=1)
+    source_id: str = Field(min_length=1)
+    target_id: str = Field(min_length=1)
+    kind: MemoryRelationKind
+    confidence: float = Field(default=1.0, ge=0.0, le=1.0)
+    eligible: bool = True
+    policy_outcome: Literal["ALLOW", "DENY", "REQUIRE_APPROVAL"] = "ALLOW"
+    provenance_source_id: str | None = None
 
 
 class RetrievalEvaluationCorpus(BaseModel):
@@ -105,6 +138,7 @@ class RetrievalEvaluationCorpus(BaseModel):
     description: str = Field(min_length=1)
     turns: tuple[RetrievalCorpusTurn, ...] = Field(min_length=1)
     claims: tuple[RetrievalCorpusClaim, ...] = Field(min_length=1)
+    relations: tuple[RetrievalCorpusRelation, ...] = ()
     cases: tuple[RetrievalEvaluationCase, ...] = Field(min_length=1)
 
     @model_validator(mode="after")
@@ -116,6 +150,9 @@ class RetrievalEvaluationCorpus(BaseModel):
             raise ValueError("retrieval corpus contains duplicate turn IDs")
         if len(set(claim_ids)) != len(claim_ids):
             raise ValueError("retrieval corpus contains duplicate claim IDs")
+        relation_ids = tuple(relation.relation_id for relation in self.relations)
+        if len(set(relation_ids)) != len(relation_ids):
+            raise ValueError("retrieval corpus contains duplicate relation IDs")
         unknown_sources = {claim.source_turn_id for claim in self.claims} - set(
             turn_ids
         )
@@ -124,6 +161,18 @@ class RetrievalEvaluationCorpus(BaseModel):
                 "claims reference missing source turns: "
                 + ", ".join(sorted(unknown_sources))
             )
+        for relation in self.relations:
+            if {relation.source_id, relation.target_id} - set(claim_ids):
+                raise ValueError(
+                    f"relation {relation.relation_id} references unknown claims"
+                )
+            if (
+                relation.provenance_source_id is not None
+                and relation.provenance_source_id not in set(turn_ids) | set(claim_ids)
+            ):
+                raise ValueError(
+                    f"relation {relation.relation_id} has unknown provenance source"
+                )
         for case in self.cases:
             if set(case.relevant_raw_turn_ids) - set(turn_ids):
                 raise ValueError(f"case {case.case_id} references unknown raw turns")
@@ -140,8 +189,12 @@ class RetrievalAnswerEvaluation(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid")
 
     answer_text: str = Field(min_length=1)
+    raw_model_text: str | None = None
+    grounding_override: bool = False
     correct: bool
+    raw_correct: bool | None = None
     abstained: bool
+    raw_abstained: bool | None = None
     tokens_in: int = Field(ge=0)
     tokens_out: int = Field(ge=0)
     latency_ms: float = Field(ge=0.0)
@@ -149,6 +202,9 @@ class RetrievalAnswerEvaluation(BaseModel):
     model_name: str = Field(min_length=1)
     judge_version: str = Field(min_length=1)
     energy_joules: float | None = Field(default=None, ge=0.0)
+    energy_source: str | None = None
+    energy_scope: str | None = None
+    energy_sensors: tuple[str, ...] = ()
     provider_cost: float | None = Field(default=None, ge=0.0)
 
 
@@ -169,6 +225,7 @@ class RetrievalChannelMeasurement(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid")
 
     case_id: str
+    trial_index: int = Field(default=1, ge=1)
     channel: RetrievalChannel
     retrieved_ids: tuple[str, ...]
     artifact_ids: tuple[str, ...] = ()
@@ -183,7 +240,11 @@ class RetrievalChannelMeasurement(BaseModel):
     answer_evaluation_failed: bool = False
     answer_failure_code: str | None = None
     answer_text: str | None = None
+    raw_model_text: str | None = None
+    grounding_override: bool = False
+    raw_answer_correct: bool | None = None
     answer_abstained: bool | None = None
+    raw_answer_abstained: bool | None = None
     answer_latency_ms: float | None = Field(default=None, ge=0.0)
     tokens_in: int | None = Field(default=None, ge=0)
     tokens_out: int | None = Field(default=None, ge=0)
@@ -192,6 +253,9 @@ class RetrievalChannelMeasurement(BaseModel):
     judge_version: str | None = None
     provider_cost: float | None = Field(default=None, ge=0.0)
     energy_joules: float | None = Field(default=None, ge=0.0)
+    energy_source: str | None = None
+    energy_scope: str | None = None
+    energy_sensors: tuple[str, ...] = ()
     retrieval_failed: bool = False
     failure_code: str | None = None
 
@@ -206,6 +270,7 @@ class RetrievalEvaluationRun(BaseModel):
     profile_scope: str
     retrieval_limit: int = Field(ge=1)
     context_character_budget: int = Field(ge=1)
+    trials: int = Field(default=1, ge=1)
     measurements: tuple[RetrievalChannelMeasurement, ...]
 
 
@@ -218,7 +283,10 @@ class RetrievalChannelAggregate(BaseModel):
     case_count: int = Field(ge=0)
     mean_recall: float = Field(ge=0.0, le=1.0)
     mean_precision: float = Field(ge=0.0, le=1.0)
+    distinct_from_claims_rate: float | None = Field(default=None, ge=0.0, le=1.0)
     answer_accuracy: float | None = Field(default=None, ge=0.0, le=1.0)
+    evaluated_answer_accuracy: float | None = Field(default=None, ge=0.0, le=1.0)
+    raw_answer_accuracy: float | None = Field(default=None, ge=0.0, le=1.0)
     retrieval_abstention_rate: float = Field(ge=0.0, le=1.0)
     answer_abstention_rate: float | None = Field(default=None, ge=0.0, le=1.0)
     retrieval_failures: int = Field(ge=0)
@@ -231,21 +299,39 @@ class RetrievalChannelAggregate(BaseModel):
     total_provider_cost: float | None = Field(default=None, ge=0.0)
     total_energy_joules: float | None = Field(default=None, ge=0.0)
     energy_measurement_coverage: float = Field(ge=0.0, le=1.0)
+    energy_sources: tuple[str, ...] = ()
+    energy_scopes: tuple[str, ...] = ()
+    energy_sensors: tuple[str, ...] = ()
+
+
+class RetrievalBenchmarkArtifact(BaseModel):
+    """Portable result written by the live retrieval benchmark command."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    artifact_version: str = "rai-assistant-retrieval-benchmark-v2"
+    run: RetrievalEvaluationRun
+    aggregates: tuple[RetrievalChannelAggregate, ...]
+    backend_name: str = Field(min_length=1)
+    model_name: str = Field(min_length=1)
+    model_artifact_version: str | None = None
+    prompt_template_version: str = Field(min_length=1)
+    judge_version: str = JUDGE_VERSION
+    max_input_tokens: int = Field(ge=1)
+    max_output_tokens: int = Field(ge=1)
+    max_latency_seconds: float = Field(gt=0.0)
+    dense_embedding_version: str = Field(min_length=1)
+    rrf_weights: dict[str, float]
+    graph_depth: int = Field(ge=1)
+    minimum_relation_confidence: float = Field(ge=0.0, le=1.0)
+    energy_required: bool = False
+    routing_run: ContextRoutingEvaluationRun | None = None
 
 
 _EVALUATION_PRODUCER = ProducerIdentity(
     producer_id="assistant-retrieval-evaluator",
     kind="evaluation",
     version="1.0.0",
-)
-_ABSTENTION_MARKERS = (
-    "nie wiem",
-    "nie mam wystarczających",
-    "brak wystarczających",
-    "nie mogę odpowiedzieć",
-    "i don't know",
-    "insufficient evidence",
-    "cannot answer",
 )
 
 
@@ -254,29 +340,18 @@ def load_retrieval_evaluation_corpus(path: str | Path) -> RetrievalEvaluationCor
     return RetrievalEvaluationCorpus.model_validate_json(Path(path).read_text("utf-8"))
 
 
-def _normalized_text(value: str) -> str:
-    return " ".join(unicodedata.normalize("NFKC", value).casefold().split())
-
-
 def _item_data_class(item: dict[str, object]) -> DataClass:
     value = item.get("data_class", DataClass.LOCAL)
     return value if isinstance(value, DataClass) else DataClass(str(value))
 
 
 def _judge_answer(case: RetrievalEvaluationCase, answer_text: str) -> tuple[bool, bool]:
-    normalized = _normalized_text(answer_text)
-    abstained = any(marker in normalized for marker in _ABSTENTION_MARKERS)
-    required = all(
-        _normalized_text(phrase) in normalized
-        for phrase in case.expected_answer_phrases
+    return judge_answer(
+        answer_text,
+        expected_phrases=case.expected_answer_phrases,
+        forbidden_phrases=case.forbidden_answer_phrases,
+        expected_abstention=case.expected_abstention,
     )
-    forbidden = any(
-        _normalized_text(phrase) in normalized
-        for phrase in case.forbidden_answer_phrases
-    )
-    if case.expected_abstention:
-        return abstained and not forbidden, abstained
-    return required and not forbidden and not abstained, abstained
 
 
 def _answer_context_content(
@@ -296,7 +371,9 @@ def _answer_context_content(
         content["episodic_evidence"] = tuple(
             {
                 "source_id": item["source_id"],
+                "record_id": item["source_id"],
                 "timestamp": "benchmark-source",
+                "role": "user",
                 "text": (
                     item.get("content", {}).get("text", "")
                     if isinstance(item.get("content"), dict)
@@ -305,7 +382,7 @@ def _answer_context_content(
             }
             for item in context_items
         )
-    elif channel == "claims_bm25":
+    elif channel != "summaries_grounded":
         content["durable_memories"] = tuple(
             {
                 "record_id": item["source_id"],
@@ -318,6 +395,23 @@ def _answer_context_content(
     return content
 
 
+def _answer_evidence_characters(
+    case: RetrievalEvaluationCase,
+    channel: RetrievalChannel,
+    context_items: tuple[dict[str, object], ...],
+) -> int:
+    """Measure the final serialized evidence layer consumed by the backend."""
+    content = _answer_context_content(case, channel, context_items)
+    key = (
+        "episodic_evidence"
+        if channel == "raw_turns_bm25"
+        else "grounded_summaries"
+        if channel == "summaries_grounded"
+        else "durable_memories"
+    )
+    return len(json.dumps(content[key], ensure_ascii=False))
+
+
 class BackendRetrievalAnswerEvaluator:
     """Answer from a product backend and judge without asking it to self-grade."""
 
@@ -328,11 +422,13 @@ class BackendRetrievalAnswerEvaluator:
         max_input_tokens: int = 4096,
         max_output_tokens: int = 256,
         max_latency_seconds: float = 60.0,
+        energy_meter: EnergyMeter | None = None,
     ) -> None:
         self.backend = backend
         self.max_input_tokens = max_input_tokens
         self.max_output_tokens = max_output_tokens
         self.max_latency_seconds = max_latency_seconds
+        self.energy_meter = energy_meter
 
     async def evaluate(
         self,
@@ -352,12 +448,10 @@ class BackendRetrievalAnswerEvaluator:
                 if channel == "raw_turns_bm25"
                 else "compact_memory"
             ),
-            evidence_character_budget=sum(
-                len(json.dumps(item, ensure_ascii=False)) for item in context_items
+            evidence_character_budget=_answer_evidence_characters(
+                case, channel, context_items
             ),
-            actual_characters=sum(
-                len(json.dumps(item, ensure_ascii=False)) for item in context_items
-            ),
+            actual_characters=_answer_evidence_characters(case, channel, context_items),
             items=tuple(
                 AssistantContextManifestItem(
                     source_id=str(item["source_id"]),
@@ -414,42 +508,90 @@ class BackendRetrievalAnswerEvaluator:
                 "If it does not support an answer, explicitly say that you do not know."
             ),
         )
+        energy_session = None
+        if self.energy_meter is not None:
+            energy_start = await self.energy_meter.start()
+            if isinstance(energy_start, Success):
+                energy_session = energy_start.unwrap()
         started = time.perf_counter()
+        timeout_failure: ActionFailure | None = None
         try:
             generated = await asyncio.wait_for(
                 self.backend.generate(request, CancellationToken()),
                 timeout=self.max_latency_seconds,
             )
         except TimeoutError:
+            generated = None
+            timeout_failure = make_assistant_failure(
+                code="ANSWER_EVALUATION_TIMEOUT",
+                message="answer backend exceeded the evaluation latency budget",
+                request_id=request.request_id,
+            )
+        latency_ms = (time.perf_counter() - started) * 1_000
+        measured_energy = None
+        if energy_session is not None:
+            energy_result = await energy_session.finish()
+            if isinstance(energy_result, Success):
+                measured_energy = energy_result.unwrap()
+        if timeout_failure is not None:
+            return Failure(timeout_failure)
+        if generated is None:
             return Failure(
                 make_assistant_failure(
-                    code="ANSWER_EVALUATION_TIMEOUT",
-                    message="answer backend exceeded the evaluation latency budget",
+                    code="ANSWER_EVALUATION_FAILED",
+                    message="answer evaluation produced no terminal result",
                     request_id=request.request_id,
                 )
             )
-        latency_ms = (time.perf_counter() - started) * 1_000
         if isinstance(generated, Failure):
             return Failure(generated.failure())
         candidate = generated.unwrap()
         correct, abstained = _judge_answer(case, candidate.text)
+        raw_model_text = candidate.metadata.get("raw_model_output")
+        if not isinstance(raw_model_text, str) or not raw_model_text.strip():
+            raw_model_text = candidate.text
+        raw_correct, raw_abstained = _judge_answer(case, raw_model_text)
+        grounding_override = candidate.metadata.get("grounding_override") is True
         energy = candidate.metadata.get("energy_joules")
         cost = candidate.metadata.get("provider_cost")
         return Success(
             RetrievalAnswerEvaluation(
                 answer_text=candidate.text,
+                raw_model_text=raw_model_text,
+                grounding_override=grounding_override,
                 correct=correct,
+                raw_correct=raw_correct,
                 abstained=abstained,
+                raw_abstained=raw_abstained,
                 tokens_in=candidate.tokens_in,
                 tokens_out=candidate.tokens_out,
                 latency_ms=latency_ms,
                 backend_name=str(getattr(self.backend, "backend_name", "unknown")),
                 model_name=str(getattr(self.backend, "model_name", "unknown")),
-                judge_version="deterministic-phrase-and-abstention-v1",
+                judge_version=JUDGE_VERSION,
                 energy_joules=(
-                    float(energy)
+                    measured_energy.joules
+                    if measured_energy is not None
+                    else float(energy)
                     if isinstance(energy, (int, float)) and not isinstance(energy, bool)
                     else None
+                ),
+                energy_source=(
+                    measured_energy.source
+                    if measured_energy is not None
+                    else "backend-metadata"
+                    if isinstance(energy, (int, float)) and not isinstance(energy, bool)
+                    else None
+                ),
+                energy_scope=(
+                    measured_energy.scope
+                    if measured_energy is not None
+                    else "backend-reported"
+                    if isinstance(energy, (int, float)) and not isinstance(energy, bool)
+                    else None
+                ),
+                energy_sensors=(
+                    measured_energy.sensors if measured_energy is not None else ()
                 ),
                 provider_cost=(
                     float(cost)
@@ -481,6 +623,11 @@ async def seed_retrieval_evaluation_corpus(
             )
         )
 
+    final_turn_id = next(
+        turn.turn_id
+        for turn in reversed(corpus.turns)
+        if turn.turn_id in claims_by_turn
+    )
     for source in corpus.turns:
         turn = ConversationTurn(
             record_id=source.turn_id,
@@ -543,12 +690,43 @@ async def seed_retrieval_evaluation_corpus(
             text="Evaluation corpus ingestion completed.",
             admitted_memory_ids=tuple(memory.record_id for memory in memories),
         )
+        corpus_relations = (
+            tuple(
+                MemoryRelation(
+                    relation_id=relation.relation_id,
+                    source_id=relation.source_id,
+                    target_id=relation.target_id,
+                    kind=relation.kind,
+                    confidence=relation.confidence,
+                    provenance=(
+                        ProvenanceReference(
+                            source_id=relation.provenance_source_id,
+                            source_type=(
+                                "conversation_turn"
+                                if relation.provenance_source_id in known_turns
+                                else "memory_record"
+                            ),
+                            source_version="1.0.0",
+                            relation="ASSERTED_BY",
+                            producer=_EVALUATION_PRODUCER,
+                        ),
+                    )
+                    if relation.provenance_source_id is not None
+                    else (),
+                    policy_outcome=relation.policy_outcome,
+                    eligible=relation.eligible,
+                )
+                for relation in corpus.relations
+            )
+            if source.turn_id == final_turn_id
+            else ()
+        )
         committed = await store.commit_terminal(
             response=response,
             manifest=manifest,
             assistant_turn=None,
             memories=memories,
-            relations=(),
+            relations=corpus_relations,
         )
         if isinstance(committed, Failure):
             return Failure(committed.failure())
@@ -588,53 +766,60 @@ def _metrics(  # noqa: PLR0913
 
 
 def _bounded_raw_items(
-    items: tuple[tuple[ConversationTurn, str], ...], character_budget: int
+    items: tuple[tuple[ConversationTurn, str], ...],
+    character_budget: int,
+    case: RetrievalEvaluationCase,
 ) -> tuple[tuple[str, ...], int, tuple[dict[str, object], ...]]:
     selected: list[str] = []
     context_items: list[dict[str, object]] = []
     used = 0
     for turn, _reason in items:
-        item_size = len(turn.text)
-        if used + item_size > character_budget:
+        item = {
+            "source_id": turn.record_id,
+            "source_type": "conversation_turn",
+            "data_class": turn.data_class,
+            "content": {"role": turn.role, "text": turn.text},
+        }
+        candidate = (*context_items, item)
+        candidate_size = _answer_evidence_characters(case, "raw_turns_bm25", candidate)
+        if candidate_size > character_budget:
             continue
         selected.append(turn.record_id)
-        context_items.append(
-            {
-                "source_id": turn.record_id,
-                "source_type": "conversation_turn",
-                "data_class": turn.data_class,
-                "content": {"role": turn.role, "text": turn.text},
-            }
-        )
-        used += item_size
+        context_items.append(item)
+        used = candidate_size
     return tuple(selected), used, tuple(context_items)
 
 
 def _bounded_claim_items(
-    items: tuple[tuple[MemoryRecord, str], ...], character_budget: int
+    items: tuple[tuple[MemoryRecord, str], ...],
+    character_budget: int,
+    case: RetrievalEvaluationCase,
+    channel: RetrievalChannel = "claims_bm25",
 ) -> tuple[tuple[str, ...], int, tuple[dict[str, object], ...]]:
     selected: list[str] = []
     context_items: list[dict[str, object]] = []
     used = 0
     for memory, _reason in items:
-        item_size = len(json.dumps(memory.content, ensure_ascii=False))
-        if used + item_size > character_budget:
+        item = {
+            "source_id": memory.record_id,
+            "source_type": "memory_record",
+            "data_class": memory.data_class,
+            "content": {"topic": memory.topic, "content": memory.content},
+        }
+        candidate = (*context_items, item)
+        candidate_size = _answer_evidence_characters(case, channel, candidate)
+        if candidate_size > character_budget:
             continue
         selected.append(memory.record_id)
-        context_items.append(
-            {
-                "source_id": memory.record_id,
-                "source_type": "memory_record",
-                "data_class": memory.data_class,
-                "content": {"topic": memory.topic, "content": memory.content},
-            }
-        )
-        used += item_size
+        context_items.append(item)
+        used = candidate_size
     return tuple(selected), used, tuple(context_items)
 
 
 def _bounded_summary_items(
-    items: tuple[AssistantEvidence, ...], character_budget: int
+    items: tuple[AssistantEvidence, ...],
+    character_budget: int,
+    case: RetrievalEvaluationCase,
 ) -> tuple[
     tuple[str, ...],
     tuple[str, ...],
@@ -650,22 +835,24 @@ def _bounded_summary_items(
         invalid = validate_grounded_summary(evidence)
         if invalid is not None:
             return (), (), 0, (), invalid.code
-        item_size = len(json.dumps(evidence.content, ensure_ascii=False))
-        if used + item_size > character_budget:
+        item = {
+            "source_id": evidence.source_id,
+            "source_type": evidence.source_type,
+            "data_class": evidence.data_class,
+            "content": evidence.content,
+        }
+        candidate = (*context_items, item)
+        candidate_size = _answer_evidence_characters(
+            case, "summaries_grounded", candidate
+        )
+        if candidate_size > character_budget:
             continue
         artifact_ids.append(evidence.source_id)
         covered_source_ids.extend(
             str(source_id) for source_id in evidence.content["source_memory_ids"]
         )
-        context_items.append(
-            {
-                "source_id": evidence.source_id,
-                "source_type": evidence.source_type,
-                "data_class": evidence.data_class,
-                "content": evidence.content,
-            }
-        )
-        used += item_size
+        context_items.append(item)
+        used = candidate_size
     return (
         tuple(dict.fromkeys(covered_source_ids)),
         tuple(artifact_ids),
@@ -705,7 +892,11 @@ async def _evaluate_answer_use(
             "answer_correct": evaluation.correct,
             "answer_utilization_evaluated": True,
             "answer_text": evaluation.answer_text,
+            "raw_model_text": evaluation.raw_model_text,
+            "grounding_override": evaluation.grounding_override,
+            "raw_answer_correct": evaluation.raw_correct,
             "answer_abstained": evaluation.abstained,
+            "raw_answer_abstained": evaluation.raw_abstained,
             "answer_latency_ms": evaluation.latency_ms,
             "tokens_in": evaluation.tokens_in,
             "tokens_out": evaluation.tokens_out,
@@ -713,6 +904,9 @@ async def _evaluate_answer_use(
             "model_name": evaluation.model_name,
             "judge_version": evaluation.judge_version,
             "energy_joules": evaluation.energy_joules,
+            "energy_source": evaluation.energy_source,
+            "energy_scope": evaluation.energy_scope,
+            "energy_sensors": evaluation.energy_sensors,
             "provider_cost": evaluation.provider_cost,
         }
     )
@@ -723,15 +917,27 @@ def aggregate_retrieval_run(
 ) -> tuple[RetrievalChannelAggregate, ...]:
     """Aggregate quality and resource use without hiding missing measurements."""
     aggregates: list[RetrievalChannelAggregate] = []
+    claim_selections = {
+        (item.case_id, item.trial_index): item.retrieved_ids
+        for item in run.measurements
+        if item.channel == "claims_bm25"
+    }
     for channel in (
         "raw_turns_bm25",
         "claims_bm25",
         "summaries_grounded",
+        "dense_local",
+        "rrf_fused",
+        "graph_bounded",
     ):
         items = tuple(item for item in run.measurements if item.channel == channel)
         if not items:
             continue
         evaluated = tuple(item for item in items if item.answer_utilization_evaluated)
+        answer_evaluation_attempted = any(
+            item.answer_utilization_evaluated or item.answer_evaluation_failed
+            for item in items
+        )
         energy_values = tuple(
             item.energy_joules for item in evaluated if item.energy_joules is not None
         )
@@ -749,10 +955,31 @@ def aggregate_retrieval_run(
                 case_count=len(items),
                 mean_recall=sum(item.recall for item in items) / len(items),
                 mean_precision=sum(item.precision for item in items) / len(items),
+                distinct_from_claims_rate=(
+                    sum(
+                        item.retrieved_ids
+                        != claim_selections.get((item.case_id, item.trial_index), ())
+                        for item in items
+                    )
+                    / len(items)
+                    if channel != "claims_bm25"
+                    else None
+                ),
                 answer_accuracy=(
+                    sum(item.answer_correct is True for item in evaluated) / len(items)
+                    if answer_evaluation_attempted
+                    else None
+                ),
+                evaluated_answer_accuracy=(
                     sum(item.answer_correct is True for item in evaluated)
                     / len(evaluated)
                     if evaluated
+                    else None
+                ),
+                raw_answer_accuracy=(
+                    sum(item.raw_answer_correct is True for item in evaluated)
+                    / len(items)
+                    if answer_evaluation_attempted
                     else None
                 ),
                 retrieval_abstention_rate=(
@@ -784,14 +1011,37 @@ def aggregate_retrieval_run(
                 total_provider_cost=(sum(cost_values) if cost_values else None),
                 total_energy_joules=(sum(energy_values) if energy_values else None),
                 energy_measurement_coverage=(
-                    len(energy_values) / len(evaluated) if evaluated else 0.0
+                    len(energy_values) / len(items) if items else 0.0
+                ),
+                energy_sources=tuple(
+                    sorted(
+                        {
+                            item.energy_source
+                            for item in evaluated
+                            if item.energy_source is not None
+                        }
+                    )
+                ),
+                energy_scopes=tuple(
+                    sorted(
+                        {
+                            item.energy_scope
+                            for item in evaluated
+                            if item.energy_scope is not None
+                        }
+                    )
+                ),
+                energy_sensors=tuple(
+                    sorted(
+                        {sensor for item in evaluated for sensor in item.energy_sensors}
+                    )
                 ),
             )
         )
     return tuple(aggregates)
 
 
-async def evaluate_retrieval_floor(  # noqa: PLR0913
+async def evaluate_retrieval_floor(  # noqa: PLR0912, PLR0913, PLR0915
     store: MemoryGraphStore,
     cases: tuple[RetrievalEvaluationCase, ...],
     *,
@@ -799,6 +1049,7 @@ async def evaluate_retrieval_floor(  # noqa: PLR0913
     retrieval_limit: int = 5,
     context_character_budget: int = 8_000,
     summary_provider: AssistantEvidenceProvider | None = None,
+    advanced_retriever: AdvancedMemoryRetriever | None = None,
     answer_evaluator: RetrievalAnswerEvaluator | None = None,
     corpus_version: str = "rai-retrieval-floor-v1",
 ) -> Result[RetrievalEvaluationRun, ActionFailure]:
@@ -831,7 +1082,7 @@ async def evaluate_retrieval_floor(  # noqa: PLR0913
         else:
             raw_items = raw_result.unwrap()
             raw_ids, raw_characters, raw_context = _bounded_raw_items(
-                raw_items, context_character_budget
+                raw_items, context_character_budget, case
             )
             measurement = _metrics(
                 case_id=case.case_id,
@@ -872,7 +1123,7 @@ async def evaluate_retrieval_floor(  # noqa: PLR0913
         else:
             claim_items = claim_result.unwrap()
             claim_ids, claim_characters, claim_context = _bounded_claim_items(
-                claim_items, context_character_budget
+                claim_items, context_character_budget, case
             )
             measurement = _metrics(
                 case_id=case.case_id,
@@ -917,7 +1168,7 @@ async def evaluate_retrieval_floor(  # noqa: PLR0913
                     summary_context,
                     summary_failure,
                 ) = _bounded_summary_items(
-                    summary_result.unwrap(), context_character_budget
+                    summary_result.unwrap(), context_character_budget, case
                 )
                 measurement = _metrics(
                     case_id=case.case_id,
@@ -934,6 +1185,81 @@ async def evaluate_retrieval_floor(  # noqa: PLR0913
                         measurement, answer_evaluator, case, summary_context
                     )
                 )
+
+        if advanced_retriever is not None:
+            advanced_result = await advanced_retriever.retrieve(
+                query=query,
+                data_classes=case.data_classes,
+                limit=retrieval_limit,
+            )
+            if isinstance(advanced_result, Failure):
+                for channel in ("dense_local", "rrf_fused", "graph_bounded"):
+                    measurements.append(
+                        _metrics(
+                            case_id=case.case_id,
+                            channel=channel,
+                            retrieved_ids=(),
+                            artifact_ids=(),
+                            relevant_ids=case.relevant_claim_ids,
+                            latency_ms=0.0,
+                            context_characters=0,
+                            failure_code=advanced_result.failure().code,
+                        )
+                    )
+            else:
+                selection = advanced_result.unwrap()
+                channel_ids = dict(selection.channel_ids)
+                channel_latencies = dict(selection.channel_latency_ms)
+                selected_by_id = {
+                    memory.record_id: (memory, reason)
+                    for memory, reason in selection.memories
+                }
+                graph_relation_ids = tuple(
+                    dict.fromkeys(
+                        relation_id
+                        for path in selection.graph_paths
+                        for relation_id in path.relation_ids
+                    )
+                )
+                for channel in ("dense_local", "rrf_fused", "graph_bounded"):
+                    identifiers = channel_ids.get(channel, ())
+                    channel_memories: list[tuple[MemoryRecord, str]] = []
+                    for identifier in identifiers:
+                        selected = selected_by_id.get(identifier)
+                        if selected is None:
+                            memory_result = await store.get_memory(identifier)
+                            if (
+                                isinstance(memory_result, Success)
+                                and memory_result.unwrap() is not None
+                            ):
+                                selected = memory_result.unwrap()
+                        if selected is not None:
+                            channel_memories.append(selected)
+                    selected_ids, characters, context_items = _bounded_claim_items(
+                        tuple(channel_memories),
+                        context_character_budget,
+                        case,
+                        channel,
+                    )
+                    artifacts = (
+                        (*selected_ids, *graph_relation_ids)
+                        if channel == "graph_bounded"
+                        else selected_ids
+                    )
+                    measurement = _metrics(
+                        case_id=case.case_id,
+                        channel=channel,
+                        retrieved_ids=selected_ids,
+                        artifact_ids=tuple(artifacts),
+                        relevant_ids=case.relevant_claim_ids,
+                        latency_ms=channel_latencies.get(channel, 0.0),
+                        context_characters=characters,
+                    )
+                    measurements.append(
+                        await _evaluate_answer_use(
+                            measurement, answer_evaluator, case, context_items
+                        )
+                    )
 
     return Success(
         RetrievalEvaluationRun(

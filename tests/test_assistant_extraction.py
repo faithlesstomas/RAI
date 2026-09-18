@@ -29,7 +29,9 @@ from rai.assistant.extraction import SchemaConstrainedMemoryExtractor
 from rai.assistant.ports import MemoryQuery
 from rai.assistant.query import MemoryQueryResolver, domain_scope_matches
 from rai.assistant.records import (
+    MAX_PROPOSALS_PER_TURN,
     ConversationTurn,
+    MemoryProposal,
     MemoryRecord,
     MemoryRelationKind,
     make_assistant_failure,
@@ -216,6 +218,37 @@ async def test_schema_extractor_rejects_hallucinated_source_span() -> None:
 
     assert isinstance(result, Failure)
     assert result.failure().code == "INVALID_MEMORY_EXTRACTION"
+
+
+@pytest.mark.asyncio
+async def test_combined_proposal_sources_share_one_global_limit(tmp_path: Path) -> None:
+    text = "Pracuję nad projektem Aurora"
+    extractor = SchemaConstrainedMemoryExtractor(
+        _StaticEngine(_extraction_json("turn-limit", text)),  # type: ignore[arg-type]
+        model_name="schema-test-model",
+    )
+    service = AssistantService(
+        SQLiteMemoryGraphStore(tmp_path / "proposal-limit.sqlite3"),
+        DeterministicAssistantBackend(),
+        memory_extractor=extractor,
+    )
+    turn = _turn("turn-limit", text)
+    backend_proposals = tuple(
+        MemoryProposal(
+            producer=PRODUCER,
+            source_turn_id=turn.record_id,
+            topic=f"backend.topic.{index}",
+            content={"value": index},
+        )
+        for index in range(MAX_PROPOSALS_PER_TURN)
+    )
+
+    merged, operations = await service._extract_proposals(  # noqa: SLF001
+        turn, backend_proposals, CancellationToken()
+    )
+
+    assert len(merged) == MAX_PROPOSALS_PER_TURN
+    assert "dropped by shared limit: 1" in (operations[0].reason or "")
 
 
 @pytest.mark.asyncio
@@ -638,6 +671,12 @@ async def test_retrieval_floor_compares_raw_and_claim_bm25_under_equal_budgets( 
     assert failed_claim_measurement.answer_evaluation_failed
     assert not failed_claim_measurement.answer_utilization_evaluated
     assert failed_claim_measurement.answer_failure_code == "ANSWER_USE_FAILED"
+    failed_aggregates = aggregate_retrieval_run(failed_answer_run.unwrap())
+    failed_claim_aggregate = next(
+        item for item in failed_aggregates if item.channel == "claims_bm25"
+    )
+    assert failed_claim_aggregate.answer_accuracy == 0.0
+    assert failed_claim_aggregate.evaluated_answer_accuracy is None
 
     aggregates = aggregate_retrieval_run(run)
     assert {item.channel for item in aggregates} == {
@@ -675,7 +714,7 @@ async def test_versioned_corpus_runs_through_backend_and_independent_judge(
         / "retrieval-floor.corpus.json"
     )
     corpus = load_retrieval_evaluation_corpus(corpus_path)
-    assert corpus.corpus_version == "rai-assistant-retrieval-floor-v1"
+    assert corpus.corpus_version == "rai-assistant-retrieval-floor-v2"
     assert {case.case_id for case in corpus.cases} >= {
         "personal-name",
         "project-goal",
@@ -733,7 +772,9 @@ async def test_versioned_corpus_runs_through_backend_and_independent_judge(
         for item in measurements
     ]
     assert all(item.recall == 1.0 for item in measurements)
-    assert all(item.precision >= MIN_EXPECTED_PROJECT_PRECISION for item in measurements)
+    assert all(
+        item.precision >= MIN_EXPECTED_PROJECT_PRECISION for item in measurements
+    )
     assert all(item.retrieved_ids for item in measurements)
     assert all(item.answer_text is not None for item in measurements)
     assert all(item.backend_name == "evaluation-local-adapter" for item in measurements)
@@ -785,6 +826,54 @@ async def test_versioned_corpus_runs_through_backend_and_independent_judge(
         for item in private_measurements
     )
 
+
+@pytest.mark.asyncio
+async def test_all_evidence_layers_feed_deterministic_personal_grounding(
+    tmp_path: Path,
+) -> None:
+    corpus_path = (
+        Path(__file__).parent
+        / "fixtures"
+        / "assistant"
+        / "v1"
+        / "retrieval-floor.corpus.json"
+    )
+    corpus = load_retrieval_evaluation_corpus(corpus_path)
+    store = SQLiteMemoryGraphStore(tmp_path / "grounding-layers.sqlite3")
+    await store.start()
+    assert isinstance(await seed_retrieval_evaluation_corpus(store, corpus), Success)
+    personal_name = next(
+        case for case in corpus.cases if case.case_id == "personal-name"
+    )
+    backend = LocalAssistantBackend(
+        engine=_StaticEngine("Model nie znalazł odpowiedzi."),
+        model_name="grounding-layer-test-model",
+    )
+    assert isinstance(await backend.start(), Success)
+
+    evaluated = await evaluate_retrieval_floor(
+        store,
+        (personal_name,),
+        retrieval_limit=2,
+        context_character_budget=EVALUATION_CONTEXT_BUDGET,
+        summary_provider=GroundedClaimSummaryProvider(store),
+        answer_evaluator=BackendRetrievalAnswerEvaluator(backend),
+        corpus_version=corpus.corpus_version,
+    )
+
+    assert isinstance(evaluated, Success)
+    measurements = evaluated.unwrap().measurements
+    assert {item.channel for item in measurements} == {
+        "raw_turns_bm25",
+        "claims_bm25",
+        "summaries_grounded",
+    }
+    assert all(item.answer_correct is True for item in measurements)
+    assert all(item.grounding_override for item in measurements)
+    assert all("Tomasz" in (item.answer_text or "") for item in measurements)
+    await backend.stop()
+    await store.stop()
+
     stopped = await backend.stop()
     assert isinstance(stopped, Success)
     await store.stop()
@@ -797,7 +886,7 @@ def test_query_resolver_and_domain_policy_support_hierarchical_scopes() -> None:
         "Co ustaliliśmy zrobić przed dodaniem embeddingów?"
     )
 
-    assert project_query.domain_scopes == ("general", "project:aurora")
+    assert project_query.domain_scopes == ("global", "project:aurora")
     assert domain_scope_matches("project", project_query.domain_scopes)
     assert domain_scope_matches("project:aurora", project_query.domain_scopes)
     assert not domain_scope_matches("project:borealis", project_query.domain_scopes)
@@ -810,7 +899,7 @@ def test_memory_sufficiency_requires_query_coverage_and_evidence_quality() -> No
     query = MemoryQuery(
         keywords=("Aurora", "budżet", "termin"),
         raw_text="Jaki jest budżet i termin projektu Aurora?",
-        domain_scopes=("general", "project:aurora"),
+        domain_scopes=("global", "project:aurora"),
     )
     partial = MemoryRecord(
         producer=PRODUCER,
@@ -888,19 +977,19 @@ async def test_retrieval_isolated_by_domain_and_purpose(tmp_path: Path) -> None:
         topic=topic,
         keywords=("Aurora",),
         raw_text="Co pamiętasz o projekcie Aurora?",
-        domain_scopes=("general", "project"),
+        domain_scopes=("global", "project"),
     )
     personal_query = MemoryQuery(
         topic=topic,
         keywords=("Aurora",),
         raw_text="Co pamiętasz o projekcie Aurora?",
-        domain_scopes=("general", "personal"),
+        domain_scopes=("global", "personal"),
     )
     wrong_purpose_query = MemoryQuery(
         topic=topic,
         keywords=("Aurora",),
         raw_text="Co pamiętasz o projekcie Aurora?",
-        domain_scopes=("general", "project"),
+        domain_scopes=("global", "project"),
         purpose="analytics",
     )
 

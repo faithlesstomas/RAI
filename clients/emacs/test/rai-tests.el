@@ -83,6 +83,8 @@
     (let ((snapshot (rai-context-record "test-event" 'compile)))
       (should (rai-context-snapshot-p snapshot))
       (should (equal (rai-context-snapshot-event snapshot) "test-event"))
+      (should (equal (rai-context-snapshot-major-mode-name snapshot)
+                     "fundamental-mode"))
       (should-not (string-match-p
                    "SECRET-TEXT"
                    (prin1-to-string snapshot))))))

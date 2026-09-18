@@ -158,6 +158,30 @@
           "title": "Fallback Used",
           "type": "boolean"
         },
+        "evidence_required": {
+          "default": false,
+          "title": "Evidence Required",
+          "type": "boolean"
+        },
+        "retrieval_channel_ids": {
+          "additionalProperties": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "title": "Retrieval Channel Ids",
+          "type": "object"
+        },
+        "graph_paths": {
+          "default": [],
+          "items": {
+            "additionalProperties": true,
+            "type": "object"
+          },
+          "title": "Graph Paths",
+          "type": "array"
+        },
         "evidence_character_budget": {
           "default": 0,
           "minimum": 0,
@@ -265,7 +289,7 @@
           "default": "LOCAL"
         },
         "domain_scope": {
-          "default": "general",
+          "default": "unknown",
           "minLength": 1,
           "title": "Domain Scope",
           "type": "string"
@@ -597,7 +621,7 @@
           "default": "LOCAL"
         },
         "domain_scope": {
-          "default": "general",
+          "default": "unknown",
           "maxLength": 128,
           "minLength": 1,
           "title": "Domain Scope",
@@ -1094,6 +1118,7 @@
           "enum": [
             "EXTRACTION",
             "ADMISSION",
+            "RETRIEVAL",
             "STORAGE",
             "UPDATE",
             "DELETION",
@@ -1310,7 +1335,7 @@
           "type": "string"
         },
         "domain_scope": {
-          "default": "general",
+          "default": "unknown",
           "maxLength": 128,
           "minLength": 1,
           "title": "Domain Scope",
@@ -1472,7 +1497,7 @@
           "type": "string"
         },
         "domain_scope": {
-          "default": "general",
+          "default": "unknown",
           "maxLength": 128,
           "minLength": 1,
           "title": "Domain Scope",

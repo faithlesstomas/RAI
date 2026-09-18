@@ -18,7 +18,12 @@ from rai.kernel.records import (
     _utc_now,
 )
 
-from .ports import AssistantEvidenceProvider, MemoryGraphStore, MemoryQuery
+from .ports import (
+    AdvancedMemoryRetriever,
+    AssistantEvidenceProvider,
+    MemoryGraphStore,
+    MemoryQuery,
+)
 from .query import MemoryQueryResolver, domain_scope_matches
 from .records import (
     AssistantContextManifest,
@@ -65,10 +70,35 @@ _SUFFICIENCY_STOP_WORDS = {
     "what",
 }
 _SUFFICIENCY_CANONICAL_TERMS = {
+    "age": "age",
+    "budzecie": "budzet",
+    "budzetu": "budzet",
+    "deadline": "termin",
+    "deadlines": "termin",
+    "embeddings": "embedding",
+    "embeddingow": "embedding",
+    "gdzie": "location",
+    "imie": "name",
+    "imienia": "name",
+    "lat": "age",
+    "live": "location",
+    "mieszkam": "location",
+    "mieszkasz": "location",
+    "nazywam": "name",
+    "old": "age",
     "projekcie": "projekt",
     "projektem": "projekt",
     "projektu": "projekt",
+    "terminie": "termin",
+    "terminu": "termin",
+    "wiek": "age",
 }
+SUFFICIENCY_POLICY_VERSION = "lexical-evidence-v2"
+MAX_RECENT_ROUTE_TURNS = 4
+
+
+def _data_class(value: DataClass | str) -> DataClass:
+    return value if isinstance(value, DataClass) else DataClass(value)
 
 
 @dataclass(frozen=True)
@@ -82,6 +112,7 @@ class MemorySufficiencyAssessment:
     matched_terms: tuple[str, ...]
     missing_terms: tuple[str, ...]
     reasons: tuple[str, ...]
+    policy_version: str = SUFFICIENCY_POLICY_VERSION
 
 
 def _search_terms(value: str) -> tuple[str, ...]:
@@ -106,9 +137,7 @@ def assess_memory_sufficiency(
     """Score whether compact claims cover this query with trustworthy evidence."""
     query_terms = tuple(
         dict.fromkeys(
-            term
-            for keyword in query.keywords
-            for term in _search_terms(keyword)
+            term for keyword in query.keywords for term in _search_terms(keyword)
         )
     )
     if not memories:
@@ -123,7 +152,8 @@ def assess_memory_sufficiency(
         )
 
     matched: set[str] = set()
-    record_qualities: list[float] = []
+    term_qualities: dict[str, float] = {}
+    topic_qualities: list[float] = []
     confidences: list[float] = []
     exact_topic = False
     for memory in memories:
@@ -136,8 +166,6 @@ def assess_memory_sufficiency(
         topic_matches = query.topic is not None and memory.topic == query.topic
         if not record_matches and not topic_matches:
             continue
-        matched.update(record_matches)
-        exact_topic = exact_topic or topic_matches
         raw_confidence = memory.content.get("confidence")
         confidence = (
             float(raw_confidence)
@@ -153,16 +181,25 @@ def assess_memory_sufficiency(
             * _MODALITY_QUALITY.get(modality, 0.0)
             * _EPISTEMIC_QUALITY.get(memory.epistemic_status, 0.0)
         )
-        record_qualities.append(quality)
+        matched.update(record_matches)
+        exact_topic = exact_topic or topic_matches
+        for term in record_matches:
+            term_qualities[term] = max(term_qualities.get(term, 0.0), quality)
+        if topic_matches:
+            topic_qualities.append(quality)
 
-    coverage = (
-        1.0
-        if exact_topic
-        else len(matched) / len(query_terms)
-        if query_terms
+    if query_terms:
+        coverage = len(matched) / len(query_terms)
+        if exact_topic and query.topic_is_complete:
+            coverage = 1.0
+    else:
+        coverage = 1.0 if exact_topic else 0.0
+    supporting_qualities = tuple(term_qualities.values()) or tuple(topic_qualities)
+    quality = (
+        sum(supporting_qualities) / len(supporting_qualities)
+        if supporting_qualities
         else 0.0
     )
-    quality = max(record_qualities, default=0.0)
     maximum_confidence = max(confidences, default=0.0)
     score = min(1.0, max(0.0, 0.6 * coverage + 0.4 * quality))
     missing = tuple(term for term in query_terms if term not in matched)
@@ -170,6 +207,7 @@ def assess_memory_sufficiency(
         f"query coverage={coverage:.3f}",
         f"evidence quality={quality:.3f}",
         f"maximum source confidence={maximum_confidence:.3f}",
+        f"policy version={SUFFICIENCY_POLICY_VERSION}",
         (
             "exact topic match"
             if exact_topic
@@ -188,6 +226,51 @@ def assess_memory_sufficiency(
     )
 
 
+def assess_recent_sufficiency(
+    query: MemoryQuery, turns: tuple[ConversationTurn, ...]
+) -> MemorySufficiencyAssessment:
+    """Score direct user statements in a short reply chain as primary evidence."""
+    query_terms = tuple(
+        dict.fromkeys(
+            term for keyword in query.keywords for term in _search_terms(keyword)
+        )
+    )
+    user_turns = tuple(
+        turn for turn in turns if turn.role == "user" and "?" not in turn.text
+    )
+    if not user_turns:
+        return MemorySufficiencyAssessment(
+            score=0.0,
+            query_coverage=0.0,
+            evidence_quality=0.0,
+            maximum_confidence=0.0,
+            matched_terms=(),
+            missing_terms=query_terms,
+            reasons=("no eligible user statement in recent reply chain",),
+        )
+
+    searchable = set(_search_terms(" ".join(turn.text for turn in user_turns)))
+    matched = tuple(term for term in query_terms if term in searchable)
+    coverage = len(matched) / len(query_terms) if query_terms else 0.0
+    quality = 1.0 if matched else 0.0
+    score = min(1.0, max(0.0, 0.6 * coverage + 0.4 * quality))
+    missing = tuple(term for term in query_terms if term not in searchable)
+    return MemorySufficiencyAssessment(
+        score=score,
+        query_coverage=coverage,
+        evidence_quality=quality,
+        maximum_confidence=1.0 if matched else 0.0,
+        matched_terms=matched,
+        missing_terms=missing,
+        reasons=(
+            f"recent user-statement coverage={coverage:.3f}",
+            f"matched terms={','.join(matched) or 'none'}",
+            f"missing terms={','.join(missing) or 'none'}",
+            f"policy version={SUFFICIENCY_POLICY_VERSION}",
+        ),
+    )
+
+
 class AssistantContextBuilder:
     """Selects recent dialogue and durable memories independently to build a ContextPackage."""
 
@@ -200,9 +283,11 @@ class AssistantContextBuilder:
         max_memories: int = 5,
         max_episodic_turns: int = 5,
         evidence_providers: tuple[AssistantEvidenceProvider, ...] = (),
+        advanced_retriever: AdvancedMemoryRetriever | None = None,
         max_external_evidence: int = 5,
         memory_sufficiency_threshold: float = 0.75,
         max_context_characters: int = 8_000,
+        enable_recent_route: bool = True,
         profile_scope: str = "default",
         producer: ProducerIdentity | None = None,
     ) -> None:
@@ -213,11 +298,13 @@ class AssistantContextBuilder:
         self.max_memories = max_memories
         self.max_episodic_turns = max_episodic_turns
         self.evidence_providers = evidence_providers
+        self.advanced_retriever = advanced_retriever
         self.max_external_evidence = max_external_evidence
         if not 0.0 <= memory_sufficiency_threshold <= 1.0:
             raise ValueError("memory_sufficiency_threshold must be between 0 and 1")
         self.memory_sufficiency_threshold = memory_sufficiency_threshold
         self.max_context_characters = max_context_characters
+        self.enable_recent_route = enable_recent_route
         self.profile_scope = profile_scope
         self.producer = producer or ProducerIdentity(
             producer_id="assistant-context-builder", kind="service", version="1.0.0"
@@ -233,6 +320,7 @@ class AssistantContextBuilder:
             session_id=turn.session_id,
             limit=self.max_recent_turns,
             before_turn_id=turn.record_id,
+            profile_scope=self.profile_scope,
         )
         if isinstance(recent_res, Failure):
             return Failure(recent_res.failure())
@@ -242,14 +330,46 @@ class AssistantContextBuilder:
             for item in all_recent_turns
             if domain_scope_matches(item.domain_scope, query.domain_scopes)
             and item.purpose == query.purpose
+            and _data_class(item.data_class) in query.data_classes
+        )
+        recent_sufficiency = assess_recent_sufficiency(query, recent_turns)
+        recent_route_sufficient = (
+            self.enable_recent_route
+            and len(recent_turns) <= MAX_RECENT_ROUTE_TURNS
+            and recent_sufficiency.score > 0.0
+            and recent_sufficiency.score >= self.memory_sufficiency_threshold
         )
 
-        mem_res = await self.store.retrieve_relevant_memories(
-            profile_scope=self.profile_scope,
-            query=query,
-            data_classes=query.data_classes,
-            limit=self.max_memories,
-        )
+        retrieval_channel_ids: dict[str, tuple[str, ...]] = {}
+        graph_paths: tuple[dict[str, object], ...] = ()
+        if recent_route_sufficient:
+            mem_res = Success(())
+        elif self.advanced_retriever is None:
+            mem_res = await self.store.retrieve_relevant_memories(
+                profile_scope=self.profile_scope,
+                query=query,
+                data_classes=query.data_classes,
+                limit=self.max_memories,
+            )
+        else:
+            advanced_res = await self.advanced_retriever.retrieve(
+                query=query,
+                data_classes=query.data_classes,
+                limit=self.max_memories,
+            )
+            if isinstance(advanced_res, Failure):
+                return Failure(advanced_res.failure())
+            selection = advanced_res.unwrap()
+            retrieval_channel_ids = dict(selection.channel_ids)
+            graph_paths = tuple(
+                {
+                    "node_ids": path.node_ids,
+                    "relation_ids": path.relation_ids,
+                    "score": path.score,
+                }
+                for path in selection.graph_paths
+            )
+            mem_res = Success(selection.memories)
         if isinstance(mem_res, Failure):
             return Failure(mem_res.failure())
         memories_with_reasons = mem_res.unwrap()
@@ -329,12 +449,17 @@ class AssistantContextBuilder:
         sufficiency = assess_memory_sufficiency(query, tuple(durable_memories))
         sufficiency_score = sufficiency.score
         compact_memory_sufficient = (
-            sufficiency_score >= self.memory_sufficiency_threshold
+            sufficiency_score > 0.0
+            and sufficiency_score >= self.memory_sufficiency_threshold
         )
         rejected_routes: list[str] = []
         episodic_with_reasons = ()
         external_evidence = []
-        if compact_memory_sufficient:
+        if recent_route_sufficient:
+            rejected_routes.extend(
+                ("compact_memory:recent_sufficient", "raw_evidence:not_needed")
+            )
+        elif compact_memory_sufficient:
             rejected_routes.append("raw_evidence:not_needed")
         else:
             rejected_routes.append(
@@ -492,15 +617,53 @@ class AssistantContextBuilder:
             )
         total_chars = len(serialized)
         est_tokens = max(1, total_chars // 4)
+        kept_recent_turns = tuple(
+            item for item in recent_turns if item.record_id in recent_ids
+        )
+        kept_durable_memories = tuple(
+            item for item in durable_memories if item.record_id in durable_ids
+        )
+        final_recent_sufficiency = assess_recent_sufficiency(query, kept_recent_turns)
+        final_memory_sufficiency = assess_memory_sufficiency(
+            query, kept_durable_memories
+        )
+        final_recent_sufficient = (
+            recent_route_sufficient
+            and final_recent_sufficiency.score >= self.memory_sufficiency_threshold
+        )
+        final_recent_evidence_sufficient = (
+            final_recent_sufficiency.score >= self.memory_sufficiency_threshold
+        )
+        final_compact_sufficient = (
+            final_memory_sufficiency.score > 0.0
+            and final_memory_sufficiency.score >= self.memory_sufficiency_threshold
+        )
         routing_decision = (
-            "compact_memory"
-            if compact_memory_sufficient
+            "recent_conversation"
+            if final_recent_sufficient
+            else "compact_memory"
+            if final_compact_sufficient
             else "raw_evidence_fallback"
-            if episodic_ids or external_ids
+            if episodic_ids or external_ids or final_recent_evidence_sufficient
             else "no_evidence"
+        )
+        route_sufficiency = (
+            final_recent_sufficiency
+            if routing_decision == "recent_conversation"
+            or (
+                routing_decision == "raw_evidence_fallback"
+                and final_recent_evidence_sufficient
+            )
+            else final_memory_sufficiency
         )
         if routing_decision == "no_evidence":
             rejected_routes.append("raw_evidence:no_match")
+            if compact_memory_sufficient and not final_compact_sufficient:
+                rejected_routes.append("compact_memory:removed_by_character_budget")
+            if recent_route_sufficient and not final_recent_sufficient:
+                rejected_routes.append(
+                    "recent_conversation:removed_by_character_budget"
+                )
 
         manifest = AssistantContextManifest(
             record_id=_new_id(),
@@ -523,14 +686,17 @@ class AssistantContextBuilder:
                 *(type(provider).__name__ for provider in self.evidence_providers),
             ),
             rejected_routes=tuple(rejected_routes),
-            sufficiency_score=sufficiency_score,
+            sufficiency_score=route_sufficiency.score,
             sufficiency_factors={
-                "query_coverage": sufficiency.query_coverage,
-                "evidence_quality": sufficiency.evidence_quality,
-                "maximum_confidence": sufficiency.maximum_confidence,
+                "query_coverage": route_sufficiency.query_coverage,
+                "evidence_quality": route_sufficiency.evidence_quality,
+                "maximum_confidence": route_sufficiency.maximum_confidence,
             },
-            sufficiency_reasons=sufficiency.reasons,
+            sufficiency_reasons=route_sufficiency.reasons,
             fallback_used=routing_decision == "raw_evidence_fallback",
+            evidence_required=query.evidence_required,
+            retrieval_channel_ids=retrieval_channel_ids,
+            graph_paths=graph_paths,
             evidence_character_budget=self.max_context_characters,
             retriever_version="2.0.0",
             policy_version="1.0.0",
