@@ -95,19 +95,24 @@ async def test_lemonade_engine_load_failure() -> None:
 
 
 @pytest.mark.asyncio
-async def test_lemonade_engine_generate_completions_success() -> None:
+async def test_lemonade_engine_generate_chat_success() -> None:
     engine = LemonadeEngine(model_name="Qwen3.5-2B-GGUF")
 
     mock_client = AsyncMock(spec=httpx.AsyncClient)
-    comp_resp = httpx.Response(
+    chat_resp = httpx.Response(
         200,
         json={
-            "choices": [{"text": "Hello from Lemonade!", "finish_reason": "stop"}],
+            "choices": [
+                {
+                    "message": {"role": "assistant", "content": "Hello from Lemonade!"},
+                    "finish_reason": "stop",
+                }
+            ],
             "usage": {"prompt_tokens": 8, "completion_tokens": 4, "total_tokens": 12},
         },
-        request=httpx.Request("POST", f"{DEFAULT_LEMONADE_HOST}/api/v1/completions"),
+        request=httpx.Request("POST", f"{DEFAULT_LEMONADE_HOST}/api/v1/chat/completions"),
     )
-    mock_client.post.return_value = comp_resp
+    mock_client.post.return_value = chat_resp
 
     with patch.object(engine, "_get_client", return_value=mock_client):
         res = await engine.generate(
@@ -127,10 +132,13 @@ async def test_lemonade_engine_generate_completions_success() -> None:
         assert engine.is_loaded
 
         mock_client.post.assert_called_once_with(
-            "/api/v1/completions",
+            "/api/v1/chat/completions",
             json={
                 "model": "Qwen3.5-2B-GGUF",
-                "prompt": "Hello there",
+                "messages": [
+                    {"role": "user", "content": "Hello there"},
+                    {"role": "assistant", "content": "<think>\n</think>\n", "prefix": True},
+                ],
                 "max_tokens": 64,
                 "temperature": 0.3,
                 "stop": ["\n"],
@@ -139,36 +147,31 @@ async def test_lemonade_engine_generate_completions_success() -> None:
 
 
 @pytest.mark.asyncio
-async def test_lemonade_engine_generate_chat_fallback() -> None:
+async def test_lemonade_engine_generate_completions_fallback() -> None:
     engine = LemonadeEngine(model_name="Qwen3.5-2B-GGUF")
 
     mock_client = AsyncMock(spec=httpx.AsyncClient)
-    # 404 on text completions, 200 on chat completions
-    comp_404 = httpx.Response(
+    # 404 on chat completions, 200 on text completions fallback
+    chat_404 = httpx.Response(
         404,
         text="Not found",
-        request=httpx.Request("POST", f"{DEFAULT_LEMONADE_HOST}/api/v1/completions"),
-    )
-    chat_200 = httpx.Response(
-        200,
-        json={
-            "choices": [
-                {
-                    "message": {"role": "assistant", "content": "Chat fallback response"},
-                    "finish_reason": "stop",
-                }
-            ],
-            "usage": {"prompt_tokens": 10, "completion_tokens": 5},
-        },
         request=httpx.Request("POST", f"{DEFAULT_LEMONADE_HOST}/api/v1/chat/completions"),
     )
-    mock_client.post.side_effect = [comp_404, chat_200]
+    comp_200 = httpx.Response(
+        200,
+        json={
+            "choices": [{"text": "Completions fallback response", "finish_reason": "stop"}],
+            "usage": {"prompt_tokens": 10, "completion_tokens": 5},
+        },
+        request=httpx.Request("POST", f"{DEFAULT_LEMONADE_HOST}/api/v1/completions"),
+    )
+    mock_client.post.side_effect = [chat_404, comp_200]
 
     with patch.object(engine, "_get_client", return_value=mock_client):
         res = await engine.generate(prompt="Explain quantum computing")
         assert isinstance(res, Success)
         result = res.unwrap()
-        assert result.text == "Chat fallback response"
+        assert result.text == "Completions fallback response"
         assert result.stats is not None
         assert result.stats.output_tokens == 5
 

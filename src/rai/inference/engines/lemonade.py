@@ -7,6 +7,7 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
+import re
 import time
 from typing import Any, List, Optional
 
@@ -107,6 +108,26 @@ class LemonadeEngine(LocalTextEngine):
             self._is_loaded = False
             return Failure(exc)
 
+    @staticmethod
+    def _parse_prompt_to_messages(prompt: str) -> list[dict[str, Any]]:
+        """Parse structured plain-text prompt into system and user messages."""
+        user_match = re.search(
+            r"\n(?:Użytkownik|User):\s*(.*?)(?:\n(?:Asystent|Assistant):|$)",
+            prompt,
+            re.DOTALL,
+        )
+        if user_match:
+            user_content = user_match.group(1).strip()
+            system_content = prompt[: user_match.start()].strip()
+            if system_content.startswith("System:"):
+                system_content = system_content[len("System:") :].strip()
+            messages: list[dict[str, Any]] = []
+            if system_content:
+                messages.append({"role": "system", "content": system_content})
+            messages.append({"role": "user", "content": user_content})
+            return messages
+        return [{"role": "user", "content": prompt}]
+
     async def generate(
         self,
         prompt: str,
@@ -118,41 +139,58 @@ class LemonadeEngine(LocalTextEngine):
         start_time = time.monotonic()
         try:
             client = self._get_client()
-            payload: dict[str, Any] = {
+            messages = self._parse_prompt_to_messages(prompt)
+            # For models with reasoning tokens (like Qwen 3.5), close thinking phase immediately
+            # with an assistant prefix so the model does not exhaust output token budget inside <think>.
+            is_thinking_model = any(
+                keyword in self._model_name.lower()
+                for keyword in ("qwen3.5", "qwen-3.5", "deepseek", "r1")
+            )
+            chat_messages = list(messages)
+            if is_thinking_model:
+                chat_messages.append(
+                    {"role": "assistant", "content": "<think>\n</think>\n", "prefix": True}
+                )
+
+            chat_payload: dict[str, Any] = {
                 "model": self._model_name,
-                "prompt": prompt,
+                "messages": chat_messages,
                 "max_tokens": max_tokens,
                 "temperature": temperature,
             }
             if stop:
-                payload["stop"] = stop
+                chat_payload["stop"] = stop
 
-            response = await client.post("/api/v1/completions", json=payload)
-            if response.status_code != 200:
-                # Fallback to chat completions if plain text completions endpoint is rejected
-                chat_payload: dict[str, Any] = {
+            response = await client.post("/api/v1/chat/completions", json=chat_payload)
+            if response.status_code == 200:
+                data = response.json()
+                choices = data.get("choices", [])
+                first_choice = choices[0] if choices else {}
+                raw_text = first_choice.get("message", {}).get("content", "")
+                text = re.sub(r"<think>.*?</think>", "", raw_text, flags=re.DOTALL).strip()
+                finish_reason = first_choice.get("finish_reason", "stop")
+            else:
+                # Fallback to plain text completions endpoint
+                payload: dict[str, Any] = {
                     "model": self._model_name,
-                    "messages": [{"role": "user", "content": prompt}],
+                    "prompt": prompt,
                     "max_tokens": max_tokens,
                     "temperature": temperature,
                 }
                 if stop:
-                    chat_payload["stop"] = stop
-                response = await client.post("/api/v1/chat/completions", json=chat_payload)
+                    payload["stop"] = stop
+                response = await client.post("/api/v1/completions", json=payload)
                 if response.status_code != 200:
                     return Failure(
-                        RuntimeError(f"Lemonade completion error {response.status_code}: {response.text}")
+                        RuntimeError(
+                            f"Lemonade completion error {response.status_code}: {response.text}"
+                        )
                     )
                 data = response.json()
                 choices = data.get("choices", [])
                 first_choice = choices[0] if choices else {}
-                text = first_choice.get("message", {}).get("content", "")
-                finish_reason = first_choice.get("finish_reason", "stop")
-            else:
-                data = response.json()
-                choices = data.get("choices", [])
-                first_choice = choices[0] if choices else {}
-                text = first_choice.get("text", "")
+                raw_text = first_choice.get("text", "")
+                text = re.sub(r"<think>.*?</think>", "", raw_text, flags=re.DOTALL).strip()
                 finish_reason = first_choice.get("finish_reason", "stop")
 
             duration = time.monotonic() - start_time
