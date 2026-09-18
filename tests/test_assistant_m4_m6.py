@@ -186,7 +186,9 @@ async def test_advanced_channels_share_retrieval_and_context_budgets(
     )
     assert len(advanced) == ADVANCED_CHANNEL_COUNT
     assert all(len(item.retrieved_ids) <= run.retrieval_limit for item in advanced)
-    assert all(item.context_characters <= run.context_character_budget for item in advanced)
+    assert all(
+        item.context_characters <= run.context_character_budget for item in advanced
+    )
     graph = next(item for item in advanced if item.channel == "graph_bounded")
     assert "corpus-relation-project-supports-commitment" in graph.artifact_ids
     await store.stop()
@@ -237,8 +239,7 @@ async def test_router_compares_short_medium_and_long_histories(tmp_path: Path) -
     assert {item.horizon for item in measurements} == {"short", "medium", "long"}
     assert {item.strategy for item in measurements} == {"adaptive", "always_memory"}
     assert all(
-        aggregate.answer_accuracy is None
-        for aggregate in result.unwrap().aggregates
+        aggregate.answer_accuracy is None for aggregate in result.unwrap().aggregates
     )
     case_ids = {item.case_id for item in measurements}
     for case_id in case_ids:
@@ -259,7 +260,7 @@ async def test_router_compares_short_medium_and_long_histories(tmp_path: Path) -
         for item in measurements
         if item.horizon == "short" and item.strategy == "adaptive"
     )
-    assert len(short_adaptive) == 2
+    assert len(short_adaptive) == BENCHMARK_TRIALS
     assert all(
         item.routing_decision == "recent_conversation" for item in short_adaptive
     )
@@ -481,8 +482,7 @@ async def test_legacy_general_rows_migrate_to_fail_closed_unknown(
             "WHERE memory_id = 'corpus-memory-project'"
         )
         connection.execute(
-            "DELETE FROM assistant_schema_metadata "
-            "WHERE key = 'domain_scope_semantics'"
+            "DELETE FROM assistant_schema_metadata WHERE key = 'domain_scope_semantics'"
         )
 
     migrated = SQLiteMemoryGraphStore(database)
@@ -537,8 +537,7 @@ async def test_benchmark_writes_six_channels_and_routing_manifest(
         "long",
     }
     assert all(
-        item.answer_correct is not None
-        for item in artifact.routing_run.measurements
+        item.answer_correct is not None for item in artifact.routing_run.measurements
     )
     assert len(artifact.routing_run.aggregates) == ROUTING_AGGREGATE_COUNT
 

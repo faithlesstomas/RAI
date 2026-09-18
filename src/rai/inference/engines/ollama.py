@@ -42,7 +42,7 @@ class OllamaEngine:
     def is_loaded(self) -> bool:
         return self._is_loaded
 
-    def _get_client(self) -> Any:
+    def _get_client(self) -> Any:  # noqa: ANN401 - optional SDK has no stable protocol
         if self._client is None:
             import ollama  # noqa: PLC0415
 

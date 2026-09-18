@@ -772,7 +772,9 @@ async def test_versioned_corpus_runs_through_backend_and_independent_judge(
         for item in measurements
     ]
     assert all(item.recall == 1.0 for item in measurements)
-    assert all(item.precision >= MIN_EXPECTED_PROJECT_PRECISION for item in measurements)
+    assert all(
+        item.precision >= MIN_EXPECTED_PROJECT_PRECISION for item in measurements
+    )
     assert all(item.retrieved_ids for item in measurements)
     assert all(item.answer_text is not None for item in measurements)
     assert all(item.backend_name == "evaluation-local-adapter" for item in measurements)

@@ -288,7 +288,7 @@ async def test_reply_chain_follows_links_without_crossing_branches(
 
 
 @pytest.mark.asyncio
-async def test_supersession_and_neutral_retrieval(
+async def test_supersession_and_neutral_retrieval(  # noqa: PLR0915
     store: SQLiteMemoryGraphStore,
 ) -> None:
     await store.start()

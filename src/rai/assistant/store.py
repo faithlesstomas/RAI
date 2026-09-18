@@ -94,9 +94,7 @@ def _domain_sql_filter(
         exact.update(":".join(parts[:index]) for index in range(1, len(parts) + 1))
         descendant_patterns.add(f"{scope}:%")
     exact.update(
-        scope
-        for scope in query_scopes
-        if scope in {"conversation", "activity"}
+        scope for scope in query_scopes if scope in {"conversation", "activity"}
     )
     ordered_exact = tuple(sorted(exact))
     ordered_patterns = tuple(sorted(descendant_patterns))
@@ -1559,9 +1557,7 @@ class SQLiteMemoryGraphStore:
                     "ORDER BY timestamp DESC LIMIT 1",
                     (session_id, row["timestamp"]),
                 ).fetchone()
-                current_id = (
-                    str(previous["turn_id"]) if previous is not None else None
-                )
+                current_id = str(previous["turn_id"]) if previous is not None else None
 
             return Success(tuple(_turn_from_row(row) for row in reversed(rows)))
         except Exception as exc:  # noqa: BLE001
@@ -1655,9 +1651,7 @@ class SQLiteMemoryGraphStore:
         conn = self._connect()
         try:
             self._init_db(conn)
-            return Success(
-                self._dependent_memory_ids(conn, memory_ids, profile_scope)
-            )
+            return Success(self._dependent_memory_ids(conn, memory_ids, profile_scope))
         except Exception as exc:  # noqa: BLE001
             return Failure(
                 make_assistant_failure(
@@ -2002,9 +1996,7 @@ class SQLiteMemoryGraphStore:
                 ).fetchall()
                 direct_ids = tuple(str(row["memory_id"]) for row in direct_rows)
                 dependent_ids: tuple[str, ...] = ()
-                profile_scopes = {
-                    str(row["profile_scope"]) for row in direct_rows
-                }
+                profile_scopes = {str(row["profile_scope"]) for row in direct_rows}
                 for profile_scope in profile_scopes:
                     profile_direct_ids = tuple(
                         str(row["memory_id"])

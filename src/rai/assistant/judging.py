@@ -50,8 +50,7 @@ def _required_phrase_matches(phrase: str, answer: str) -> bool:
         if not any(
             actual_token == expected_token
             or (
-                min(len(actual_token), len(expected_token))
-                >= _MIN_INFLECTION_PREFIX
+                min(len(actual_token), len(expected_token)) >= _MIN_INFLECTION_PREFIX
                 and _common_prefix_length(actual_token, expected_token)
                 >= _MIN_INFLECTION_PREFIX
             )

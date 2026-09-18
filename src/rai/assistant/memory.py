@@ -487,7 +487,9 @@ def _relevant_generic_memory(
         if not isinstance(item, dict):
             continue
         content = item.get("content", {})
-        semantic_text = f"{item.get('topic', '')} {json.dumps(content, ensure_ascii=False)}"
+        semantic_text = (
+            f"{item.get('topic', '')} {json.dumps(content, ensure_ascii=False)}"
+        )
         overlap = query_terms & _grounding_terms(semantic_text)
         if overlap:
             ranked.append((len(overlap), item))

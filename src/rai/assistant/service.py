@@ -286,9 +286,7 @@ class AssistantService:
                         "niczego nie usunąłem."
                     )
                     continue
-                targets = tuple(
-                    dict.fromkeys((*targets, *dependent_res.unwrap()))
-                )
+                targets = tuple(dict.fromkeys((*targets, *dependent_res.unwrap())))
                 status = "APPLIED" if targets else "NOOP"
                 operations.append(
                     MemoryOperation(
@@ -713,11 +711,7 @@ class AssistantService:
             turn.text, profile_scope=self.profile_scope
         )
         turn_domain = next(
-            (
-                domain
-                for domain in turn_query.domain_scopes
-                if domain != "global"
-            ),
+            (domain for domain in turn_query.domain_scopes if domain != "global"),
             "global",
         )
         turn = turn.model_copy(
@@ -736,9 +730,7 @@ class AssistantService:
                 return Failure(
                     make_assistant_failure(
                         code="ID_CONFLICT",
-                        message=(
-                            f"request id {request_id} belongs to another turn"
-                        ),
+                        message=(f"request id {request_id} belongs to another turn"),
                         request_id=request_id,
                     )
                 )
@@ -792,9 +784,7 @@ class AssistantService:
                 return Failure(chain_res.failure())
             chain = chain_res.unwrap()
             if chain:
-                turn = turn.model_copy(
-                    update={"reply_to_turn_id": chain[-1].record_id}
-                )
+                turn = turn.model_copy(update={"reply_to_turn_id": chain[-1].record_id})
         elif stored_turn is None:
             parent_res = await self.store.get_turn(turn.reply_to_turn_id)
             if isinstance(parent_res, Failure):

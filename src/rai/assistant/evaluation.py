@@ -333,6 +333,8 @@ _EVALUATION_PRODUCER = ProducerIdentity(
     kind="evaluation",
     version="1.0.0",
 )
+
+
 def load_retrieval_evaluation_corpus(path: str | Path) -> RetrievalEvaluationCorpus:
     """Load and validate a complete, versioned retrieval benchmark fixture."""
     return RetrievalEvaluationCorpus.model_validate_json(Path(path).read_text("utf-8"))
@@ -449,9 +451,7 @@ class BackendRetrievalAnswerEvaluator:
             evidence_character_budget=_answer_evidence_characters(
                 case, channel, context_items
             ),
-            actual_characters=_answer_evidence_characters(
-                case, channel, context_items
-            ),
+            actual_characters=_answer_evidence_characters(case, channel, context_items),
             items=tuple(
                 AssistantContextManifestItem(
                     source_id=str(item["source_id"]),
@@ -781,9 +781,7 @@ def _bounded_raw_items(
             "content": {"role": turn.role, "text": turn.text},
         }
         candidate = (*context_items, item)
-        candidate_size = _answer_evidence_characters(
-            case, "raw_turns_bm25", candidate
-        )
+        candidate_size = _answer_evidence_characters(case, "raw_turns_bm25", candidate)
         if candidate_size > character_budget:
             continue
         selected.append(turn.record_id)
@@ -968,8 +966,7 @@ def aggregate_retrieval_run(
                     else None
                 ),
                 answer_accuracy=(
-                    sum(item.answer_correct is True for item in evaluated)
-                    / len(items)
+                    sum(item.answer_correct is True for item in evaluated) / len(items)
                     if answer_evaluation_attempted
                     else None
                 ),
@@ -1036,11 +1033,7 @@ def aggregate_retrieval_run(
                 ),
                 energy_sensors=tuple(
                     sorted(
-                        {
-                            sensor
-                            for item in evaluated
-                            for sensor in item.energy_sensors
-                        }
+                        {sensor for item in evaluated for sensor in item.energy_sensors}
                     )
                 ),
             )

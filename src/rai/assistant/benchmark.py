@@ -132,8 +132,7 @@ async def run_retrieval_benchmark(  # noqa: PLR0911, PLR0912, PLR0913
             )
             aggregates = aggregate_retrieval_run(run)
             if require_energy and any(
-                aggregate.energy_measurement_coverage < 1.0
-                for aggregate in aggregates
+                aggregate.energy_measurement_coverage < 1.0 for aggregate in aggregates
             ):
                 return Failure(
                     make_assistant_failure(
@@ -228,9 +227,7 @@ async def run_retrieval_benchmark(  # noqa: PLR0911, PLR0912, PLR0913
             )
             output_path.parent.mkdir(parents=True, exist_ok=True)
             temporary = output_path.with_suffix(f"{output_path.suffix}.tmp")
-            temporary.write_text(
-                artifact.model_dump_json(indent=2), encoding="utf-8"
-            )
+            temporary.write_text(artifact.model_dump_json(indent=2), encoding="utf-8")
             temporary.replace(output_path)
             return Success(artifact)
         finally:

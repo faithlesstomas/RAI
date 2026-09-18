@@ -40,7 +40,7 @@ def _turn(record_id: str, session_id: str, text: str) -> ConversationTurn:
 
 
 @pytest.mark.asyncio
-async def test_natural_memory_recall_context_inspection_forget_and_replay(
+async def test_natural_memory_recall_context_inspection_forget_and_replay(  # noqa: PLR0915
     tmp_path: Path,
 ) -> None:
     database = tmp_path / "assistant.sqlite3"
@@ -123,17 +123,16 @@ async def test_natural_memory_recall_context_inspection_forget_and_replay(
         (DataClass.PUBLIC, DataClass.LOCAL),
     )
     assert isinstance(raw, Success)
-    assert {
-        turn.record_id for turn, _reason in raw.unwrap()
-    }.isdisjoint({"turn-colour", remembered.unwrap().turn_id})
+    assert {turn.record_id for turn, _reason in raw.unwrap()}.isdisjoint(
+        {"turn-colour", remembered.unwrap().turn_id}
+    )
     assert all("zielony" not in turn.text.casefold() for turn, _reason in raw.unwrap())
     suppressed_recent = await store.get_recent_reply_chain(
         "session-a", profile_scope="default"
     )
     assert isinstance(suppressed_recent, Success)
     assert all(
-        turn.record_id
-        not in {"turn-colour", remembered.unwrap().turn_id}
+        turn.record_id not in {"turn-colour", remembered.unwrap().turn_id}
         for turn in suppressed_recent.unwrap()
     )
     assert isinstance(operations, Success)
@@ -145,9 +144,7 @@ async def test_natural_memory_recall_context_inspection_forget_and_replay(
 
     await service.stop()
     store = SQLiteMemoryGraphStore(database)
-    service = AssistantService(
-        store=store, backend=DeterministicAssistantBackend()
-    )
+    service = AssistantService(store=store, backend=DeterministicAssistantBackend())
     await service.start()
     raw_after_restart = await store.retrieve_relevant_turns(
         "default",
@@ -155,9 +152,9 @@ async def test_natural_memory_recall_context_inspection_forget_and_replay(
         (DataClass.PUBLIC, DataClass.LOCAL),
     )
     assert isinstance(raw_after_restart, Success)
-    assert {
-        turn.record_id for turn, _reason in raw_after_restart.unwrap()
-    }.isdisjoint({"turn-colour", remembered.unwrap().turn_id})
+    assert {turn.record_id for turn, _reason in raw_after_restart.unwrap()}.isdisjoint(
+        {"turn-colour", remembered.unwrap().turn_id}
+    )
     assert all(
         "zielony" not in turn.text.casefold()
         for turn, _reason in raw_after_restart.unwrap()

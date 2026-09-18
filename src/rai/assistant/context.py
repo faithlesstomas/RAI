@@ -137,9 +137,7 @@ def assess_memory_sufficiency(
     """Score whether compact claims cover this query with trustworthy evidence."""
     query_terms = tuple(
         dict.fromkeys(
-            term
-            for keyword in query.keywords
-            for term in _search_terms(keyword)
+            term for keyword in query.keywords for term in _search_terms(keyword)
         )
     )
     if not memories:
@@ -234,9 +232,7 @@ def assess_recent_sufficiency(
     """Score direct user statements in a short reply chain as primary evidence."""
     query_terms = tuple(
         dict.fromkeys(
-            term
-            for keyword in query.keywords
-            for term in _search_terms(keyword)
+            term for keyword in query.keywords for term in _search_terms(keyword)
         )
     )
     user_turns = tuple(
@@ -627,9 +623,7 @@ class AssistantContextBuilder:
         kept_durable_memories = tuple(
             item for item in durable_memories if item.record_id in durable_ids
         )
-        final_recent_sufficiency = assess_recent_sufficiency(
-            query, kept_recent_turns
-        )
+        final_recent_sufficiency = assess_recent_sufficiency(query, kept_recent_turns)
         final_memory_sufficiency = assess_memory_sufficiency(
             query, kept_durable_memories
         )
