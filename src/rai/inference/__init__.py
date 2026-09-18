@@ -20,7 +20,13 @@ from .cache import (
     SQLiteBoundedResultCache,
 )
 from .engines.llama import AsyncLlamaEngine, LlamaCppEngine
-from .factory import get_available_backends, is_backend_available, load_local_model
+from .engines.lemonade import LemonadeEngine
+from .factory import (
+    get_available_backends,
+    is_backend_available,
+    is_lemonade_available,
+    load_local_model,
+)
 from .supervisor import ProcessorSupervisor
 from .tasks import (
     BOUNDED_TASK_CONTRACTS,
@@ -51,6 +57,7 @@ __all__ = [
     "InferenceResult",
     "is_async_local_engine",
     "LlamaCppEngine",
+    "LemonadeEngine",
     "LocalTextEngine",
     "ModelMetadata",
     "ProcessorHealth",
@@ -84,5 +91,6 @@ __all__ = [
     "get_bounded_task_contract",
     "get_available_backends",
     "is_backend_available",
+    "is_lemonade_available",
     "load_local_model",
 ]

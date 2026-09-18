@@ -221,7 +221,7 @@ Exit evidence:
 - injected untrusted edges cannot change trusted selection;
 - quality gains survive multiple local models and are not judge-specific.
 
-### M7 — scope, personalization and consolidation
+### M7 — scope, personalization, conversational templating and consolidation
 
 Status: `[/]`. Profile, domain and purpose isolation is enforced for claims,
 raw-turn retrieval and recent context, with hierarchical domain scope matching
@@ -232,6 +232,20 @@ unrelated-domain and wrong-purpose retrieval. Broader leakage/sycophancy
 evaluation and persistent consolidation remain open. The M4 grounded-summary
 baseline is query-time and rebuildable: deleting its source turn removes the
 claim and therefore makes the projection disappear.
+
+Interactive evaluation exposed an architectural gap between single-turn retrieval
+metrics and conversational user experience:
+1. **Chat templating**: monolithic plain-text prompt formatting (`_format_prompt`)
+   without model-native control tokens (ChatML, Jinja) triggers prompt echoing
+   ("parrot" behavior) and role confusion on low-level completion endpoints like
+   Lemonade (`/api/v1/completions`). Backends must pass structured `messages`
+   to utilize model-native chat templates.
+2. **System prompt calibration**: the prompt must distinguish strict closed-book
+   memory tests from natural conversational desktop assistance.
+3. **Multi-turn evaluation**: the M4 benchmark evaluates isolated single-turn QA
+   masked by deterministic grounding overrides (`grounded_memory_response`). A
+   multi-turn conversational benchmark with raw-model scoring is required to
+   measure true dialog coherence and memory retention across conversational turns.
 
 Partition durable memory by user, profile, domain and purpose. Retrieve personal
 context only when the request and policy require it. Measure cross-domain
@@ -246,7 +260,9 @@ Exit evidence:
 - unrelated domains do not receive personal claims by default;
 - personalization cannot override evidence or calibrated uncertainty;
 - consolidation preserves modality, conflicts and source coverage;
-- deleting all sources makes the derived summary ineligible.
+- deleting all sources makes the derived summary ineligible;
+- backends use structured chat messages with model-native templates;
+- multi-turn benchmark validates conversational coherence and unmasked memory recall.
 
 ### M8 — optional adapters and ADR
 

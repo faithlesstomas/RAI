@@ -101,6 +101,13 @@ Supervisor-facing engines conform to the `LocalTextEngine` protocol, exposing un
 - Employs lazy importing to ensure that environments lacking C++ toolchains or `llama-cpp-python` can start the RAI kernel without dependency errors.
 - Preserves the public synchronous `InferenceEngine` contract in `LlamaCppEngine`; `AsyncLlamaEngine` and `AsyncEngineAdapter` dispatch model initialization and generation onto worker threads.
 
+### Lemonade (`LemonadeEngine`)
+- Connects asynchronously via `httpx.AsyncClient` to the local Lemonade Server daemon (default `http://127.0.0.1:13305`).
+- Enables hardware acceleration on GNU/Linux for AMD Ryzen AI NPUs (XDNA) and Radeon GPUs (ROCm/Vulkan), as well as CPU.
+- Uses native Lemonade memory lifecycle endpoints (`POST /api/v1/load` and `POST /api/v1/unload`) to support bounded idle eviction.
+- Uses standard OpenAI-compatible completions and chat endpoints with fallback.
+- Requires no additional Python SDK packages, reusing RAI's core `httpx` dependency.
+
 ### IREE (`IreeEngine`)
 - Frozen stub for compiled MLIR/Vulkan neural workloads, guarded by `is_iree_available() -> False`.
 
