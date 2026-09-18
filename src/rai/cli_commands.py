@@ -591,6 +591,96 @@ def _run_assistant_dialog_benchmark(  # noqa: PLR0913
     asyncio.run(_run())
 
 
+def _run_assistant_context_rot_benchmark(  # noqa: PLR0913
+    backend: str,
+    model: str | None,
+    profile: str | None,
+    token_steps_str: str,
+    depths_str: str,
+    trials: int,
+    corpus: Path,
+    output: Path,
+    max_output_tokens: int,
+    max_latency_seconds: float,
+) -> None:
+    """Run the context rot A/B benchmark and format summary output."""
+    from returns.result import Success  # noqa: PLC0415
+
+    from .assistant.context_rot_evaluation import (  # noqa: PLC0415
+        evaluate_context_rot,
+        format_context_rot_summary_table,
+        load_context_rot_corpus,
+        save_context_rot_report,
+    )
+    from .assistant.runtime import (  # noqa: PLC0415
+        build_assistant_backend,
+        resolve_assistant_config,
+    )
+
+    try:
+        config = _assistant_config(backend, model, profile)
+        assistant_config = dict(config.get("assistant", {}))
+        assistant_config["max_output_tokens"] = max_output_tokens
+        config["assistant"] = assistant_config
+        runtime = resolve_assistant_config(config)
+        model_backend = build_assistant_backend(runtime)
+    except ValueError as exc:
+        raise click.ClickException(str(exc)) from exc
+
+    try:
+        corpus_data = load_context_rot_corpus(corpus)
+    except Exception as exc:  # noqa: BLE001
+        raise click.ClickException(f"Failed to load context rot corpus: {exc}") from exc
+
+    try:
+        token_steps = tuple(
+            int(s.strip()) for s in token_steps_str.split(",") if s.strip()
+        )
+    except ValueError as exc:
+        raise click.ClickException(
+            f"Invalid token-steps format: {token_steps_str}"
+        ) from exc
+
+    depths = tuple(d.strip() for d in depths_str.split(",") if d.strip())
+    for d in depths:
+        if d not in ("start", "middle", "end"):
+            raise click.ClickException(
+                f"Invalid depth: {d}. Expected start, middle, or end."
+            )
+
+    async def _run() -> None:
+        result = await evaluate_context_rot(
+            model_backend,
+            corpus=corpus_data,
+            token_steps=token_steps,
+            depths=depths,  # type: ignore[arg-type]
+            trials=trials,
+            max_output_tokens=max_output_tokens,
+            max_latency_seconds=max_latency_seconds,
+        )
+        if not isinstance(result, Success):
+            failure = result.failure()
+            raise click.ClickException(f"[{failure.code}] {failure.message}")
+        report = result.unwrap()
+        save_context_rot_report(report, output)
+        click.echo(format_context_rot_summary_table(report))
+        click.echo(
+            json.dumps(
+                {
+                    "output": str(output),
+                    "backend": report.backend_name,
+                    "model": report.model_name,
+                    "token_steps": list(report.token_steps),
+                    "total_cases": report.total_cases,
+                },
+                indent=2,
+                ensure_ascii=False,
+            )
+        )
+
+    asyncio.run(_run())
+
+
 def register_assistant_commands(root: click.Group) -> None:
     """Attach assistant commands to the root CLI."""
 
@@ -814,6 +904,84 @@ def register_assistant_commands(root: click.Group) -> None:
             corpus,
             output,
             max_output_tokens,
+        )
+
+    @assistant.command(name="benchmark-context-rot")
+    @click.option(
+        "--backend",
+        type=click.Choice(["lemonade", "ollama", "llama", "deterministic", "local"]),
+        default="lemonade",
+        show_default=True,
+    )
+    @click.option("--model", default=None, help="Model name override.")
+    @click.option("--profile", default=None, help="Assistant profile to evaluate.")
+    @click.option(
+        "--token-steps",
+        default="1024,2048,4096,7500",
+        show_default=True,
+        help="Comma-separated target token saturation steps.",
+    )
+    @click.option(
+        "--depths",
+        default="start,middle,end",
+        show_default=True,
+        help="Comma-separated needle depths (start, middle, end).",
+    )
+    @click.option(
+        "--trials",
+        type=click.IntRange(min=1),
+        default=1,
+        show_default=True,
+        help="Trials per configuration.",
+    )
+    @click.option(
+        "--corpus",
+        type=click.Path(path_type=Path, dir_okay=False),
+        default=Path("tests/fixtures/assistant/v1/context-rot.corpus.json"),
+        show_default=True,
+    )
+    @click.option(
+        "--output",
+        type=click.Path(path_type=Path, dir_okay=False),
+        default=Path("assistant-context-rot-benchmark.json"),
+        show_default=True,
+    )
+    @click.option(
+        "--max-output-tokens",
+        type=click.IntRange(min=1),
+        default=128,
+        show_default=True,
+    )
+    @click.option(
+        "--max-latency-seconds",
+        type=click.FloatRange(min=1.0),
+        default=90.0,
+        show_default=True,
+    )
+    def benchmark_context_rot_command(  # noqa: PLR0913
+        backend: str,
+        model: str | None,
+        profile: str | None,
+        token_steps: str,
+        depths: str,
+        trials: int,
+        corpus: Path,
+        output: Path,
+        max_output_tokens: int,
+        max_latency_seconds: float,
+    ) -> None:
+        """Run the long-context needle-in-a-haystack & context rot benchmark."""
+        _run_assistant_context_rot_benchmark(
+            backend=backend,
+            model=model,
+            profile=profile,
+            token_steps_str=token_steps,
+            depths_str=depths,
+            trials=trials,
+            corpus=corpus,
+            output=output,
+            max_output_tokens=max_output_tokens,
+            max_latency_seconds=max_latency_seconds,
         )
 
     @assistant.command(name="sessions")

@@ -256,16 +256,22 @@ class MemoryQueryResolver:
         padded_normalized = f" {normalized} "
         domains = [GLOBAL_DOMAIN_SCOPE]
         named_project = _NAMED_PROJECT_PATTERN.search(text)
-        if named_project is not None:
-            domains.append(f"project:{_normalized_text(named_project.group(1))}")
-        if re.search(r"\bRAI\b", text):
-            domains.append("system:rai")
+        named_scopes = {
+            "project": (
+                f"project:{_normalized_text(named_project.group(1))}"
+                if named_project is not None
+                else None
+            ),
+            "system": "system:rai" if re.search(r"\bRAI\b", text) else None,
+        }
         for domain, markers in _DOMAIN_MARKERS.items():
             if any(
                 f" {_normalized_text(marker)} " in padded_normalized
                 for marker in markers
             ):
-                domains.append(domain)
+                resolved = named_scopes.get(domain) or domain
+                if resolved not in domains:
+                    domains.append(resolved)
 
         restrictive_domains = tuple(
             domain

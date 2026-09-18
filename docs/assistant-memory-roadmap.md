@@ -306,6 +306,11 @@ scenarios from LongMemEval, MemOps, HaluMem, MemFail and conversational-memory
 benchmarks. Published scores are not directly comparable unless ingestion,
 retrieval budgets, answer model and judge protocol are controlled.
 
+Dedicated evaluation commands:
+- `rai assistant benchmark-memory`: Equal-budget 6-channel retrieval evaluation (M4–M6).
+- `rai assistant benchmark-dialog`: Multi-turn conversational coherence, role stability, and anti-parroting benchmark (M7).
+- `rai assistant benchmark-context-rot`: Needle-in-a-Haystack & Context Rot A/B benchmark scaling context up to 8,192+ tokens, comparing naive full chat history (`raw_context`) against RAI compact graph memory (`graph_memory`) with needle depth placement (`start`, `middle`, `end`) and absent-fact hallucination probes.
+
 ## Definition of done for general assistant memory
 
 General memory is not complete when the assistant merely recalls a planted
