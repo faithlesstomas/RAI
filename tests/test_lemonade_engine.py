@@ -312,7 +312,13 @@ async def test_supervisor_integration_with_lemonade() -> None:
     mock_client.post.side_effect = [load_resp, comp_resp, unload_resp]
     mock_client.get.return_value = models_resp
 
-    with patch.object(engine, "_get_client", return_value=mock_client):
+    with (
+        patch.object(engine, "_get_client", return_value=mock_client),
+        patch(
+            "rai.inference.supervisor.get_available_backends",
+            return_value=("lemonade", "ollama"),
+        ),
+    ):
         supervisor = ProcessorSupervisor(
             engine=engine,
             model_name="Qwen3.5-2B-GGUF",
