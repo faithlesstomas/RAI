@@ -378,7 +378,13 @@ async def _run_single_inference(  # noqa: PLR0913
     latency_ms = (time.monotonic() - start_time) * 1000.0
 
     if isinstance(result, Failure):
-        return ("", "", False, False, latency_ms, 0, 0)
+        failed_tokens_in = (
+            sum(estimate_tokens(t.get("text", "")) for t in recent_turns)
+            + estimate_tokens(query_text)
+            if recent_turns
+            else estimate_tokens(query_text) + 20
+        )
+        return ("", "", False, False, latency_ms, failed_tokens_in, 0)
 
     candidate = result.unwrap()
     delivered = candidate.text
@@ -654,12 +660,21 @@ def save_context_rot_report(
 
 def format_context_rot_summary_table(report: ContextRotEvaluationReport) -> str:
     """Format an ASCII table summarizing Strategy A vs Strategy B comparison."""
+    header = (
+        f"{'Strategy':<14} | {'Target':<7} | {'Depth':<8} | "
+        f"{'Recall Acc':<10} | {'Haluc Rate':<10} | {'Mean TTFT (ms)':<15} | "
+        f"{'Tokens In':<9} | {'Tokens Out':<10}"
+    )
+    divider = (
+        "---------------+---------+----------+------------+------------+-----------------+-----------+-----------"
+    )
+    banner = "=" * len(divider)
     lines: list[str] = [
-        "==================================================================================================",
+        banner,
         f" CONTEXT ROT BENCHMARK REPORT — {report.model_name} ({report.backend_name})",
-        "==================================================================================================",
-        f"{'Strategy':<14} | {'Target':<7} | {'Depth':<8} | {'Recall Acc':<10} | {'Haluc Rate':<10} | {'Mean TTFT (ms)':<15} | {'Tokens In':<9}",
-        "---------------+---------+----------+------------+------------+-----------------+----------",
+        banner,
+        header,
+        divider,
     ]
 
     for agg in report.aggregates:
@@ -671,10 +686,9 @@ def format_context_rot_summary_table(report: ContextRotEvaluationReport) -> str:
             f"{agg.needle_recall_accuracy * 100.0:>9.1f}% | "
             f"{agg.absent_hallucination_rate * 100.0:>9.1f}% | "
             f"{agg.mean_latency_ms:>15.1f} | "
-            f"{agg.mean_tokens_in:>9.0f}"
+            f"{agg.mean_tokens_in:>9.0f} | "
+            f"{agg.mean_tokens_out:>10.1f}"
         )
 
-    lines.append(
-        "=================================================================================================="
-    )
+    lines.append(banner)
     return "\n".join(lines)

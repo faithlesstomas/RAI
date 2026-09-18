@@ -110,6 +110,7 @@ async def test_evaluate_context_rot_deterministic() -> None:
     assert "CONTEXT ROT BENCHMARK REPORT" in table
     assert "raw_context" in table
     assert "graph_memory" in table
+    assert "Tokens Out" in table
 
     with TemporaryDirectory() as tmpdir:
         out_path = Path(tmpdir) / "report.json"

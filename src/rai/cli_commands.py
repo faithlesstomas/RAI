@@ -949,8 +949,9 @@ def register_assistant_commands(root: click.Group) -> None:
     @click.option(
         "--max-output-tokens",
         type=click.IntRange(min=1),
-        default=128,
+        default=256,
         show_default=True,
+        help="Maximum generation output tokens per query (use 512+ for deep reasoning models).",
     )
     @click.option(
         "--max-latency-seconds",

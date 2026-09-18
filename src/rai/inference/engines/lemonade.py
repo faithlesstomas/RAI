@@ -173,8 +173,13 @@ class LemonadeEngine(LocalTextEngine):
                 data = response.json()
                 choices = data.get("choices", [])
                 first_choice = choices[0] if choices else {}
-                raw_text = first_choice.get("message", {}).get("content", "")
+                msg = first_choice.get("message", {})
+                raw_text = msg.get("content", "") or ""
+                if not raw_text.strip() and msg.get("reasoning_content"):
+                    raw_text = msg.get("reasoning_content", "") or ""
                 text = re.sub(r"<think>.*?</think>", "", raw_text, flags=re.DOTALL).strip()
+                if not text and raw_text.strip():
+                    text = raw_text.strip()
                 finish_reason = first_choice.get("finish_reason", "stop")
             else:
                 # Fallback to plain text completions endpoint
