@@ -39,6 +39,7 @@ assistant-user-mvp
 assistant-live-acceptance
 assistant-memory-roadmap
 assistant-m4-m6-evaluation
+assistant-context-rot-evaluation
 assistant-memory-gcas-crosscheck
 emacs-client
 local-voice

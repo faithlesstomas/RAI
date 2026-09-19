@@ -600,6 +600,7 @@ def _run_assistant_context_rot_benchmark(  # noqa: PLR0913
     trials: int,
     corpus: Path,
     output: Path,
+    server_context_window: int | None,
     max_output_tokens: int,
     max_latency_seconds: float,
 ) -> None:
@@ -657,6 +658,11 @@ def _run_assistant_context_rot_benchmark(  # noqa: PLR0913
             trials=trials,
             max_output_tokens=max_output_tokens,
             max_latency_seconds=max_latency_seconds,
+            configured_context_window=(
+                server_context_window
+                if server_context_window is not None
+                else runtime.context_window if runtime.backend == "llama" else None
+            ),
         )
         if not isinstance(result, Success):
             failure = result.failure()
@@ -672,16 +678,21 @@ def _run_assistant_context_rot_benchmark(  # noqa: PLR0913
                     "model": report.model_name,
                     "token_steps": list(report.token_steps),
                     "total_cases": report.total_cases,
+                    "successful_cases": report.successful_cases,
+                    "failed_cases": report.failed_cases,
                 },
                 indent=2,
                 ensure_ascii=False,
             )
         )
 
-    asyncio.run(_run())
+    try:
+        asyncio.run(_run())
+    except ValueError as exc:
+        raise click.ClickException(str(exc)) from exc
 
 
-def register_assistant_commands(root: click.Group) -> None:
+def register_assistant_commands(root: click.Group) -> None:  # noqa: PLR0915
     """Attach assistant commands to the root CLI."""
 
     @root.group(name="assistant")
@@ -917,7 +928,7 @@ def register_assistant_commands(root: click.Group) -> None:
     @click.option("--profile", default=None, help="Assistant profile to evaluate.")
     @click.option(
         "--token-steps",
-        default="1024,2048,4096,7500",
+        default="512,2048,8192,32768",
         show_default=True,
         help="Comma-separated target token saturation steps.",
     )
@@ -930,14 +941,14 @@ def register_assistant_commands(root: click.Group) -> None:
     @click.option(
         "--trials",
         type=click.IntRange(min=1),
-        default=1,
+        default=3,
         show_default=True,
         help="Trials per configuration.",
     )
     @click.option(
         "--corpus",
         type=click.Path(path_type=Path, dir_okay=False),
-        default=Path("tests/fixtures/assistant/v1/context-rot.corpus.json"),
+        default=Path("tests/fixtures/assistant/v2/context-rot.corpus.json"),
         show_default=True,
     )
     @click.option(
@@ -945,6 +956,15 @@ def register_assistant_commands(root: click.Group) -> None:
         type=click.Path(path_type=Path, dir_okay=False),
         default=Path("assistant-context-rot-benchmark.json"),
         show_default=True,
+    )
+    @click.option(
+        "--server-context-window",
+        type=click.IntRange(min=1),
+        default=None,
+        help=(
+            "Context window configured in the inference server. Required for "
+            "auditable Lemonade/Ollama runs because RAI cannot discover it reliably."
+        ),
     )
     @click.option(
         "--max-output-tokens",
@@ -968,6 +988,7 @@ def register_assistant_commands(root: click.Group) -> None:
         trials: int,
         corpus: Path,
         output: Path,
+        server_context_window: int | None,
         max_output_tokens: int,
         max_latency_seconds: float,
     ) -> None:
@@ -981,6 +1002,7 @@ def register_assistant_commands(root: click.Group) -> None:
             trials=trials,
             corpus=corpus,
             output=output,
+            server_context_window=server_context_window,
             max_output_tokens=max_output_tokens,
             max_latency_seconds=max_latency_seconds,
         )

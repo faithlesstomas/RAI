@@ -901,9 +901,12 @@ explicit ConversationTurn or policy-approved proactive trigger
   - transition from monolithic plain-text prompt formatting (`rai-assistant-plain-text-v3`) to structured messages (`messages` payload supporting model-native ChatML / Jinja templates across Ollama, Lemonade, and LlamaCpp backends) to eliminate prompt echoing ("parrot" behavior), role bleeding and repetition loops;
   - distinguish closed-book retrieval evaluation prompts from interactive conversational system prompts, allowing natural conversation when explicit memory evidence is not required;
   - complement the single-turn retrieval floor with a multi-turn conversational benchmark (`rai assistant benchmark-dialog`) and raw-model generation metrics without deterministic grounding overrides (`docs/evaluation/assistant-m7-dialog-qwen3.5-4b-lemonade.json`).
-- [x] Context Rot and Long-Context Needle-in-a-Haystack benchmark:
-  - add `rai assistant benchmark-context-rot` evaluating context saturation (up to 8,192+ tokens), comparing Strategy A (`raw_context` full history) vs Strategy B (`graph_memory` selective compact evidence);
-  - measure attention degradation across needle depths (`start`, `middle`, `end`), absent-fact hallucination resistance, prompt processing latency (TTFT), and token scaling ($O(N)$ vs $O(1)$).
+- [/] Context Rot and long-context evaluation:
+  - [x] protocol v2 separates raw model output from the response delivered after RAI grounding, records backend failures outside behavioral denominators, reports end-to-end latency without calling it TTFT, preserves backend-reported and estimated token counts separately, and treats compact `graph_memory` as one constant control;
+  - [x] use a versioned bilingual literal/semantic regression corpus, repeated trials, Wilson intervals and an explicitly qualified 85%-of-short-baseline effective-context estimate;
+  - [ ] add reproducible import adapters for generated RULER cases and bounded MRCR v2 subsets, retaining upstream dataset, licence, prompt, metric and tokenizer metadata without adding a runtime network dependency;
+  - [ ] cross-check selected LongBench/LongBench-E cases and run AA-LCR or LongBench v2 only as opt-in release evaluations; keep LongMemEval and the memory-operation suites assigned to `benchmark-memory`;
+  - [ ] publish repeated local-model manifests through at least 32K and, where hardware permits without truncation, 64K/128K. See [Assistant context-rot evaluation](docs/assistant-context-rot-evaluation.md).
 
 **Durable graph memory and reconstructed context**
 

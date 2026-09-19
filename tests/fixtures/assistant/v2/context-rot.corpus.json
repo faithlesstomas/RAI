@@ -1,0 +1,166 @@
+{
+  "corpus_version": "rai-assistant-context-rot-corpus-v2",
+  "description": "Bilingual literal and semantic single-needle context-rot fixture with unrelated absent-fact probes.",
+  "scenarios": [
+    {
+      "scenario_id": "test-db-port",
+      "description": "Polish literal retrieval of a custom test database port.",
+      "task_family": "literal_retrieval",
+      "language": "pl",
+      "needle_user": "Mój port testowej bazy to 5433.",
+      "needle_assistant": "Zanotowałem: port testowej bazy danych to 5433.",
+      "query_text": "Jaki jest port testowej bazy danych?",
+      "expected_phrases": ["5433"],
+      "forbidden_phrases": ["5432", "nie wiem", "brak informacji"],
+      "claim": {
+        "topic": "user.attribute.port-testowej-bazy",
+        "content": {"attribute": "port testowej bazy", "value": "5433"}
+      },
+      "absent_query_text": "Jaki jest numer seryjny mojego monitora?",
+      "absent_expected_phrases": ["nie wiem", "brak", "nie ma", "nie znam"],
+      "absent_forbidden_phrases": ["5433"]
+    },
+    {
+      "scenario_id": "shfmt-indent",
+      "description": "Polish literal retrieval of a command-line formatting preference.",
+      "task_family": "literal_retrieval",
+      "language": "pl",
+      "needle_user": "Moje wcięcie shfmt to -i 4.",
+      "needle_assistant": "Będę pamiętać: wcięcie shfmt to -i 4.",
+      "query_text": "Jakie jest moje wcięcie shfmt dla skryptów?",
+      "expected_phrases": ["-i 4"],
+      "forbidden_phrases": ["-i 2", "nie wiem"],
+      "claim": {
+        "topic": "user.attribute.wciecie-shfmt",
+        "content": {"attribute": "wcięcie shfmt", "value": "-i 4"}
+      },
+      "absent_query_text": "Jaka jest moja domyślna powłoka systemowa?",
+      "absent_expected_phrases": ["nie wiem", "brak", "nie ma", "nie znam"],
+      "absent_forbidden_phrases": ["-i 4"]
+    },
+    {
+      "scenario_id": "code-language",
+      "description": "Polish preference retrieval with a competing language name.",
+      "task_family": "literal_retrieval",
+      "language": "pl",
+      "needle_user": "W przykładach kodu wolę język Rust zamiast Pythona.",
+      "needle_assistant": "Rozumiem, w przykładach kodu będę preferować język Rust.",
+      "query_text": "W jakim języku mam otrzymywać przykłady kodu?",
+      "expected_phrases": ["rust"],
+      "forbidden_phrases": ["python", "nie wiem"],
+      "claim": {
+        "topic": "code_examples",
+        "content": {"subject": "user", "preference": "Rust"}
+      },
+      "absent_query_text": "Jaki jest mój ulubiony edytor tekstu?",
+      "absent_expected_phrases": ["nie wiem", "brak", "nie ma", "nie znam"],
+      "absent_forbidden_phrases": ["rust"]
+    },
+    {
+      "scenario_id": "atlas-backup-host",
+      "description": "Polish semantic retrieval with deliberately reduced lexical overlap.",
+      "task_family": "semantic_retrieval",
+      "language": "pl",
+      "needle_user": "Wieczorne kopie projektu Atlas są odkładane na maszynie Aurora.",
+      "needle_assistant": "Zanotowałem miejsce przechowywania nocnych archiwów Atlasu: Aurora.",
+      "query_text": "Na jaki komputer trafiają nocne archiwa Atlasu?",
+      "expected_phrases": ["aurora"],
+      "forbidden_phrases": ["nie wiem", "brak informacji"],
+      "claim": {
+        "topic": "project.atlas.backup-host",
+        "content": {"attribute": "host nocnych kopii Atlasu", "value": "Aurora"}
+      },
+      "absent_query_text": "Którego dnia tygodnia wykonywana jest pełna kopia Atlasu?",
+      "absent_expected_phrases": ["nie wiem", "brak", "nie ma", "nie znam"],
+      "absent_forbidden_phrases": ["aurora"]
+    },
+    {
+      "scenario_id": "cedar-maintenance-window",
+      "description": "English long-context retrieval of a maintenance schedule.",
+      "task_family": "literal_retrieval",
+      "language": "en",
+      "needle_user": "The maintenance window for Project Cedar begins at 02:30 UTC every Thursday.",
+      "needle_assistant": "Noted: Cedar maintenance starts Thursdays at 02:30 UTC.",
+      "query_text": "When does Cedar's weekly maintenance start?",
+      "expected_phrases": ["02:30", "Thursday"],
+      "forbidden_phrases": ["I don't know", "Friday"],
+      "claim": {
+        "topic": "project.cedar.maintenance-window",
+        "content": {"attribute": "Cedar maintenance start", "value": "Thursday 02:30 UTC"}
+      },
+      "absent_query_text": "Who approves Cedar maintenance?",
+      "absent_expected_phrases": ["I don't know", "insufficient", "no information", "cannot answer"],
+      "absent_forbidden_phrases": ["02:30"]
+    },
+    {
+      "scenario_id": "falcon-artifact-store",
+      "description": "English semantic retrieval using a paraphrased storage question.",
+      "task_family": "semantic_retrieval",
+      "language": "en",
+      "needle_user": "Release bundles produced by Falcon are deposited in the repository named Blue Harbor.",
+      "needle_assistant": "Understood: Blue Harbor receives Falcon's release bundles.",
+      "query_text": "Where should I look for Falcon's packaged build outputs?",
+      "expected_phrases": ["Blue Harbor"],
+      "forbidden_phrases": ["I don't know", "cannot answer"],
+      "claim": {
+        "topic": "project.falcon.artifact-store",
+        "content": {"attribute": "Falcon artifact repository", "value": "Blue Harbor"}
+      },
+      "absent_query_text": "How long are Falcon build outputs retained?",
+      "absent_expected_phrases": ["I don't know", "insufficient", "no information", "cannot answer"],
+      "absent_forbidden_phrases": ["Blue Harbor"]
+    }
+  ],
+  "distractors": [
+    {
+      "distractor_id": "systemd-service-debug",
+      "user_text": "Usługa rai-daemon.service zgłasza błąd przy starcie. Jak sprawdzić logi?",
+      "assistant_text": "Sprawdź systemctl --user status rai-daemon.service oraz journalctl --user -xeu rai-daemon.service -n 100."
+    },
+    {
+      "distractor_id": "python-uv-virtualenv",
+      "user_text": "Jak w uv utworzyć środowisko Pythona 3.12 i zainstalować zależności deweloperskie?",
+      "assistant_text": "Wykonaj uv venv --python 3.12 .venv, a następnie uv sync --dev."
+    },
+    {
+      "distractor_id": "git-interactive-rebase",
+      "user_text": "Chcę połączyć ostatnie cztery commity przed wystawieniem merge requesta.",
+      "assistant_text": "Uruchom git rebase -i HEAD~4, pozostaw pick przy pierwszym commicie, a pozostałe oznacz jako squash."
+    },
+    {
+      "distractor_id": "linux-nftables-firewall",
+      "user_text": "Jak zablokować ruch na porcie 8080 za pomocą nftables?",
+      "assistant_text": "Dodaj regułę sudo nft add rule inet filter input tcp dport 8080 drop i sprawdź tabelę przed utrwaleniem konfiguracji."
+    },
+    {
+      "distractor_id": "sqlite-wal-tuning",
+      "user_text": "Jak poprawić współbieżność SQLite w asynchronicznym serwisie?",
+      "assistant_text": "Rozważ WAL, synchronous=NORMAL i ustawienie busy_timeout odpowiednie dla obciążenia."
+    },
+    {
+      "distractor_id": "amdgpu-vulkan-verification",
+      "user_text": "Jak sprawdzić, czy RADV widzi zintegrowaną kartę AMD?",
+      "assistant_text": "Uruchom vulkaninfo --summary i sprawdź sekcję Devices oraz nazwę sterownika."
+    },
+    {
+      "distractor_id": "ssh-multiplexing",
+      "user_text": "Jak przyspieszyć kolejne połączenia SSH do tego samego hosta?",
+      "assistant_text": "Skonfiguruj ControlMaster auto, ControlPath i ControlPersist w pliku SSH config."
+    },
+    {
+      "distractor_id": "rust-release-flags",
+      "user_text": "Jak zmniejszyć rozmiar binarki Rust w profilu release?",
+      "assistant_text": "Użyj opt-level z, LTO, jednej jednostki codegen, panic abort i strip."
+    },
+    {
+      "distractor_id": "network-ss-diagnostic",
+      "user_text": "Które polecenie pokazuje nasłuchujące procesy TCP bez DNS?",
+      "assistant_text": "Użyj sudo ss -tlpn; flaga n wyłącza rozwiązywanie nazw."
+    },
+    {
+      "distractor_id": "container-layer-cache",
+      "user_text": "How should I order Dockerfile instructions to preserve dependency caching?",
+      "assistant_text": "Copy dependency manifests and install dependencies before copying frequently changing application source files."
+    }
+  ]
+}

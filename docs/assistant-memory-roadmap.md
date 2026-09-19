@@ -309,7 +309,7 @@ retrieval budgets, answer model and judge protocol are controlled.
 Dedicated evaluation commands:
 - `rai assistant benchmark-memory`: Equal-budget 6-channel retrieval evaluation (M4–M6).
 - `rai assistant benchmark-dialog`: Multi-turn conversational coherence, role stability, and anti-parroting benchmark (M7).
-- `rai assistant benchmark-context-rot`: Needle-in-a-Haystack & Context Rot A/B benchmark scaling context up to 8,192+ tokens, comparing naive full chat history (`raw_context`) against RAI compact graph memory (`graph_memory`) with needle depth placement (`start`, `middle`, `end`) and absent-fact hallucination probes.
+- `rai assistant benchmark-context-rot`: protocol-v2 model/system evaluation with raw model output isolated from deterministic grounding, explicit backend-failure accounting, start/middle/end placement, unrelated absent-fact probes, confidence intervals and one non-duplicated compact graph-memory control. The integration plan for RULER, MRCR v2, LongBench and AA-LCR is documented in [Assistant context-rot evaluation](assistant-context-rot-evaluation.md).
 
 ## Definition of done for general assistant memory
 
