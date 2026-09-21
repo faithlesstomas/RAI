@@ -420,7 +420,7 @@ async def _run_single_inference(  # noqa: PLR0913
             backend.generate(request, CancellationToken()),
             timeout=max_latency_seconds,
         )
-    except TimeoutError:
+    except asyncio.TimeoutError:
         latency_ms = (time.monotonic() - start_time) * 1000.0
         return ContextRotInferenceOutcome(
             status="backend_failure",
