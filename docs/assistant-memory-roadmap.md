@@ -223,13 +223,15 @@ Exit evidence:
 
 ### M7 — scope, personalization, conversational templating and consolidation
 
-Status: `[x]` for native chat templating and conversational evaluation. Profile, domain and purpose isolation is enforced for claims,
+Status: `[/]`. Native chat templating and the baseline conversational evaluation
+are implemented. Profile, domain and purpose isolation is enforced for claims,
 raw-turn retrieval and recent context, with hierarchical domain scope matching
 (`global` for intentional cross-domain evidence, fail-closed `unknown`,
 parent/child project matching, and non-restrictive facets). Manifests expose the
 selected scope. Negative tests cover
 unrelated-domain and wrong-purpose retrieval. Broader leakage/sycophancy
-evaluation and persistent consolidation remain open for M8. The M4 grounded-summary
+evaluation and evidence-preserving persistent consolidation remain open in M7;
+M8 remains limited to optional store adapters and their ADR. The M4 grounded-summary
 baseline is query-time and rebuildable: deleting its source turn removes the
 claim and therefore makes the projection disappear.
 
@@ -238,18 +240,21 @@ Interactive evaluation and conversational chat templating implementation:
    `LemonadeEngine`, `LlamaCppEngine`) natively accept structured `messages`
    and route through chat completion endpoints (`client.chat` in Ollama,
    `/api/v1/chat/completions` in Lemonade, `create_chat_completion` in LlamaCpp)
-   using model-native templates (ChatML / Jinja). This completely eliminates prompt echoing
-   ("parrot" echoing) and repetition loops.
+   using model-native templates (ChatML / Jinja). This addresses a major source
+   of prompt echoing, role bleeding and repetition, but does not guarantee their
+   absence for every model or context length.
 2. **System prompt calibration**: The prompt distinguishes strict closed-book
    memory tests (`evidence_required=True`) from open conversational desktop
    assistance (`evidence_required=False`), preventing unwarranted abstentions
    ("nie wiem") during ordinary conversation.
 3. **Multi-turn evaluation**: A versioned multi-turn conversational benchmark
-   (`tests/fixtures/assistant/v1/conversational-dialog.corpus.json`) and CLI
+   (`tests/fixtures/assistant/v2/conversational-dialog.corpus.json`) and CLI
    command (`rai assistant benchmark-dialog`) evaluates raw model generation
-   without deterministic grounding masks. Baseline run on Lemonade (`Qwen3.5-4B-GGUF`)
-   achieves 100% coherence with 0.0% parroting, 0.0% repetition, and 0.0% role confusion
-   (`docs/evaluation/assistant-m7-dialog-qwen3.5-4b-lemonade.json`).
+   without deterministic grounding masks. Protocol v2 distinguishes conjunctive
+   required phrases from accepted alternatives. The Lemonade/Qwen result in
+   `docs/evaluation/assistant-m7-dialog-qwen3.5-4b-lemonade.json` used the
+   historical v1 any-of judge; its reported 100% coherence is not current M7
+   acceptance evidence and must be rerun with v2 before comparison.
 
 Partition durable memory by user, profile, domain and purpose. Retrieve personal
 context only when the request and policy require it. Measure cross-domain

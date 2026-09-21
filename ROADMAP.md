@@ -898,9 +898,9 @@ explicit ConversationTurn or policy-approved proactive trigger
 - [x] Define streaming, cancellation, deadlines, interruption and exactly-once
   terminal delivery independently of a model provider.
 - [x] Native chat templating and conversational context synthesis:
-  - transition from monolithic plain-text prompt formatting (`rai-assistant-plain-text-v3`) to structured messages (`messages` payload supporting model-native ChatML / Jinja templates across Ollama, Lemonade, and LlamaCpp backends) to eliminate prompt echoing ("parrot" behavior), role bleeding and repetition loops;
+  - transition from monolithic plain-text prompt formatting (`rai-assistant-plain-text-v3`) to structured messages (`messages` payload supporting model-native ChatML / Jinja templates across Ollama, Lemonade, and LlamaCpp backends) to mitigate prompt echoing ("parrot" behavior), role bleeding and repetition loops;
   - distinguish closed-book retrieval evaluation prompts from interactive conversational system prompts, allowing natural conversation when explicit memory evidence is not required;
-  - complement the single-turn retrieval floor with a multi-turn conversational benchmark (`rai assistant benchmark-dialog`) and raw-model generation metrics without deterministic grounding overrides (`docs/evaluation/assistant-m7-dialog-qwen3.5-4b-lemonade.json`).
+  - complement the single-turn retrieval floor with a multi-turn conversational benchmark (`rai assistant benchmark-dialog`) and raw-model generation metrics without deterministic grounding overrides; protocol v2 uses explicit all-required and any-accepted phrase rules, while `docs/evaluation/assistant-m7-dialog-qwen3.5-4b-lemonade.json` remains a historical v1 result pending a v2 rerun.
 - [/] Context Rot and long-context evaluation:
   - [x] protocol v2 separates raw model output from the response delivered after RAI grounding, records backend failures outside behavioral denominators, reports end-to-end latency without calling it TTFT, preserves backend-reported and estimated token counts separately, and treats compact `graph_memory` as one constant control;
   - [x] use a versioned bilingual literal/semantic regression corpus, repeated trials, Wilson intervals and an explicitly qualified 85%-of-short-baseline effective-context estimate;

@@ -44,7 +44,7 @@ EvaluationStrategy = Literal["raw_context", "graph_memory"]
 InferenceStatus = Literal["success", "backend_failure"]
 ModelOutputSource = Literal["model_metadata", "delivered_unmodified", "unavailable"]
 
-_TOKEN_ESTIMATOR_VERSION = "rai-heuristic-words-chars-v1"
+_ESTIMATOR_VERSION = "rai-heuristic-words-chars-v1"
 _EFFECTIVE_CONTEXT_RETENTION = 0.85
 _MAX_ACCEPTABLE_FAILURE_RATE = 0.20
 _MIN_SCORED_CASES_PER_CELL = 3
@@ -173,10 +173,16 @@ class ContextRotAggregate(BaseModel):
     model_needle_recall_ci_high: float | None = Field(default=None, ge=0.0, le=1.0)
     model_absent_case_count: int = Field(ge=0)
     model_absent_hallucination_rate: float | None = Field(default=None, ge=0.0, le=1.0)
-    model_absent_hallucination_ci_low: float | None = Field(default=None, ge=0.0, le=1.0)
-    model_absent_hallucination_ci_high: float | None = Field(default=None, ge=0.0, le=1.0)
+    model_absent_hallucination_ci_low: float | None = Field(
+        default=None, ge=0.0, le=1.0
+    )
+    model_absent_hallucination_ci_high: float | None = Field(
+        default=None, ge=0.0, le=1.0
+    )
     assistant_needle_recall_accuracy: float | None = Field(default=None, ge=0.0, le=1.0)
-    assistant_absent_hallucination_rate: float | None = Field(default=None, ge=0.0, le=1.0)
+    assistant_absent_hallucination_rate: float | None = Field(
+        default=None, ge=0.0, le=1.0
+    )
     mean_end_to_end_latency_ms: float = Field(ge=0.0)
     mean_backend_reported_prompt_tokens: float | None = Field(default=None, ge=0.0)
     mean_backend_reported_output_tokens: float | None = Field(default=None, ge=0.0)
@@ -215,7 +221,7 @@ class ContextRotEvaluationReport(BaseModel):
     temperature: float | None = None
     max_output_tokens: int = Field(ge=1)
     max_latency_seconds: float = Field(gt=0.0)
-    token_estimator: str = _TOKEN_ESTIMATOR_VERSION
+    token_estimator: str = _ESTIMATOR_VERSION
     token_steps: tuple[int, ...]
     depths: tuple[NeedleDepth, ...]
     trials: int = Field(ge=1)
@@ -306,7 +312,9 @@ def _estimate_prompt_tokens(
     recent_turns: Sequence[dict[str, str]],
     durable_memories: Sequence[dict[str, Any]],
 ) -> int:
-    context_tokens = sum(estimate_tokens(str(turn.get("text", ""))) for turn in recent_turns)
+    context_tokens = sum(
+        estimate_tokens(str(turn.get("text", ""))) for turn in recent_turns
+    )
     memory_tokens = estimate_tokens(json.dumps(durable_memories, ensure_ascii=False))
     return context_tokens + memory_tokens + estimate_tokens(query_text) + 64
 
@@ -585,7 +593,9 @@ def _aggregate_group(
     group: Sequence[ContextRotCaseMeasurement],
 ) -> ContextRotAggregate:
     successful = [case for case in group if case.status == "success"]
-    model_scored = [case for case in successful if case.model_answer_correct is not None]
+    model_scored = [
+        case for case in successful if case.model_answer_correct is not None
+    ]
     assistant_scored = [
         case for case in successful if case.assistant_answer_correct is not None
     ]
@@ -645,8 +655,7 @@ def _aggregate_group(
             else None
         ),
         assistant_absent_hallucination_rate=(
-            sum(assistant_absent_hallucinations)
-            / len(assistant_absent_hallucinations)
+            sum(assistant_absent_hallucinations) / len(assistant_absent_hallucinations)
             if assistant_absent_hallucinations
             else None
         ),
@@ -675,7 +684,11 @@ def _aggregate_measurements(
     aggregates: list[ContextRotAggregate] = []
     for strategy in ("raw_context", "graph_memory"):
         targets = sorted(
-            {case.target_context_tokens for case in measurements if case.strategy == strategy}
+            {
+                case.target_context_tokens
+                for case in measurements
+                if case.strategy == strategy
+            }
         )
         for target in targets:
             target_cases = [
@@ -694,7 +707,9 @@ def _aggregate_measurements(
                     _aggregate_group(strategy, target, depth, depth_cases)  # type: ignore[arg-type]
                 )
             if not depths or len(depths) > 1:
-                aggregates.append(_aggregate_group(strategy, target, None, target_cases))
+                aggregates.append(
+                    _aggregate_group(strategy, target, None, target_cases)
+                )
     return aggregates
 
 
@@ -723,7 +738,9 @@ def _effective_context_summaries(
             point.model_needle_case_count < _MIN_SCORED_CASES_PER_CELL
             for point in points
         ):
-            invalid_reasons.append("fewer than three scored needle cases in at least one cell")
+            invalid_reasons.append(
+                "fewer than three scored needle cases in at least one cell"
+            )
 
         baseline_accuracy = baseline.model_needle_recall_accuracy
         threshold = (

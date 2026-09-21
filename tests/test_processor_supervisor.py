@@ -7,6 +7,7 @@ Covers:
 - ProcessorSupervisor lifecycle, concurrency limits, and idle unloading.
 - Stage 4 Acceptance Slice 1: Offline episode to structured Claim with provenance.
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -30,7 +31,11 @@ from rai.inference import (
     load_local_model,
 )
 from rai.inference.engines.iree import is_iree_available
-from rai.inference.engines.llama import LlamaCppEngine, is_llama_cpp_available
+from rai.inference.engines.llama import (
+    AsyncLlamaEngine,
+    LlamaCppEngine,
+    is_llama_cpp_available,
+)
 from rai.inference.engines.ollama import OllamaEngine
 from rai.kernel.ports import CancellationToken, LifecycleState
 from rai.kernel.records import (
@@ -68,7 +73,6 @@ def _make_budget(max_tokens: int = 100) -> InferenceBudget:
         max_vram_bytes=0,
         cancellation_deadline=datetime.now(timezone.utc) + timedelta(seconds=60),
     )
-
 
 
 class MockEngine(LocalTextEngine):
@@ -471,6 +475,32 @@ async def test_stage4_acceptance_slice_1_offline_episode_to_claim() -> None:
 
 
 @pytest.mark.asyncio
+async def test_async_llama_engine_forwards_structured_messages() -> None:
+    """Keep the async adapter compatible with native chat templating."""
+    sync_engine = LlamaCppEngine("/tmp/nonexistent.gguf")
+    sync_engine.llm = object()
+    expected = Success(InferenceResult(text="ok"))
+    sync_engine.generate = MagicMock(return_value=expected)  # type: ignore[method-assign]
+    engine = AsyncLlamaEngine(sync_engine)
+    messages = [{"role": "user", "content": "Cześć"}]
+
+    async def run_inline(function: Any, *args: Any, **kwargs: Any) -> Any:  # noqa: ANN401
+        return function(*args, **kwargs)
+
+    with patch("rai.inference.engines.llama.asyncio.to_thread", side_effect=run_inline):
+        result = await engine.generate(prompt="fallback", messages=messages)
+
+    assert result is expected
+    sync_engine.generate.assert_called_once_with(
+        prompt="fallback",
+        stop=None,
+        max_tokens=1024,
+        temperature=0.7,
+        messages=messages,
+    )
+
+
+@pytest.mark.asyncio
 async def test_ollama_engine_generate_and_unload() -> None:
     """Test OllamaEngine client interaction, options, stats, and keep_alive=0 unload."""
     engine = OllamaEngine(model_name="llama3.2:1b")
@@ -500,6 +530,23 @@ async def test_ollama_engine_generate_and_unload() -> None:
         assert inference_result.stats.input_tokens == 5
         generation_call = mock_client.generate.call_args_list[0]
         assert generation_call.kwargs["think"] is False
+
+        mock_client.chat.return_value = {
+            "message": {"role": "assistant", "content": "Chat response."},
+            "eval_count": 3,
+            "prompt_eval_count": 2,
+            "done": True,
+        }
+        messages = [{"role": "user", "content": "Chat prompt"}]
+        chat_res = await engine.generate(messages=messages)
+        assert isinstance(chat_res, Success)
+        assert chat_res.unwrap().text == "Chat response."
+        mock_client.chat.assert_awaited_once_with(
+            model="llama3.2:1b",
+            messages=messages,
+            think=False,
+            options={"temperature": 0.7, "num_predict": 1024},
+        )
 
         # Unload (keep_alive=0)
         unload_res = await engine.unload()
@@ -1013,9 +1060,7 @@ async def test_zero_input_budget_and_known_resource_limits_fail_closed() -> None
     supervisor = ProcessorSupervisor(engine=engine, idle_unload_seconds=0)
     await supervisor.start()
     zero_input = _make_budget().model_copy(update={"max_input_tokens": 0})
-    result = await supervisor.process(
-        task, context, zero_input, CancellationToken()
-    )
+    result = await supervisor.process(task, context, zero_input, CancellationToken())
     assert isinstance(result, Failure)
     assert result.failure().code == "BUDGET_EXCEEDED"
     await supervisor.stop()
@@ -1026,9 +1071,7 @@ async def test_zero_input_budget_and_known_resource_limits_fail_closed() -> None
     constrained = _make_budget().model_copy(
         update={"max_ram_bytes": 1024, "max_vram_bytes": 512}
     )
-    result = await supervisor.process(
-        task, context, constrained, CancellationToken()
-    )
+    result = await supervisor.process(task, context, constrained, CancellationToken())
     assert isinstance(result, Failure)
     assert result.failure().code == "RESOURCE_CAPACITY_EXCEEDED"
     await supervisor.stop()

@@ -1,6 +1,7 @@
 """
 Llama.cpp implementation of LocalTextEngine and InferenceEngine.
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -13,7 +14,12 @@ from typing import Any, Dict, List, Optional
 
 from returns.result import Failure, Result, Success, safe
 
-from ..protocols import GenerationStats, InferenceEngine, InferenceResult, LocalTextEngine
+from ..protocols import (
+    GenerationStats,
+    InferenceEngine,
+    InferenceResult,
+    LocalTextEngine,
+)
 
 
 def is_llama_cpp_available() -> bool:
@@ -244,10 +250,12 @@ class AsyncLlamaEngine(LocalTextEngine):
 
     async def generate(
         self,
-        prompt: str,
+        prompt: str = "",
         stop: Optional[List[str]] = None,
         max_tokens: int = 1024,
         temperature: float = 0.7,
+        *,
+        messages: Optional[List[Dict[str, str]]] = None,
     ) -> Result[InferenceResult, Exception]:
         if not self.is_loaded:
             load_res = await self.load()
@@ -256,10 +264,11 @@ class AsyncLlamaEngine(LocalTextEngine):
 
         return await asyncio.to_thread(
             self._engine.generate,
-            prompt,
-            stop,
-            max_tokens,
-            temperature,
+            prompt=prompt,
+            stop=stop,
+            max_tokens=max_tokens,
+            temperature=temperature,
+            messages=messages,
         )
 
     async def stream(
@@ -275,4 +284,3 @@ class AsyncLlamaEngine(LocalTextEngine):
     async def unload(self) -> Result[None, Exception]:
         await asyncio.to_thread(self._engine.unload)
         return Success(None)
-

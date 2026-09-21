@@ -13,16 +13,22 @@ from pathlib import Path
 import re
 from tempfile import TemporaryDirectory
 import time
-from typing import Any, Sequence
+from typing import Any, AsyncIterator, Sequence
 
 from pydantic import BaseModel, ConfigDict, Field
 from returns.result import Failure, Result, Success
 
+from rai.kernel.ports import CancellationToken, LifecycleState
 from rai.kernel.records import ActionFailure, ProducerIdentity, _new_id, _utc_now
 
 from .judging import _required_phrase_matches
 from .ports import AssistantModelBackend
-from .records import ConversationTurn, make_assistant_failure
+from .records import (
+    AssistantCandidate,
+    ConversationTurn,
+    InferenceRequest,
+    make_assistant_failure,
+)
 from .service import AssistantService
 from .store import SQLiteMemoryGraphStore
 
@@ -96,7 +102,8 @@ class ConversationalTurnCase(BaseModel):
 
     turn_id: str
     user_text: str
-    expected_phrases: tuple[str, ...] = Field(default_factory=tuple)
+    required_phrases: tuple[str, ...] = Field(default_factory=tuple)
+    accepted_any_phrases: tuple[str, ...] = Field(default_factory=tuple)
     forbidden_phrases: tuple[str, ...] = Field(default_factory=tuple)
     forbidden_parroting: bool = True
 
@@ -135,6 +142,8 @@ class ConversationalTurnMeasurement(BaseModel):
     parroting_detected: bool
     repetition_detected: bool
     role_confusion_detected: bool
+    required_phrases_passed: bool
+    accepted_phrase_passed: bool
     coherence_passed: bool
     turn_latency_ms: float
     tokens_in: int
@@ -147,6 +156,7 @@ class ConversationalEvaluationReport(BaseModel):
     model_config = ConfigDict(frozen=True)
 
     corpus_version: str
+    judge_version: str = "conversational-phrase-v2"
     backend_name: str
     model_name: str
     model_artifact_version: str | None
@@ -160,6 +170,79 @@ class ConversationalEvaluationReport(BaseModel):
     measurements: tuple[ConversationalTurnMeasurement, ...]
 
 
+class _CandidateRecordingBackend:
+    """Benchmark-only decorator capturing raw candidates by input turn ID."""
+
+    def __init__(self, delegate: AssistantModelBackend) -> None:
+        self._delegate = delegate
+        self._candidates: dict[str, AssistantCandidate] = {}
+
+    @property
+    def state(self) -> LifecycleState:
+        return self._delegate.state
+
+    @property
+    def backend_name(self) -> str:
+        return str(getattr(self._delegate, "backend_name", "unknown"))
+
+    @property
+    def model_name(self) -> str:
+        return str(getattr(self._delegate, "model_name", "unknown"))
+
+    @property
+    def model_artifact_version(self) -> str | None:
+        value = getattr(self._delegate, "model_artifact_version", None)
+        return str(value) if value is not None else None
+
+    @property
+    def prompt_template_version(self) -> str:
+        return str(
+            getattr(self._delegate, "prompt_template_version", "unknown-template")
+        )
+
+    @property
+    def max_output_tokens(self) -> int:
+        return int(getattr(self._delegate, "max_output_tokens", 512))
+
+    async def start(self) -> Result[LifecycleState, ActionFailure]:
+        return await self._delegate.start()
+
+    async def stop(self) -> Result[LifecycleState, ActionFailure]:
+        return await self._delegate.stop()
+
+    async def generate(
+        self, request: InferenceRequest, cancellation: CancellationToken
+    ) -> Result[AssistantCandidate, ActionFailure]:
+        result = await self._delegate.generate(request, cancellation)
+        if isinstance(result, Success):
+            self._candidates[request.turn_id] = result.unwrap()
+        return result
+
+    async def stream(
+        self, request: InferenceRequest, cancellation: CancellationToken
+    ) -> AsyncIterator[Result[str, ActionFailure]]:
+        async for chunk in self._delegate.stream(request, cancellation):
+            yield chunk
+
+    def pop_candidate(self, turn_id: str) -> AssistantCandidate | None:
+        return self._candidates.pop(turn_id, None)
+
+
+def _phrase_requirements_pass(
+    turn_case: ConversationalTurnCase, model_output: str
+) -> tuple[bool, bool]:
+    """Evaluate conjunctive requirements separately from accepted alternatives."""
+    required_passed = all(
+        _required_phrase_matches(phrase, model_output)
+        for phrase in turn_case.required_phrases
+    )
+    accepted_passed = not turn_case.accepted_any_phrases or any(
+        _required_phrase_matches(phrase, model_output)
+        for phrase in turn_case.accepted_any_phrases
+    )
+    return required_passed, accepted_passed
+
+
 def load_conversational_corpus(path: Path) -> ConversationalCorpus:
     """Load and validate the conversational benchmark corpus."""
     with open(path, "rb") as file:
@@ -170,7 +253,10 @@ def load_conversational_corpus(path: Path) -> ConversationalCorpus:
             ConversationalTurnCase(
                 turn_id=t["turn_id"],
                 user_text=t["user_text"],
-                expected_phrases=tuple(t.get("expected_phrases", ())),
+                required_phrases=tuple(t.get("required_phrases", ())),
+                accepted_any_phrases=tuple(
+                    t.get("accepted_any_phrases", t.get("expected_phrases", ()))
+                ),
                 forbidden_phrases=tuple(t.get("forbidden_phrases", ())),
                 forbidden_parroting=t.get("forbidden_parroting", True),
             )
@@ -209,19 +295,10 @@ async def run_conversational_benchmark(  # noqa: PLR0912, PLR0915
 
     with TemporaryDirectory(prefix="rai-conv-benchmark-") as directory:
         store = SQLiteMemoryGraphStore(Path(directory) / "memory.sqlite3")
-        store_res = await store.start()
-        if isinstance(store_res, Failure):
-            return Failure(store_res.failure())
-
-        backend_res = await backend.start()
-        if isinstance(backend_res, Failure):
-            await store.stop()
-            return Failure(backend_res.failure())
-
-        service = AssistantService(store=store, backend=backend)
+        recording_backend = _CandidateRecordingBackend(backend)
+        service = AssistantService(store=store, backend=recording_backend)
         service_res = await service.start()
         if isinstance(service_res, Failure):
-            await store.stop()
             return Failure(service_res.failure())
 
         measurements: list[ConversationalTurnMeasurement] = []
@@ -251,45 +328,37 @@ async def run_conversational_benchmark(  # noqa: PLR0912, PLR0915
                     latency_ms = (time.monotonic() - start_time) * 1000.0
 
                     if isinstance(turn_res, Failure):
-                        await service.stop()
-                        await store.stop()
                         return Failure(turn_res.failure())
 
                     response = turn_res.unwrap()
                     reply_to_turn_id = response.turn_id
                     delivered_text = response.text
 
-                    # Extract raw model output from context/response
-                    stored_response_res = await store.get_response_by_turn_id(
-                        response.turn_id
-                    )
                     raw_model_output = delivered_text
                     tokens_in = len(turn_case.user_text.split())
                     tokens_out = len(delivered_text.split())
 
-                    # Check metadata from backend candidate if available
-                    candidate = getattr(service, "_last_candidate", None)
-                    if candidate and candidate.metadata:
-                        raw_model_output = candidate.metadata.get(
-                            "raw_model_output", delivered_text
+                    candidate = recording_backend.pop_candidate(turn.record_id)
+                    if candidate is not None:
+                        raw_model_output = str(
+                            candidate.metadata.get("raw_model_output", candidate.text)
                         )
                         tokens_in = candidate.tokens_in
                         tokens_out = candidate.tokens_out
 
                     # Evaluation checks on raw model output
-                    parroting = detect_parroting(
-                        turn_case.user_text, raw_model_output
-                    )
+                    parroting = detect_parroting(turn_case.user_text, raw_model_output)
                     repetition = detect_repetition(raw_model_output)
                     role_confusion = detect_role_confusion(raw_model_output)
 
                     # Coherence check
-                    matches_expected = True
-                    if turn_case.expected_phrases:
-                        matches_expected = any(
-                            _required_phrase_matches(phrase, raw_model_output)
-                            for phrase in turn_case.expected_phrases
-                        )
+                    (
+                        required_phrases_passed,
+                        accepted_phrase_passed,
+                    ) = _phrase_requirements_pass(
+                        turn_case,
+                        raw_model_output,
+                    )
 
                     contains_forbidden = False
                     for phrase in turn_case.forbidden_phrases:
@@ -298,10 +367,11 @@ async def run_conversational_benchmark(  # noqa: PLR0912, PLR0915
                             break
 
                     coherence_passed = (
-                        not parroting
+                        (not parroting or not turn_case.forbidden_parroting)
                         and not repetition
                         and not role_confusion
-                        and matches_expected
+                        and required_phrases_passed
+                        and accepted_phrase_passed
                         and not contains_forbidden
                         and bool(raw_model_output.strip())
                     )
@@ -317,6 +387,8 @@ async def run_conversational_benchmark(  # noqa: PLR0912, PLR0915
                             parroting_detected=parroting,
                             repetition_detected=repetition,
                             role_confusion_detected=role_confusion,
+                            required_phrases_passed=required_phrases_passed,
+                            accepted_phrase_passed=accepted_phrase_passed,
                             coherence_passed=coherence_passed,
                             turn_latency_ms=latency_ms,
                             tokens_in=tokens_in,
@@ -325,7 +397,6 @@ async def run_conversational_benchmark(  # noqa: PLR0912, PLR0915
                     )
         finally:
             await service.stop()
-            await store.stop()
 
     total_turns = len(measurements)
     mean_coherence = (
@@ -373,9 +444,7 @@ async def run_conversational_benchmark(  # noqa: PLR0912, PLR0915
         output_path.parent.mkdir(parents=True, exist_ok=True)
         with open(output_path, "w", encoding="utf-8") as f:
             f.write(
-                json.dumps(
-                    report.model_dump(mode="json"), indent=2, ensure_ascii=False
-                )
+                json.dumps(report.model_dump(mode="json"), indent=2, ensure_ascii=False)
             )
 
     return Success(report)

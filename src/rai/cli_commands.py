@@ -661,7 +661,9 @@ def _run_assistant_context_rot_benchmark(  # noqa: PLR0913
             configured_context_window=(
                 server_context_window
                 if server_context_window is not None
-                else runtime.context_window if runtime.backend == "llama" else None
+                else runtime.context_window
+                if runtime.backend == "llama"
+                else None
             ),
         )
         if not isinstance(result, Success):
@@ -711,7 +713,9 @@ def register_assistant_commands(root: click.Group) -> None:  # noqa: PLR0915
         show_default=True,
         help="Local inference backend. Deterministic is only for conformance tests.",
     )
-    @click.option("--model", default=None, help="GGUF path or local Ollama/Lemonade model name.")
+    @click.option(
+        "--model", default=None, help="GGUF path or local Ollama/Lemonade model name."
+    )
     @click.option("--profile", default=None, help="Assistant profile and memory scope.")
     @click.option(
         "--system", default=None, help="Override the profile system instruction."
@@ -744,7 +748,9 @@ def register_assistant_commands(root: click.Group) -> None:  # noqa: PLR0915
         show_default=True,
         help="Local inference backend. Deterministic is only for conformance tests.",
     )
-    @click.option("--model", default=None, help="GGUF path or local Ollama/Lemonade model name.")
+    @click.option(
+        "--model", default=None, help="GGUF path or local Ollama/Lemonade model name."
+    )
     @click.option("--profile", default=None, help="Assistant profile and memory scope.")
     @click.option(
         "--system", default=None, help="Override the profile system instruction."
@@ -884,7 +890,7 @@ def register_assistant_commands(root: click.Group) -> None:  # noqa: PLR0915
     @click.option(
         "--corpus",
         type=click.Path(path_type=Path, exists=True, dir_okay=False),
-        default=Path("tests/fixtures/assistant/v1/conversational-dialog.corpus.json"),
+        default=Path("tests/fixtures/assistant/v2/conversational-dialog.corpus.json"),
         show_default=True,
     )
     @click.option(
