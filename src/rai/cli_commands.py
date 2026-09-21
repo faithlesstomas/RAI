@@ -39,11 +39,13 @@ def register_kernel_commands(root: click.Group) -> None:
         click.echo(render_envelope(envelope))
 
 
-def _assistant_config(
+def _assistant_config(  # noqa: PLR0913
     backend: str | None,
     model: str | None,
     profile: str | None = None,
     system: str | None = None,
+    thinking: bool | None = None,
+    thinking_budget: int | None = None,
 ) -> dict[str, object]:
     from . import config_manager  # noqa: PLC0415
 
@@ -75,6 +77,10 @@ def _assistant_config(
         assistant["model"] = model
     if system:
         assistant["system"] = system
+    if thinking is not None:
+        assistant["enable_thinking"] = thinking
+    if thinking_budget is not None:
+        assistant["thinking_budget"] = thinking_budget
     config["assistant"] = assistant
     return config
 
@@ -262,6 +268,9 @@ def _run_assistant_ask(  # noqa: PLR0913
     show_context: bool,
     profile: str | None = None,
     system: str | None = None,
+    thinking: bool | None = None,
+    show_thinking: bool = False,
+    thinking_budget: int | None = None,
 ) -> None:
     from returns.result import Success  # noqa: PLC0415
 
@@ -271,7 +280,14 @@ def _run_assistant_ask(  # noqa: PLR0913
 
     try:
         container = ApplicationContainer(
-            config=_assistant_config(backend, model, profile, system)
+            config=_assistant_config(
+                backend,
+                model,
+                profile,
+                system,
+                thinking=thinking,
+                thinking_budget=thinking_budget,
+            )
         )
         service = container.assistant_service
     except ValueError as exc:
@@ -294,6 +310,12 @@ def _run_assistant_ask(  # noqa: PLR0913
             res = await service.accept_turn(turn)
             if isinstance(res, Success):
                 response = res.unwrap()
+                if show_thinking and response.reasoning_content:
+                    click.secho(
+                        f"\n[Thinking]\n{response.reasoning_content}\n[/Thinking]\n",
+                        fg="cyan",
+                        err=True,
+                    )
                 click.echo(response.text)
                 if show_context:
                     if response.admitted_memory_ids:
@@ -319,6 +341,9 @@ def _run_assistant_chat(  # noqa: PLR0913, PLR0915
     show_context: bool,
     profile: str | None = None,
     system: str | None = None,
+    thinking: bool | None = None,
+    show_thinking: bool = False,
+    thinking_budget: int | None = None,
 ) -> None:
     from returns.result import Success  # noqa: PLC0415
 
@@ -328,7 +353,14 @@ def _run_assistant_chat(  # noqa: PLR0913, PLR0915
 
     try:
         container = ApplicationContainer(
-            config=_assistant_config(backend, model, profile, system)
+            config=_assistant_config(
+                backend,
+                model,
+                profile,
+                system,
+                thinking=thinking,
+                thinking_budget=thinking_budget,
+            )
         )
         service = container.assistant_service
     except ValueError as exc:
@@ -342,7 +374,11 @@ def _run_assistant_chat(  # noqa: PLR0913, PLR0915
     )
     click.echo("Type /help for commands, /exit or /q to quit.\n")
 
+    current_thinking = thinking if thinking is not None else getattr(service.backend, "enable_thinking", False)
+    current_show_thinking = show_thinking
+
     async def _run_loop() -> None:  # noqa: PLR0912, PLR0915
+        nonlocal current_thinking, current_show_thinking
         reply_to_turn_id: str | None = None
         last_manifest_id: str | None = None
         try:
@@ -378,11 +414,36 @@ def _run_assistant_chat(  # noqa: PLR0913, PLR0915
                         "/diagnostics stage-specific memory integrity report\n"
                         "/history [N] persisted turns in this session\n"
                         "/context   exact context window for the latest reply\n"
+                        "/thinking [on|off|show|hide] toggle model thinking\n"
                         "/remember TEXT explicitly save a fact\n"
                         "/forget TEXT remove matching memory; use 'all' for everything\n"
                         "/session   current profile and session ID\n"
                         "/exit      leave the chat"
                     )
+                    continue
+                if stripped.startswith("/thinking"):
+                    parts = stripped.split()
+                    if len(parts) > 1:
+                        cmd = parts[1].lower()
+                        if cmd in ("on", "true", "1", "enable"):
+                            current_thinking = True
+                            click.echo("Thinking mode: ON")
+                        elif cmd in ("off", "false", "0", "disable"):
+                            current_thinking = False
+                            click.echo("Thinking mode: OFF")
+                        elif cmd == "show":
+                            current_show_thinking = True
+                            click.echo("Show thinking: ON")
+                        elif cmd == "hide":
+                            current_show_thinking = False
+                            click.echo("Show thinking: OFF")
+                        else:
+                            click.echo("Usage: /thinking [on|off|show|hide]")
+                    else:
+                        current_thinking = not current_thinking
+                        click.echo(f"Thinking mode: {'ON' if current_thinking else 'OFF'}")
+                    if hasattr(service.backend, "enable_thinking"):
+                        service.backend.enable_thinking = current_thinking
                     continue
                 if stripped == "/memories":
                     await _echo_memories(service)
@@ -439,6 +500,12 @@ def _run_assistant_chat(  # noqa: PLR0913, PLR0915
                 result = await service.accept_turn(turn)
                 if isinstance(result, Success):
                     response = result.unwrap()
+                    if current_show_thinking and response.reasoning_content:
+                        click.secho(
+                            f"\n[Thinking]\n{response.reasoning_content}\n[/Thinking]",
+                            fg="cyan",
+                            err=True,
+                        )
                     click.echo(f"Assistant: {response.text}")
                     reply_to_turn_id = response.turn_id
                     last_manifest_id = response.manifest_id
@@ -725,6 +792,22 @@ def register_assistant_commands(root: click.Group) -> None:  # noqa: PLR0915
         is_flag=True,
         help="Print the context manifest after the reply.",
     )
+    @click.option(
+        "--thinking/--no-thinking",
+        default=None,
+        help="Enable or disable model chain-of-thought thinking.",
+    )
+    @click.option(
+        "--show-thinking",
+        is_flag=True,
+        help="Print model reasoning content in the output.",
+    )
+    @click.option(
+        "--thinking-budget",
+        default=None,
+        type=int,
+        help="Token budget for model thinking (llama.cpp engine).",
+    )
     def ask_command(  # noqa: PLR0913
         prompt: str,
         session_id: str | None,
@@ -733,10 +816,22 @@ def register_assistant_commands(root: click.Group) -> None:  # noqa: PLR0915
         profile: str | None,
         system: str | None,
         show_context: bool,
+        thinking: bool | None,
+        show_thinking: bool,
+        thinking_budget: int | None,
     ) -> None:
         """Send a single prompt to the assistant."""
         _run_assistant_ask(
-            prompt, session_id, backend, model, show_context, profile, system
+            prompt,
+            session_id,
+            backend,
+            model,
+            show_context,
+            profile,
+            system,
+            thinking=thinking,
+            show_thinking=show_thinking,
+            thinking_budget=thinking_budget,
         )
 
     @assistant.command(name="chat")
@@ -756,6 +851,22 @@ def register_assistant_commands(root: click.Group) -> None:  # noqa: PLR0915
         "--system", default=None, help="Override the profile system instruction."
     )
     @click.option("--show-context", is_flag=True, help="Print each context manifest.")
+    @click.option(
+        "--thinking/--no-thinking",
+        default=None,
+        help="Enable or disable model chain-of-thought thinking.",
+    )
+    @click.option(
+        "--show-thinking",
+        is_flag=True,
+        help="Print model reasoning content in the output.",
+    )
+    @click.option(
+        "--thinking-budget",
+        default=None,
+        type=int,
+        help="Token budget for model thinking (llama.cpp engine).",
+    )
     def chat_command(  # noqa: PLR0913
         session_id: str | None,
         backend: str,
@@ -763,9 +874,22 @@ def register_assistant_commands(root: click.Group) -> None:  # noqa: PLR0915
         profile: str | None,
         system: str | None,
         show_context: bool,
+        thinking: bool | None,
+        show_thinking: bool,
+        thinking_budget: int | None,
     ) -> None:
         """Start an interactive chat session with the assistant."""
-        _run_assistant_chat(session_id, backend, model, show_context, profile, system)
+        _run_assistant_chat(
+            session_id,
+            backend,
+            model,
+            show_context,
+            profile,
+            system,
+            thinking=thinking,
+            show_thinking=show_thinking,
+            thinking_budget=thinking_budget,
+        )
 
     @assistant.command(name="memories")
     @click.option("--profile", default=None, help="Assistant profile and memory scope.")

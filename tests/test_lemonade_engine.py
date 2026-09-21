@@ -149,6 +149,7 @@ async def test_lemonade_engine_generate_chat_success() -> None:
                 ],
                 "max_tokens": 64,
                 "temperature": 0.3,
+                "chat_template_kwargs": {"enable_thinking": False},
                 "stop": ["\n"],
             },
         )

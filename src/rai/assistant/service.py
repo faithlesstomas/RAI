@@ -919,6 +919,10 @@ class AssistantService:
             )
 
         assistant_turn_id = _new_id()
+        assistant_turn_metadata: dict[str, object] = {"profile_scope": self.profile_scope}
+        if reasoning_content := candidate.metadata.get("reasoning_content"):
+            assistant_turn_metadata["reasoning_content"] = reasoning_content
+
         assistant_turn = ConversationTurn(
             record_id=assistant_turn_id,
             timestamp=_utc_now(),
@@ -931,7 +935,7 @@ class AssistantService:
             domain_scope=turn.domain_scope,
             purpose=turn.purpose,
             status="COMPLETED",
-            metadata={"profile_scope": self.profile_scope},
+            metadata=assistant_turn_metadata,
         )
 
         admitted_ids = [memory.record_id for memory in admitted_memories]
@@ -953,6 +957,7 @@ class AssistantService:
             request_id=request_id,
             manifest_id=manifest.record_id,
             text=delivered_text,
+            reasoning_content=candidate.metadata.get("reasoning_content"),
             status="COMPLETED",
             admitted_memory_ids=tuple(admitted_ids),
             memory_operation_ids=tuple(

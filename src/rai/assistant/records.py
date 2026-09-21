@@ -384,6 +384,7 @@ class AssistantResponse(KernelRecord):
     request_id: str = Field(min_length=1)
     manifest_id: str = Field(min_length=1)
     text: str
+    reasoning_content: str | None = None
     status: Literal["COMPLETED", "FAILED", "CANCELLED"] = "COMPLETED"
     error_message: str | None = None
     admitted_memory_ids: tuple[str, ...] = ()

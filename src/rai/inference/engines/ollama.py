@@ -12,6 +12,7 @@ from typing import Any, Dict, List, Optional
 
 from returns.result import Failure, Result, Success
 
+from ..cot_utils import extract_reasoning_and_content
 from ..protocols import GenerationStats, InferenceResult, LocalTextEngine
 
 logger = logging.getLogger(__name__)
@@ -73,7 +74,7 @@ class OllamaEngine:
             self._is_loaded = False
             return Failure(exc)
 
-    async def generate(
+    async def generate(  # noqa: PLR0913
         self,
         prompt: str = "",
         stop: Optional[List[str]] = None,
@@ -81,6 +82,9 @@ class OllamaEngine:
         temperature: float = 0.7,
         *,
         messages: Optional[List[Dict[str, str]]] = None,
+        enable_thinking: bool = False,
+        thinking_budget: Optional[int] = None,
+        thinking_level: Optional[str] = None,
     ) -> Result[InferenceResult, Exception]:
         """Asynchronously generates text from Ollama using native chat templating."""
         start_time = time.monotonic()
@@ -93,35 +97,50 @@ class OllamaEngine:
             if stop:
                 options["stop"] = stop
 
+            if not enable_thinking or thinking_budget == 0:
+                think_param: Any = False
+            elif thinking_level:
+                think_param = thinking_level
+            else:
+                think_param = True
+
+            explicit_reasoning: Optional[str] = None
             if messages is not None:
                 response = await client.chat(
                     model=self._model_name,
                     messages=list(messages),
-                    # Reasoning-only output is not a user-visible assistant answer. Small
-                    # reasoning models can otherwise consume the entire token budget in
-                    # the hidden `thinking` field and return an empty `response`.
-                    think=False,
+                    think=think_param,
                     options=options,
                 )
                 message = response.get("message", {})
-                text = (
-                    message.get("content", "")
-                    if isinstance(message, dict)
-                    else response.get("response", "")
-                )
+                if isinstance(message, dict):
+                    raw_text = message.get("content", "")
+                    explicit_reasoning = message.get("thinking")
+                else:
+                    raw_text = response.get("response", "")
+                    explicit_reasoning = response.get("thinking")
             else:
                 response = await client.generate(
                     model=self._model_name,
                     prompt=prompt,
-                    think=False,
+                    think=think_param,
                     options=options,
                 )
-                text = response.get("response", "")
+                raw_text = response.get("response", "")
+                explicit_reasoning = response.get("thinking")
+
             duration = time.monotonic() - start_time
             self._is_loaded = True
             eval_count = response.get("eval_count", 0)
             prompt_eval_count = response.get("prompt_eval_count", 0)
             tps = eval_count / duration if duration > 0 else 0.0
+
+            clean_text, reasoning = extract_reasoning_and_content(
+                raw_text, explicit_reasoning=explicit_reasoning
+            )
+            if not clean_text and reasoning and not enable_thinking:
+                clean_text = reasoning
+                reasoning = None
 
             stats = GenerationStats(
                 input_tokens=prompt_eval_count,
@@ -131,7 +150,8 @@ class OllamaEngine:
             )
             return Success(
                 InferenceResult(
-                    text=text,
+                    text=clean_text,
+                    reasoning_content=reasoning,
                     stats=stats,
                     finish_reason="stop" if response.get("done", True) else "length",
                 )

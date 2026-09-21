@@ -41,6 +41,9 @@ class LocalAssistantBackend:
         max_output_tokens: int = 256,
         temperature: float = 0.2,
         model_artifact_version: str | None = None,
+        enable_thinking: bool = False,
+        thinking_budget: int | None = None,
+        thinking_level: str | None = None,
     ) -> None:
         self.engine = engine
         self.model_name = model_name or "local-model"
@@ -48,6 +51,9 @@ class LocalAssistantBackend:
         self.max_output_tokens = max_output_tokens
         self.temperature = temperature
         self.model_artifact_version = model_artifact_version
+        self.enable_thinking = enable_thinking
+        self.thinking_budget = thinking_budget
+        self.thinking_level = thinking_level
         self.prompt_template_version = "rai-assistant-messages-v4"
         self._state = LifecycleState.CREATED
         self.producer = ProducerIdentity(
@@ -314,6 +320,21 @@ class LocalAssistantBackend:
                 )
             )
         try:
+            enable_thinking = (
+                request.context.content.get("enable_thinking")
+                if "enable_thinking" in request.context.content
+                else self.enable_thinking
+            )
+            thinking_budget = (
+                request.context.content.get("thinking_budget")
+                if "thinking_budget" in request.context.content
+                else self.thinking_budget
+            )
+            thinking_level = (
+                request.context.content.get("thinking_level")
+                if "thinking_level" in request.context.content
+                else self.thinking_level
+            )
             gen_res = await self.engine.generate(
                 prompt=prompt,
                 stop=[
@@ -328,6 +349,9 @@ class LocalAssistantBackend:
                 max_tokens=self.max_output_tokens,
                 temperature=self.temperature,
                 messages=messages,
+                enable_thinking=bool(enable_thinking),
+                thinking_budget=thinking_budget,
+                thinking_level=thinking_level,
             )
             if isinstance(gen_res, Failure):
                 return Failure(
@@ -351,13 +375,16 @@ class LocalAssistantBackend:
             )
 
         if not response_text:
-            return Failure(
-                make_assistant_failure(
-                    code="INVALID_OUTPUT",
-                    message="local engine returned an empty response",
-                    request_id=request.request_id,
+            if result_obj.reasoning_content:
+                response_text = result_obj.reasoning_content
+            else:
+                return Failure(
+                    make_assistant_failure(
+                        code="INVALID_OUTPUT",
+                        message="local engine returned an empty response",
+                        request_id=request.request_id,
+                    )
                 )
-            )
 
         response_text, repetition_truncated = self._truncate_repetition(response_text)
         proposals = self._extract_proposals(user_text, request.turn_id)
@@ -383,6 +410,7 @@ class LocalAssistantBackend:
                 "model_artifact_version": self.model_artifact_version,
                 "prompt_template_version": self.prompt_template_version,
                 "finish_reason": result_obj.finish_reason,
+                "reasoning_content": result_obj.reasoning_content,
                 "grounding_override": grounding_override,
                 "repetition_truncated": repetition_truncated,
                 "delivered_words": len(grounded_text.split()),

@@ -32,6 +32,7 @@ class InferenceResult:
     Wraps the raw text and telemetry data.
     """
     text: str
+    reasoning_content: Optional[str] = None
     stats: Optional[GenerationStats] = None
     finish_reason: str = "stop"  # stop, length, error
 
@@ -86,7 +87,7 @@ class LocalTextEngine(Protocol):
         """Loads model weights into memory/VRAM."""
         ...
 
-    async def generate(
+    async def generate(  # noqa: PLR0913
         self,
         prompt: str = "",
         stop: Optional[List[str]] = None,
@@ -94,6 +95,9 @@ class LocalTextEngine(Protocol):
         temperature: float = 0.7,
         *,
         messages: Optional[List[Dict[str, str]]] = None,
+        enable_thinking: bool = False,
+        thinking_budget: Optional[int] = None,
+        thinking_level: Optional[str] = None,
     ) -> Result[InferenceResult, Exception]:
         """Asynchronously generates text without blocking the main event loop."""
         ...
@@ -124,7 +128,7 @@ class InferenceEngine(Protocol):
     All methods must be efficient and side-effect free where possible.
     """
 
-    def generate(
+    def generate(  # noqa: PLR0913
         self, 
         prompt: str = "", 
         stop: Optional[List[str]] = None, 
@@ -132,6 +136,9 @@ class InferenceEngine(Protocol):
         temperature: float = 0.7,
         *,
         messages: Optional[List[Dict[str, str]]] = None,
+        enable_thinking: bool = False,
+        thinking_budget: Optional[int] = None,
+        thinking_level: Optional[str] = None,
     ) -> Result[InferenceResult, Exception]:
         ...
 

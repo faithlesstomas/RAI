@@ -497,6 +497,9 @@ async def test_async_llama_engine_forwards_structured_messages() -> None:
         max_tokens=1024,
         temperature=0.7,
         messages=messages,
+        enable_thinking=False,
+        thinking_budget=None,
+        thinking_level=None,
     )
 
 

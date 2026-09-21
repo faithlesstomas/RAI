@@ -636,6 +636,15 @@ def _atspi_bindings_available() -> bool:
     return Atspi is not None
 
 
+def _gnome_dbus_bindings_available() -> bool:
+    try:
+        import pydbus  # type: ignore[import-not-found]  # noqa: PLC0415
+        from gi.repository import GLib  # type: ignore[import-not-found]  # noqa: PLC0415
+    except (ImportError, ValueError):
+        return False
+    return True
+
+
 def _required_live_gnome_command() -> str:
     required = os.environ.get("RAI_REQUIRE_LIVE_GNOME", "").casefold() in {
         "1", "true", "yes",
@@ -643,6 +652,8 @@ def _required_live_gnome_command() -> str:
     reason = None
     if "GNOME" not in os.environ.get("XDG_CURRENT_DESKTOP", "").upper():
         reason = "GNOME is not the current desktop"
+    elif not _gnome_dbus_bindings_available():
+        reason = "GNOME D-Bus bindings (pydbus / GLib) are unavailable"
     elif not _dbus_service_available(EXTENSION_BUS, EXTENSION_PATH):
         reason = "the RAI History GNOME extension is unavailable"
     command = shutil.which("rai-history-gnome")
