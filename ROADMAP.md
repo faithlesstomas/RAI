@@ -305,6 +305,10 @@ Cost controls follow this order:
 24. Durable memory is scoped by user, profile and domain. Context assembly does
     not leak personal claims into an unrelated domain merely because they are
     relevant by embedding similarity.
+25. A sandbox backend enforces an already authorized execution envelope; it does
+    not grant semantic authority. Effective execution permissions are the
+    intersection of the RAI policy decision and the sandbox's attested policy,
+    and missing or inconsistent enforcement fails closed.
 
 ## Delivery sequence
 
@@ -1477,6 +1481,20 @@ actions.
 
 #### 5.4 Execution and verification
 
+- [ ] Define a provider-neutral, versioned `ExecutionSandbox` protocol with
+  immutable execution, filesystem, egress, credential, resource, cancellation
+  and evidence records; keep sandbox lifecycle separate from `AgentBackend`
+  reasoning semantics.
+- [ ] Adapt Bubblewrap and Guix to the common execution contract as lightweight
+  local implementations without making either implementation's flags the public
+  RAI policy model.
+- [ ] Replace the public `allow_network` boolean with deny-by-default egress
+  constraints capable of naming destinations, ports, initiating executables and
+  protocol operations, even when a lightweight backend can only report that a
+  requested constraint is unsupported.
+- [ ] Require every backend to report an attested effective policy, backend and
+  version identity, applied isolation controls and any degradation before an
+  action may be treated as sandboxed.
 - [ ] Make requests idempotent where possible and use request IDs to suppress
   duplicate execution.
 - [ ] Define preconditions and postconditions for every state-changing
@@ -1487,8 +1505,9 @@ actions.
   evidence.
 - [ ] Add compensation/undo only where it is well defined; never imply rollback
   for irreversible actions.
-- [ ] Keep arbitrary shell execution inside verified Bubblewrap/Guix isolation
-  with network and write mounts disabled unless individually approved.
+- [ ] Keep arbitrary shell execution inside a verified `ExecutionSandbox`;
+  Bubblewrap and Guix remain the baseline local implementations, with network
+  and write mounts disabled unless individually approved.
 
 #### 5.5 GUI fallback
 
@@ -1626,7 +1645,66 @@ prices change independently of RAI releases.
   process-wide patching or private runtime coupling.
 - [ ] Make backend removal or outage preserve local history and capability state.
 
-#### 6.5 Optional GAIA embodiment adapter
+#### 6.5 Optional experimental OpenShell execution adapter
+
+[NVIDIA OpenShell](https://github.com/NVIDIA/OpenShell) is currently alpha
+software. It is an optional reference and adapter for stronger agent-runtime
+isolation, not a core dependency, a replacement for RAI policy or a release gate
+for local-only operation. RAI must retain useful Bubblewrap/Guix execution when
+OpenShell is absent.
+
+- [ ] Package OpenShell integration separately from the kernel and from model
+  backends. Pin compatible SDK and gateway versions, keep the base RAI Python
+  compatibility unchanged and report an unavailable optional adapter cleanly.
+- [ ] Implement OpenShell behind `ExecutionSandbox`; do not model it as an
+  `AgentBackend` or allow its gateway/session state to become assistant memory.
+- [ ] Compile only an already approved RAI execution envelope into OpenShell
+  filesystem, process, network, inference and MCP policy. A sandbox denial may
+  propose a narrowly scoped policy change, but no policy widening takes effect
+  without a new RAI `PolicyDecision` and, where required, `ApprovalBroker`
+  record.
+- [ ] Make effective authority the intersection of RAI and OpenShell policy.
+  Reject policy-hash drift, missing attestation, unsupported mandatory controls,
+  audit-only enforcement and any silent downgrade.
+- [ ] Require fail-closed Landlock configuration for production acceptance;
+  permit best-effort isolation only in an explicitly labeled development profile
+  that cannot satisfy the production security gate.
+- [ ] Use OpenShell provider and credential mediation so the agent receives no
+  reusable real secret. Keep endpoint permission and credential-use permission
+  independently constrained and exclude secret values from RAI and OpenShell
+  logs, results and manifests.
+- [ ] Transfer a minimal approved task bundle into sandbox-owned storage and
+  return patches or typed artifacts for local verification. Do not mount the
+  user's home directory, ambient desktop IPC or a broadly writable project tree.
+- [ ] Expose only task-scoped RAI capabilities. Where MCP-over-HTTP is used, add
+  exact protocol-version, method and tool-name rules as defense in depth without
+  treating OpenShell filtering as a replacement for `CapabilityService`.
+- [ ] Normalize policy revision and digest, runtime version, applied isolation,
+  resource usage, denials, cancellation and terminal status into RAI audit and
+  evidence records without duplicating sensitive payloads.
+- [ ] Add hermetic adapter conformance tests plus opt-in live tests for gateway
+  loss, cancellation, malicious paths and symlinks, forbidden file reads,
+  unapproved egress, MCP tool substitution, credential exfiltration and policy
+  update attempts originating from prompt-injected content.
+
+Experimental acceptance gate:
+
+```text
+OpenShell can be removed without affecting local history or deterministic actions
+an approved task receives only its bounded files, egress and RAI capabilities
+the observed OpenShell policy digest matches the approved compiled-policy record
+forbidden files, endpoints, methods, MCP tools and credential uses are blocked
+gateway loss, timeout and cancellation leave no uncontrolled workload running
+the agent returns a patch or typed artifact and RAI verifies it before commitment
+Bubblewrap/Guix remain usable without installing or starting OpenShell
+```
+
+Promotion from experimental to a supported production profile is deferred to
+Stage 9 and requires a stable upstream compatibility policy, pinned conformance
+matrix and independent review. RAI may adopt the general execution requirements
+above even if OpenShell itself is later replaced or never promoted.
+
+#### 6.6 Optional GAIA embodiment adapter
 
 - [ ] Implement GAIA strictly as an adapter over the public Stage 2 event and
   Stage 1 capability contracts; do not import GAIA implementation modules into
@@ -1645,7 +1723,7 @@ prices change independently of RAI releases.
 The GAIA round-trip is an additional cross-project conformance test, not a
 prerequisite for the Stage 2 event plane, Rich History or local-only operation.
 
-#### 6.6 ACP and MCP roles
+#### 6.7 ACP and MCP roles
 
 - [x] Expose the base typed capability registry through authenticated local MCP;
   MCP calls use the shared validation, policy, approval and audit path.
@@ -1661,7 +1739,7 @@ prerequisite for the Stage 2 event plane, Rich History or local-only operation.
 - [ ] Add conformance fixtures that prove an ACP agent cannot bypass RAI policy or
   obtain ambient desktop context.
 
-#### 6.7 Hybrid routing
+#### 6.8 Hybrid routing
 
 - [ ] Route deterministic tasks directly to capabilities without spending model
   tokens.
@@ -1825,6 +1903,9 @@ recoverable and secure enough for non-development use.
   approval spoofing, replay, symlink/path races and malicious accessibility
   trees.
 - [ ] Fuzz public schemas and capability validation.
+- [ ] Test every supported `ExecutionSandbox` for policy drift, enforcement
+  downgrade, stale approval reuse, incomplete attestation, runtime loss and
+  sandbox escape or egress attempts using the same adversarial contract.
 - [ ] Perform an independent security review before declaring 1.0.
 - [ ] Document residual risks and safe deployment profiles.
 
@@ -1859,6 +1940,10 @@ all distribution work until Stage 9.
 - [ ] Provide schema/database migration and rollback procedures.
 - [ ] Define supported Linux distributions, desktops, model runtimes and protocol
   versions.
+- [ ] Publish a sandbox support matrix covering backend and gateway versions,
+  compute drivers, kernel/LSM requirements, enforced resource limits and known
+  degradations. OpenShell remains experimental until its pinned matrix and live
+  conformance suite satisfy the production profile.
 - [ ] Publish an operator guide for local-only, hybrid, trusted-LAN and external
   deployments.
 - [/] Keep Sphinx, MyST Markdown and Furo as the single publishable documentation
@@ -1922,9 +2007,12 @@ release-level regression tests.
 2. A local processor classifies the requested repair as out of scope.
 3. RAI builds a minimal `ContextPackage` with approved files and evidence.
 4. GAIA or an external harness receives only the package and scoped capabilities.
-5. Commands run in the configured sandbox, changes remain reviewable and tests
-   provide postcondition evidence.
-6. Usage and transmitted context appear in the local audit view.
+5. Commands run through the provider-neutral `ExecutionSandbox`; an optional
+   OpenShell profile receives the same RAI-approved execution envelope.
+6. The sandbox returns a patch or typed artifact instead of writing broadly to
+   the host project; RAI reviews and applies it through policy-controlled actions.
+7. Local tests verify postconditions, and usage, effective sandbox policy and
+   transmitted context appear in the local audit view.
 
 ### Scenario E — privacy boundary
 
