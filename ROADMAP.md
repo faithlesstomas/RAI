@@ -84,23 +84,28 @@ replaceable reasoning strategy within a budget, validate its candidate outputs
 and commit only policy-approved records. This loop is not a GCAS Workspace and
 does not grant the model ownership of memory, tools, goals or execution.
 
-Hybrid model inference and external-agent interoperability are separate ports.
-An `AssistantModelBackend` performs one bounded model inference locally or
-through an external API. An optional `AgentBackend` delegates a bounded task to
-an external cognitive runtime or agent harness. Both receive explicit context,
-privacy and resource budgets and report usage to the common ledger, but agent
-session semantics do not leak into the assistant core.
+Generative model inference, finite-outcome decisions and external-agent
+interoperability are separate ports. An `AssistantModelBackend` performs one
+bounded generative inference locally or through an external API. A
+`DecisionBackend` evaluates one declared finite answer space and returns its
+full predictive distribution without generating prose. An optional
+`AgentBackend` delegates a bounded task to an external cognitive runtime or
+agent harness. All three receive explicit context, privacy and resource budgets
+and report usage to the common ledger, but decision-provider or agent-session
+semantics do not leak into the assistant core.
 
 RAI owns its versioned embodiment, capability, policy and provenance contracts.
 Those contracts must support a useful standalone product and must not import or
 require an external cognitive runtime. GCAS compatibility is an optional
 semantic mapping, not the source of RAI's runtime types. Local and external LLM
-providers remain replaceable `AssistantModelBackend` implementations. External
-cognitive runtimes and agent harnesses remain optional, separately packaged
-`AgentBackend` implementations; named integrations belong in adapters rather
-than the core. J-lens is an optional neural-inspection sidecar, not a core
-dependency or release gate. A remote Android, VR or wearable client is a thin
-`DeviceAgent`, not necessarily a full RAI installation.
+providers remain replaceable `AssistantModelBackend` implementations. Local and
+external finite-decision providers remain replaceable `DecisionBackend`
+implementations. External cognitive runtimes and agent harnesses remain
+optional, separately packaged `AgentBackend` implementations; named
+integrations belong in adapters rather than the core. J-lens is an optional
+neural-inspection sidecar, not a core dependency or release gate. A remote
+Android, VR or wearable client is a thin `DeviceAgent`, not necessarily a full
+RAI installation.
 
 RAI must not depend on private ChatGPT Computer History, Chronicle or Skysight
 interfaces. Those systems are architectural references only. Linux collectors
@@ -129,29 +134,37 @@ and memory formats are defined by RAI's own versioned contracts.
 
 `LOCAL_ONLY`
 
-- Network model backends are disabled.
+- Network model and decision backends are disabled, including hosted
+  Jev/System One APIs.
 - Observation, memory, voice and inference stay inside the local trust domain.
 - Unsupported tasks fail clearly or ask the user to switch profiles.
 
 `LOCAL_PREFERRED`
 
 - Deterministic rules and local processors are attempted first.
-- Remote escalation requires a policy decision and explicit task context.
+- Remote generative or decision escalation requires a policy decision and
+  explicit task context; no provider receives the ambient desktop or implicit
+  history.
 - Background collection and routine memory consolidation never consume remote
   tokens.
 
 `HYBRID_APPROVAL`
 
 - RAI may propose external escalation and show an outbound context manifest,
-  estimated budget and requested capabilities.
+  named provider/backend, transmitted state, question/option schema, estimated
+  budget, retention expectation and requested capabilities.
 - The user approves the individual transfer or a narrowly scoped reusable rule.
 
 `REMOTE_ALLOWED`
 
-- Approved agent backends may be selected automatically within configured data,
-  capability and cost boundaries.
+- Approved model, decision and agent backends may be selected automatically
+  within configured data, capability and cost boundaries.
 - Ambient desktop access is still forbidden; the backend receives only a
   `ContextPackage` and capability handles.
+- Automatic remote selection does not override data classes: `LOCAL` remains in
+  the local trust domain, `PRIVATE` still requires explicit approval and
+  `SECRET`/`BLOCKED` never leave it. Only eligible `PUBLIC` context may be sent
+  under a pre-approved automatic rule.
 
 The default profile is `LOCAL_PREFERRED`. The invariant
 `background_remote_tokens = 0` applies to every profile unless the user creates
@@ -808,16 +821,137 @@ backends and voice enrollment are tracked by #23–#25 under umbrella #21.
 
 #### 4.5 Routing and evaluation
 
+**Provider-neutral bounded decisions**
+
+RAI needs a `DecisionBackend` beside `AssistantModelBackend`, `AgentBackend` and
+the existing `BoundedTaskProcessor`. It performs one bounded, non-generative
+judgment over an answer space declared by RAI. It does not produce assistant
+prose, own memory, call tools, authorize actions or replace deterministic
+policy. Local implementations belong to Stage 4; an adapter for a hosted
+decision API belongs to Stage 6 and remains optional.
+
+The initial protocol shape is:
+
+```python
+class DecisionBackend(Protocol):
+    async def decide(
+        self,
+        request: DecisionRequest,
+        cancellation: CancellationToken,
+    ) -> Result[DecisionResult, ActionFailure]: ...
+```
+
+`DecisionRequest` contains a request ID, bounded task kind and task-schema
+version, the policy-filtered `ContextPackage` and its manifest, a closed set of
+stable option IDs with descriptions, any ordering semantics, an explicit
+abstention policy and an `InferenceBudget`. Binary and ordered-score tasks use
+the same finite-outcome representation as choices: binary outcomes expose both
+values, while score levels retain their declared order. Open-ended generation,
+including summaries and discovery of arbitrary entity strings, stays outside
+this contract. Candidate entities may be found deterministically or by a
+generative processor and then judged by a `DecisionBackend`.
+
+`DecisionResult` preserves decision semantics rather than reducing every
+backend to one scalar named confidence. It contains at least:
+
+- `status`: `DECIDED`, `ABSTAINED` or `INSUFFICIENT_EVIDENCE`;
+- `selected_option`: one declared stable option ID only when `status` is
+  `DECIDED`;
+- `outcome_distribution`: the complete finite distribution, keyed by exactly
+  the declared option IDs, whenever inference evaluated the answer space. The
+  values are predictive probabilities regardless of whether their calibration
+  has been established; a backend that only exposes scores, a top label or one
+  confidence number does not satisfy this v1 result contract;
+- immutable backend, model artifact/revision, task-schema and decision-contract
+  versions;
+- `calibration`: status, method and version, calibration-corpus fingerprint,
+  applicable task/language/domain scope and measured metrics; absent evidence
+  is represented as `UNCALIBRATED` or `UNKNOWN`, never inferred from a value
+  being inside `[0, 1]`;
+- `input_source_ids`: the manifest sources actually exposed to the backend, and
+  `evidence_source_ids`: the backend-declared supporting subset when the backend
+  supports attribution. Both must be subsets of the approved manifest; a
+  declared evidence set is provenance, not proof that an internal attention
+  path causally used a source;
+- typed usage and cost evidence: input units/tokens, evaluated questions,
+  forward passes, generated tokens, latent or provider-native steps, retries,
+  wall time, cache use, local compute/energy when measurable, and external cost
+  with currency. Unknown counters remain unknown rather than being guessed or
+  collapsed into an ambiguous `steps` number.
+
+The distribution is structurally valid only when all values are finite and in
+range, the key set matches the request and probabilities sum to one within a
+documented numerical tolerance. `ABSTAINED` means that a backend capable of
+evaluating the request deliberately declined to select an outcome;
+`INSUFFICIENT_EVIDENCE` means that the declared context did not contain enough
+evidence. Cancellation, timeout, malformed output, unavailable model,
+unsupported primitive and exceeded budget remain `ActionFailure` values rather
+than being disguised as abstention. When no inference ran, a non-decision may
+omit the distribution and must report zero measured inference work.
+
+`DecisionResult.status` records the backend inference outcome. A later
+`DecisionAcceptancePolicy` may route a structurally valid `DECIDED` result to
+`ASK`, another backend or deterministic fallback, but it does not rewrite the
+original result as if the backend had abstained.
+
+Backend-native uncertainty fields remain named, versioned evidence. For
+example, a provider's `confidence`, entropy, margin or concentration statistic
+may be retained as a native metric together with its formula or documented
+semantics, but it is never copied directly into a universal RAI `confidence`
+field and cannot substitute for the required distribution. RAI may derive
+versioned metrics such as selected-outcome probability, margin or entropy from
+the returned distribution. None of these derivations is evidence of calibration
+by itself.
+
+The current `BoundedTaskOutput.confidence: float` and
+`minimum_confidence` validation only prove a value is in range and above a
+configured threshold. They do not prove that it estimates correctness. Migrate
+decision-shaped tasks to `DecisionResult` and a versioned
+`DecisionAcceptancePolicy` that names the exact statistic, calibration scope,
+risk-dependent threshold and fallback being applied. Keep legacy generative
+self-reports explicitly marked as uncalibrated evidence during migration. Do
+not synthesize `BoundedTaskOutput.confidence` from a backend-native confidence
+merely to reuse the old validator.
+
+- [ ] Record an ADR and freeze versioned `DecisionRequest`, `DecisionResult`,
+  `DecisionCalibration` and `DecisionUsage` schemas plus JSON fixtures.
+- [ ] Implement lifecycle, cancellation, budget, health and typed-failure
+  conformance tests for `DecisionBackend` independently of any named model.
+- [ ] Add a deterministic test backend, one local decision-model adapter and a
+  strict adapter from decision results into the existing claim-validation path.
+- [ ] Migrate intent classification, routing hints, salience and privacy-risk
+  elevation first; retain generative episode summarization and open entity
+  extraction on their existing contracts.
+- [ ] Preserve the full distribution and calibration metadata in audit evidence
+  while exposing only policy-approved derived claims to ordinary consumers.
+- [ ] Treat question isolation, option-order sensitivity, explicit abstention
+  and distribution validity as conformance and evaluation properties.
+
+TypeSafe Jev/System One and open Jev-like projects such as
+[Kev](https://github.com/jaredpalmer/kev) are comparison points, not RAI
+architecture dependencies. Evaluate a local compatible model in a separately
+startable process so model and accelerator dependencies remain outside the
+default installation. A hosted Jev adapter is an external Stage 6 experiment,
+not evidence that Rich Local AI works offline. Do not claim compatibility with
+Jev's unpublished architecture or training method merely because an adapter
+implements a similar finite-decision API.
+
+**Routing policy and evaluation**
+
 - [ ] Route through deterministic rules first, local classification second and
   policy last.
 - [ ] Support `LOCAL`, `ASK`, `ESCALATE` and `DENY` routing decisions.
-- [ ] Include privacy class, capability set, budget, confidence and verification
-  requirements in every decision.
+- [ ] Include privacy class, capability set, budget, decision status, named
+  uncertainty/calibration evidence and verification requirements in every
+  routing decision.
 - [ ] Build a versioned evaluation corpus covering desktop intent, Polish and
   English voice, episode summaries, false wakeups, prompt injection and model
   abstention.
-- [ ] Measure task accuracy, schema failures, latency, energy, tokens, RAM/VRAM,
-  cold start and cancellation latency on representative laptop and edge classes.
+- [ ] Measure task accuracy, Brier score, log loss, calibration error, selective
+  risk/coverage, confident errors, abstention quality, schema failures, latency,
+  energy, tokens, RAM/VRAM, cold start and cancellation latency on representative
+  laptop and edge classes. Report calibration per task, language and material
+  deployment domain rather than only as one aggregate number.
 - [ ] Choose model size and quantization from evidence; do not make a particular
   2–4B model part of the architecture contract.
 
@@ -1544,8 +1678,8 @@ desktop.
 Prerequisites: Stages 1, 3 and 5. A backend cannot be production-enabled until
 usage accounting, cancellation and data-egress auditing work.
 
-Hybrid LLM inference and delegated agent execution are separate flows and
-modules. Both preserve RAI's product boundary:
+Generative inference, finite-outcome decisions and delegated agent execution
+are separate flows and modules. All preserve RAI's product boundary:
 
 ```text
 assistant turn
@@ -1553,6 +1687,13 @@ assistant turn
   -> policy-filtered ContextPackage
   -> local or external AssistantModelBackend
   -> validated response and memory/capability proposals
+
+bounded decision
+  -> deterministic trigger/router
+  -> policy-filtered ContextPackage
+  -> local or external DecisionBackend
+  -> typed DecisionResult with distribution, provenance, calibration and usage
+  -> DecisionAcceptancePolicy and bounded-task claim validation
 
 bounded delegated task
   -> policy-filtered ContextPackage
@@ -1612,14 +1753,22 @@ on_budget_exceeded: cancel
 Token and currency amounts remain operator configuration because models and
 prices change independently of RAI releases.
 
-#### 6.3 External model API backends
+#### 6.3 External model and decision API backends
 
 - [ ] Implement external LLM APIs through `AssistantModelBackend`, not
   `AgentBackend`. A model backend performs one bounded inference and receives no
   ambient tools, desktop access or ownership of assistant memory.
+- [ ] Implement hosted finite-decision APIs through `DecisionBackend`, not
+  `AssistantModelBackend` or `AgentBackend`. Keep provider-native probability,
+  score, confidence and calibration semantics distinct, and reject adapters
+  that fabricate a full distribution from incomplete provider output.
 - [ ] Send the same versioned `ContextPackage` and reasoning-strategy contract to
   local and external models where capabilities permit. Unsupported latent or
   observer features fail explicitly rather than changing strategy silently.
+- [ ] Send the same versioned `DecisionRequest` to local and external decision
+  backends where their declared primitives permit. A provider alias that can
+  move must not satisfy immutable model or calibration-version requirements;
+  pin and audit the resolved model revision.
 - [ ] Disable provider-side conversation persistence when possible and never use
   a remote conversation ID as context. Record provider retention expectations in
   the outbound `ContextManifest`.
@@ -1629,6 +1778,68 @@ prices change independently of RAI releases.
 - [ ] Keep provider SDKs, credentials, retry rules and response normalization in
   optional adapters. Removing one provider must not change memory or public
   assistant-domain records.
+- [ ] Benchmark hosted decision services only on policy-approved data and retain
+  a deterministic or local fallback. Their absence must not degrade Rich Local
+  AI, local routing policy, audit or previously accepted work.
+
+**Jev/System One hosted decision adapter**
+
+Jev may be used for the decision-shaped Stage 4 tasks when the active profile
+permits an external provider: intent classification, routing hints, salience,
+privacy-risk elevation and judgment over precomputed entity candidates. It is
+not an assistant-response backend, local processor, policy engine or source of
+action authority. Configure it behind the provider-neutral `DecisionBackend`;
+do not let TypeSafe SDK or API types enter kernel, task or audit records.
+
+- [ ] Disable the adapter in `LOCAL_ONLY`. In `LOCAL_PREFERRED`, use it only as
+  policy-approved escalation after the local path is unavailable, is outside
+  its evaluated envelope or has explicitly abstained. In `HYBRID_APPROVAL`, show
+  and approve the outbound manifest. In `REMOTE_ALLOWED`, permit automatic use
+  only for an eligible `PUBLIC` context and a pre-approved task/provider rule;
+  `PRIVATE` still requires per-transfer approval.
+- [ ] Include the complete serialized `state`, instructions, option IDs and
+  option descriptions in egress classification, preview, size accounting and
+  audit. Question schemas can disclose private policy, installed capabilities or
+  user intent even when the state itself appears harmless.
+- [ ] Minimize and redact locally before the request. Reject `LOCAL`, `SECRET`
+  and `BLOCKED` fields at the final transport boundary, and prove with negative
+  tests that a provider adapter cannot rehydrate excluded sources or request
+  more context.
+- [ ] Treat all state as adversarial data. Finite typed output removes malformed
+  free-text/tool-call classes of failure but does not prevent prompt injection,
+  manipulated classification or a confidently wrong allowed option. The result
+  remains advisory and passes through `DecisionAcceptancePolicy`, deterministic
+  capability policy and effect verification.
+- [ ] Pin the resolved Jev model revision and record API/SDK, task schema and
+  calibration versions. Do not use a moving `jev-latest` alias for an accepted
+  threshold without re-running the per-task, per-language and out-of-domain
+  calibration evaluation.
+- [ ] Treat "not used for model training" and "zero data retention" as separate
+  provider properties. Before enabling production use, record the effective
+  contract/DPA version, retention and telemetry behavior, ZDR entitlement,
+  subprocessors, processing region and deletion/incident contacts. Missing or
+  unverifiable terms fail closed for `PRIVATE` data.
+- [ ] Store the API key in the operating-system secret store, never in a
+  `ContextPackage`, manifest payload, repository, error message or ordinary log.
+  Restrict outbound traffic to the configured HTTPS endpoint, validate TLS,
+  bound response size, redact provider errors and support key rotation.
+- [ ] Enforce deadline, cancellation, rate and monetary/token budgets before and
+  during the call. Provider outage, `429`, malformed response, billing failure or
+  model-version drift returns a typed failure and follows an explicit local,
+  `ASK` or deny fallback; it never silently changes provider or authorizes an
+  action.
+- [ ] Retain the request/response hashes, approved source IDs, full distribution,
+  resolved revision, usage/cost and policy decision needed for audit without
+  duplicating remote plaintext into telemetry. Deletion of a local source must
+  remove local derived records and provenance links even though RAI cannot
+  retroactively erase a provider copy outside the contracted deletion process.
+
+Re-verify TypeSafe's current [model and data-handling
+documentation](https://docs.typesafe.ai/models), [legal and ZDR
+terms](https://docs.typesafe.ai/legal) and [documented Jev failure
+modes](https://docs.typesafe.ai/model-jaggedness/jev-1.13) when implementing or
+re-certifying the adapter; vendor claims and contracts are not immutable RAI
+security guarantees.
 
 #### 6.4 AgentBackend conformance
 
@@ -1748,7 +1959,9 @@ prerequisite for the Stage 2 event plane, Rich History or local-only operation.
 - [ ] Escalate open-ended planning, complex coding or research only within data,
   cost, latency and capability policy.
 - [ ] Allow the user to pin or exclude providers for a task or data class.
-- [ ] Use model confidence only as routing evidence; policy remains deterministic.
+- [ ] Use named distribution/calibration evidence only within its evaluated
+  scope; backend-native confidence remains advisory and policy stays
+  deterministic.
 - [ ] Re-verify external claims and requested actions against local tools and
   observations before committing state.
 
@@ -1761,6 +1974,15 @@ assistant turn exceeds the selected local model envelope
   -> one external AssistantModelBackend inference runs without tools
   -> response proposals and exact or conservatively estimated usage return
   -> assistant memory remains local and provider-independent
+
+bounded decision exceeds the accepted local decision envelope
+  -> finite DecisionRequest and outbound manifest are built
+  -> profile, data-class, provider and budget policy is applied
+  -> optional approval occurs before any PRIVATE transfer
+  -> one external DecisionBackend call runs without tools or ambient memory
+  -> full distribution, calibration provenance and actual usage return
+  -> DecisionAcceptancePolicy accepts, asks, falls back or denies locally
+  -> capability policy remains independent of the provider result
 
 user asks for a complex task
   -> local router marks it out of local scope
@@ -1902,6 +2124,10 @@ recoverable and secure enough for non-development use.
 - [ ] Add adversarial fixtures for indirect prompt injection, target substitution,
   approval spoofing, replay, symlink/path races and malicious accessibility
   trees.
+- [ ] Test remote decision adapters for forbidden data egress, injected state,
+  malicious/oversized responses, option-order attacks, model-alias drift,
+  calibration-scope mismatch, credential leakage, `429`/outage fallback and
+  provider retention-policy changes.
 - [ ] Fuzz public schemas and capability validation.
 - [ ] Test every supported `ExecutionSandbox` for policy drift, enforcement
   downgrade, stale approval reuse, incomplete attestation, runtime loss and
