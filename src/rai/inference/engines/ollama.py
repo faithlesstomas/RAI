@@ -50,6 +50,14 @@ class OllamaEngine:
             self._client = ollama.AsyncClient(host=self.host)
         return self._client
 
+    @staticmethod
+    def _response_field(payload: object, key: str, default: Any = None) -> Any:  # noqa: ANN401
+        """Read one field from SDK models and plain mapping test doubles."""
+        getter = getattr(payload, "get", None)
+        if callable(getter):
+            return getter(key, default)
+        return getattr(payload, key, default)
+
     async def load(self) -> Result[None, Exception]:
         """Verify model availability in Ollama."""
         try:
@@ -112,13 +120,9 @@ class OllamaEngine:
                     think=think_param,
                     options=options,
                 )
-                message = response.get("message", {})
-                if isinstance(message, dict):
-                    raw_text = message.get("content", "")
-                    explicit_reasoning = message.get("thinking")
-                else:
-                    raw_text = response.get("response", "")
-                    explicit_reasoning = response.get("thinking")
+                message = self._response_field(response, "message", {})
+                raw_text = self._response_field(message, "content", "")
+                explicit_reasoning = self._response_field(message, "thinking")
             else:
                 response = await client.generate(
                     model=self._model_name,
@@ -126,13 +130,15 @@ class OllamaEngine:
                     think=think_param,
                     options=options,
                 )
-                raw_text = response.get("response", "")
-                explicit_reasoning = response.get("thinking")
+                raw_text = self._response_field(response, "response", "")
+                explicit_reasoning = self._response_field(response, "thinking")
 
             duration = time.monotonic() - start_time
             self._is_loaded = True
-            eval_count = response.get("eval_count", 0)
-            prompt_eval_count = response.get("prompt_eval_count", 0)
+            eval_count = int(self._response_field(response, "eval_count", 0) or 0)
+            prompt_eval_count = int(
+                self._response_field(response, "prompt_eval_count", 0) or 0
+            )
             tps = eval_count / duration if duration > 0 else 0.0
 
             clean_text, reasoning = extract_reasoning_and_content(
@@ -153,7 +159,11 @@ class OllamaEngine:
                     text=clean_text,
                     reasoning_content=reasoning,
                     stats=stats,
-                    finish_reason="stop" if response.get("done", True) else "length",
+                    finish_reason=(
+                        "stop"
+                        if self._response_field(response, "done", True)
+                        else "length"
+                    ),
                 )
             )
         except Exception as exc:

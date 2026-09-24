@@ -251,10 +251,11 @@ Interactive evaluation and conversational chat templating implementation:
    (`tests/fixtures/assistant/v2/conversational-dialog.corpus.json`) and CLI
    command (`rai assistant benchmark-dialog`) evaluates raw model generation
    without deterministic grounding masks. Protocol v2 distinguishes conjunctive
-   required phrases from accepted alternatives. The Lemonade/Qwen result in
-   `docs/evaluation/assistant-m7-dialog-qwen3.5-4b-lemonade.json` used the
-   historical v1 any-of judge; its reported 100% coherence is not current M7
-   acceptance evidence and must be rerun with v2 before comparison.
+   required phrases from accepted alternatives. The refreshed 4B Lemonade/Qwen
+   report records the `conversational-phrase-v3` judge and
+   `rai-assistant-messages-v5` prompt, passing all 12 turns. The historical 0.8B
+   v2 result demonstrates that passing role-stability checks alone is
+   insufficient for conversational coherence.
 
 Partition durable memory by user, profile, domain and purpose. Retrieve personal
 context only when the request and policy require it. Measure cross-domain

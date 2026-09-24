@@ -1050,7 +1050,7 @@ def register_assistant_commands(root: click.Group) -> None:  # noqa: PLR0915
     @assistant.command(name="benchmark-context-rot")
     @click.option(
         "--backend",
-        type=click.Choice(["lemonade", "ollama", "llama", "deterministic", "local"]),
+        type=click.Choice(["lemonade", "ollama", "llama", "deterministic"]),
         default="lemonade",
         show_default=True,
     )

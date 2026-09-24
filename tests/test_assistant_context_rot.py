@@ -13,6 +13,7 @@ from returns.result import Success
 from rai.assistant.backends.deterministic import DeterministicAssistantBackend
 from rai.assistant.context_rot_evaluation import (
     ContextRotCorpus,
+    DistractorItem,
     estimate_haystack_layout,
     estimate_tokens,
     evaluate_context_rot,
@@ -121,6 +122,35 @@ def test_estimate_tokens_handles_empty_and_scales_monotonically() -> None:
     assert estimate_tokens("") == 0
     assert estimate_tokens(short_text) >= 1
     assert estimate_tokens(short_text) < estimate_tokens(short_text * 50)
+
+
+@pytest.mark.parametrize(
+    "distractors, expected_error",
+    [
+        ((), "distractors are required"),
+        (
+            (
+                DistractorItem(
+                    distractor_id="empty",
+                    user_text="",
+                    assistant_text="",
+                ),
+            ),
+            "distractors must contain non-empty text",
+        ),
+    ],
+)
+def test_generate_haystack_rejects_corpora_that_cannot_reach_target(
+    distractors: tuple[DistractorItem, ...], expected_error: str
+) -> None:
+    with pytest.raises(ValueError, match=expected_error):
+        generate_haystack(
+            distractors=distractors,
+            needle_user="needle",
+            needle_assistant="ack",
+            target_tokens=100,
+            depth="middle",
+        )
 
 
 @pytest.mark.asyncio

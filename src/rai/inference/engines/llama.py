@@ -73,7 +73,7 @@ def _build_budget_processor(llm: Any, budget: int) -> Optional[Any]:  # noqa: AN
         if open_tokens and close_token is not None:
             return ReasoningBudgetLogitsProcessor(open_tokens, close_token, budget)
     except Exception:
-        pass
+        return None
     return None
 
 

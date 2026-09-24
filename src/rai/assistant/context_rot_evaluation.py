@@ -262,20 +262,30 @@ def generate_haystack(
     ]
     needle_tokens = estimate_tokens(needle_user) + estimate_tokens(needle_assistant)
     remaining_tokens = max(0, target_tokens - needle_tokens)
+    distractor_pairs = tuple(
+        (
+            [
+                {"role": "user", "text": item.user_text},
+                {"role": "assistant", "text": item.assistant_text},
+            ],
+            estimate_tokens(item.user_text) + estimate_tokens(item.assistant_text),
+        )
+        for item in distractors
+    )
+    if remaining_tokens > 0 and not distractor_pairs:
+        raise ValueError("distractors are required to reach the target token count")
+    if remaining_tokens > 0 and not any(
+        tokens > 0 for _pair, tokens in distractor_pairs
+    ):
+        raise ValueError("distractors must contain non-empty text")
 
     pairs: list[list[dict[str, str]]] = []
     accumulated_tokens = 0
     distractor_idx = 0
-    while accumulated_tokens < remaining_tokens and distractors:
-        item = distractors[distractor_idx % len(distractors)]
-        pair = [
-            {"role": "user", "text": item.user_text},
-            {"role": "assistant", "text": item.assistant_text},
-        ]
+    while accumulated_tokens < remaining_tokens:
+        pair, pair_tokens = distractor_pairs[distractor_idx % len(distractor_pairs)]
         pairs.append(pair)
-        accumulated_tokens += estimate_tokens(item.user_text) + estimate_tokens(
-            item.assistant_text
-        )
+        accumulated_tokens += pair_tokens
         distractor_idx += 1
 
     if not pairs:

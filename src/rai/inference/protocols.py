@@ -123,15 +123,15 @@ def is_async_local_engine(engine: object) -> TypeGuard[LocalTextEngine]:
 class InferenceEngine(Protocol):
     """
     Protocol for a low-level local inference engine.
-    
+
     Implementations (IREE, Llama.cpp) must satisfy this interface.
     All methods must be efficient and side-effect free where possible.
     """
 
     def generate(  # noqa: PLR0913
-        self, 
-        prompt: str = "", 
-        stop: Optional[List[str]] = None, 
+        self,
+        prompt: str = "",
+        stop: Optional[List[str]] = None,
         max_tokens: int = 1024,
         temperature: float = 0.7,
         *,
@@ -143,8 +143,8 @@ class InferenceEngine(Protocol):
         ...
 
     def stream(
-        self, 
-        prompt: str, 
+        self,
+        prompt: str,
         stop: Optional[List[str]] = None,
         max_tokens: int = 1024,
         temperature: float = 0.7

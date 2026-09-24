@@ -149,6 +149,20 @@ def test_required_phrases_are_conjunctive() -> None:
     assert accepted_passed
 
 
+def test_required_phrases_accept_short_polish_inflection() -> None:
+    turn = ConversationalTurnCase(
+        turn_id="polish-vocative",
+        user_text="Jak ma na imię pies?",
+        required_phrases=("Burek",),
+    )
+
+    required_passed, _accepted_passed = _phrase_requirements_pass(
+        turn, "Cześć Bureku!"
+    )
+
+    assert required_passed
+
+
 @pytest.mark.asyncio
 async def test_run_conversational_benchmark_with_deterministic_backend(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -209,7 +223,8 @@ async def test_run_conversational_benchmark_with_deterministic_backend(
     assert backend.stop_calls == 1
     assert _CountingStore.start_calls == 1
     assert _CountingStore.stop_calls == 1
-    assert report.judge_version == "conversational-phrase-v2"
+    assert report.judge_version == "conversational-phrase-v3"
+    assert report.prompt_template_version == "deterministic-v1"
     assert all(m.raw_model_output == "Rozumiem." for m in report.measurements)
 
     with open(output_path, encoding="utf-8") as f:

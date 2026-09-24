@@ -560,6 +560,35 @@ async def test_ollama_engine_generate_and_unload() -> None:
         )
 
 
+@pytest.mark.asyncio
+async def test_ollama_engine_reads_structured_sdk_chat_response() -> None:
+    """The Ollama SDK returns Message models, not plain dictionaries."""
+    from ollama import ChatResponse, Message  # noqa: PLC0415
+
+    engine = OllamaEngine(model_name="llama3.2:1b")
+    mock_client = AsyncMock()
+    mock_client.chat.return_value = ChatResponse(
+        message=Message(
+            role="assistant",
+            content="Structured chat response.",
+            thinking="Private reasoning.",
+        ),
+        eval_count=4,
+        prompt_eval_count=3,
+        done=True,
+    )
+
+    with patch.object(engine, "_get_client", return_value=mock_client):
+        result = await engine.generate(
+            messages=[{"role": "user", "content": "Chat prompt"}],
+            enable_thinking=True,
+        )
+
+    assert isinstance(result, Success)
+    assert result.unwrap().text == "Structured chat response."
+    assert result.unwrap().reasoning_content == "Private reasoning."
+
+
 # --- Supervisor Health Reporting Test ---
 
 

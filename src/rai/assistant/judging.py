@@ -28,8 +28,8 @@ _ABSTENTION_MARKERS = (
     "insufficient evidence",
     "cannot answer",
 )
-JUDGE_VERSION = "deterministic-phrase-and-abstention-v3"
-_MIN_INFLECTION_PREFIX = 6
+JUDGE_VERSION = "deterministic-phrase-and-abstention-v4"
+_MIN_INFLECTION_PREFIX = 5
 
 
 def _normalized_text(value: str) -> str:

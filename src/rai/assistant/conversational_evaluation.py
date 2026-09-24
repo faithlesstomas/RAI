@@ -156,10 +156,11 @@ class ConversationalEvaluationReport(BaseModel):
     model_config = ConfigDict(frozen=True)
 
     corpus_version: str
-    judge_version: str = "conversational-phrase-v2"
+    judge_version: str = "conversational-phrase-v3"
     backend_name: str
     model_name: str
     model_artifact_version: str | None
+    prompt_template_version: str | None
     scenario_count: int
     total_turns: int
     mean_coherence: float
@@ -430,6 +431,7 @@ async def run_conversational_benchmark(  # noqa: PLR0912, PLR0915
         backend_name=getattr(backend, "backend_name", "unknown"),
         model_name=getattr(backend, "model_name", "unknown"),
         model_artifact_version=getattr(backend, "model_artifact_version", None),
+        prompt_template_version=getattr(backend, "prompt_template_version", None),
         scenario_count=len(corpus.scenarios),
         total_turns=total_turns,
         mean_coherence=mean_coherence,

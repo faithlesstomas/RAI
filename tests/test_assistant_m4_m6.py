@@ -516,7 +516,7 @@ async def test_benchmark_writes_six_channels_and_routing_manifest(
     artifact = result.unwrap()
     assert output.exists()
     assert artifact.artifact_version == "rai-assistant-retrieval-benchmark-v2"
-    assert artifact.judge_version == "deterministic-phrase-and-abstention-v3"
+    assert artifact.judge_version == "deterministic-phrase-and-abstention-v4"
     assert artifact.model_artifact_version == "1.0.0"
     assert artifact.run.trials == BENCHMARK_TRIALS
     assert {item.trial_index for item in artifact.run.measurements} == {1, 2}
