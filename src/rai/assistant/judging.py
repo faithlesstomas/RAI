@@ -18,12 +18,18 @@ _ABSTENTION_MARKERS = (
     "brak jest danych",
     "nie mam dostępu",
     "nie mogę wskazać",
+    "nie mogę podać",
+    "brak danych",
+    "nie podałeś",
+    "nie podałaś",
+    "nie podano",
+    "nie mam w pamięci",
     "i don't know",
     "insufficient evidence",
     "cannot answer",
 )
-JUDGE_VERSION = "deterministic-phrase-and-abstention-v3"
-_MIN_INFLECTION_PREFIX = 6
+JUDGE_VERSION = "deterministic-phrase-and-abstention-v4"
+_MIN_INFLECTION_PREFIX = 5
 
 
 def _normalized_text(value: str) -> str:

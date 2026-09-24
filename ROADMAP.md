@@ -1035,10 +1035,16 @@ explicit ConversationTurn or policy-approved proactive trigger
   IDs and implicit server-side history are forbidden as state.
 - [x] Define streaming, cancellation, deadlines, interruption and exactly-once
   terminal delivery independently of a model provider.
-- [/] Native chat templating and conversational context synthesis:
-  - transition from monolithic plain-text prompt formatting (`rai-assistant-plain-text-v3`) to structured messages (`messages` payload supporting model-native ChatML / Jinja templates across Ollama and Lemonade backends) to eliminate prompt echoing ("parrot" behavior), role bleeding and repetition loops;
+- [x] Native chat templating and conversational context synthesis:
+  - transition from monolithic plain-text prompt formatting (`rai-assistant-plain-text-v3`) to structured messages (`messages` payload supporting model-native ChatML / Jinja templates across Ollama, Lemonade, and LlamaCpp backends) to mitigate prompt echoing ("parrot" behavior), role bleeding and repetition loops;
   - distinguish closed-book retrieval evaluation prompts from interactive conversational system prompts, allowing natural conversation when explicit memory evidence is not required;
-  - complement the single-turn retrieval floor with a multi-turn conversational benchmark and raw-model generation metrics without deterministic grounding overrides.
+  - complement the single-turn retrieval floor with a multi-turn conversational benchmark (`rai assistant benchmark-dialog`) and raw-model generation metrics without deterministic grounding overrides; the refreshed Qwen3.5-4B report uses the versioned v3 judge and v5 prompt and passes all 12 protocol-v2 turns without parroting, repetition or role confusion.
+- [/] Context Rot and long-context evaluation:
+  - [x] protocol v2 separates raw model output from the response delivered after RAI grounding, records backend failures outside behavioral denominators, reports end-to-end latency without calling it TTFT, preserves backend-reported and estimated token counts separately, and treats compact `graph_memory` as one constant control;
+  - [x] use a versioned bilingual literal/semantic regression corpus, repeated trials, Wilson intervals and an explicitly qualified 85%-of-short-baseline effective-context estimate;
+  - [ ] add reproducible import adapters for generated RULER cases and bounded MRCR v2 subsets, retaining upstream dataset, licence, prompt, metric and tokenizer metadata without adding a runtime network dependency;
+  - [ ] cross-check selected LongBench/LongBench-E cases and run AA-LCR or LongBench v2 only as opt-in release evaluations; keep LongMemEval and the memory-operation suites assigned to `benchmark-memory`;
+  - [ ] publish repeated local-model manifests through at least 32K and, where hardware permits without truncation, 64K/128K. See [Assistant context-rot evaluation](docs/assistant-context-rot-evaluation.md).
 
 **Durable graph memory and reconstructed context**
 

@@ -223,29 +223,39 @@ Exit evidence:
 
 ### M7 — scope, personalization, conversational templating and consolidation
 
-Status: `[/]`. Profile, domain and purpose isolation is enforced for claims,
+Status: `[/]`. Native chat templating and the baseline conversational evaluation
+are implemented. Profile, domain and purpose isolation is enforced for claims,
 raw-turn retrieval and recent context, with hierarchical domain scope matching
 (`global` for intentional cross-domain evidence, fail-closed `unknown`,
 parent/child project matching, and non-restrictive facets). Manifests expose the
 selected scope. Negative tests cover
 unrelated-domain and wrong-purpose retrieval. Broader leakage/sycophancy
-evaluation and persistent consolidation remain open. The M4 grounded-summary
+evaluation and evidence-preserving persistent consolidation remain open in M7;
+M8 remains limited to optional store adapters and their ADR. The M4 grounded-summary
 baseline is query-time and rebuildable: deleting its source turn removes the
 claim and therefore makes the projection disappear.
 
-Interactive evaluation exposed an architectural gap between single-turn retrieval
-metrics and conversational user experience:
-1. **Chat templating**: monolithic plain-text prompt formatting (`_format_prompt`)
-   without model-native control tokens (ChatML, Jinja) triggers prompt echoing
-   ("parrot" behavior) and role confusion on low-level completion endpoints like
-   Lemonade (`/api/v1/completions`). Backends must pass structured `messages`
-   to utilize model-native chat templates.
-2. **System prompt calibration**: the prompt must distinguish strict closed-book
-   memory tests from natural conversational desktop assistance.
-3. **Multi-turn evaluation**: the M4 benchmark evaluates isolated single-turn QA
-   masked by deterministic grounding overrides (`grounded_memory_response`). A
-   multi-turn conversational benchmark with raw-model scoring is required to
-   measure true dialog coherence and memory retention across conversational turns.
+Interactive evaluation and conversational chat templating implementation:
+1. **Chat templating**: Local inference protocols and engines (`OllamaEngine`,
+   `LemonadeEngine`, `LlamaCppEngine`) natively accept structured `messages`
+   and route through chat completion endpoints (`client.chat` in Ollama,
+   `/api/v1/chat/completions` in Lemonade, `create_chat_completion` in LlamaCpp)
+   using model-native templates (ChatML / Jinja). This addresses a major source
+   of prompt echoing, role bleeding and repetition, but does not guarantee their
+   absence for every model or context length.
+2. **System prompt calibration**: The prompt distinguishes strict closed-book
+   memory tests (`evidence_required=True`) from open conversational desktop
+   assistance (`evidence_required=False`), preventing unwarranted abstentions
+   ("nie wiem") during ordinary conversation.
+3. **Multi-turn evaluation**: A versioned multi-turn conversational benchmark
+   (`tests/fixtures/assistant/v2/conversational-dialog.corpus.json`) and CLI
+   command (`rai assistant benchmark-dialog`) evaluates raw model generation
+   without deterministic grounding masks. Protocol v2 distinguishes conjunctive
+   required phrases from accepted alternatives. The refreshed 4B Lemonade/Qwen
+   report records the `conversational-phrase-v3` judge and
+   `rai-assistant-messages-v5` prompt, passing all 12 turns. The historical 0.8B
+   v2 result demonstrates that passing role-stability checks alone is
+   insufficient for conversational coherence.
 
 Partition durable memory by user, profile, domain and purpose. Retrieve personal
 context only when the request and policy require it. Measure cross-domain
@@ -301,6 +311,11 @@ Use RAI-owned deterministic fixtures first, then selected subsets or adapted
 scenarios from LongMemEval, MemOps, HaluMem, MemFail and conversational-memory
 benchmarks. Published scores are not directly comparable unless ingestion,
 retrieval budgets, answer model and judge protocol are controlled.
+
+Dedicated evaluation commands:
+- `rai assistant benchmark-memory`: Equal-budget 6-channel retrieval evaluation (M4–M6).
+- `rai assistant benchmark-dialog`: Multi-turn conversational coherence, role stability, and anti-parroting benchmark (M7).
+- `rai assistant benchmark-context-rot`: protocol-v2 model/system evaluation with raw model output isolated from deterministic grounding, explicit backend-failure accounting, start/middle/end placement, unrelated absent-fact probes, confidence intervals and one non-duplicated compact graph-memory control. The integration plan for RULER, MRCR v2, LongBench and AA-LCR is documented in [Assistant context-rot evaluation](assistant-context-rot-evaluation.md).
 
 ## Definition of done for general assistant memory
 

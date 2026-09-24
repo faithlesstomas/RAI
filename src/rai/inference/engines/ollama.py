@@ -8,10 +8,11 @@ import hashlib
 import json
 import logging
 import time
-from typing import Any, List, Optional
+from typing import Any, Dict, List, Optional
 
 from returns.result import Failure, Result, Success
 
+from ..cot_utils import extract_reasoning_and_content
 from ..protocols import GenerationStats, InferenceResult, LocalTextEngine
 
 logger = logging.getLogger(__name__)
@@ -49,6 +50,14 @@ class OllamaEngine:
             self._client = ollama.AsyncClient(host=self.host)
         return self._client
 
+    @staticmethod
+    def _response_field(payload: object, key: str, default: Any = None) -> Any:  # noqa: ANN401
+        """Read one field from SDK models and plain mapping test doubles."""
+        getter = getattr(payload, "get", None)
+        if callable(getter):
+            return getter(key, default)
+        return getattr(payload, key, default)
+
     async def load(self) -> Result[None, Exception]:
         """Verify model availability in Ollama."""
         try:
@@ -73,14 +82,19 @@ class OllamaEngine:
             self._is_loaded = False
             return Failure(exc)
 
-    async def generate(
+    async def generate(  # noqa: PLR0913
         self,
-        prompt: str,
+        prompt: str = "",
         stop: Optional[List[str]] = None,
         max_tokens: int = 1024,
         temperature: float = 0.7,
+        *,
+        messages: Optional[List[Dict[str, str]]] = None,
+        enable_thinking: bool = False,
+        thinking_budget: Optional[int] = None,
+        thinking_level: Optional[str] = None,
     ) -> Result[InferenceResult, Exception]:
-        """Asynchronously generates text from Ollama."""
+        """Asynchronously generates text from Ollama using native chat templating."""
         start_time = time.monotonic()
         try:
             client = self._get_client()
@@ -91,22 +105,48 @@ class OllamaEngine:
             if stop:
                 options["stop"] = stop
 
-            response = await client.generate(
-                model=self._model_name,
-                prompt=prompt,
-                # Reasoning-only output is not a user-visible assistant answer. Small
-                # reasoning models can otherwise consume the entire token budget in
-                # the hidden `thinking` field and return an empty `response`.
-                think=False,
-                options=options,
-            )
+            if not enable_thinking or thinking_budget == 0:
+                think_param: Any = False
+            elif thinking_level:
+                think_param = thinking_level
+            else:
+                think_param = True
+
+            explicit_reasoning: Optional[str] = None
+            if messages is not None:
+                response = await client.chat(
+                    model=self._model_name,
+                    messages=list(messages),
+                    think=think_param,
+                    options=options,
+                )
+                message = self._response_field(response, "message", {})
+                raw_text = self._response_field(message, "content", "")
+                explicit_reasoning = self._response_field(message, "thinking")
+            else:
+                response = await client.generate(
+                    model=self._model_name,
+                    prompt=prompt,
+                    think=think_param,
+                    options=options,
+                )
+                raw_text = self._response_field(response, "response", "")
+                explicit_reasoning = self._response_field(response, "thinking")
+
             duration = time.monotonic() - start_time
             self._is_loaded = True
-
-            text = response.get("response", "")
-            eval_count = response.get("eval_count", 0)
-            prompt_eval_count = response.get("prompt_eval_count", 0)
+            eval_count = int(self._response_field(response, "eval_count", 0) or 0)
+            prompt_eval_count = int(
+                self._response_field(response, "prompt_eval_count", 0) or 0
+            )
             tps = eval_count / duration if duration > 0 else 0.0
+
+            clean_text, reasoning = extract_reasoning_and_content(
+                raw_text, explicit_reasoning=explicit_reasoning
+            )
+            if not clean_text and reasoning and not enable_thinking:
+                clean_text = reasoning
+                reasoning = None
 
             stats = GenerationStats(
                 input_tokens=prompt_eval_count,
@@ -116,9 +156,14 @@ class OllamaEngine:
             )
             return Success(
                 InferenceResult(
-                    text=text,
+                    text=clean_text,
+                    reasoning_content=reasoning,
                     stats=stats,
-                    finish_reason="stop" if response.get("done", True) else "length",
+                    finish_reason=(
+                        "stop"
+                        if self._response_field(response, "done", True)
+                        else "length"
+                    ),
                 )
             )
         except Exception as exc:

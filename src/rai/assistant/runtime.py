@@ -44,6 +44,9 @@ class AssistantRuntimeConfig:
     max_episodic_turns: int = 5
     max_external_evidence: int = 5
     memory_sufficiency_threshold: float = 0.75
+    enable_thinking: bool = False
+    thinking_budget: int | None = None
+    thinking_level: str | None = None
 
 
 def _discover_gguf(search_root: Path) -> Path | None:
@@ -68,13 +71,16 @@ def _local_artifact_version(model: str) -> str | None:
     return f"sha256:{digest.hexdigest()}"
 
 
-def resolve_assistant_config(
+def resolve_assistant_config(  # noqa: PLR0913
     config: dict[str, Any],
     *,
     backend_override: str | None = None,
     model_override: str | None = None,
     profile_override: str | None = None,
     search_root: Path | None = None,
+    enable_thinking: bool | None = None,
+    thinking_budget: int | None = None,
+    thinking_level: str | None = None,
 ) -> AssistantRuntimeConfig:
     """Resolve CLI, environment and persisted config into one runtime config."""
     raw_assistant = config.get("assistant", {})
@@ -144,10 +150,17 @@ def resolve_assistant_config(
             f"Unsupported assistant backend {backend!r}; choose llama, ollama, or lemonade."
         )
 
+    resolved_enable_thinking = bool(
+        enable_thinking
+        if enable_thinking is not None
+        else (assistant.get("enable_thinking", False) or local_ai.get("enable_thinking", False))
+    )
+    max_tokens_default = 1024 if resolved_enable_thinking else 256
+
     return AssistantRuntimeConfig(
         backend=backend,
         model=model,
-        max_output_tokens=int(assistant.get("max_output_tokens", 256)),
+        max_output_tokens=int(assistant.get("max_output_tokens", max_tokens_default)),
         temperature=float(assistant.get("temperature", 0.2)),
         context_window=int(assistant.get("context_window", 2048)),
         model_artifact_version=(
@@ -197,6 +210,21 @@ def resolve_assistant_config(
         memory_sufficiency_threshold=float(
             assistant.get("memory_sufficiency_threshold", 0.75)
         ),
+        enable_thinking=bool(
+            enable_thinking
+            if enable_thinking is not None
+            else (assistant.get("enable_thinking", False) or local_ai.get("enable_thinking", False))
+        ),
+        thinking_budget=(
+            thinking_budget
+            if thinking_budget is not None
+            else (assistant.get("thinking_budget") or local_ai.get("thinking_budget"))
+        ),
+        thinking_level=(
+            thinking_level
+            if thinking_level is not None
+            else (assistant.get("thinking_level") or local_ai.get("thinking_level"))
+        ),
     )
 
 
@@ -226,4 +254,7 @@ def build_assistant_backend(runtime: AssistantRuntimeConfig) -> AssistantModelBa
         max_output_tokens=runtime.max_output_tokens,
         temperature=runtime.temperature,
         model_artifact_version=runtime.model_artifact_version,
+        enable_thinking=runtime.enable_thinking,
+        thinking_budget=runtime.thinking_budget,
+        thinking_level=runtime.thinking_level,
     )

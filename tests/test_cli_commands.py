@@ -11,6 +11,8 @@ from returns.result import Success, Failure
 
 from rai import cli as rai_cli
 
+CLICK_USAGE_ERROR = 2
+
 
 @pytest.mark.asyncio
 @patch.dict("rai.cli._SLASH_COMMAND_HANDLERS", {"config": AsyncMock()})
@@ -174,6 +176,17 @@ def test_cli_standalone_forwards_new_assistant_options(mock_assistant_ask) -> No
         "work",
         "Be concise.",
     )
+
+
+@patch("rai.cli_commands._run_assistant_ask")
+def test_cli_rejects_removed_local_backend_alias(mock_assistant_ask) -> None:
+    result = click.testing.CliRunner().invoke(
+        rai_cli.cli, ["--prompt", "hello", "--backend", "local"]
+    )
+
+    assert result.exit_code == CLICK_USAGE_ERROR
+    assert "Invalid value for '-b' / '--backend'" in result.output
+    mock_assistant_ask.assert_not_called()
 
 
 @patch("rai.cli.async_main_client")

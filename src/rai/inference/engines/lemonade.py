@@ -9,11 +9,12 @@ import json
 import logging
 import re
 import time
-from typing import Any, List, Optional
+from typing import Any, Dict, List, Optional
 
 import httpx
 from returns.result import Failure, Result, Success
 
+from ..cot_utils import extract_reasoning_and_content
 from ..protocols import GenerationStats, InferenceResult, LocalTextEngine
 
 logger = logging.getLogger(__name__)
@@ -128,35 +129,46 @@ class LemonadeEngine(LocalTextEngine):
             return messages
         return [{"role": "user", "content": prompt}]
 
-    async def generate(
+    async def generate(  # noqa: PLR0913
         self,
-        prompt: str,
+        prompt: str = "",
         stop: Optional[List[str]] = None,
         max_tokens: int = 1024,
         temperature: float = 0.7,
+        *,
+        messages: Optional[List[Dict[str, str]]] = None,
+        enable_thinking: bool = False,
+        thinking_budget: Optional[int] = None,
+        thinking_level: Optional[str] = None,
     ) -> Result[InferenceResult, Exception]:
         """Asynchronously generates text from Lemonade server."""
         start_time = time.monotonic()
         try:
             client = self._get_client()
-            messages = self._parse_prompt_to_messages(prompt)
-            # For models with reasoning tokens (like Qwen 3.5), close thinking phase immediately
-            # with an assistant prefix so the model does not exhaust output token budget inside <think>.
-            is_thinking_model = any(
-                keyword in self._model_name.lower()
-                for keyword in ("qwen3.5", "qwen-3.5", "deepseek", "r1")
-            )
-            chat_messages = list(messages)
-            if is_thinking_model:
-                chat_messages.append(
-                    {"role": "assistant", "content": "<think>\n</think>\n", "prefix": True}
+            if messages:
+                chat_messages = [dict(m) for m in messages]
+            elif prompt:
+                chat_messages = self._parse_prompt_to_messages(prompt)
+            else:
+                chat_messages = []
+
+            # Fallback assistant prefix if thinking is explicitly disabled
+            if not enable_thinking or thinking_budget == 0:
+                is_thinking_model = any(
+                    keyword in self._model_name.lower()
+                    for keyword in ("qwen3.5", "qwen-3.5", "deepseek", "r1")
                 )
+                if is_thinking_model:
+                    chat_messages.append(
+                        {"role": "assistant", "content": "<think>\n</think>\n", "prefix": True}
+                    )
 
             chat_payload: dict[str, Any] = {
                 "model": self._model_name,
                 "messages": chat_messages,
                 "max_tokens": max_tokens,
                 "temperature": temperature,
+                "chat_template_kwargs": {"enable_thinking": bool(enable_thinking and (thinking_budget is None or thinking_budget > 0))},
             }
             if stop:
                 chat_payload["stop"] = stop
@@ -166,8 +178,9 @@ class LemonadeEngine(LocalTextEngine):
                 data = response.json()
                 choices = data.get("choices", [])
                 first_choice = choices[0] if choices else {}
-                raw_text = first_choice.get("message", {}).get("content", "")
-                text = re.sub(r"<think>.*?</think>", "", raw_text, flags=re.DOTALL).strip()
+                msg = first_choice.get("message", {})
+                raw_text = msg.get("content", "") or ""
+                explicit_reasoning = msg.get("reasoning_content")
                 finish_reason = first_choice.get("finish_reason", "stop")
             else:
                 # Fallback to plain text completions endpoint
@@ -190,15 +203,23 @@ class LemonadeEngine(LocalTextEngine):
                 choices = data.get("choices", [])
                 first_choice = choices[0] if choices else {}
                 raw_text = first_choice.get("text", "")
-                text = re.sub(r"<think>.*?</think>", "", raw_text, flags=re.DOTALL).strip()
+                explicit_reasoning = None
                 finish_reason = first_choice.get("finish_reason", "stop")
 
             duration = time.monotonic() - start_time
             self._is_loaded = True
 
+            clean_text, reasoning = extract_reasoning_and_content(
+                raw_text, explicit_reasoning=explicit_reasoning
+            )
+            # If model produced no clean text but had reasoning and thinking was suppressed, use reasoning as text
+            if not clean_text and reasoning and not enable_thinking:
+                clean_text = reasoning
+                reasoning = None
+
             usage = data.get("usage", {})
             prompt_tokens = usage.get("prompt_tokens", len(prompt.split()))
-            completion_tokens = usage.get("completion_tokens", len(text.split()))
+            completion_tokens = usage.get("completion_tokens", len(clean_text.split()))
             tps = completion_tokens / duration if duration > 0 else 0.0
 
             stats = GenerationStats(
@@ -209,9 +230,10 @@ class LemonadeEngine(LocalTextEngine):
             )
             return Success(
                 InferenceResult(
-                    text=text,
+                    text=clean_text,
+                    reasoning_content=reasoning,
                     stats=stats,
-                    finish_reason=finish_reason or "stop",
+                    finish_reason=finish_reason,
                 )
             )
         except Exception as exc:  # noqa: BLE001

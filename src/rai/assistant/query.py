@@ -16,7 +16,9 @@ _TOPIC_KEYWORDS: dict[str, tuple[str, ...]] = {
     ),
     "user.identity.age": (
         "wiek",
-        "lat",
+        "mam lat",
+        "ile mam lat",
+        "mój wiek",
         "old",
         "age",
     ),
@@ -82,7 +84,9 @@ _DOMAIN_MARKERS: dict[str, tuple[str, ...]] = {
         "nazywam",
         "mieszkam",
         "wiek",
-        "lat",
+        "mam lat",
+        "ile mam lat",
+        "mój wiek",
         "lubię",
         "wolę",
         "preferuję",
@@ -118,8 +122,7 @@ _DOMAIN_MARKERS: dict[str, tuple[str, ...]] = {
     "system": (
         "system",
         "linux",
-        "komputer",
-        "komputerze",
+        "system operacyjny",
         "runtime",
         "daemon",
         "service",
@@ -266,7 +269,9 @@ class MemoryQueryResolver:
                 f" {_normalized_text(marker)} " in padded_normalized
                 for marker in markers
             ):
-                domains.append(named_scopes.get(domain) or domain)
+                resolved = named_scopes.get(domain) or domain
+                if resolved not in domains:
+                    domains.append(resolved)
 
         restrictive_domains = tuple(
             domain

@@ -1,0 +1,145 @@
+{
+  "corpus_version": "rai-assistant-context-rot-v1",
+  "description": "Long-context needle-in-a-haystack and context rot benchmark measuring attention degradation and hallucination resistance under variable context saturation.",
+  "scenarios": [
+    {
+      "scenario_id": "test-db-port",
+      "description": "Needle specifying custom test database port 5433.",
+      "needle_user": "Mój port testowej bazy to 5433.",
+      "needle_assistant": "Zanotowałem: port testowej bazy danych to 5433.",
+      "query_text": "Jaki jest port testowej bazy danych?",
+      "expected_phrases": ["5433"],
+      "forbidden_phrases": ["5432", "nie wiem", "brak informacji"],
+      "claim": {
+        "topic": "user.attribute.port-testowej-bazy",
+        "content": {
+          "attribute": "port testowej bazy",
+          "value": "5433"
+        }
+      },
+      "absent_query_text": "Jaki jest port produkcyjnej bazy danych?",
+      "absent_expected_phrases": ["nie wiem", "brak", "nie ma"],
+      "absent_forbidden_phrases": ["5433", "5432"]
+    },
+    {
+      "scenario_id": "shfmt-indent",
+      "description": "Needle specifying bash formatting indentation flag -i 4.",
+      "needle_user": "Moje wcięcie shfmt to -i 4.",
+      "needle_assistant": "Będę pamiętać: wcięcie shfmt to -i 4.",
+      "query_text": "Jakie jest moje wcięcie shfmt dla skryptów?",
+      "expected_phrases": ["-i 4", "4"],
+      "forbidden_phrases": ["2", "-i 2", "nie wiem"],
+      "claim": {
+        "topic": "user.attribute.wciecie-shfmt",
+        "content": {
+          "attribute": "wcięcie shfmt",
+          "value": "-i 4"
+        }
+      },
+      "absent_query_text": "Jaka jest moja domyślna powłoka systemowa?",
+      "absent_expected_phrases": ["nie wiem", "brak", "nie ma"],
+      "absent_forbidden_phrases": []
+    },
+    {
+      "scenario_id": "code-language",
+      "description": "Needle specifying user preference for Rust in code examples.",
+      "needle_user": "W przykładach kodu wolę język Rust zamiast Pythona.",
+      "needle_assistant": "Rozumiem, w przykładach kodu będę preferować język Rust.",
+      "query_text": "W jakim języku wolisz pokazywać przykłady kodu?",
+      "expected_phrases": ["rust"],
+      "forbidden_phrases": ["python", "nie wiem"],
+      "claim": {
+        "topic": "code_examples",
+        "content": {
+          "subject": "user",
+          "preference": "Rust"
+        }
+      },
+      "absent_query_text": "Jaki jest mój ulubiony edytor tekstu?",
+      "absent_expected_phrases": ["nie wiem", "brak", "nie ma"],
+      "absent_forbidden_phrases": []
+    }
+  ],
+  "distractors": [
+    {
+      "distractor_id": "systemd-service-debug",
+      "user_text": "Usługa rai-daemon.service zgłasza błąd jednostki systemd przy starcie. Jak sprawdzić dokładne logi i status?",
+      "assistant_text": "Możesz sprawdzić bieżący status jednostki poleceniem 'systemctl --user status rai-daemon.service', a szczegółowy zrzut logów z bieżącego uruchomienia przejrzeć za pomocą 'journalctl --user -xeu rai-daemon.service -n 100'. Jeśli jednostka wpada w pętlę restartów, zweryfikuj dyrektywę RestartSec w pliku serwisowym."
+    },
+    {
+      "distractor_id": "python-uv-virtualenv",
+      "user_text": "Jak w uv utworzyć hermetyczne środowisko wirtualne Pythona 3.12 i zainstalować zależności deweloperskie?",
+      "assistant_text": "Aby utworzyć środowisko Pythona 3.12 przy użyciu uv, wykonaj 'uv venv --python 3.12 .venv'. Następnie zainstaluj zależności deweloperskie zdefiniowane w pyproject.toml poleceniem 'uv sync --dev' lub zainstaluj projekt w trybie edytowalnym poleceniem 'uv pip install -e .[dev]'."
+    },
+    {
+      "distractor_id": "git-interactive-rebase",
+      "user_text": "Chcę spłaszczyć ostatnie 4 commity w gałęzi funkcyjnej przed wystawieniem merge requesta w GitLabie.",
+      "assistant_text": "Uruchom interaktywny rebase komendą 'git rebase -i HEAD~4'. W otwartym edytorze pozostaw 'pick' przy pierwszym commicie, a przy kolejnych trzech zmień słowo kluczowe na 'squash' (lub 's'). Po zapisaniu edytora połącz opisy commitów w jeden spójny komunikat."
+    },
+    {
+      "distractor_id": "linux-nftables-firewall",
+      "user_text": "W jaki sposób zablokować ruch przychodzący na porcie 8080 za pomocą nftables bez restartowania całej zapory?",
+      "assistant_text": "Możesz dodać regułę do istniejącego łańcucha 'input' w tabeli inet: 'sudo nft add rule inet filter input tcp dport 8080 drop'. Aktualne reguły w tabeli podejrzysz poleceniem 'sudo nft list table inet filter'. Aby zachować konfigurację na stałe, zaktualizuj plik /etc/nftables.conf."
+    },
+    {
+      "distractor_id": "sqlite-wal-tuning",
+      "user_text": "Jakie parametry PRAGMA w SQLite zapewniają najwyższą współbieżność odczytów i zapisów w asynchronicznym serwisie?",
+      "assistant_text": "Kluczowe ustawienia to włączenie trybu WAL: 'PRAGMA journal_mode=WAL;', obniżenie synchronizacji do 'PRAGMA synchronous=NORMAL;', zwiększenie limitu oczekiwania na blokadę 'PRAGMA busy_timeout=5000;' oraz optymalizacja pamięci podręcznej 'PRAGMA cache_size=-64000;' (około 64MB cache)."
+    },
+    {
+      "distractor_id": "podman-rootless-cgroups",
+      "user_text": "Mój kontener w Podmanie nie może zaalokować więcej niż 4GB RAM z powodu limitów cgroups v2 w trybie rootless.",
+      "assistant_text": "W trybie rootless limity pamięci cgroups v2 wymagają włączenia kontrolerów w sesji użytkownika. Sprawdź plik /sys/fs/cgroup/user.slice/user-1000.slice/cgroup.controllers. Upewnij się, że kontrolery 'memory' i 'pids' są włączone za pomocą polecenia 'systemctl --user set-property user@1000.service Delegate=yes'."
+    },
+    {
+      "distractor_id": "amdgpu-vulkan-verification",
+      "user_text": "Jak sprawdzić, czy sterownik RADV Vulkan poprawnie widzi zintegrowaną kartę AMD Radeon 780M w Linuksie?",
+      "assistant_text": "Uruchom narzędzie 'vulkaninfo --summary'. W sekcji Devices powinieneś zobaczyć identyfikator karty oraz sterownik 'RADV'. Przydatne jest również 'radv_debug' lub uruchomienie aplikacji z 'VK_INSTANCE_LAYERS' oraz monitoring pamięci VRAM i taktowaniami za pomocą programu 'radeontop'."
+    },
+    {
+      "distractor_id": "ssh-multiplexing-sockets",
+      "user_text": "Często łączę się z serwerem obliczeniowym przez SSH. Jak przyspieszyć kolejne połączenia bez ponownego uzgadniania kluczy?",
+      "assistant_text": "Skonfiguruj multipleksowanie połączeń w pliku ~/.ssh/config dla danego hosta: dodaj opcje 'ControlMaster auto', 'ControlPath ~/.ssh/control-%C' oraz 'ControlPersist 10m'. Pierwsze połączenie otworzy gniazdo UNIX-owe, a wszystkie kolejne będą łączyć się natychmiast."
+    },
+    {
+      "distractor_id": "rust-cargo-release-flags",
+      "user_text": "Jakie flagi w Cargo.toml warto włączyć, aby zminimalizować rozmiar wynikowego pliku binarnego w profilu release?",
+      "assistant_text": "W sekcji [profile.release] ustaw: 'opt-level = \"z\"' (lub 3 pod prędkość), 'lto = true' (Link Time Optimization), 'codegen-units = 1', 'panic = \"abort\"' oraz 'strip = true'. Te opcje eliminują nieużywany kod maszynowy i symbole debugowania."
+    },
+    {
+      "distractor_id": "wireplumber-pipewire-audio",
+      "user_text": "Dźwięk w PipeWire czasem przełącza się na niewłaściwe wyjście HDMI po wybudzeniu laptopa z uśpienia.",
+      "assistant_text": "Zarządza tym sesja WirePlumber. Możesz zablokować domyślny węzeł wyjściowy za pomocą polecenia 'wpctl set-default <ID_URZADZENIA>'. Listę urządzeń wraz z ich numerycznymi identyfikatorami sprawdzisz przez 'wpctl status'. Reguły priorytetów można zapisać w ~/.config/wireplumber/wireplumber.conf.d/."
+    },
+    {
+      "distractor_id": "network-ss-diagnostic",
+      "user_text": "Które polecenie w Linuksie wyświetla wszystkie nasłuchujące procesy TCP z ich numerami PID bez odpytywania DNS?",
+      "assistant_text": "Użyj 'sudo ss -tulpn' (lub 'ss -tlpn' dla samego TCP). Flaga -t oznacza TCP, -u UDP, -l nasłuchujące gniazda, -p pokazuje nazwę procesu i PID, a flaga -n wyłącza rozwiązywanie nazw hostów i usług, co przyspiesza wykonanie polecenia."
+    },
+    {
+      "distractor_id": "neovim-treesitter-lsp",
+      "user_text": "W Neovimie podświetlanie składni Rust działa wolno na dużych plikach modułów z wieloma makrami.",
+      "assistant_text": "Sprawdź konfigurację nvim-treesitter. Wyłącz opcję 'additional_vim_regex_highlighting = false', aby zapobiec konfliktom ze starym silnikiem regexów Vima. W rust-analyzer warto ustawić 'checkOnSave.command = \"clippy\"' oraz ograniczyć 'procMacro.enable' jeśli makra generują zbyt dużo syntetycznego kodu."
+    },
+    {
+      "distractor_id": "fio-nvme-benchmark",
+      "user_text": "Jak wykonać szybki pomiar losowego odczytu IOPS dysku NVMe przy użyciu narzędzia fio?",
+      "assistant_text": "Wykonaj polecenie: 'fio --name=random-read --ioengine=libaio --rw=randread --bs=4k --direct=1 --size=2G --numjobs=4 --runtime=30 --group_reporting --filename=./fio_test.tmp'. Raport wskaże średni IOPS, przepustowość w MB/s oraz percentyle opóźnień (p95, p99)."
+    },
+    {
+      "distractor_id": "nginx-http2-ssl-tls",
+      "user_text": "Jak w konfiguracji Nginx włączyć protokół HTTP/2 i nowoczesne szyfry TLS 1.3?",
+      "assistant_text": "W bloku server dodaj 'listen 443 ssl http2;'. Następnie zdefiniuj 'ssl_protocols TLSv1.2 TLSv1.3;', oraz 'ssl_prefer_server_ciphers off;'. Wskaż certyfikaty dyrektywami 'ssl_certificate' oraz 'ssl_certificate_key'. Przetestuj konfigurację komendą 'nginx -t' przed przeładowaniem."
+    },
+    {
+      "distractor_id": "docker-multistage-caching",
+      "user_text": "Jak zorganizować wieloetapowy Dockerfile, aby uniknąć pobierania zależności przy każdej zmianie kodu źródłowego?",
+      "assistant_text": "Najpierw skopiuj wyłącznie pliki manifestów zależności (np. pyproject.toml lub package.json) i wykonaj polecenie instalacji. Dopiero w kolejnym kroku skopiuj pozostały kod źródłowy za pomocą 'COPY . .'. Dzięki temu Docker wykorzysta warstwę pamięci podręcznej (cache), o ile nie zmieniły się same zależności."
+    },
+    {
+      "distractor_id": "kernel-psi-memory-pressure",
+      "user_text": "Gdzie w systemie Linux sprawdzić wskaźniki PSI (Pressure Stall Information) dotyczące dławienia pamięci RAM?",
+      "assistant_text": "Informacje PSI dotyczące pamięci znajdują się w wirtualnym pliku '/proc/pressure/memory'. Wartości 'some' i 'full' pokazują procent czasu, w którym procesy były wstrzymane z powodu braku pamięci w oknach 10s, 60s i 300s. PSI jest znacznie dokładniejszym wskaźnikiem nasycenia niż zwykłe polecenie free."
+    }
+  ]
+}

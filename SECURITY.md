@@ -77,6 +77,13 @@ provider-owned CLI path is no longer the standalone default, and its HTTP/SSE/
 WebSocket endpoints return `410 Gone` unless `legacy_chat.enabled` is explicitly
 set for compatibility.
 
+The backend keeps the configured system instruction in the sole `system`
+message. Retrieved memories, episodic records, grounded summaries and external
+evidence are rendered as explicitly labelled, untrusted user-role data. Stored
+turns cannot introduce a `system` role. This role separation is defense in
+depth against persisted prompt injection; retrieved text never gains instruction
+authority merely because it was selected as context.
+
 Assistant output and memory proposals are untrusted. Only deterministic policy
 admits the current MVP's bounded personal attributes, preferences, plans and
 explicit memory requests. It requires an exact source span, rejects quoted,

@@ -481,6 +481,18 @@
           "title": "Text",
           "type": "string"
         },
+        "reasoning_content": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Reasoning Content"
+        },
         "status": {
           "default": "COMPLETED",
           "enum": [

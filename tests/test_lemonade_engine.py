@@ -56,7 +56,9 @@ async def test_lemonade_engine_load_success() -> None:
     models_resp = httpx.Response(
         200,
         json={"data": [{"id": "Qwen3.5-2B-GGUF", "recipe": "llamacpp", "size": 1.8}]},
-        request=httpx.Request("GET", f"{DEFAULT_LEMONADE_HOST}/api/v1/models?show_all=true"),
+        request=httpx.Request(
+            "GET", f"{DEFAULT_LEMONADE_HOST}/api/v1/models?show_all=true"
+        ),
     )
 
     mock_client.post.return_value = load_resp
@@ -110,7 +112,9 @@ async def test_lemonade_engine_generate_chat_success() -> None:
             ],
             "usage": {"prompt_tokens": 8, "completion_tokens": 4, "total_tokens": 12},
         },
-        request=httpx.Request("POST", f"{DEFAULT_LEMONADE_HOST}/api/v1/chat/completions"),
+        request=httpx.Request(
+            "POST", f"{DEFAULT_LEMONADE_HOST}/api/v1/chat/completions"
+        ),
     )
     mock_client.post.return_value = chat_resp
 
@@ -137,13 +141,45 @@ async def test_lemonade_engine_generate_chat_success() -> None:
                 "model": "Qwen3.5-2B-GGUF",
                 "messages": [
                     {"role": "user", "content": "Hello there"},
-                    {"role": "assistant", "content": "<think>\n</think>\n", "prefix": True},
+                    {
+                        "role": "assistant",
+                        "content": "<think>\n</think>\n",
+                        "prefix": True,
+                    },
                 ],
                 "max_tokens": 64,
                 "temperature": 0.3,
+                "chat_template_kwargs": {"enable_thinking": False},
                 "stop": ["\n"],
             },
         )
+
+
+@pytest.mark.asyncio
+async def test_lemonade_engine_preserves_structured_messages() -> None:
+    engine = LemonadeEngine(model_name="Qwen3.5-2B-GGUF")
+    mock_client = AsyncMock(spec=httpx.AsyncClient)
+    mock_client.post.return_value = httpx.Response(
+        200,
+        json={
+            "choices": [{"message": {"role": "assistant", "content": "Pamiętam."}}],
+            "usage": {"prompt_tokens": 5, "completion_tokens": 1},
+        },
+        request=httpx.Request(
+            "POST", f"{DEFAULT_LEMONADE_HOST}/api/v1/chat/completions"
+        ),
+    )
+    messages = [
+        {"role": "system", "content": "Pomagaj zwięźle."},
+        {"role": "user", "content": "Pamiętasz?"},
+    ]
+
+    with patch.object(engine, "_get_client", return_value=mock_client):
+        result = await engine.generate(messages=messages)
+
+    assert isinstance(result, Success)
+    payload = mock_client.post.await_args.kwargs["json"]
+    assert payload["messages"][:2] == messages
 
 
 @pytest.mark.asyncio
@@ -155,12 +191,16 @@ async def test_lemonade_engine_generate_completions_fallback() -> None:
     chat_404 = httpx.Response(
         404,
         text="Not found",
-        request=httpx.Request("POST", f"{DEFAULT_LEMONADE_HOST}/api/v1/chat/completions"),
+        request=httpx.Request(
+            "POST", f"{DEFAULT_LEMONADE_HOST}/api/v1/chat/completions"
+        ),
     )
     comp_200 = httpx.Response(
         200,
         json={
-            "choices": [{"text": "Completions fallback response", "finish_reason": "stop"}],
+            "choices": [
+                {"text": "Completions fallback response", "finish_reason": "stop"}
+            ],
             "usage": {"prompt_tokens": 10, "completion_tokens": 5},
         },
         request=httpx.Request("POST", f"{DEFAULT_LEMONADE_HOST}/api/v1/completions"),
@@ -186,13 +226,18 @@ async def test_lemonade_engine_generate_multimodal() -> None:
         json={
             "choices": [
                 {
-                    "message": {"role": "assistant", "content": "I see a cat in the image."},
+                    "message": {
+                        "role": "assistant",
+                        "content": "I see a cat in the image.",
+                    },
                     "finish_reason": "stop",
                 }
             ],
             "usage": {"prompt_tokens": 15, "completion_tokens": 7},
         },
-        request=httpx.Request("POST", f"{DEFAULT_LEMONADE_HOST}/api/v1/chat/completions"),
+        request=httpx.Request(
+            "POST", f"{DEFAULT_LEMONADE_HOST}/api/v1/chat/completions"
+        ),
     )
     mock_client.post.return_value = chat_200
 
@@ -293,12 +338,19 @@ async def test_supervisor_integration_with_lemonade() -> None:
     models_resp = httpx.Response(
         200,
         json={"data": [{"id": "Qwen3.5-2B-GGUF"}]},
-        request=httpx.Request("GET", f"{DEFAULT_LEMONADE_HOST}/api/v1/models?show_all=true"),
+        request=httpx.Request(
+            "GET", f"{DEFAULT_LEMONADE_HOST}/api/v1/models?show_all=true"
+        ),
     )
     comp_resp = httpx.Response(
         200,
         json={
-            "choices": [{"text": '{"intent": "query", "confidence": 0.95}', "finish_reason": "stop"}],
+            "choices": [
+                {
+                    "text": '{"intent": "query", "confidence": 0.95}',
+                    "finish_reason": "stop",
+                }
+            ],
             "usage": {"prompt_tokens": 10, "completion_tokens": 10},
         },
         request=httpx.Request("POST", f"{DEFAULT_LEMONADE_HOST}/api/v1/completions"),

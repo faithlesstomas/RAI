@@ -159,7 +159,7 @@ def validate_model_env(
         "groq": "GROQ_API_KEY",
     }
 
-    supported_backends = ["ollama", "gemini", "anthropic", "openai", "groq", "local"]
+    supported_backends = ["ollama", "llama", "gemini", "anthropic", "openai", "groq"]
 
     if backend not in supported_backends:
         error_console.print(f"[bold red]ERROR: Unsupported backend '{backend}'.[/bold red]")

@@ -886,7 +886,7 @@ async def async_main_client(options: CliOptions) -> None: # noqa: PLR0912
 @click.option("-m", "--model", default=None, help="ID of the model to use.",
               cls=SectionedOption, section="AI Configuration")
 @click.option("-b", "--backend", default=None,
-              type=click.Choice(["ollama", "llama", "local", "gemini", "anthropic", "openai", "groq"]),
+              type=click.Choice(["ollama", "llama", "gemini", "anthropic", "openai", "groq"]),
               help="The backend to use.",
               cls=SectionedOption, section="AI Configuration")
 # Section: Output Formatting
@@ -975,7 +975,7 @@ def cli(ctx: click.Context, **kwargs: Any) -> None: # noqa: ANN401
                 _run_assistant_chat,
             )
 
-            assistant_backend = "llama" if options.backend == "local" else options.backend
+            assistant_backend = options.backend
             unsupported = {"gemini", "anthropic", "openai", "groq"}
             if assistant_backend in unsupported:
                 raise click.ClickException(

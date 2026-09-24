@@ -32,6 +32,7 @@ class InferenceResult:
     Wraps the raw text and telemetry data.
     """
     text: str
+    reasoning_content: Optional[str] = None
     stats: Optional[GenerationStats] = None
     finish_reason: str = "stop"  # stop, length, error
 
@@ -86,12 +87,17 @@ class LocalTextEngine(Protocol):
         """Loads model weights into memory/VRAM."""
         ...
 
-    async def generate(
+    async def generate(  # noqa: PLR0913
         self,
-        prompt: str,
+        prompt: str = "",
         stop: Optional[List[str]] = None,
         max_tokens: int = 1024,
         temperature: float = 0.7,
+        *,
+        messages: Optional[List[Dict[str, str]]] = None,
+        enable_thinking: bool = False,
+        thinking_budget: Optional[int] = None,
+        thinking_level: Optional[str] = None,
     ) -> Result[InferenceResult, Exception]:
         """Asynchronously generates text without blocking the main event loop."""
         ...
@@ -117,23 +123,28 @@ def is_async_local_engine(engine: object) -> TypeGuard[LocalTextEngine]:
 class InferenceEngine(Protocol):
     """
     Protocol for a low-level local inference engine.
-    
+
     Implementations (IREE, Llama.cpp) must satisfy this interface.
     All methods must be efficient and side-effect free where possible.
     """
 
-    def generate(
-        self, 
-        prompt: str, 
-        stop: Optional[List[str]] = None, 
+    def generate(  # noqa: PLR0913
+        self,
+        prompt: str = "",
+        stop: Optional[List[str]] = None,
         max_tokens: int = 1024,
-        temperature: float = 0.7
+        temperature: float = 0.7,
+        *,
+        messages: Optional[List[Dict[str, str]]] = None,
+        enable_thinking: bool = False,
+        thinking_budget: Optional[int] = None,
+        thinking_level: Optional[str] = None,
     ) -> Result[InferenceResult, Exception]:
         ...
 
     def stream(
-        self, 
-        prompt: str, 
+        self,
+        prompt: str,
         stop: Optional[List[str]] = None,
         max_tokens: int = 1024,
         temperature: float = 0.7
@@ -191,26 +202,31 @@ class AsyncEngineAdapter(LocalTextEngine):
 
     async def generate(
         self,
-        prompt: str,
+        prompt: str = "",
         stop: Optional[List[str]] = None,
         max_tokens: int = 1024,
         temperature: float = 0.7,
+        *,
+        messages: Optional[List[Dict[str, str]]] = None,
     ) -> Result[InferenceResult, Exception]:
         if not self.is_loaded:
             load_res = await self.load()
             if isinstance(load_res, Failure):
                 return load_res
 
+        kwargs: dict[str, Any] = {
+            "prompt": prompt,
+            "stop": stop,
+            "max_tokens": max_tokens,
+            "temperature": temperature,
+        }
+        if messages is not None:
+            kwargs["messages"] = messages
+
         gen_fn = self._engine.generate
         if asyncio.iscoroutinefunction(gen_fn):
-            return await gen_fn(prompt, stop, max_tokens, temperature)
-        return await asyncio.to_thread(
-            gen_fn,
-            prompt,
-            stop,
-            max_tokens,
-            temperature,
-        )
+            return await gen_fn(**kwargs)
+        return await asyncio.to_thread(gen_fn, **kwargs)
 
     async def stream(
         self,
