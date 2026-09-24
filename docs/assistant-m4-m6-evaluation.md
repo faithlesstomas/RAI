@@ -53,6 +53,26 @@ histories with distractors. All three manifests have a non-empty fingerprint,
 zero retrieval failures, zero answer-evaluation failures and energy coverage
 1.0.
 
+Additional larger-model Lemonade snapshots preserve cross-model evidence from
+the same v2 corpus and deterministic judge:
+
+- [Qwen 3.5 9B](evaluation/assistant-m4-m6-lemonade-qwen3.5-9b-v2.json)
+- [Qwen 3 30B A3B](evaluation/assistant-m4-m6-lemonade-qwen3-30b-v2.json)
+- [Gemma 4 26B A4B](evaluation/assistant-m4-m6-lemonade-gemma4-26b-v2.json)
+
+They use the Lemonade `rai-assistant-messages-v4` prompt and judge v3, matching
+the other checked-in Lemonade M4–M6 runs. They are historical comparison
+evidence rather than a regression gate for the current v5 prompt and v4 judge.
+Each contains three trials, 126 retrieval measurements, 30 routing
+measurements, a non-empty model fingerprint, zero retrieval or answer-evaluation
+failures and energy coverage 1.0.
+
+| Model | Final M4 accuracy | Raw M4 accuracy | Final routing accuracy | Raw routing accuracy |
+|---|---:|---:|---:|---:|
+| Qwen 3.5 9B | 0.952–1.000 | 0.905–1.000 | 1.000 | 0.333–1.000 |
+| Qwen 3 30B A3B | 0.857–1.000 | 0.857–1.000 | 1.000 | 1.000 |
+| Gemma 4 26B A4B | 1.000 | 1.000 | 1.000 | 1.000 |
+
 Judge v3 remains deterministic. It accepts conservative Polish inflection,
 recognizes explicit forms such as `nie ma informacji` and `brak jest danych`,
 and rejects answers that turn a future plan into a completed event. It does not
