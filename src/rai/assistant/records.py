@@ -292,6 +292,7 @@ class AssistantContextManifest(KernelRecord):
     record_type: Literal["assistant_context_manifest"] = "assistant_context_manifest"
     session_id: AssistantSessionId
     turn_id: str = Field(min_length=1)
+    approved: bool = False
     recent_turn_ids: tuple[str, ...] = ()
     episodic_turn_ids: tuple[str, ...] = ()
     external_evidence_ids: tuple[str, ...] = ()

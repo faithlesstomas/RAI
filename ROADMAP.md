@@ -915,17 +915,24 @@ merely to reuse the old validator.
 
 - [ ] Record an ADR and freeze versioned `DecisionRequest`, `DecisionResult`,
   `DecisionCalibration` and `DecisionUsage` schemas plus JSON fixtures.
-- [ ] Implement lifecycle, cancellation, budget, health and typed-failure
+- [/] Implement lifecycle, cancellation, budget, health and typed-failure
   conformance tests for `DecisionBackend` independently of any named model.
-- [ ] Add a deterministic test backend, one local decision-model adapter and a
+- [/] Add a deterministic test backend, one local decision-model adapter and a
   strict adapter from decision results into the existing claim-validation path.
-- [ ] Migrate intent classification, routing hints, salience and privacy-risk
+- [/] Migrate intent classification, routing hints, salience and privacy-risk
   elevation first; retain generative episode summarization and open entity
   extraction on their existing contracts.
 - [ ] Preserve the full distribution and calibration metadata in audit evidence
   while exposing only policy-approved derived claims to ordinary consumers.
-- [ ] Treat question isolation, option-order sensitivity, explicit abstention
+- [/] Treat question isolation, option-order sensitivity, explicit abstention
   and distribution validity as conformance and evaluation properties.
+
+The current experimental slice defines the protocol and immutable records,
+provides deterministic and local Lemonade implementations, validates explicit
+abstention and complete distributions, and uses a decision backend for isolated
+routing-hint tests. It does not yet provide lifecycle/health conformance, an
+ADR and frozen fixtures, claim-validation integration, audit persistence,
+option-order evaluation or production runtime dispatch.
 
 TypeSafe Jev/System One and open Jev-like projects such as
 [Kev](https://github.com/jaredpalmer/kev) are comparison points, not RAI
@@ -938,7 +945,7 @@ implements a similar finite-decision API.
 
 **Routing policy and evaluation**
 
-- [ ] Route through deterministic rules first, local classification second and
+- [/] Route through deterministic rules first, local classification second and
   policy last.
 - [ ] Support `LOCAL`, `ASK`, `ESCALATE` and `DENY` routing decisions.
 - [ ] Include privacy class, capability set, budget, decision status, named
@@ -1717,30 +1724,45 @@ release, capability authority, verification and durable evidence.
 
 #### 6.1 Context construction and egress
 
-- [ ] Build task-specific `ContextPackage` values from durable state through
+- [/] Build task-specific `ContextPackage` values from durable state through
   deterministic retrieval and policy filtering.
-- [ ] Include a `ContextManifest` listing sources, data classes, redactions,
+- [/] Include a `ContextManifest` listing sources, data classes, redactions,
   approximate size, intended recipient, retention expectation and reason for
   transfer.
-- [ ] Prefer claims, summaries and stable resource handles over raw files,
+- [/] Prefer claims, summaries and stable resource handles over raw files,
   screenshots or full activity history.
 - [ ] Preview the manifest in `HYBRID_APPROVAL` mode before transmission.
-- [ ] Persist the manifest, approval and actual transmitted-size/usage metadata.
-- [ ] Prevent a backend from requesting broader historical context without a new
+- [/] Persist the manifest, approval and actual transmitted-size/usage metadata.
+- [/] Prevent a backend from requesting broader historical context without a new
   policy decision.
+
+The Antigravity assistant slice now manifests the current turn and every
+serialized retrieved source, rejects missing manifest entries, and keeps
+retrieved state in the user role. Assistant manifests are persisted with the
+turn and response. Intended recipient, retention expectations, transmitted
+wire size, approval preview and a broker-backed transition to `approved=True`
+remain open; the current assistant runtime therefore fails closed for
+unapproved `PRIVATE` context.
 
 #### 6.2 Token and cost governor
 
-- [ ] Enforce `InferenceBudget` before and during every backend request.
-- [ ] Add per-task, automation, model, provider, daily and monthly limits.
-- [ ] Count retries, cached-token billing, tool turns, image inputs and partial
+- [/] Enforce `InferenceBudget` before and during every backend request.
+- [/] Add per-task, automation, model, provider, daily and monthly limits.
+- [/] Count retries, cached-token billing, tool turns, image inputs and partial
   streamed responses where reported by the provider.
-- [ ] Treat missing or unverifiable usage/pricing as unknown and apply the
+- [/] Treat missing or unverifiable usage/pricing as unknown and apply the
   configured conservative limit.
-- [ ] Cancel at the deadline or budget boundary and retain the partial evidence
+- [/] Cancel at the deadline or budget boundary and retain the partial evidence
   without treating it as success.
-- [ ] Provide usage reports and alerts without leaking prompt content into
+- [/] Provide usage reports and alerts without leaking prompt content into
   telemetry.
+
+`InferenceBudgetGovernor` currently enforces request, provider, token, image,
+turn, tool, daily/monthly token and daily/monthly cost boundaries. Supported
+remote adapters also enforce deadlines, and missing decision-provider usage is
+rejected. The ledger and summary are in-memory only; automation/model-specific
+quotas, pricing verification, retry/cached/reasoning-token accounting, partial
+stream retention, durable reporting and alerts are not complete.
 
 Suggested safe initial defaults:
 
@@ -1761,27 +1783,27 @@ prices change independently of RAI releases.
 
 #### 6.3 External model and decision API backends
 
-- [ ] Implement external LLM APIs through `AssistantModelBackend`, not
+- [/] Implement external LLM APIs through `AssistantModelBackend`, not
   `AgentBackend`. A model backend performs one bounded inference and receives no
   ambient tools, desktop access or ownership of assistant memory.
-- [ ] Implement hosted finite-decision APIs through `DecisionBackend`, not
+- [/] Implement hosted finite-decision APIs through `DecisionBackend`, not
   `AssistantModelBackend` or `AgentBackend`. Keep provider-native probability,
   score, confidence and calibration semantics distinct, and reject adapters
   that fabricate a full distribution from incomplete provider output.
 - [ ] Send the same versioned `ContextPackage` and reasoning-strategy contract to
   local and external models where capabilities permit. Unsupported latent or
   observer features fail explicitly rather than changing strategy silently.
-- [ ] Send the same versioned `DecisionRequest` to local and external decision
+- [/] Send the same versioned `DecisionRequest` to local and external decision
   backends where their declared primitives permit. A provider alias that can
   move must not satisfy immutable model or calibration-version requirements;
   pin and audit the resolved model revision.
 - [ ] Disable provider-side conversation persistence when possible and never use
   a remote conversation ID as context. Record provider retention expectations in
   the outbound `ContextManifest`.
-- [ ] Reconcile reported prompt, cached, completion and reasoning tokens with
+- [/] Reconcile reported prompt, cached, completion and reasoning tokens with
   local estimates; treat absent or inconsistent usage as unknown and apply the
   conservative budget policy.
-- [ ] Keep provider SDKs, credentials, retry rules and response normalization in
+- [/] Keep provider SDKs, credentials, retry rules and response normalization in
   optional adapters. Removing one provider must not change memory or public
   assistant-domain records.
 - [ ] Benchmark hosted decision services only on policy-approved data and retain
@@ -1797,7 +1819,7 @@ not an assistant-response backend, local processor, policy engine or source of
 action authority. Configure it behind the provider-neutral `DecisionBackend`;
 do not let TypeSafe SDK or API types enter kernel, task or audit records.
 
-- [ ] Disable the adapter in `LOCAL_ONLY`. In `LOCAL_PREFERRED`, use it only as
+- [/] Disable the adapter in `LOCAL_ONLY`. In `LOCAL_PREFERRED`, use it only as
   policy-approved escalation after the local path is unavailable, is outside
   its evaluated envelope or has explicitly abstained. In `HYBRID_APPROVAL`, show
   and approve the outbound manifest. In `REMOTE_ALLOWED`, permit automatic use
@@ -1807,7 +1829,7 @@ do not let TypeSafe SDK or API types enter kernel, task or audit records.
   option descriptions in egress classification, preview, size accounting and
   audit. Question schemas can disclose private policy, installed capabilities or
   user intent even when the state itself appears harmless.
-- [ ] Minimize and redact locally before the request. Reject `LOCAL`, `SECRET`
+- [/] Minimize and redact locally before the request. Reject `LOCAL`, `SECRET`
   and `BLOCKED` fields at the final transport boundary, and prove with negative
   tests that a provider adapter cannot rehydrate excluded sources or request
   more context.
@@ -1816,7 +1838,7 @@ do not let TypeSafe SDK or API types enter kernel, task or audit records.
   manipulated classification or a confidently wrong allowed option. The result
   remains advisory and passes through `DecisionAcceptancePolicy`, deterministic
   capability policy and effect verification.
-- [ ] Pin the resolved Jev model revision and record API/SDK, task schema and
+- [/] Pin the resolved Jev model revision and record API/SDK, task schema and
   calibration versions. Do not use a moving `jev-latest` alias for an accepted
   threshold without re-running the per-task, per-language and out-of-domain
   calibration evaluation.
@@ -1829,7 +1851,7 @@ do not let TypeSafe SDK or API types enter kernel, task or audit records.
   `ContextPackage`, manifest payload, repository, error message or ordinary log.
   Restrict outbound traffic to the configured HTTPS endpoint, validate TLS,
   bound response size, redact provider errors and support key rotation.
-- [ ] Enforce deadline, cancellation, rate and monetary/token budgets before and
+- [/] Enforce deadline, cancellation, rate and monetary/token budgets before and
   during the call. Provider outage, `429`, malformed response, billing failure or
   model-version drift returns a typed failure and follows an explicit local,
   `ASK` or deny fallback; it never silently changes provider or authorizes an
@@ -1839,6 +1861,14 @@ do not let TypeSafe SDK or API types enter kernel, task or audit records.
   duplicating remote plaintext into telemetry. Deletion of a local source must
   remove local derived records and provenance links even though RAI cannot
   retroactively erase a provider copy outside the contracted deletion process.
+
+The current hosted Jev adapter is an isolated experiment, not a
+production-enabled provider. It validates profile/data-class egress, a pinned
+revision, the complete declared option distribution, reported usage and request
+budgets. It is not wired into the product runtime and does not yet implement
+manifest preview, `DecisionAcceptancePolicy`, durable audit hashes, response
+size/rate controls, provider-contract retention evidence or operating-system
+secret-store and key-rotation support.
 
 Re-verify TypeSafe's current [model and data-handling
 documentation](https://docs.typesafe.ai/models), [legal and ZDR
@@ -1962,14 +1992,20 @@ prerequisite for the Stage 2 event plane, Rich History or local-only operation.
   tokens.
 - [ ] Route bounded language/perception tasks to local processors when their
   evaluation envelope covers the request.
-- [ ] Escalate open-ended planning, complex coding or research only within data,
+- [/] Escalate open-ended planning, complex coding or research only within data,
   cost, latency and capability policy.
-- [ ] Allow the user to pin or exclude providers for a task or data class.
+- [/] Allow the user to pin or exclude providers for a task or data class.
 - [ ] Use named distribution/calibration evidence only within its evaluated
   scope; backend-native confidence remains advisory and policy stays
   deterministic.
 - [ ] Re-verify external claims and requested actions against local tools and
   observations before committing state.
+
+`HybridRouter` currently exists as test-covered infrastructure and can return
+`LOCAL`, `REMOTE` or `ASK` after deterministic, privacy, egress and budget
+checks. It is not dispatched by `AssistantService` or the container, does not
+yet execute the selected backend, and does not yet satisfy the target
+`LOCAL`/`ASK`/`ESCALATE`/`DENY` outcome vocabulary or acceptance-policy flow.
 
 Acceptance slices:
 

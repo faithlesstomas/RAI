@@ -71,6 +71,11 @@ async def test_natural_memory_recall_context_inspection_forget_and_replay(  # no
         remembered.unwrap().admitted_memory_ids[0],
     )
     assert package.unwrap().content["recent_turns"] == ()
+    current_item = next(
+        item for item in package.unwrap().manifest.items if item.layer == "current_turn"
+    )
+    assert current_item.source_id == "turn-question"
+    assert current_item.data_class == DataClass.LOCAL
 
     diagnostic = await diagnose_memory(
         store,

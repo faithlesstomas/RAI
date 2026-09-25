@@ -73,8 +73,8 @@ DATA_CLASS_LEVELS: dict[DataClass, int] = {
 
 def max_data_class(*classes: DataClass | str | None) -> DataClass:
     """Resolve the highest data sensitivity classification to prevent taint degradation."""
-    highest = DataClass.LOCAL
-    highest_level = DATA_CLASS_LEVELS[highest]
+    highest: DataClass | None = None
+    highest_level = -1
     for c in classes:
         if c is None:
             continue
@@ -86,7 +86,7 @@ def max_data_class(*classes: DataClass | str | None) -> DataClass:
         if level > highest_level:
             highest = dc
             highest_level = level
-    return highest
+    return highest or DataClass.LOCAL
 
 
 class RiskClass(str, Enum):

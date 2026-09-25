@@ -7,20 +7,25 @@ and BLOCKED data to external/remote backends, and mandates HITL approval where r
 from __future__ import annotations
 
 import logging
-from typing import Any, Mapping
+from typing import Any, Mapping, Protocol
 
 from returns.result import Failure, Result, Success
 
 from rai.kernel.records import (
     ActionFailure,
-    ContextManifest,
-    ContextManifestItem,
     DataClass,
     ProducerIdentity,
-    _new_id,
 )
 
 logger = logging.getLogger(__name__)
+
+
+class EgressManifest(Protocol):
+    """Structural manifest contract shared by kernel and assistant contexts."""
+
+    items: tuple[Any, ...]
+    approved: bool
+
 
 EGRESS_PRODUCER = ProducerIdentity(
     producer_id="rai.kernel.egress_firewall",
@@ -70,9 +75,10 @@ class EgressFirewall:
 
     def validate_egress(
         self,
-        manifest: ContextManifest,
+        manifest: EgressManifest,
         destination_is_remote: bool = True,
         request_id: str = "egress-firewall",
+        required_source_ids: tuple[str, ...] = (),
     ) -> Result[None, ActionFailure]:
         """Validate whether the given ContextManifest is permitted to exit to destination."""
         if not destination_is_remote:
@@ -88,6 +94,22 @@ class EgressFirewall:
                 )
             )
 
+        present_source_ids = {item.source_id for item in manifest.items}
+        missing_source_ids = sorted(set(required_source_ids) - present_source_ids)
+        if missing_source_ids:
+            return Failure(
+                make_egress_failure(
+                    code="EGRESS_MANIFEST_INCOMPLETE",
+                    message=(
+                        "Egress blocked: outbound context is missing manifest entries for "
+                        + ", ".join(missing_source_ids)
+                    ),
+                    request_id=request_id,
+                    producer=self.producer,
+                )
+            )
+
+        approved = bool(getattr(manifest, "approved", False))
         for item in manifest.items:
             data_class = item.data_class
             if isinstance(data_class, str):
@@ -133,7 +155,7 @@ class EgressFirewall:
             # Invariant: PRIVATE data requires approval in LOCAL_PREFERRED, HYBRID_APPROVAL,
             # or REMOTE_ALLOWED
             if data_class == DataClass.PRIVATE:
-                if not manifest.approved:
+                if not approved:
                     return Failure(
                         make_egress_failure(
                             code="PRIVATE_DATA_EGRESS_REQUIRES_APPROVAL",
@@ -148,7 +170,7 @@ class EgressFirewall:
                     )
 
         # In HYBRID_APPROVAL profile, even non-private remote transmissions need manifest approval
-        if self.profile == "HYBRID_APPROVAL" and not manifest.approved:
+        if self.profile == "HYBRID_APPROVAL" and not approved:
             return Failure(
                 make_egress_failure(
                     code="HYBRID_APPROVAL_REQUIRED",

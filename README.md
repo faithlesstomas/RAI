@@ -24,9 +24,12 @@ building are implemented by the opt-in Rich History slice. A lifecycle-managed
 local processor, six schema-constrained task contracts and a policy-aware result
 cache are also implemented, although broader live-model acceptance and runtime
 routing remain open. The RAI-native assistant now provides a usable CLI,
-RAI-owned chat history and an auditable SQLite memory slice; general semantic
-memory and hybrid routing remain roadmap work. GAIA, GCAS compatibility,
-Google Antigravity, Coconut-style latent
+RAI-owned chat history and an auditable SQLite memory slice. Experimental
+hybrid-routing, finite-decision and remote Antigravity assistant components now
+exist behind provider-neutral contracts, but they are not wired into the
+default product runtime and do not complete the Stage 6 acceptance gates.
+Broader semantic memory remains roadmap work. GAIA, GCAS compatibility,
+Google Antigravity agent interoperability, Coconut-style latent
 inference, writable slots and J-lens are optional integrations or research
 paths; none is required by the core product.
 
@@ -103,7 +106,11 @@ See [docs/architecture.md](docs/architecture.md) for component boundaries and
 - opt-in Rich History with isolated GNOME/AT-SPI/process/filesystem collectors,
   pre-persistence privacy filtering, encrypted episodes, provenance queries and
   verified deletion.
-- experimental Antigravity chat compatibility.
+- experimental Antigravity chat compatibility and a separate RAI-native remote
+  `AssistantModelBackend` with manifest, role, tool and budget containment.
+- experimental finite-decision infrastructure with deterministic, local
+  Lemonade and hosted Jev adapters plus a test-covered `HybridRouter`; these are
+  not yet a user-facing routing path.
 - container-owned local processor supervision, six bounded task contracts and a
   persistent policy-aware cache; Ollama and llama.cpp still require repeatable
   live-model acceptance.
@@ -117,9 +124,11 @@ This list is deliberately narrower than the target architecture. The memory MVP
 admits bounded personal attributes, preferences, plans and explicit remember or
 forget requests from ordinary Polish and English conversation. It rejects
 quoted, hearsay and hedged candidates from automatic admission.
-Schema-constrained SLM extraction, bitemporal claims, FTS/dense retrieval and
-hybrid model routing remain planned. The old provider-owned `ChatService` is
-disabled by default and remains only as an opt-in compatibility facade.
+Schema-constrained SLM extraction, bitemporal claims and further FTS/dense
+retrieval work remain planned. Product integration, approval UI, durable usage
+audit and production acceptance for hybrid model routing also remain planned.
+The old provider-owned `ChatService` is disabled by default and remains only as
+an opt-in compatibility facade.
 
 ## Installation
 

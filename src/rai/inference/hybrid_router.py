@@ -10,10 +10,11 @@ Orchestrates model selection and execution paths across:
 
 from __future__ import annotations
 
+import json
 import logging
-from typing import Any, Literal
+from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict
 from returns.result import Failure, Result, Success
 
 from rai.inference.decision import (
@@ -219,6 +220,49 @@ class HybridRouter:
                     decision_result=decision,
                 )
             )
+
+        egress_check = self.egress_firewall.validate_egress(
+            manifest=context.manifest,
+            destination_is_remote=True,
+            request_id=context.task_id,
+        )
+        if isinstance(egress_check, Failure):
+            failure = egress_check.failure()
+            if failure.code in {
+                "PRIVATE_DATA_EGRESS_REQUIRES_APPROVAL",
+                "HYBRID_APPROVAL_REQUIRED",
+            }:
+                return Success(
+                    RoutingDecision(
+                        outcome="ASK",
+                        target_backend="antigravity",
+                        target_model=self.default_remote_model,
+                        reason=failure.message,
+                        decision_result=decision,
+                    )
+                )
+            return Failure(failure)
+
+        estimated_input_tokens = max(
+            1,
+            (
+                len(user_prompt)
+                + len(json.dumps(context.content, ensure_ascii=False, default=str))
+                + 3
+            )
+            // 4,
+        )
+        governor_check = self.governor.check_request(
+            budget=budget,
+            request_id=context.task_id,
+            is_background=is_background,
+            is_remote=True,
+            estimated_input_tokens=estimated_input_tokens,
+            estimated_output_tokens=budget.max_output_tokens,
+            provider="antigravity",
+        )
+        if isinstance(governor_check, Failure):
+            return Failure(governor_check.failure())
 
         return Success(
             RoutingDecision(

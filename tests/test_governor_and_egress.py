@@ -76,6 +76,24 @@ def test_egress_firewall_blocks_remote_in_local_only() -> None:
     assert result.failure().code == "EGRESS_LOCAL_ONLY_VIOLATION"
 
 
+def test_egress_firewall_rejects_incomplete_manifest() -> None:
+    firewall = EgressFirewall(profile="REMOTE_ALLOWED")
+    manifest = ContextManifest(
+        producer=TEST_PRODUCER,
+        destination="https://remote.example",
+        items=(),
+    )
+
+    result = firewall.validate_egress(
+        manifest,
+        destination_is_remote=True,
+        required_source_ids=("current-turn",),
+    )
+
+    assert isinstance(result, Failure)
+    assert result.failure().code == "EGRESS_MANIFEST_INCOMPLETE"
+
+
 def test_egress_firewall_blocks_secret_and_blocked_data() -> None:
     firewall = EgressFirewall(profile="REMOTE_ALLOWED")
     for bad_dc in (DataClass.SECRET, DataClass.BLOCKED):
@@ -220,6 +238,65 @@ def test_governor_enforces_per_task_turns_and_tool_calls() -> None:
     assert res_tools.failure().code == "TASK_MAX_TOOL_CALLS_EXCEEDED"
 
 
+def test_governor_enforces_token_provider_and_cost_budget() -> None:
+    governor = InferenceBudgetGovernor()
+    budget = _make_budget().model_copy(
+        update={
+            "max_input_tokens": 10,
+            "max_output_tokens": 5,
+            "max_provider_cost": 0.01,
+            "allowed_providers": ("approved-provider",),
+        }
+    )
+
+    input_result = governor.check_request(
+        budget, estimated_input_tokens=11, provider="approved-provider"
+    )
+    assert isinstance(input_result, Failure)
+    assert input_result.failure().code == "TASK_MAX_INPUT_TOKENS_EXCEEDED"
+
+    output_result = governor.check_request(
+        budget,
+        estimated_input_tokens=10,
+        estimated_output_tokens=6,
+        provider="approved-provider",
+    )
+    assert isinstance(output_result, Failure)
+    assert output_result.failure().code == "TASK_MAX_OUTPUT_TOKENS_EXCEEDED"
+
+    provider_result = governor.check_request(
+        budget, estimated_input_tokens=1, provider="unapproved-provider"
+    )
+    assert isinstance(provider_result, Failure)
+    assert provider_result.failure().code == "PROVIDER_NOT_ALLOWED"
+
+    cost_result = governor.check_request(
+        budget,
+        estimated_input_tokens=1,
+        estimated_cost_usd=0.02,
+        provider="approved-provider",
+    )
+    assert isinstance(cost_result, Failure)
+    assert cost_result.failure().code == "TASK_MAX_PROVIDER_COST_EXCEEDED"
+
+
+def test_governor_zero_budget_fails_closed() -> None:
+    governor = InferenceBudgetGovernor()
+    zero_budget = _make_budget().model_copy(
+        update={"max_input_tokens": 0, "max_output_tokens": 0}
+    )
+
+    result = governor.check_request(zero_budget, estimated_input_tokens=1)
+
+    assert isinstance(result, Failure)
+    assert result.failure().code == "TASK_MAX_INPUT_TOKENS_EXCEEDED"
+
+    no_output_budget = _make_budget().model_copy(update={"max_output_tokens": 0})
+    output_result = governor.check_request(no_output_budget, estimated_input_tokens=1)
+    assert isinstance(output_result, Failure)
+    assert output_result.failure().code == "TASK_OUTPUT_FORBIDDEN"
+
+
 def test_governor_tracks_and_enforces_daily_limits() -> None:
     config = GovernorConfig(daily_remote_token_limit=1000, daily_cost_limit_usd=5.0)
     governor = InferenceBudgetGovernor(config=config)
@@ -262,3 +339,18 @@ def test_governor_usage_summary_does_not_leak_prompts() -> None:
     # Assure prompt text is not anywhere in summary
     assert "prompt" not in summary
     assert "text" not in summary
+
+
+def test_governor_missing_remote_usage_cancel_policy_fails_closed() -> None:
+    governor = InferenceBudgetGovernor(GovernorConfig(on_missing_usage="cancel"))
+
+    result = governor.record_usage(
+        request_id="missing-usage",
+        tokens_in=0,
+        tokens_out=0,
+        is_remote=True,
+    )
+
+    assert isinstance(result, Failure)
+    assert result.failure().code == "REMOTE_USAGE_MISSING"
+    assert governor.get_usage_summary()["total_requests"] == 0

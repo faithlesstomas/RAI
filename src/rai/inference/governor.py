@@ -10,7 +10,7 @@ Enforces:
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from datetime import datetime, timezone
 import logging
 from typing import Any, Literal
@@ -22,7 +22,6 @@ from rai.kernel.records import (
     ActionFailure,
     InferenceBudget,
     ProducerIdentity,
-    _utc_now,
 )
 
 logger = logging.getLogger(__name__)
@@ -56,9 +55,9 @@ class GovernorConfig(BaseModel):
 
     model_config = ConfigDict(frozen=True, extra="forbid")
 
-    profile: Literal["LOCAL_ONLY", "LOCAL_PREFERRED", "HYBRID_APPROVAL", "REMOTE_ALLOWED"] = (
-        "LOCAL_PREFERRED"
-    )
+    profile: Literal[
+        "LOCAL_ONLY", "LOCAL_PREFERRED", "HYBRID_APPROVAL", "REMOTE_ALLOWED"
+    ] = "LOCAL_PREFERRED"
     background_remote_tokens: int = Field(default=0, ge=0)
     remote_on_ambiguous_input: Literal["ask", "deny", "local"] = "ask"
     on_missing_usage: Literal["ask", "estimate", "cancel"] = "ask"
@@ -108,12 +107,44 @@ class InferenceBudgetGovernor:
         is_background: bool = False,
         is_remote: bool = False,
         estimated_tokens: int = 0,
+        estimated_input_tokens: int | None = None,
+        estimated_output_tokens: int = 0,
+        estimated_cost_usd: float = 0.0,
+        estimated_images: int = 0,
+        provider: str | None = None,
         current_turns: int = 0,
         current_tool_calls: int = 0,
         now: datetime | None = None,
     ) -> Result[None, ActionFailure]:
         """Validate an upcoming inference request against all budget boundaries."""
         current_time = now or datetime.now(timezone.utc)
+        input_tokens = (
+            estimated_tokens
+            if estimated_input_tokens is None
+            else estimated_input_tokens
+        )
+        output_tokens = estimated_output_tokens
+        total_tokens = input_tokens + output_tokens
+
+        if (
+            min(
+                input_tokens,
+                output_tokens,
+                estimated_cost_usd,
+                estimated_images,
+                current_turns,
+                current_tool_calls,
+            )
+            < 0
+        ):
+            return Failure(
+                make_governor_failure(
+                    code="INVALID_USAGE_ESTIMATE",
+                    message="Inference usage estimates cannot be negative",
+                    request_id=request_id,
+                    producer=self.producer,
+                )
+            )
 
         # 1. Deadline expiration check
         if current_time > budget.cancellation_deadline:
@@ -129,7 +160,7 @@ class InferenceBudgetGovernor:
         # 2. Strict invariant: background tasks are forbidden from remote tokens
         if is_background and is_remote:
             allowed_bg = self.config.background_remote_tokens
-            if allowed_bg == 0 or estimated_tokens > allowed_bg:
+            if allowed_bg == 0 or total_tokens > allowed_bg:
                 return Failure(
                     make_governor_failure(
                         code="BACKGROUND_REMOTE_FORBIDDEN",
@@ -153,27 +184,115 @@ class InferenceBudgetGovernor:
                 )
             )
 
-        # 4. Per-task constraints
-        if current_turns > budget.max_agent_turns:
+        if (
+            provider
+            and budget.allowed_providers
+            and provider not in budget.allowed_providers
+        ):
             return Failure(
                 make_governor_failure(
-                    code="TASK_MAX_TURNS_EXCEEDED",
+                    code="PROVIDER_NOT_ALLOWED",
+                    message=f"Provider '{provider}' is not allowed by this inference budget",
+                    request_id=request_id,
+                    producer=self.producer,
+                )
+            )
+
+        if input_tokens > budget.max_input_tokens:
+            return Failure(
+                make_governor_failure(
+                    code="TASK_MAX_INPUT_TOKENS_EXCEEDED",
                     message=(
-                        f"Task agent turns ({current_turns}) reached budget limit "
-                        f"({budget.max_agent_turns})"
+                        f"Estimated input tokens ({input_tokens}) exceed budget limit "
+                        f"({budget.max_input_tokens})"
                     ),
                     request_id=request_id,
                     producer=self.producer,
                 )
             )
 
-        if current_tool_calls > budget.max_tool_calls:
+        if budget.max_output_tokens == 0:
+            return Failure(
+                make_governor_failure(
+                    code="TASK_OUTPUT_FORBIDDEN",
+                    message="Inference output is forbidden by this budget",
+                    request_id=request_id,
+                    producer=self.producer,
+                )
+            )
+
+        if output_tokens > budget.max_output_tokens:
+            return Failure(
+                make_governor_failure(
+                    code="TASK_MAX_OUTPUT_TOKENS_EXCEEDED",
+                    message=(
+                        f"Estimated output tokens ({output_tokens}) exceed budget limit "
+                        f"({budget.max_output_tokens})"
+                    ),
+                    request_id=request_id,
+                    producer=self.producer,
+                )
+            )
+
+        if total_tokens > self.config.per_task_max_tokens:
+            return Failure(
+                make_governor_failure(
+                    code="TASK_MAX_TOKENS_EXCEEDED",
+                    message=(
+                        f"Estimated task tokens ({total_tokens}) exceed governor limit "
+                        f"({self.config.per_task_max_tokens})"
+                    ),
+                    request_id=request_id,
+                    producer=self.producer,
+                )
+            )
+
+        if estimated_cost_usd > budget.max_provider_cost:
+            return Failure(
+                make_governor_failure(
+                    code="TASK_MAX_PROVIDER_COST_EXCEEDED",
+                    message=(
+                        f"Estimated provider cost (${estimated_cost_usd:.4f}) exceeds "
+                        f"budget limit (${budget.max_provider_cost:.4f})"
+                    ),
+                    request_id=request_id,
+                    producer=self.producer,
+                )
+            )
+
+        if estimated_images > min(budget.max_images, self.config.per_task_max_images):
+            return Failure(
+                make_governor_failure(
+                    code="TASK_MAX_IMAGES_EXCEEDED",
+                    message="Estimated image count exceeds the task image limit",
+                    request_id=request_id,
+                    producer=self.producer,
+                )
+            )
+
+        # 4. Per-task constraints
+        max_turns = min(budget.max_agent_turns, self.config.per_task_max_agent_turns)
+        if current_turns >= max_turns:
+            return Failure(
+                make_governor_failure(
+                    code="TASK_MAX_TURNS_EXCEEDED",
+                    message=(
+                        f"Task agent turns ({current_turns}) reached budget limit "
+                        f"({max_turns})"
+                    ),
+                    request_id=request_id,
+                    producer=self.producer,
+                )
+            )
+
+        max_tool_calls = min(budget.max_tool_calls, self.config.per_task_max_tool_calls)
+        if current_tool_calls > max_tool_calls:
             return Failure(
                 make_governor_failure(
                     code="TASK_MAX_TOOL_CALLS_EXCEEDED",
                     message=(
                         f"Task tool calls ({current_tool_calls}) reached budget limit "
-                        f"({budget.max_tool_calls})"
+                        f"({max_tool_calls})"
                     ),
                     request_id=request_id,
                     producer=self.producer,
@@ -182,40 +301,62 @@ class InferenceBudgetGovernor:
 
         # 5. Cumulative remote limits
         if is_remote:
-            daily_used = self._get_tokens_in_period(current_time, days=1, remote_only=True)
-            if daily_used + estimated_tokens > self.config.daily_remote_token_limit:
+            daily_used = self._get_tokens_in_period(
+                current_time, days=1, remote_only=True
+            )
+            if daily_used + total_tokens > self.config.daily_remote_token_limit:
                 return Failure(
                     make_governor_failure(
                         code="DAILY_TOKEN_LIMIT_EXCEEDED",
                         message=(
                             f"Daily remote token ceiling ({self.config.daily_remote_token_limit}) "
-                            f"would be exceeded (currently used: {daily_used}, estimated: {estimated_tokens})"
+                            f"would be exceeded (currently used: {daily_used}, estimated: {total_tokens})"
                         ),
                         request_id=request_id,
                         producer=self.producer,
                     )
                 )
 
-            monthly_used = self._get_tokens_in_period(current_time, days=30, remote_only=True)
-            if monthly_used + estimated_tokens > self.config.monthly_remote_token_limit:
+            monthly_used = self._get_tokens_in_period(
+                current_time, days=30, remote_only=True
+            )
+            if monthly_used + total_tokens > self.config.monthly_remote_token_limit:
                 return Failure(
                     make_governor_failure(
                         code="MONTHLY_TOKEN_LIMIT_EXCEEDED",
                         message=(
                             f"Monthly remote token ceiling ({self.config.monthly_remote_token_limit}) "
-                            f"would be exceeded (currently used: {monthly_used}, estimated: {estimated_tokens})"
+                            f"would be exceeded (currently used: {monthly_used}, estimated: {total_tokens})"
                         ),
                         request_id=request_id,
                         producer=self.producer,
                     )
                 )
 
-            daily_cost = self._get_cost_in_period(current_time, days=1)
-            if daily_cost > self.config.daily_cost_limit_usd:
+            daily_cost = self._get_cost_in_period(
+                current_time, days=1, remote_only=True
+            )
+            if daily_cost + estimated_cost_usd > self.config.daily_cost_limit_usd:
                 return Failure(
                     make_governor_failure(
                         code="DAILY_COST_LIMIT_EXCEEDED",
                         message=f"Daily cost ceiling (${self.config.daily_cost_limit_usd:.2f}) exceeded",
+                        request_id=request_id,
+                        producer=self.producer,
+                    )
+                )
+
+            monthly_cost = self._get_cost_in_period(
+                current_time, days=30, remote_only=True
+            )
+            if monthly_cost + estimated_cost_usd > self.config.monthly_cost_limit_usd:
+                return Failure(
+                    make_governor_failure(
+                        code="MONTHLY_COST_LIMIT_EXCEEDED",
+                        message=(
+                            f"Monthly cost ceiling (${self.config.monthly_cost_limit_usd:.2f}) "
+                            "would be exceeded"
+                        ),
                         request_id=request_id,
                         producer=self.producer,
                     )
@@ -237,6 +378,26 @@ class InferenceBudgetGovernor:
         """Record inference metrics into the usage ledger."""
         ts = timestamp or datetime.now(timezone.utc)
 
+        if min(tokens_in, tokens_out, cost_usd) < 0:
+            return Failure(
+                make_governor_failure(
+                    code="INVALID_USAGE_RECORD",
+                    message="Recorded usage values cannot be negative",
+                    request_id=request_id,
+                    producer=self.producer,
+                )
+            )
+
+        if is_background and is_remote and self.config.background_remote_tokens == 0:
+            return Failure(
+                make_governor_failure(
+                    code="BACKGROUND_REMOTE_FORBIDDEN",
+                    message="Background remote usage cannot be recorded when its limit is zero",
+                    request_id=request_id,
+                    producer=self.producer,
+                )
+            )
+
         # Check for missing usage on remote calls
         if is_remote and tokens_in == 0 and tokens_out == 0:
             if self.config.on_missing_usage == "ask":
@@ -248,13 +409,22 @@ class InferenceBudgetGovernor:
                 # Apply conservative default
                 tokens_in = 500
                 tokens_out = 200
+            elif self.config.on_missing_usage == "cancel":
+                return Failure(
+                    make_governor_failure(
+                        code="REMOTE_USAGE_MISSING",
+                        message="Remote inference did not report required usage metrics",
+                        request_id=request_id,
+                        producer=self.producer,
+                    )
+                )
 
         entry = UsageEntry(
             request_id=request_id,
             timestamp=ts,
-            tokens_in=max(0, tokens_in),
-            tokens_out=max(0, tokens_out),
-            cost_usd=max(0.0, cost_usd),
+            tokens_in=tokens_in,
+            tokens_out=tokens_out,
+            cost_usd=cost_usd,
             is_remote=is_remote,
             is_background=is_background,
             provider=provider,
@@ -300,8 +470,12 @@ class InferenceBudgetGovernor:
             if e.timestamp.timestamp() >= cutoff and (not remote_only or e.is_remote)
         )
 
-    def _get_cost_in_period(self, current_time: datetime, days: int) -> float:
+    def _get_cost_in_period(
+        self, current_time: datetime, days: int, remote_only: bool = False
+    ) -> float:
         cutoff = current_time.timestamp() - (days * 86400)
         return sum(
-            e.cost_usd for e in self._usage_ledger if e.timestamp.timestamp() >= cutoff
+            e.cost_usd
+            for e in self._usage_ledger
+            if e.timestamp.timestamp() >= cutoff and (not remote_only or e.is_remote)
         )

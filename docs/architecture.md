@@ -104,12 +104,12 @@ Linux event
    → verified result
 ```
 
-## Planned assistant boundary
+## Assistant boundary
 
-The target Rich Assistant is a bounded application service, not a second
-cognitive kernel. One container-owned `AssistantService` will accept text,
-voice and future desktop interactions and construct every model call from
-explicit RAI state:
+The Rich Assistant is a bounded application service, not a second cognitive
+kernel. The container-owned `AssistantService` accepts text interactions and
+constructs every model call from explicit RAI state. Voice and additional
+desktop interaction surfaces remain planned:
 
 ```text
 ConversationTurn
@@ -130,10 +130,30 @@ ordinary chat does not create a task. If a turn proposes an operating-system
 action, the proposal still becomes a separate `CapabilityRequest` and passes
 through the existing policy, approval, invocation and verification path.
 
-The graph store, not a provider session, will own conversation and semantic
+The graph store, not a provider session, owns conversation and semantic
 memory. Provider conversation IDs, KV caches, hidden states, Coconut recurrence
 vectors and writable slots remain ephemeral backend state. The first replacement
 slice and its failure boundaries are specified in the [assistant architecture](assistant-architecture.md).
+
+The optional, experimental Antigravity `AssistantModelBackend` preserves this
+boundary for a remote model call. Context construction records the current turn
+and every retrieved source in an outbound manifest. The egress firewall rejects
+incomplete manifests and enforces data classes before the SDK starts. Retrieved
+state is serialized into user-role input, while the system role contains only
+trusted configuration and the static untrusted-context rule. The SDK is
+composed with subagents disabled and only its terminal `FINISH` builtin enabled.
+The trusted assistant approval/preview flow is not wired yet, so unapproved
+`PRIVATE` context currently fails closed.
+
+Experimental hybrid-routing infrastructure uses a separate finite
+`DecisionBackend`. Local Lemonade and hosted Jev adapters exchange a versioned
+option set and require a full validated probability distribution over that
+exact set. The standalone router applies data-egress and budget checks again
+before returning a remote route; an approval-requiring private route becomes
+`ASK`, while a forbidden or over-budget route fails closed. This router and the
+hosted Jev adapter are currently exercised directly by tests; they are not yet
+dispatched by `AssistantService` or the application container and do not
+constitute a completed Stage 6 product path.
 
 ## Relationship to GCAS and GAIA
 
