@@ -17,7 +17,9 @@ from typing import Any, AsyncIterator
 
 from returns.result import Failure, Result, Success
 
+from rai.inference.governor import InferenceBudgetGovernor
 from rai.kernel.compatibility import UNTRUSTED_CONTENT_INSTRUCTION
+from rai.kernel.egress import EgressFirewall
 from rai.kernel.ports import CancellationToken, LifecycleState
 from rai.kernel.records import ActionFailure, ProducerIdentity
 
@@ -48,6 +50,8 @@ class AntigravityAssistantModelBackend:
         model_name: str | None = None,
         max_output_tokens: int = 1024,
         temperature: float = 0.2,
+        governor: InferenceBudgetGovernor | None = None,
+        egress_firewall: EgressFirewall | None = None,
     ) -> None:
         self.model_name = (
             model_name
@@ -57,6 +61,8 @@ class AntigravityAssistantModelBackend:
         )
         self.max_output_tokens = max_output_tokens
         self.temperature = temperature
+        self.governor = governor or InferenceBudgetGovernor()
+        self.egress_firewall = egress_firewall or EgressFirewall()
         self._state = LifecycleState.CREATED
         self.producer = ProducerIdentity(
             producer_id="assistant-backend-antigravity",
@@ -206,6 +212,27 @@ class AntigravityAssistantModelBackend:
             *summary_projection,
         )
 
+        # Governor budget and limit check
+        estimated_in_tokens = (len(user_text) + len(sys_instructions)) // 4
+        gov_check = self.governor.check_request(
+            budget=request.budget,
+            request_id=request.request_id,
+            is_background=False,
+            is_remote=True,
+            estimated_tokens=estimated_in_tokens,
+        )
+        if isinstance(gov_check, Failure):
+            return gov_check
+
+        # Egress firewall validation
+        egress_check = self.egress_firewall.validate_egress(
+            manifest=request.context.manifest,
+            destination_is_remote=True,
+            request_id=request.request_id,
+        )
+        if isinstance(egress_check, Failure):
+            return egress_check
+
         try:
             from google.antigravity import Agent, LocalAgentConfig
             from google.antigravity.types import (
@@ -235,6 +262,16 @@ class AntigravityAssistantModelBackend:
                     )
                 response = await ag.chat(prompt=user_text)
                 raw_text = await response.text()
+
+            # Record usage in governor
+            tokens_out_est = len(raw_text) // 4
+            self.governor.record_usage(
+                request_id=request.request_id,
+                tokens_in=estimated_in_tokens,
+                tokens_out=tokens_out_est,
+                is_remote=True,
+                provider="antigravity-gemini",
+            )
 
         except Exception as exc:  # noqa: BLE001
             return Failure(
