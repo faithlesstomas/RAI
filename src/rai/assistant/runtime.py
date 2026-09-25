@@ -130,7 +130,14 @@ def resolve_assistant_config(  # noqa: PLR0913
             ),
         )
 
-    if not model:
+    if backend == "antigravity":
+        if not model:
+            model = (
+                os.environ.get("RAI_ANTIGRAVITY_MODEL")
+                or os.environ.get("GEMINI_MODEL")
+                or "gemini-2.5-flash"
+            )
+    elif not model:
         discovered = _discover_gguf(search_root or Path.cwd())
         if discovered is not None:
             model = str(discovered)
@@ -145,9 +152,9 @@ def resolve_assistant_config(  # noqa: PLR0913
     model = str(model)
     if backend == "auto":
         backend = "llama" if Path(model).suffix.lower() == ".gguf" else "ollama"
-    if backend not in {"llama", "ollama", "lemonade"}:
+    if backend not in {"llama", "ollama", "lemonade", "antigravity"}:
         raise AssistantConfigurationError(
-            f"Unsupported assistant backend {backend!r}; choose llama, ollama, or lemonade."
+            f"Unsupported assistant backend {backend!r}; choose llama, ollama, lemonade, or antigravity."
         )
 
     resolved_enable_thinking = bool(
@@ -232,6 +239,15 @@ def build_assistant_backend(runtime: AssistantRuntimeConfig) -> AssistantModelBa
     """Build a lifecycle-aware backend without a silent deterministic fallback."""
     if runtime.backend == "deterministic":
         return DeterministicAssistantBackend()
+
+    if runtime.backend == "antigravity":
+        from .backends.antigravity import AntigravityAssistantModelBackend
+
+        return AntigravityAssistantModelBackend(
+            model_name=runtime.model,
+            max_output_tokens=runtime.max_output_tokens,
+            temperature=runtime.temperature,
+        )
 
     engine_res = load_local_model(runtime.model, backend=runtime.backend)
     if isinstance(engine_res, Failure):

@@ -6,8 +6,13 @@ import asyncio
 from typing import Any, AsyncIterator, Dict, List, Optional
 from returns.result import Failure, Result, Success
 
-from google.antigravity import Agent, LocalAgentConfig
-from google.antigravity.types import CapabilitiesConfig, BuiltinTools, CustomSystemInstructions
+from google.antigravity import Agent, LocalAgentConfig, LocalOpenAIAgentConfig
+from google.antigravity.types import (
+    BuiltinTools,
+    CapabilitiesConfig,
+    CustomSystemInstructions,
+    SubagentConfig,
+)
 from rai.core import setup_tools
 from rai.config_manager import (
     load_config,
@@ -40,6 +45,38 @@ BACKEND_PRODUCER = ProducerIdentity(
     kind="agent-backend",
     version="1.0.0",
 )
+
+DEFAULT_ANTIGRAVITY_MODEL = "gemini-2.5-flash"
+DEFAULT_LEMONADE_URL = "http://127.0.0.1:13305/api/v1"
+
+
+async def resolve_lemonade_model(
+    base_url: str = DEFAULT_LEMONADE_URL,
+    explicit_model: Optional[str] = None,
+) -> str:
+    """Dynamically resolve the active model on Lemonade daemon, never hardcoding."""
+    if explicit_model:
+        return explicit_model
+    env_model = os.environ.get("RAI_LEMONADE_WORKER_MODEL") or os.environ.get("LEMONADE_MODEL")
+    if env_model:
+        return env_model
+    try:
+        import httpx
+
+        host = base_url.replace("/api/v1", "").rstrip("/")
+        async with httpx.AsyncClient(timeout=3.0) as client:
+            resp = await client.get(f"{host}/api/v1/models")
+            if resp.status_code == 200:
+                data = resp.json()
+                models = data.get("data", [])
+                if models and isinstance(models, list):
+                    first_model = models[0].get("id") or models[0].get("checkpoint")
+                    if first_model:
+                        return str(first_model)
+    except Exception as exc:  # noqa: BLE001
+        logger.debug("Failed to query Lemonade for active models: %s", exc)
+    return "default"
+
 
 class AntigravityBackend:
     """
@@ -183,6 +220,73 @@ class AntigravityBackend:
             except asyncio.QueueEmpty:
                 break
 
+    async def _build_agent_config(
+        self,
+        agent_config: Dict[str, Any],
+        agent_tools: List[Any],
+        custom_sys_inst: Optional[CustomSystemInstructions],
+        sys_inst: str,
+        actual_conv_id: Optional[str],
+    ) -> Any:
+        use_lemonade = (
+            agent_config.get("backend") == "lemonade"
+            or agent_config.get("use_lemonade")
+            or os.environ.get("RAI_ANTIGRAVITY_WORKER_BACKEND") == "lemonade"
+        )
+        lemonade_base_url = (
+            agent_config.get("lemonade_url")
+            or os.environ.get("LEMONADE_BASE_URL")
+            or DEFAULT_LEMONADE_URL
+        )
+
+        if use_lemonade:
+            resolved_worker_model = await resolve_lemonade_model(
+                base_url=lemonade_base_url,
+                explicit_model=agent_config.get("worker_model") or agent_config.get("model"),
+            )
+            return LocalOpenAIAgentConfig(
+                base_url=lemonade_base_url,
+                model=resolved_worker_model,
+                system_instructions=custom_sys_inst,
+                tools=agent_tools,
+                conversation_id=actual_conv_id,
+                save_dir=TRAJECTORY_DIR,
+                capabilities=CapabilitiesConfig(
+                    disabled_tools=[BuiltinTools.RUN_COMMAND]
+                ),
+            )
+
+        main_model = (
+            agent_config.get("model")
+            or os.environ.get("RAI_ANTIGRAVITY_MODEL")
+            or os.environ.get("GEMINI_MODEL")
+            or DEFAULT_ANTIGRAVITY_MODEL
+        )
+
+        subagents = []
+        if agent_config.get("enable_local_worker", False):
+            subagents.append(
+                SubagentConfig(
+                    name="local_worker",
+                    description="Local subagent worker running on local Lemonade daemon",
+                    system_instructions=sys_inst,
+                    capabilities=CapabilitiesConfig(disabled_tools=[BuiltinTools.RUN_COMMAND]),
+                    tools=agent_tools,
+                )
+            )
+
+        return LocalAgentConfig(
+            system_instructions=custom_sys_inst,
+            model=main_model,
+            tools=agent_tools,
+            conversation_id=actual_conv_id,
+            save_dir=TRAJECTORY_DIR,
+            subagents=subagents or None,
+            capabilities=CapabilitiesConfig(
+                disabled_tools=[BuiltinTools.RUN_COMMAND]
+            ),
+        )
+
     async def run_chain(
         self,
         chain_input: str,
@@ -238,16 +342,9 @@ class AntigravityBackend:
                 )
             custom_sys_inst = CustomSystemInstructions(text=sys_inst) if sys_inst else None
 
-            # Construct LocalAgentConfig
-            config = LocalAgentConfig(
-                system_instructions=custom_sys_inst,
-                model=agent_config.get("model", "gemini-2.5-flash"),
-                tools=agent_tools,
-                conversation_id=actual_conv_id,
-                save_dir=TRAJECTORY_DIR,
-                capabilities=CapabilitiesConfig(
-                    disabled_tools=[BuiltinTools.RUN_COMMAND]
-                )
+            # Construct agent config
+            config = await self._build_agent_config(
+                agent_config, agent_tools, custom_sys_inst, sys_inst, actual_conv_id
             )
 
             # Start agent session
@@ -347,12 +444,8 @@ class AntigravityBackend:
                 )
             custom_sys_inst = CustomSystemInstructions(text=sys_inst) if sys_inst else None
 
-            config = LocalAgentConfig(
-                system_instructions=custom_sys_inst,
-                model=agent_config.get("model", "gemini-2.5-flash"),
-                tools=agent_tools,
-                conversation_id=actual_conv_id,
-                save_dir=TRAJECTORY_DIR,
+            config = await self._build_agent_config(
+                agent_config, agent_tools, custom_sys_inst, sys_inst, actual_conv_id
             )
 
             accumulated_response = ""
