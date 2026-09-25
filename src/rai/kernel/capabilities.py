@@ -196,6 +196,8 @@ def validate_arguments(schema: dict[str, Any], arguments: dict[str, Any]) -> str
         "array": list,
     }
     for name, value in arguments.items():
+        if value is None and name not in required:
+            continue
         property_schema = properties.get(name)
         if property_schema is None:
             continue

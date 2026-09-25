@@ -20,6 +20,7 @@ from rai.config_manager import (
 from rai.exceptions import ChainExecutionError
 from rai.kernel.ports import CancellationToken, LifecycleState
 from rai.kernel.audit import JsonlAuditLedger
+from rai.kernel.compatibility import UNTRUSTED_CONTENT_INSTRUCTION
 from rai.kernel.defaults import HitlApprovalBroker, create_default_capability_registry, isolation_available
 from rai.kernel.policy import PolicyEngine
 from rai.kernel.service import CapabilityService
@@ -223,7 +224,18 @@ class AntigravityBackend:
             actual_conv_id = None
 
         try:
-            sys_inst = agent_config.get("system") or agent_config.get("system_instructions") or agent_config.get("system_prompt")
+            sys_inst = (
+                agent_config.get("system")
+                or agent_config.get("system_instructions")
+                or agent_config.get("system_prompt")
+                or ""
+            )
+            if UNTRUSTED_CONTENT_INSTRUCTION not in sys_inst:
+                sys_inst = (
+                    f"{sys_inst}\n\n{UNTRUSTED_CONTENT_INSTRUCTION}".strip()
+                    if sys_inst
+                    else UNTRUSTED_CONTENT_INSTRUCTION
+                )
             custom_sys_inst = CustomSystemInstructions(text=sys_inst) if sys_inst else None
 
             # Construct LocalAgentConfig
@@ -321,7 +333,18 @@ class AntigravityBackend:
             actual_conv_id = None
 
         try:
-            sys_inst = agent_config.get("system") or agent_config.get("system_instructions") or agent_config.get("system_prompt")
+            sys_inst = (
+                agent_config.get("system")
+                or agent_config.get("system_instructions")
+                or agent_config.get("system_prompt")
+                or ""
+            )
+            if UNTRUSTED_CONTENT_INSTRUCTION not in sys_inst:
+                sys_inst = (
+                    f"{sys_inst}\n\n{UNTRUSTED_CONTENT_INSTRUCTION}".strip()
+                    if sys_inst
+                    else UNTRUSTED_CONTENT_INSTRUCTION
+                )
             custom_sys_inst = CustomSystemInstructions(text=sys_inst) if sys_inst else None
 
             config = LocalAgentConfig(

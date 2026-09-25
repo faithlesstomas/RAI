@@ -34,8 +34,18 @@ async def test_mcp_list_tools_comes_from_capability_registry() -> None:
     names = {tool.name for tool in tools}
     assert names == {
         "calculate",
+        "client.eval_scheme",
         "finance.quote",
         "get_desktop_weather",
+        "gitlab.create_issue",
+        "gitlab.create_merge_request",
+        "gitlab.get_file_content",
+        "gitlab.get_issue",
+        "gitlab.get_merge_request",
+        "gitlab.get_project",
+        "gitlab.list_issues",
+        "gitlab.list_merge_requests",
+        "gitlab.list_projects",
         "run_python_code",
         "run_shell_command",
         "search.arxiv",
