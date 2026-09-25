@@ -48,6 +48,7 @@ def policy_wrapped_handlers(
             **kwargs: Any,
         ) -> str:  # noqa: ANN401
             caller_dc = kwargs.pop("__data_class", None)
+            caller_target = kwargs.pop("__target_resource", None)
             effective_dc = max_data_class(data_class, caller_dc)
 
             bound = inspect.signature(__raw).bind(*args, **kwargs)
@@ -64,7 +65,7 @@ def policy_wrapped_handlers(
                 arguments,
                 actor=actor,
                 data_class=effective_dc,
-                target_resource=f"capability://{__capability.name}",
+                target_resource=caller_target or f"capability://{__capability.name}",
             )
             envelope = await invoke_envelope(service, request)
             if not envelope.ok:
