@@ -2,6 +2,88 @@
 
 <!-- version list -->
 
+## v0.10.0 (2026-10-02)
+
+### Bug Fixes
+
+- **assistant**: Catch inference timeout on python 3.10
+  ([`29a42e7`](https://gitlab.com/tk-lab1/ai/rai/-/commit/29a42e72aa510c33f3bfa598ac072a564dd2cd20))
+
+- **assistant**: Complete chat template conformance
+  ([`8eecf12`](https://gitlab.com/tk-lab1/ai/rai/-/commit/8eecf12747be1d0028afdd0e13f7b6695e98bf0a))
+
+- **assistant**: Complete M4-M6 memory audit fixes and update v2 benchmark evidence
+  ([`b6e0e0b`](https://gitlab.com/tk-lab1/ai/rai/-/commit/b6e0e0b229808c726fb4492e09fcae372346a6eb))
+
+- **assistant**: Complete M4-M6 memory audit fixes and update v2 benchmark evidence
+  ([`ede282b`](https://gitlab.com/tk-lab1/ai/rai/-/commit/ede282b0755ab60cb2c2349cd5fc77181e9a6a9b))
+
+- **assistant**: Expand judge abstention markers for natural Polish phrasing
+  ([`a707da9`](https://gitlab.com/tk-lab1/ai/rai/-/commit/a707da9b57439162f485ce1f3ed32f254ae48949))
+
+- **assistant**: Harden context rot benchmark protocol
+  ([`c1a88c0`](https://gitlab.com/tk-lab1/ai/rai/-/commit/c1a88c05d50ea3b94ef593973fb4569de3f00006))
+
+- **assistant**: Harden local backend boundaries
+  ([`a24cad7`](https://gitlab.com/tk-lab1/ai/rai/-/commit/a24cad76137bc92c3d4006ee86730eaa254e3a25))
+
+- **client**: Validate Emacs package in CI
+  ([`1418f11`](https://gitlab.com/tk-lab1/ai/rai/-/commit/1418f11b95a042b1e7294dcd79cbfe5a27b1a029))
+
+- **emacs**: Support context snapshots on Emacs 28
+  ([`8c44cde`](https://gitlab.com/tk-lab1/ai/rai/-/commit/8c44cde5e8c569d4813ee301150bc9059bc67e7b))
+
+- **inference**: Handle reasoning_content and display tokens_out in context rot report
+  ([`1a63b35`](https://gitlab.com/tk-lab1/ai/rai/-/commit/1a63b35773745e2b4b02846ce658eb314388d750))
+
+- **inference**: Prioritize chat completions in LemonadeEngine and update conversational memory
+  roadmap
+  ([`3cd67b7`](https://gitlab.com/tk-lab1/ai/rai/-/commit/3cd67b7a1cdba2db2ffe7f443702b99808b80970))
+
+### Features
+
+- **assistant**: Add context rot and long-context needle-in-a-haystack benchmark
+  ([`c55a661`](https://gitlab.com/tk-lab1/ai/rai/-/commit/c55a661b22dd664c3baf01ec4eea337384e36e37))
+
+- **assistant**: Add evidence-first general memory
+  ([`af761bf`](https://gitlab.com/tk-lab1/ai/rai/-/commit/af761bf104e404d5108446ce65cadef5a46351ce))
+
+- **assistant**: Add grounded summary evaluation
+  ([`641736b`](https://gitlab.com/tk-lab1/ai/rai/-/commit/641736b8fb0319bf434a55f1f6484ae87edd5c2c))
+
+- **assistant**: Add versioned memory benchmark
+  ([`e55c7f4`](https://gitlab.com/tk-lab1/ai/rai/-/commit/e55c7f4d789c3b10f2610e2980ab312d11316afd))
+
+- **assistant**: Complete memory evaluation through M6
+  ([`9312db7`](https://gitlab.com/tk-lab1/ai/rai/-/commit/9312db7a8bb6d8b26a189aba72d47a99b099370f))
+
+- **assistant**: Deliver usable memory-backed MVP
+  ([`16e40b6`](https://gitlab.com/tk-lab1/ai/rai/-/commit/16e40b6b1907b5e9e7fc9d4a8099a352ba83b81e))
+
+- **assistant**: Evaluate memory sufficiency and hierarchical domain scopes
+  ([`f7ca053`](https://gitlab.com/tk-lab1/ai/rai/-/commit/f7ca053083f441bb73300041117f192b4d42bf7c))
+
+- **assistant**: Implement M7 structured chat templating and conversational benchmark
+  ([`2dc795e`](https://gitlab.com/tk-lab1/ai/rai/-/commit/2dc795e743eed85bef3ede7e31c3e6e1c3b72c9e))
+
+- **assistant**: Scope and evaluate memory retrieval
+  ([`ba6f8e5`](https://gitlab.com/tk-lab1/ai/rai/-/commit/ba6f8e5bb145c6b23a4c98f4da6666be923c839f))
+
+- **assistant**: Unify CoT reasoning architecture and update benchmarks up to 4B
+  ([`e8a8f2e`](https://gitlab.com/tk-lab1/ai/rai/-/commit/e8a8f2e0a2a509f86f1d92f4784aa9718555f2a7))
+
+- **client**: Add provider-neutral Emacs assistant package
+  ([`84ba90e`](https://gitlab.com/tk-lab1/ai/rai/-/commit/84ba90e3ed32ea69c183aa0863ab7a984f2629ab))
+
+- **inference**: Add Lemonade Server multimodal backend, speech adapters, and neural retrieval
+  ([`17abfce`](https://gitlab.com/tk-lab1/ai/rai/-/commit/17abfcedb4f8bbfd8ff2f07ade5d812acf3a6630))
+
+### Breaking Changes
+
+- **assistant**: Remove the ambiguous local backend alias; use llama, ollama, or lemonade
+  explicitly.
+
+
 ## v0.9.0 (2026-09-15)
 
 ### Bug Fixes
