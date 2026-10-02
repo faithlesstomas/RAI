@@ -33,7 +33,7 @@ before_script:
   - apt-get update -y
   - apt-get install -y libgirepository1.0-dev libcairo2-dev pkg-config python3-dev gir1.2-gtk-3.0
   - pip install uv
-  - uv sync --frozen --extra dev --extra docs
+  - uv sync --locked --extra dev --extra docs
 
 .branch_quality_job:
   rules:
@@ -49,7 +49,7 @@ before_script:
     GIT_DEPTH: 0
     PYTHON_SEMANTIC_RELEASE_VERSION: "10.6.2"
   before_script:
-    - pip install "python-semantic-release==$PYTHON_SEMANTIC_RELEASE_VERSION"
+    - pip install uv "python-semantic-release==$PYTHON_SEMANTIC_RELEASE_VERSION"
     - git config --global user.name "semantic-release-bot"
     - git config --global user.email "semantic-release@rai-project.com"
     - git checkout -B "$CI_COMMIT_REF_NAME" "$CI_COMMIT_SHA"
@@ -67,7 +67,7 @@ release:
   extends: .release_job
   resource_group: release-$CI_COMMIT_REF_NAME
   script:
-    - semantic-release --strict version --skip-build
+    - semantic-release --strict version
 
 critical_lint:
   extends: .branch_quality_job

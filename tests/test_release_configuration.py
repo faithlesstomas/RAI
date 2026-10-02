@@ -58,12 +58,14 @@ def test_ci_has_one_version_producing_release_job() -> None:
     assert "release_plan:" in pipeline
     assert "\nrelease:\n" in pipeline
     assert pipeline.count("semantic-release --strict version") == 1
-    assert "semantic-release --strict version --skip-build" in pipeline
+    assert "semantic-release --strict version\n" in pipeline
+    assert "--skip-build" not in pipeline
     assert "semantic-release --noop --strict version --print" in pipeline
     assert 'glab release upload "$CI_COMMIT_TAG"' in pipeline
     assert "--as-prerelease" not in pipeline
     assert "release_guard.py" not in pipeline
     assert "python-semantic-release==$PYTHON_SEMANTIC_RELEASE_VERSION" in pipeline
+    assert 'pip install uv "python-semantic-release==' in pipeline
     assert "resource_group: release-$CI_COMMIT_REF_NAME" in pipeline
 
 
@@ -121,6 +123,15 @@ def test_release_artifacts_are_built_once_in_the_tag_pipeline() -> None:
     config = _release_config()
     pipeline = Path(".gitlab-ci.yml").read_text(encoding="utf-8")
 
-    assert "build_command" not in config
+    assert config["build_command"] == "uv lock"
+    assert config["assets"] == ["uv.lock"]
     assert "uv build --out-dir build/pypi" in pipeline
-    assert "semantic-release --strict version --skip-build" in pipeline
+    assert "semantic-release --strict version\n" in pipeline
+    assert "--skip-build" not in pipeline
+
+
+def test_ci_rejects_a_stale_lockfile() -> None:
+    pipeline = Path(".gitlab-ci.yml").read_text(encoding="utf-8")
+
+    assert "uv sync --locked --extra dev --extra docs" in pipeline
+    assert "uv sync --frozen" not in pipeline

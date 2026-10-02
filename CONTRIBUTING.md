@@ -106,7 +106,9 @@ pyproject.toml                 [project].version
 src/rai/__init__.py            __version__
 ```
 
-`python-semantic-release` updates both locations. Runtime surfaces, including
+`python-semantic-release` updates both locations, then runs `uv lock` and includes
+`uv.lock` in the same release commit. CI uses `uv sync --locked` to reject a
+stale lockfile instead of silently repairing it. Runtime surfaces, including
 `rai --version`, FastAPI metadata and generated Sphinx documentation, must read
 the package `__version__` instead of maintaining another literal. Git release
 tags use the corresponding annotated name `vX.Y.Z`; the `v` belongs to the tag,
@@ -254,8 +256,10 @@ The normal process is:
    uses strict mode, so it fails instead of silently publishing when no
    releasable Conventional Commit exists. It updates `pyproject.toml`,
    `src/rai/__init__.py` and `CHANGELOG.md`, creates and pushes the release
-   commit and tag, and publishes the GitLab release notes. Package building is
-   deliberately skipped in this branch pipeline. The push of the generated
+   commit and tag, and publishes the GitLab release notes. The release build hook
+   runs only `uv lock`; wheel and source archive building
+   remains in the tag pipeline. Do not pass `--skip-build`, which would skip
+   lockfile synchronization. The push of the generated
    release commit does not create another branch pipeline. A release resource
    group serializes release jobs for the same branch so concurrent maintainers
    cannot version one release channel at the same time.
@@ -306,6 +310,26 @@ locations and `CHANGELOG.md` in one `chore(release): X.Y.Z` commit, build and
 verify artifacts, create the annotated `vX.Y.Z` tag, and push the commit and tag
 together. Do not combine manual and semantic-release flows for the same
 release.
+
+### Diagnosing an installed version mismatch
+
+TestPyPI and PyPI are separate indexes. Installing without an upgrade can retain
+an already installed version, and `rai` on PATH can belong to another environment.
+Verify a candidate in a fresh environment, installing its exact version explicitly:
+
+```bash
+python -m venv /tmp/rai-candidate
+/tmp/rai-candidate/bin/python -m pip install --index-url https://pypi.org/simple rich-ai
+/tmp/rai-candidate/bin/python -m pip install --no-deps --index-url https://test.pypi.org/simple --upgrade rich-ai==0.10.0
+/tmp/rai-candidate/bin/python -c "import rai; from importlib.metadata import version; print(version('rich-ai'), rai.__version__, rai.__file__)"
+/tmp/rai-candidate/bin/rai --version
+```
+
+Replace `0.10.0` with the candidate under review. The first install supplies
+dependencies from PyPI; the second selects only the candidate from TestPyPI.
+A wheel whose metadata and imported version agree cannot explain an older CLI
+unless a different installation or executable is being used.
+
 
 ## GitLab workflow
 

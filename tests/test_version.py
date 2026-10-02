@@ -59,7 +59,7 @@ def test_semantic_release_only_publishes_python_distributions() -> None:
     with Path("pyproject.toml").open("rb") as stream:
         release_config = tomllib.load(stream)["tool"]["semantic_release"]
 
-    assert "build_command" not in release_config
+    assert release_config["build_command"] == "uv lock"
     assert release_config["publish"]["dist_glob_patterns"] == [
         "build/pypi/*.whl",
         "build/pypi/*.tar.gz",
@@ -86,3 +86,19 @@ def test_rich_history_entry_points_and_extension_assets_are_packaged() -> None:
     assets = files("rai.history").joinpath("gnome_extension")
     assert assets.joinpath("extension.js").is_file()
     assert assets.joinpath("metadata.json").is_file()
+
+
+def test_lockfile_project_and_runtime_versions_match() -> None:
+    """Release commits must keep frozen installations on the canonical version."""
+    with Path("pyproject.toml").open("rb") as stream:
+        project_version = tomllib.load(stream)["project"]["version"]
+    with Path("uv.lock").open("rb") as stream:
+        packages = tomllib.load(stream)["package"]
+    local_packages = [
+        package for package in packages
+        if package["name"] == "rich-ai" and package.get("source") == {"editable": "."}
+    ]
+
+    assert len(local_packages) == 1
+    assert Version(local_packages[0]["version"]) == Version(project_version)
+    assert Version(project_version) == Version(__version__)
