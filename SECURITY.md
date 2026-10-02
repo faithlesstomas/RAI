@@ -107,6 +107,12 @@ remains a Stage 6 gate. The approval/preview workflow is not connected to the
 assistant runtime yet, so `PRIVATE` context fails closed unless a trusted caller
 supplies an explicitly approved manifest.
 
+The Antigravity timeout covers SDK session entry, chat, response reading and
+session exit on every supported Python version, including 3.10. Expiry cancels
+the SDK coroutine and returns `ANTIGRAVITY_TIMEOUT`. Cancellation is cooperative:
+an SDK that blocks the event loop or suppresses cancellation can delay cleanup;
+this is not a process-isolation boundary.
+
 Finite decision backends must return a provider-produced distribution over
 exactly the declared option identifiers. The Lemonade and hosted Jev adapters
 make bounded HTTP calls, validate status, distribution, model revision, usage

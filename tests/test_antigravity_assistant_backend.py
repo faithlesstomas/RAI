@@ -1,5 +1,6 @@
 """Unit tests for AntigravityAssistantModelBackend and Lemonade worker integration."""
 
+import asyncio
 import os
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -316,3 +317,41 @@ async def test_antigravity_agent_backend_lemonade_worker_config() -> None:
         kwargs = mock_openai_config.call_args.kwargs
         assert kwargs.get("base_url") == "http://127.0.0.1:13305/api/v1"
         assert kwargs.get("model") == "qwen-local-coder"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("phase", ["enter", "chat", "text", "exit"])
+async def test_antigravity_timeout_cancels_the_entire_sdk_session(phase: str) -> None:
+    backend = AntigravityAssistantModelBackend()
+    request = _make_inference_request("Hello")
+    request = request.model_copy(update={
+        "budget": request.budget.model_copy(update={"max_latency_seconds": 0.01}),
+    })
+    cancelled = asyncio.Event()
+
+    async def stall(*args: object, **kwargs: object) -> None:
+        try:
+            await asyncio.Event().wait()
+        finally:
+            cancelled.set()
+
+    with patch("google.antigravity.Agent") as agent_class:
+        session = agent_class.return_value
+        agent = session.__aenter__.return_value
+        response = MagicMock()
+        response.text = AsyncMock(return_value="Hello")
+        agent.chat = AsyncMock(return_value=response)
+        target = {
+            "enter": session.__aenter__,
+            "chat": agent.chat,
+            "text": response.text,
+            "exit": session.__aexit__,
+        }[phase]
+        target.side_effect = stall
+        result = await backend.generate(request, CancellationToken())
+
+    assert isinstance(result, Failure)
+    assert result.failure().code == "ANTIGRAVITY_TIMEOUT"
+    assert cancelled.is_set()
+    if phase != "enter":
+        session.__aexit__.assert_awaited_once()

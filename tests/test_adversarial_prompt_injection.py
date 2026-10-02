@@ -177,9 +177,17 @@ async def test_egress_firewall_prevents_secret_exfiltration_via_decision_query()
     assert result.failure().code == "EGRESS_DATA_CLASS_FORBIDDEN"
 
 
-def test_setup_tools_registers_zero_raw_unwrapped_tools() -> None:
+@pytest.mark.parametrize("has_token", [False, True])
+def test_setup_tools_registers_zero_raw_unwrapped_tools(
+    monkeypatch: pytest.MonkeyPatch, has_token: bool,
+) -> None:
     """Ensures setup_tools passes ZERO unmonitored functions to any LLM or agent runtime."""
     import inspect
+
+    if has_token:
+        monkeypatch.setenv("GITLAB_ACCESS_TOKEN", "synthetic-test-token")
+    else:
+        monkeypatch.delenv("GITLAB_ACCESS_TOKEN", raising=False)
 
     tools, _ = setup_tools(
         enable_tools=True,
@@ -187,6 +195,8 @@ def test_setup_tools_registers_zero_raw_unwrapped_tools() -> None:
         enabled_tool_names=["ClientTools", "GitlabTools"],
     )
     # 1 eval_scheme + 9 gitlab tools = 10 tools
-    assert len(tools) == 10
+    assert len(tools) == (10 if has_token else 1)
     for tool_fn in tools:
         assert inspect.iscoroutinefunction(tool_fn)
+        assert hasattr(tool_fn, "__wrapped__")
+        assert tool_fn is not tool_fn.__wrapped__

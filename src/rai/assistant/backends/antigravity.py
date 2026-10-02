@@ -270,7 +270,7 @@ class AntigravityAssistantModelBackend:
             timeout_seconds = min(
                 request.budget.max_latency_seconds, deadline_remaining
             )
-            async with asyncio.timeout(timeout_seconds):
+            async def run_inference() -> Result[str, ActionFailure]:
                 async with Agent(config) as ag:
                     if cancellation.cancelled:
                         return Failure(
@@ -281,7 +281,12 @@ class AntigravityAssistantModelBackend:
                             )
                         )
                     response = await ag.chat(prompt=model_prompt)
-                    raw_text = await response.text()
+                    return Success(await response.text())
+
+            inference = await asyncio.wait_for(run_inference(), timeout=timeout_seconds)
+            if isinstance(inference, Failure):
+                return inference
+            raw_text = inference.unwrap()
 
             # Record usage in governor
             tokens_out_est = len(raw_text) // 4
@@ -293,7 +298,7 @@ class AntigravityAssistantModelBackend:
                 provider="antigravity-gemini",
             )
 
-        except TimeoutError:
+        except (TimeoutError, asyncio.TimeoutError):
             return Failure(
                 make_assistant_failure(
                     code="ANTIGRAVITY_TIMEOUT",
