@@ -2,6 +2,35 @@
 
 <!-- version list -->
 
+## v0.11.0 (2026-10-02)
+
+### Bug Fixes
+
+- **ci**: Restore security tests across supported Python versions
+  ([`1a689b1`](https://gitlab.com/tk-lab1/ai/rai/-/commit/1a689b1a19a4618b40db6039e192aa0e824cfddb))
+
+- **release**: Synchronize lockfile before tagging releases
+  ([`ce3e549`](https://gitlab.com/tk-lab1/ai/rai/-/commit/ce3e54996d2d0814bcead8a2b92c4557b2f72fd0))
+
+- **security**: Harden hybrid inference boundaries
+  ([`02eac8e`](https://gitlab.com/tk-lab1/ai/rai/-/commit/02eac8e0acb022853336f1dc97e30c4cb78f330b))
+
+### Features
+
+- **assistant**: Implement AntigravityAssistantModelBackend and Lemonade worker integration
+  ([`3a07c98`](https://gitlab.com/tk-lab1/ai/rai/-/commit/3a07c98a5ee0e8acb32eba679c900167f2a6be27))
+
+- **governor**: Implement InferenceBudgetGovernor, EgressFirewall, and usage accounting
+  ([`7dc8a00`](https://gitlab.com/tk-lab1/ai/rai/-/commit/7dc8a00d30ebab83a92796f05d95b5f72d26bb6b))
+
+- **routing**: Implement DecisionBackend, HybridRouter, and adversarial red-teaming test suite
+  ([`3166b5b`](https://gitlab.com/tk-lab1/ai/rai/-/commit/3166b5be9f68885c718d5bf1bb6d958c877ce031))
+
+- **security**: Harden tool execution, register gitlab/client capabilities, and wrap untrusted
+  content
+  ([`b126132`](https://gitlab.com/tk-lab1/ai/rai/-/commit/b126132c61d59bb93af1f36a8a52c80baee3c97a))
+
+
 ## v0.10.0 (2026-10-02)
 
 ### Bug Fixes
