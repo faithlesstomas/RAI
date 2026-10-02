@@ -17,6 +17,7 @@ from .records import (
     DataClass,
     PolicyDecision,
     ProducerIdentity,
+    max_data_class,
 )
 from .service import CapabilityService
 
@@ -42,13 +43,18 @@ def normalize_request(  # noqa: PLR0913
     data_class: DataClass = DataClass.LOCAL,
     target_resource: str | None = None,
 ) -> CapabilityRequest:
+    arg_dc = arguments.get("__data_class") or arguments.get("_data_class")
+    effective_data_class = max_data_class(data_class, arg_dc)
+    clean_arguments = {
+        k: v for k, v in arguments.items() if k not in {"__data_class", "_data_class"}
+    }
     values: dict[str, Any] = {
         "producer": actor,
         "actor": actor,
         "correlation_id": correlation_id,
         "capability": descriptor.name,
-        "arguments": arguments,
-        "data_class": data_class,
+        "arguments": clean_arguments,
+        "data_class": effective_data_class,
         "target_resource": target_resource or f"capability://{descriptor.name}",
         "requested_side_effects": descriptor.side_effects,
         "isolation": descriptor.isolation,

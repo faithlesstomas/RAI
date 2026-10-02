@@ -6,6 +6,8 @@ import re
 from typing import Any, Dict, List, Optional
 from returns.result import Result, Success, Failure
 
+from rai.kernel.compatibility import UNTRUSTED_CONTENT_INSTRUCTION, wrap_untrusted_content
+
 def format_tools_to_system_prompt(tools: List[Dict[str, Any]]) -> str:
     """
     Formats a list of tool definitions (JSON schema) into a system prompt addition.
@@ -33,6 +35,8 @@ Tool Definitions:
 {tool_desc}
 
 If you do not need to use a tool, just respond with natural text.
+
+{UNTRUSTED_CONTENT_INSTRUCTION}
 [/AVAILABLE TOOLS]
 """
     return prompt

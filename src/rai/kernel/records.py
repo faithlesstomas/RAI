@@ -62,6 +62,33 @@ class DataClass(str, Enum):
     BLOCKED = "BLOCKED"
 
 
+DATA_CLASS_LEVELS: dict[DataClass, int] = {
+    DataClass.PUBLIC: 0,
+    DataClass.LOCAL: 1,
+    DataClass.PRIVATE: 2,
+    DataClass.SECRET: 3,
+    DataClass.BLOCKED: 4,
+}
+
+
+def max_data_class(*classes: DataClass | str | None) -> DataClass:
+    """Resolve the highest data sensitivity classification to prevent taint degradation."""
+    highest: DataClass | None = None
+    highest_level = -1
+    for c in classes:
+        if c is None:
+            continue
+        try:
+            dc = DataClass(c) if isinstance(c, str) else c
+        except ValueError:
+            continue
+        level = DATA_CLASS_LEVELS.get(dc, -1)
+        if level > highest_level:
+            highest = dc
+            highest_level = level
+    return highest or DataClass.LOCAL
+
+
 class RiskClass(str, Enum):
     """Risk associated with invoking a capability."""
 

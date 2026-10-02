@@ -26,6 +26,33 @@ from rai.kernel.records import DataClass, ProducerIdentity, _utc_now
 PRODUCER = ProducerIdentity(producer_id="service-test", kind="test", version="1.0.0")
 
 
+@pytest.mark.asyncio
+async def test_context_manifest_classifies_current_turn_for_egress() -> None:
+    store = AsyncMock()
+    store.get_recent_reply_chain.return_value = Success(())
+    store.retrieve_relevant_memories.return_value = Success(())
+    store.retrieve_relevant_turns.return_value = Success(())
+    builder = AssistantContextBuilder(store=store)
+    turn = ConversationTurn(
+        record_id="current-public-turn",
+        producer=PRODUCER,
+        session_id="session-egress",
+        role="user",
+        text="Public question",
+        data_class=DataClass.PUBLIC,
+    )
+
+    result = await builder.build_context(turn)
+
+    assert isinstance(result, Success)
+    package = result.unwrap()
+    current_item = next(
+        item for item in package.manifest.items if item.layer == "current_turn"
+    )
+    assert current_item.source_id == turn.record_id
+    assert current_item.data_class == DataClass.PUBLIC
+
+
 @pytest.fixture
 def service(tmp_path: Path) -> AssistantService:
     store = SQLiteMemoryGraphStore(path=tmp_path / "memory_graph.sqlite3")

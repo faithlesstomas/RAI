@@ -22,10 +22,15 @@ class ResponseDict(TypedDict, total=False):
     content: str
     tool_calls: List[object]
 
-from rai.tools.desktop import get_desktop_adapter
 from rai.kernel.capabilities import CapabilityRegistry
-from rai.kernel.defaults import create_default_capability_registry
 from rai.kernel.compatibility import policy_wrapped_handlers
+from rai.kernel.defaults import (
+    HitlApprovalBroker,
+    create_default_capability_registry,
+    isolation_available,
+)
+from rai.kernel.audit import JsonlAuditLedger
+from rai.kernel.policy import PolicyEngine
 from rai.kernel.service import CapabilityService
 
 # --- Globals ---
@@ -34,7 +39,7 @@ error_console = Console(stderr=True)
 active_status = None
 
 # --- Tool and Model Setup ---
-def setup_tools(  # noqa: PLR0912 # pylint: disable=too-many-branches, too-many-locals
+def setup_tools(
     enable_tools: bool,
     quiet: bool,
     enabled_tool_names: Optional[List[str]] = None,
@@ -42,95 +47,46 @@ def setup_tools(  # noqa: PLR0912 # pylint: disable=too-many-branches, too-many-
     capability_service: CapabilityService | None = None,
     capability_registry: CapabilityRegistry | None = None,
 ) -> Tuple[List[Any], List[str]]:
-    """Sets up the tools for the agent."""
+    """Sets up the tools for the agent with strict capability policy mediation."""
     messages = []
     agent_tools: List[Any] = []
 
     if not enable_tools:
         return agent_tools, messages
 
-    active_registry = (
-        capability_service.registry
-        if capability_service is not None
-        else capability_registry or create_default_capability_registry()
+    active_service = capability_service or CapabilityService(
+        capability_registry or create_default_capability_registry(),
+        PolicyEngine(isolation_available=isolation_available),
+        JsonlAuditLedger(),
+        HitlApprovalBroker(),
     )
+    active_registry = active_service.registry
     tools_to_enable = (
         enabled_tool_names
         if enabled_tool_names is not None
         else list(active_registry.compatibility_groups())
-        + ["ClientTools", "GitlabTools"]
     )
 
     for tool_name in tools_to_enable:
-        if capability_service is not None:
-            secured_handlers = policy_wrapped_handlers(capability_service, tool_name)
-            if secured_handlers:
-                agent_tools.extend(secured_handlers)
-                continue
-        # Handle Desktop tools
-        if tool_name in [
-            "DesktopNotificationTool", "DesktopScreenshotTool", "DesktopWeatherTool"
-        ]:
-            try:
-                adapter = get_desktop_adapter()
-                if tool_name == "DesktopNotificationTool":
-                    agent_tools.append(adapter.send_notification)
-                elif tool_name == "DesktopScreenshotTool":
-                    agent_tools.append(adapter.take_screenshot)
-                elif tool_name == "DesktopWeatherTool":
-                    agent_tools.append(adapter.weather)
-                logger.debug("%s successfully enabled.", tool_name)
-            except Exception as e:
-                logger.debug("Could not enable %s: %s", tool_name, e)
-            continue
-
-        # Handle ClientTools
-        if tool_name == "ClientTools":
-            try:
-                from rai.tools.client import eval_scheme
-                agent_tools.append(eval_scheme)
-                logger.debug("ClientTools successfully enabled.")
-            except Exception as e:
-                logger.debug("Could not enable ClientTools: %s", e)
-            continue
-
-        # Handle GitlabTools
-        if tool_name == "GitlabTools":
-            if not os.getenv("GITLAB_ACCESS_TOKEN"):
-                if not quiet and not has_prompt:
-                    messages.append(
-                        "[bold yellow]WARNING: Missing GITLAB_ACCESS_TOKEN env variable. "
-                        "GitlabTools will be disabled![/bold yellow]"
-                    )
-                continue
-            try:
-                from rai.tools.gitlab import GitlabTools
-                gitlab_inst = GitlabTools()
-                # Get all public methods of GitlabTools as callables
-                for attr_name in dir(gitlab_inst):
-                    if attr_name.startswith("_"):
-                        continue
-                    attr = getattr(gitlab_inst, attr_name)
-                    if callable(attr):
-                        agent_tools.append(attr)
-                logger.debug("GitlabTools successfully enabled.")
-            except Exception as e:
-                logger.debug("Could not enable GitlabTools: %s", e)
-            continue
-
-        handlers = active_registry.compatibility_handlers(tool_name)
-        if not handlers:
-            if not quiet:
+        if tool_name == "GitlabTools" and not os.getenv("GITLAB_ACCESS_TOKEN"):
+            if not quiet and not has_prompt:
                 messages.append(
-                    f"[bold yellow]WARNING: Unknown tool '{tool_name}' "
-                    "specified in configuration. Skipping.[/bold yellow]"
+                    "[bold yellow]WARNING: Missing GITLAB_ACCESS_TOKEN env variable. "
+                    "GitlabTools will be disabled![/bold yellow]"
                 )
             continue
 
-        # Enable mapped standalone functions
-        for func in handlers:
-            agent_tools.append(func)
+        secured_handlers = policy_wrapped_handlers(active_service, tool_name)
+        if secured_handlers:
+            agent_tools.extend(secured_handlers)
             logger.debug("%s successfully enabled.", tool_name)
+            continue
+
+        if not quiet:
+            messages.append(
+                f"[bold yellow]WARNING: Unknown tool '{tool_name}' "
+                "specified in configuration. Skipping.[/bold yellow]"
+            )
 
     return agent_tools, messages
 

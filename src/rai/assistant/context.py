@@ -375,6 +375,18 @@ class AssistantContextBuilder:
         memories_with_reasons = mem_res.unwrap()
 
         items: list[AssistantContextManifestItem] = []
+        items.append(
+            AssistantContextManifestItem(
+                source_id=turn.record_id,
+                source_type="conversation_turn",
+                layer="current_turn",
+                data_class=turn.data_class,
+                domain_scope=turn.domain_scope,
+                purpose=turn.purpose,
+                ranking_reason="current user request",
+                fields=("text", "role"),
+            )
+        )
         recent_ids: list[str] = []
         for rt in recent_turns:
             recent_ids.append(rt.record_id)

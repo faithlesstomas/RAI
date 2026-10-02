@@ -72,9 +72,14 @@ class PolicyEngine:
             return PolicyOutcome.DENY, ("ISOLATION_UNAVAILABLE",)
         if descriptor.risk_class == RiskClass.CRITICAL:
             return PolicyOutcome.DENY, ("CRITICAL_RISK",)
-        if request.target_resource.startswith(("https://", "http://")) and (
-            request.data_class == DataClass.PRIVATE
-        ):
+        network_egress = request.target_resource.startswith(
+            ("https://", "http://")
+        ) or (
+            "network" in descriptor.side_effects and descriptor.isolation == "host-api"
+        )
+        if network_egress and request.data_class == DataClass.LOCAL:
+            return PolicyOutcome.DENY, ("LOCAL_DATA_EGRESS_FORBIDDEN",)
+        if network_egress and request.data_class == DataClass.PRIVATE:
             return PolicyOutcome.ESCALATE, ("PRIVATE_DATA_EGRESS",)
         if descriptor.risk_class in {RiskClass.MODERATE, RiskClass.HIGH}:
             return PolicyOutcome.ASK, (f"{descriptor.risk_class}_RISK_APPROVAL",)

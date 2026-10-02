@@ -49,6 +49,11 @@
           "title": "Turn Id",
           "type": "string"
         },
+        "approved": {
+          "default": false,
+          "title": "Approved",
+          "type": "boolean"
+        },
         "recent_turn_ids": {
           "default": [],
           "items": {

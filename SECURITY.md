@@ -60,6 +60,13 @@ and unavailable approval or required isolation fails closed. A model-supplied
 backend/private tool name has no authority unless it resolves in the common
 `CapabilityRegistry`.
 
+Capabilities whose descriptor represents a direct host API with a `network`
+side effect are also treated as an egress boundary even when their logical
+target uses a `capability://` identifier. `LOCAL` input is denied and `PRIVATE`
+input requires the explicit external-egress path; changing the logical target
+URI cannot downgrade that decision. `PUBLIC` remains the only class eligible
+for an automatic read-only network call.
+
 Every resolved request writes a decision event and one typed terminal event to
 the protected XDG data audit ledger. A ledger failure prevents invocation. The
 audit includes the policy version, approval identifier where applicable and the
@@ -83,6 +90,38 @@ evidence are rendered as explicitly labelled, untrusted user-role data. Stored
 turns cannot introduce a `system` role. This role separation is defense in
 depth against persisted prompt injection; retrieved text never gains instruction
 authority merely because it was selected as context.
+
+The remote Antigravity assistant uses the same role boundary. Its outbound
+manifest must contain the current user turn as well as every retrieved source;
+an incomplete manifest fails closed. `LOCAL` turns never leave the local trust
+domain, and `PRIVATE` turns require an approved manifest. The SDK receives no
+custom tools, has subagents disabled and allowlists only its terminal `FINISH`
+control. File, shell, web, URL, image and subagent builtins are therefore not
+available to an ordinary assistant turn. Input, output, latency and provider
+boundaries are enforced in different layers: token/model-call ceilings are
+copied into the SDK budget, latency is bounded by the adapter timeout, and
+provider allowlists plus token quotas are checked by the inference governor
+before the call. The Antigravity adapter does not yet have a verified provider
+cost estimate or billing reconciliation, so production monetary enforcement
+remains a Stage 6 gate. The approval/preview workflow is not connected to the
+assistant runtime yet, so `PRIVATE` context fails closed unless a trusted caller
+supplies an explicitly approved manifest.
+
+The Antigravity timeout covers SDK session entry, chat, response reading and
+session exit on every supported Python version, including 3.10. Expiry cancels
+the SDK coroutine and returns `ANTIGRAVITY_TIMEOUT`. Cancellation is cooperative:
+an SDK that blocks the event loop or suppresses cancellation can delay cleanup;
+this is not a process-isolation boundary.
+
+Finite decision backends must return a provider-produced distribution over
+exactly the declared option identifiers. The Lemonade and hosted Jev adapters
+make bounded HTTP calls, validate status, distribution, model revision, usage
+and request budget, and return a typed failure for malformed or unavailable
+providers. They never synthesize a successful distribution when the provider
+did not return one. These adapters and `HybridRouter` remain experimental and
+are not production-enabled runtime dispatch. Secret-store integration,
+provider-retention evidence, durable request/response audit hashes, response
+size/rate controls and local `DecisionAcceptancePolicy` remain Stage 6 gates.
 
 Assistant output and memory proposals are untrusted. Only deterministic policy
 admits the current MVP's bounded personal attributes, preferences, plans and

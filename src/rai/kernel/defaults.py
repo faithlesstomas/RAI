@@ -127,6 +127,158 @@ def _text_handler(
     return handler
 
 
+def _get_gitlab() -> Any:
+    from rai.tools.gitlab import GitlabTools
+    return GitlabTools()
+
+
+def _gitlab_list_projects(arguments: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "projects": _get_gitlab().list_projects(
+            search=arguments.get("search"),
+            owned=arguments.get("owned", False),
+        )
+    }
+
+
+def _gitlab_get_project(arguments: dict[str, Any]) -> dict[str, Any]:
+    return {"project": _get_gitlab().get_project(arguments["project_id_or_path"])}
+
+
+def _gitlab_list_mrs(arguments: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "merge_requests": _get_gitlab().list_merge_requests(
+            arguments["project_id_or_path"],
+            state=arguments.get("state", "opened"),
+        )
+    }
+
+
+def _gitlab_get_mr(arguments: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "merge_request": _get_gitlab().get_merge_request(
+            arguments["project_id_or_path"],
+            arguments["mr_iid"],
+        )
+    }
+
+
+def _gitlab_list_issues(arguments: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "issues": _get_gitlab().list_issues(
+            arguments["project_id_or_path"],
+            state=arguments.get("state", "opened"),
+        )
+    }
+
+
+def _gitlab_get_issue(arguments: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "issue": _get_gitlab().get_issue(
+            arguments["project_id_or_path"],
+            arguments["issue_iid"],
+        )
+    }
+
+
+def _gitlab_get_file_content(arguments: dict[str, Any]) -> dict[str, Any]:
+    content = _get_gitlab().get_file_content(
+        arguments["project_id_or_path"],
+        arguments["file_path"],
+        ref=arguments.get("ref", "main"),
+    )
+    return {"text": content or ""}
+
+
+def _gitlab_create_issue(arguments: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "issue": _get_gitlab().create_issue(
+            arguments["project_id_or_path"],
+            arguments["title"],
+            description=arguments.get("description"),
+        )
+    }
+
+
+def _gitlab_create_mr(arguments: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "merge_request": _get_gitlab().create_merge_request(
+            arguments["project_id_or_path"],
+            arguments["mr_data"],
+        )
+    }
+
+
+def list_projects(
+    search: str | None = None, owned: bool = False
+) -> list[dict[str, Any]]:
+    """List GitLab projects matching criteria."""
+    return _get_gitlab().list_projects(search=search, owned=owned)
+
+
+def get_project(project_id_or_path: str) -> dict[str, Any] | None:
+    """Get details of a specific GitLab project."""
+    return _get_gitlab().get_project(project_id_or_path)
+
+
+def list_merge_requests(
+    project_id_or_path: str, state: str = "opened"
+) -> list[dict[str, Any]]:
+    """List merge requests for a given project."""
+    return _get_gitlab().list_merge_requests(project_id_or_path, state=state)
+
+
+def get_merge_request(
+    project_id_or_path: str, mr_iid: int
+) -> dict[str, Any] | None:
+    """Get details of a specific merge request for a given project."""
+    return _get_gitlab().get_merge_request(project_id_or_path, mr_iid=mr_iid)
+
+
+def list_issues(
+    project_id_or_path: str, state: str = "opened"
+) -> list[dict[str, Any]]:
+    """List issues for a given project."""
+    return _get_gitlab().list_issues(project_id_or_path, state=state)
+
+
+def get_issue(project_id_or_path: str, issue_iid: int) -> dict[str, Any] | None:
+    """Get details of a specific issue for a given project."""
+    return _get_gitlab().get_issue(project_id_or_path, issue_iid=issue_iid)
+
+
+def get_file_content(
+    project_id_or_path: str, file_path: str, ref: str = "main"
+) -> str | None:
+    """Get the content of a file from a GitLab project repository."""
+    return _get_gitlab().get_file_content(project_id_or_path, file_path=file_path, ref=ref)
+
+
+def create_issue(
+    project_id_or_path: str, title: str, description: str | None = None
+) -> dict[str, Any] | None:
+    """Create a new issue in a GitLab project."""
+    return _get_gitlab().create_issue(project_id_or_path, title=title, description=description)
+
+
+def create_merge_request(
+    project_id_or_path: str, mr_data: dict[str, Any]
+) -> dict[str, Any] | None:
+    """Create a new merge request in a GitLab project."""
+    return _get_gitlab().create_merge_request(project_id_or_path, mr_data=mr_data)
+
+
+def _client_eval_scheme(arguments: dict[str, Any]) -> dict[str, Any]:
+    from rai.tools.client import eval_scheme as _eval
+    return {"text": _eval(arguments["code"])}
+
+
+def eval_scheme(code: str) -> str:
+    """Execute Scheme code on the client."""
+    from rai.tools.client import eval_scheme as _eval
+    return _eval(code)
+
+
 def create_default_capability_registry() -> CapabilityRegistry:
     """Create the canonical built-in registry without invoking any capability."""
     registry = CapabilityRegistry()
@@ -297,6 +449,180 @@ def create_default_capability_registry() -> CapabilityRegistry:
             _text_handler(get_stock_price, "ticker"),
             get_stock_price,
             ("YFinanceTools",),
+        ),
+        (
+            _descriptor(
+                "gitlab.list_projects",
+                "List projects in GitLab matching criteria.",
+                _object_schema(
+                    {"search": {"type": "string"}, "owned": {"type": "boolean"}},
+                ),
+                RiskClass.LOW,
+                ("network",),
+                "host-api",
+                ("adapter-returned",),
+            ),
+            _gitlab_list_projects,
+            list_projects,
+            ("GitlabTools",),
+        ),
+        (
+            _descriptor(
+                "gitlab.get_project",
+                "Get details of a specific GitLab project.",
+                _object_schema(
+                    {"project_id_or_path": {"type": "string"}},
+                    ("project_id_or_path",),
+                ),
+                RiskClass.LOW,
+                ("network",),
+                "host-api",
+                ("adapter-returned",),
+            ),
+            _gitlab_get_project,
+            get_project,
+            ("GitlabTools",),
+        ),
+        (
+            _descriptor(
+                "gitlab.list_merge_requests",
+                "List merge requests for a given project.",
+                _object_schema(
+                    {"project_id_or_path": {"type": "string"}, "state": {"type": "string"}},
+                    ("project_id_or_path",),
+                ),
+                RiskClass.LOW,
+                ("network",),
+                "host-api",
+                ("adapter-returned",),
+            ),
+            _gitlab_list_mrs,
+            list_merge_requests,
+            ("GitlabTools",),
+        ),
+        (
+            _descriptor(
+                "gitlab.get_merge_request",
+                "Get details of a specific merge request.",
+                _object_schema(
+                    {"project_id_or_path": {"type": "string"}, "mr_iid": {"type": "integer"}},
+                    ("project_id_or_path", "mr_iid"),
+                ),
+                RiskClass.LOW,
+                ("network",),
+                "host-api",
+                ("adapter-returned",),
+            ),
+            _gitlab_get_mr,
+            get_merge_request,
+            ("GitlabTools",),
+        ),
+        (
+            _descriptor(
+                "gitlab.list_issues",
+                "List issues for a given project.",
+                _object_schema(
+                    {"project_id_or_path": {"type": "string"}, "state": {"type": "string"}},
+                    ("project_id_or_path",),
+                ),
+                RiskClass.LOW,
+                ("network",),
+                "host-api",
+                ("adapter-returned",),
+            ),
+            _gitlab_list_issues,
+            list_issues,
+            ("GitlabTools",),
+        ),
+        (
+            _descriptor(
+                "gitlab.get_issue",
+                "Get details of a specific issue.",
+                _object_schema(
+                    {"project_id_or_path": {"type": "string"}, "issue_iid": {"type": "integer"}},
+                    ("project_id_or_path", "issue_iid"),
+                ),
+                RiskClass.LOW,
+                ("network",),
+                "host-api",
+                ("adapter-returned",),
+            ),
+            _gitlab_get_issue,
+            get_issue,
+            ("GitlabTools",),
+        ),
+        (
+            _descriptor(
+                "gitlab.get_file_content",
+                "Get the content of a file from a GitLab project repository.",
+                _object_schema(
+                    {
+                        "project_id_or_path": {"type": "string"},
+                        "file_path": {"type": "string"},
+                        "ref": {"type": "string"},
+                    },
+                    ("project_id_or_path", "file_path"),
+                ),
+                RiskClass.LOW,
+                ("network",),
+                "host-api",
+                ("adapter-returned",),
+            ),
+            _gitlab_get_file_content,
+            get_file_content,
+            ("GitlabTools",),
+        ),
+        (
+            _descriptor(
+                "gitlab.create_issue",
+                "Create a new issue in a GitLab project.",
+                _object_schema(
+                    {
+                        "project_id_or_path": {"type": "string"},
+                        "title": {"type": "string"},
+                        "description": {"type": "string"},
+                    },
+                    ("project_id_or_path", "title"),
+                ),
+                RiskClass.HIGH,
+                ("network", "gitlab-mutation"),
+                "host-api",
+                ("adapter-returned",),
+            ),
+            _gitlab_create_issue,
+            create_issue,
+            ("GitlabTools",),
+        ),
+        (
+            _descriptor(
+                "gitlab.create_merge_request",
+                "Create a new merge request in a GitLab project.",
+                _object_schema(
+                    {"project_id_or_path": {"type": "string"}, "mr_data": {"type": "object"}},
+                    ("project_id_or_path", "mr_data"),
+                ),
+                RiskClass.HIGH,
+                ("network", "gitlab-mutation"),
+                "host-api",
+                ("adapter-returned",),
+            ),
+            _gitlab_create_mr,
+            create_merge_request,
+            ("GitlabTools",),
+        ),
+        (
+            _descriptor(
+                "client.eval_scheme",
+                "Execute Scheme code on the client.",
+                _object_schema({"code": {"type": "string"}}, ("code",)),
+                RiskClass.HIGH,
+                ("client-execution",),
+                "client-runtime",
+                ("client-dispatched",),
+            ),
+            _client_eval_scheme,
+            eval_scheme,
+            ("ClientTools",),
         ),
     )
     for descriptor, handler, compatibility_handler, groups in entries:
