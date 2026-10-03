@@ -25,10 +25,12 @@ local processor, six schema-constrained task contracts and a policy-aware result
 cache are also implemented, although broader live-model acceptance and runtime
 routing remain open. The RAI-native assistant now provides a usable CLI,
 RAI-owned chat history and an auditable SQLite memory slice. Experimental
-hybrid-routing, finite-decision and remote Antigravity assistant components now
-exist behind provider-neutral contracts, but they are not wired into the
-default product runtime and do not complete the Stage 6 acceptance gates.
-Broader semantic memory remains roadmap work. GAIA, GCAS compatibility,
+hybrid-routing and finite-decision components exist behind provider-neutral
+contracts but are not dispatched by the default assistant runtime. The remote
+Antigravity assistant backend can be selected explicitly; automatic routing,
+approval preview and production Stage 6 acceptance remain open. Memory M1–M6
+are implemented within their documented acceptance scope; domain-aware
+consolidation and broader conversational evaluation remain ongoing work. GAIA, GCAS compatibility,
 Google Antigravity agent interoperability, Coconut-style latent
 inference, writable slots and J-lens are optional integrations or research
 paths; none is required by the core product.
@@ -124,8 +126,11 @@ This list is deliberately narrower than the target architecture. The memory MVP
 admits bounded personal attributes, preferences, plans and explicit remember or
 forget requests from ordinary Polish and English conversation. It rejects
 quoted, hearsay and hedged candidates from automatic admission.
-Schema-constrained SLM extraction, bitemporal claims and further FTS/dense
-retrieval work remain planned. Product integration, approval UI, durable usage
+Schema-constrained local SLM extraction, bitemporal claims, FTS5/BM25 retrieval
+and adaptive context selection are implemented. When Rich History is enabled
+and its encryption key is available, its episodes can supply bounded evidence.
+Dense, RRF and graph retrieval are evaluated opt-in channels; claim BM25 remains
+the default. Persistent domain-aware consolidation remains planned. Product integration, approval UI, durable usage
 audit and production acceptance for hybrid model routing also remain planned.
 The old provider-owned `ChatService` is disabled by default and remains only as
 an opt-in compatibility facade.

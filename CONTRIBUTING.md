@@ -205,8 +205,12 @@ uv run sphinx-autobuild docs docs/_build/html
 Warnings fail the documentation build locally and in CI. Keep links relative
 where possible, include new pages in `docs/index.md`, and never commit
 `docs/_build/` or generated `public/` output. GitLab Pages publishes the static
-HTML generated from `main`; release documentation therefore remains rebuildable
-from the corresponding immutable Git tag.
+HTML generated from `main` and stable release tags into the same public site.
+A later `main` deployment can replace the published release snapshot. The
+documentation source remains rebuildable from each immutable Git tag, but
+browsable version directories and a version selector are planned in ROADMAP.md.
+Warning-as-error validation currently runs in the Pages job; an independent
+merge-request documentation check is also planned.
 
 ## Release process
 

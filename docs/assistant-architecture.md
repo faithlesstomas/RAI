@@ -3,7 +3,7 @@
 ## Status and scope
 
 Rich Assistant delivers the Issue #34 graph-memory foundation and the first
-user-facing Issue #35 slice. It provides transactional SQLite
+user-facing Issue #35 M1–M6 slices within their documented acceptance scope. It provides transactional SQLite
 graph storage (`SQLiteMemoryGraphStore`), two-phase interaction execution
 (`AssistantService`), inspectable context packages with `ContextManifest`,
 and direct local model inference (`LocalAssistantBackend`). The 8-step user-visible
@@ -12,7 +12,11 @@ correction path has also been exercised with a pinned TinyLlama GGUF artifact.
 Users can resume and inspect sessions, history, exact context packages, active
 memory, operation traces and stage-specific diagnostics from CLI or API.
 
-The assistant is a continuous, local-first interaction surface with explicit,
+Capability proposals and proactive execution are target behavior, not a
+completed runtime path: current assistant candidates carry response text and
+memory proposals, and the service does not dispatch desktop actions.
+
+The assistant is a local-first interaction surface with explicit,
 reconstructed context. It may conduct ordinary conversation, answer from RAI
 memory and propose work. It is not a GCAS Workspace, an autonomous goal loop or
 an alternative capability authority.

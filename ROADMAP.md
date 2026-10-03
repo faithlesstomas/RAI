@@ -323,6 +323,28 @@ Cost controls follow this order:
     intersection of the RAI policy decision and the sandbox's attested policy,
     and missing or inconsistent enforcement fails closed.
 
+## Readiness follow-up tracking
+
+The 2026-10-02 readiness audit distinguishes existing infrastructure from
+complete user-facing acceptance. The following issues track remaining work;
+creating an issue does not advance a completion checkbox.
+
+| Roadmap scope | Delivery issue |
+| --- | --- |
+| Stage 4.7 / 5: assistant action proposals, Linux catalog and verified effects | [#38](https://gitlab.com/tk-lab1/ai/rai/-/issues/38) |
+| Stage 6: integrated hybrid routing, approval and durable usage | [#39](https://gitlab.com/tk-lab1/ai/rai/-/issues/39) |
+| Release follow-up / Stage 9: versioned docs and independent MR validation | [#40](https://gitlab.com/tk-lab1/ai/rai/-/issues/40) |
+| Stages 8–9: user service, status, pause/stop and privacy review | [#41](https://gitlab.com/tk-lab1/ai/rai/-/issues/41) |
+| Stage 4.7 / 8: durable workflows and proactive triggers | [#42](https://gitlab.com/tk-lab1/ai/rai/-/issues/42) |
+| Stage 4.7: legacy chat removal | [#43](https://gitlab.com/tk-lab1/ai/rai/-/issues/43) |
+| Stage 4.1–4.2: bounded-task dispatch and live acceptance | [#44](https://gitlab.com/tk-lab1/ai/rai/-/issues/44) |
+| Stages 4.4 / 5.5: bounded visual and semantic GUI fallback | [#45](https://gitlab.com/tk-lab1/ai/rai/-/issues/45) |
+
+Existing issues remain authoritative for browser/history acceptance (#11/#12),
+voice (#21–#25), memory (#35), HITL (#18), coverage (#13), lint (#19) and
+systemd log formatting (#28). The first action implementation should deliver
+application launch end-to-end; advanced inference research is not its dependency.
+
 ## Delivery sequence
 
 The stages are ordered by dependency. Work inside one stage may proceed in
@@ -1034,9 +1056,11 @@ explicit ConversationTurn or policy-approved proactive trigger
 - [x] Reserve `Task` for an explicit, trackable user goal or delegated unit of
   work. Conversation may lead to a proposed task, but neither a model response
   nor intent classification may silently create or authorize one.
-- [x] Replace `ChatService`, legacy agent chains and the Antigravity-owned chat
-  endpoint rather than preserving their behavior. CLI, REST or WebSocket chat
-  surfaces that remain may change schema and semantics before 1.0.
+- [x] Replace the default provider-owned chat path with `AssistantService`
+  across the native CLI, REST and WebSocket assistant surfaces.
+- [ ] Remove the opt-in `legacy_chat.enabled` execution endpoints, `ChatService`
+  facade and obsolete agent-chain compatibility after the removal gates below
+  pass. Replacement of the default path does not complete compatibility removal.
 - [x] Treat an `AssistantSessionId` only as interaction and audit grouping. Each
   model request starts from the explicit `ContextPackage`; provider conversation
   IDs and implicit server-side history are forbidden as state.
@@ -1500,9 +1524,11 @@ Training is an explicit experimental stage, not an inference side effect:
 
 **Continuous local assistance without continuous LLM inference**
 
-- [ ] Feed the assistant from privacy-filtered Rich History observations and
-  deterministic episodes. Collection may be continuous and opt-in; LLM
-  inference is event-, schedule- or user-triggered and separately budgeted.
+- [x] Retrieve bounded, privacy-eligible Rich History episode evidence for
+  user-triggered assistant turns when history is enabled and its key is available.
+- [ ] Add policy-approved event and schedule triggers for continuous assistance.
+  Collection remains opt-in; background inference requires a separate budget
+  and must not be confused with on-demand episode retrieval.
 - [ ] Perform routine consolidation locally. Preserve
   `background_remote_tokens = 0` unless the user creates an explicit automation
   with its own data and cost policy.
@@ -2334,11 +2360,12 @@ migration layer without a concrete consumer requirement.
 
 - `cli_compatibility.py` and `config_manager.py` remain oversized compatibility
   modules and still mix some I/O and UI concerns.
-- Antigravity compatibility still owns the legacy chat execution path and is
-  scheduled for incompatible replacement by `AssistantService`, not long-term
-  preservation behind another facade.
-- Conversation history is still a flat transcript and has more implementation
-  weight than normalized observation, graph memory and action-result state.
+- `AssistantService` owns the default chat path. The disabled-by-default
+  Antigravity compatibility endpoints and `ChatService` facade still require
+  removal; they are not the explicitly selectable native Antigravity model backend.
+- Audit transcripts, semantic SQLite memory and Rich History are separate stores.
+  Persistent domain-aware consolidation and the assistant-to-action path remain
+  incomplete despite the delivered M1–M6 memory contracts.
 - The processor supervisor and bounded-task contracts are container-owned and
   tested, but no daemon API or registered capability dispatches work to them and
   neither production adapter has a repeatable live-model acceptance test.

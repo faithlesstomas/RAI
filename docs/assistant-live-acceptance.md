@@ -90,7 +90,15 @@ using the same `RAI_DATA_DIR`. `recent_turn_ids` is capped independently from
 `durable_memory_ids`; `exclusions` shows entries removed by privacy, validity or
 character budgets.
 
-## Current limits
+## Limits of the September 14 acceptance run
+
+The following describes the historical Issue #34 run, not the current feature
+inventory. Schema-constrained extraction, bitemporal memory, additional retrieval
+channels and on-demand Rich History evidence have since been implemented. An
+explicit remote Antigravity backend is also available experimentally. See the
+[current user guide](assistant-user-mvp.md) and
+[memory development plan](assistant-memory-roadmap.md) for present scope. The
+original run does not certify these later features.
 
 - Durable admission covers name, age, home location, explicit
   `remember`/`zapamiętaj` facts and Guile/Python code-example preferences. It is

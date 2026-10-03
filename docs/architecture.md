@@ -87,8 +87,9 @@ model, network, microphone or speaker. A lazy Piper adapter and local
 sounddevice player implement the same ports without import-time optional
 dependency loading or implicit downloads. A registry adapter places the whole
 operation behind `CapabilityService`, and the default registry exposes it to
-the runtime and MCP. User-configurable profile/device loading and STT are still
-planned.
+the runtime and MCP. A Lemonade Whisper transcription adapter also exists,
+but microphone capture, push-to-talk/VAD and the integrated voice loop remain
+planned, as does user-configurable profile/device loading.
 
 ## Data flow
 
