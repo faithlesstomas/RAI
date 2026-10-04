@@ -43,6 +43,7 @@ assistant-context-rot-evaluation
 assistant-memory-gcas-crosscheck
 emacs-client
 local-voice
+linux-actions
 neural-sidecar
 reference/modules
 ```
