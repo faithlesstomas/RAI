@@ -3,13 +3,14 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-import json
 from datetime import datetime, timezone
+import json
 import re
 import unicodedata
 
 from returns.result import Failure, Result, Success
 
+from rai.kernel.capabilities import CapabilityRegistry
 from rai.kernel.records import (
     ActionFailure,
     DataClass,
@@ -38,6 +39,66 @@ DEFAULT_SYSTEM_INSTRUCTION = (
     "You are Rich AI (RAI), an intelligent and secure local assistant for the GNU/Linux desktop. "
     "You respect user preferences stored in durable memory and provide concise, accurate answers."
 )
+
+
+def format_capabilities_instruction(
+    registry: CapabilityRegistry | None = None,
+    base_instruction: str = DEFAULT_SYSTEM_INSTRUCTION,
+) -> str:
+    """Compose the system prompt dynamically with the active Linux capabilities."""
+    capabilities_text = [
+        "- Applications: Discover and launch installed desktop applications "
+        "(application.list, application.launch) with verified OS process tracking.",
+        "- Audio: Check and set system audio volume with verification readback "
+        "(system.volume.get, system.volume.set).",
+        "- Documents & Files: Search allowed directories and open files with default "
+        "system handlers (file.search, document.open).",
+        "- Processes: Inspect running processes, resources, and system state (process.inspect).",
+        "- Web: Search the web and read public pages (browser.search, browser.open_result, browser.read_page).",
+    ]
+    if registry is not None:
+        descriptors = registry.descriptors() if hasattr(registry, "descriptors") else ()
+        names = {desc.name for desc in descriptors} if descriptors else set()
+        if names:
+            active = []
+            if "application.launch" in names or "application.list" in names:
+                active.append(
+                    "- Applications: Discover and launch installed desktop applications "
+                    "(application.list, application.launch) with verified OS process tracking."
+                )
+            if "system.volume.get" in names or "system.volume.set" in names:
+                active.append(
+                    "- Audio: Check and set system audio volume with verification readback "
+                    "(system.volume.get, system.volume.set)."
+                )
+            if "file.search" in names or "document.open" in names:
+                active.append(
+                    "- Documents & Files: Search allowed directories and open files with "
+                    "default system handlers (file.search, document.open)."
+                )
+            if "process.inspect" in names or "process.kill" in names:
+                active.append(
+                    "- Processes: Inspect running processes, resources, and system state "
+                    "(process.inspect)."
+                )
+            if "browser.search" in names or "browser.read_page" in names:
+                active.append(
+                    "- Web: Search the web and read public pages "
+                    "(browser.search, browser.open_result, browser.read_page)."
+                )
+            if active:
+                capabilities_text = active
+
+    caps_block = "\n".join(capabilities_text)
+    return (
+        f"{base_instruction}\n\n"
+        "System Capabilities:\n"
+        "You have direct, verified access to local Linux system capabilities managed through the RAI policy gateway:\n"
+        f"{caps_block}\n\n"
+        "When chatting with the user, be fully aware of these capabilities. Acknowledge what you can do and "
+        "offer to execute these actions upon user request. Never claim that you lack access to the operating system "
+        "or cannot launch applications."
+    )
 
 _EPISTEMIC_QUALITY = {
     "asserted": 1.0,

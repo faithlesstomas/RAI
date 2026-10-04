@@ -13,6 +13,7 @@ from returns.result import Failure
 from rai.inference.engines.llama import AsyncLlamaEngine
 from rai.inference.factory import load_local_model
 
+from .backends.antigravity import AntigravityAssistantModelBackend
 from .backends.deterministic import DeterministicAssistantBackend
 from .backends.local import LocalAssistantBackend
 from .context import DEFAULT_SYSTEM_INSTRUCTION
@@ -29,16 +30,16 @@ class AssistantRuntimeConfig:
 
     backend: str
     model: str
-    max_output_tokens: int = 256
+    max_output_tokens: int = 4096
     temperature: float = 0.2
-    context_window: int = 2048
+    context_window: int = 8192
     model_artifact_version: str | None = None
     ollama_host: str = "http://127.0.0.1:11434"
     lemonade_host: str = "http://127.0.0.1:13305"
     lemonade_api_key: str | None = None
     profile_scope: str = "default"
     system_instruction: str = DEFAULT_SYSTEM_INSTRUCTION
-    max_context_characters: int = 8_000
+    max_context_characters: int = 32_000
     max_recent_turns: int = 10
     max_memories: int = 5
     max_episodic_turns: int = 5
@@ -162,14 +163,14 @@ def resolve_assistant_config(  # noqa: PLR0913
         if enable_thinking is not None
         else (assistant.get("enable_thinking", False) or local_ai.get("enable_thinking", False))
     )
-    max_tokens_default = 1024 if resolved_enable_thinking else 256
+    max_tokens_default = 4096
 
     return AssistantRuntimeConfig(
         backend=backend,
         model=model,
         max_output_tokens=int(assistant.get("max_output_tokens", max_tokens_default)),
         temperature=float(assistant.get("temperature", 0.2)),
-        context_window=int(assistant.get("context_window", 2048)),
+        context_window=int(assistant.get("context_window", 8192)),
         model_artifact_version=(
             str(assistant["model_artifact_version"])
             if assistant.get("model_artifact_version")
@@ -209,7 +210,7 @@ def resolve_assistant_config(  # noqa: PLR0913
             or profile.get("system")
             or DEFAULT_SYSTEM_INSTRUCTION
         ),
-        max_context_characters=int(assistant.get("max_context_characters", 8_000)),
+        max_context_characters=int(assistant.get("max_context_characters", 32_000)),
         max_recent_turns=int(assistant.get("max_recent_turns", 10)),
         max_memories=int(assistant.get("max_memories", 5)),
         max_episodic_turns=int(assistant.get("max_episodic_turns", 5)),
@@ -241,8 +242,6 @@ def build_assistant_backend(runtime: AssistantRuntimeConfig) -> AssistantModelBa
         return DeterministicAssistantBackend()
 
     if runtime.backend == "antigravity":
-        from .backends.antigravity import AntigravityAssistantModelBackend
-
         return AntigravityAssistantModelBackend(
             model_name=runtime.model,
             max_output_tokens=runtime.max_output_tokens,

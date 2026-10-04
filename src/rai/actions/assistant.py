@@ -1,6 +1,7 @@
 """Explicit user action intents; retrieved/model text has no execution authority."""
 from __future__ import annotations
 
+from collections.abc import Callable
 from returns.result import Failure
 
 from rai.assistant.records import AssistantCandidate, ConversationTurn
@@ -12,6 +13,8 @@ from rai.kernel.transport import normalize_request
 
 from .records import ActionProposal
 from .intent import IntentRecognizer, ActionIntent
+
+MAX_DISPLAYED_APPLICATIONS = 15
 
 class AssistantActions:
     """Route explicit current-turn requests through the same capability service."""
@@ -44,6 +47,8 @@ class AssistantActions:
 
         if intent.outcome in {"file.search", "document.open"}:
             return await self._document_intent(turn, intent, cancellation)
+        if intent.outcome == "application.list":
+            return await self._list_applications_intent(turn, intent, cancellation, message)
         if intent.outcome.startswith(("browser.", "system.volume.", "process.")):
             from .routing import route_action  # noqa: PLC0415
             return await route_action(self.capabilities, self.store, self.profile, turn, intent, cancellation)
@@ -156,3 +161,56 @@ class AssistantActions:
                                                        "action_proposal": proposal.model_dump(mode="json"),
                                                        "remote_tokens": 0,
                                                        "policy_decision_id": decision.record_id if decision else None})
+
+    async def _list_applications_intent(
+        self, turn: ConversationTurn, intent: ActionIntent,
+        cancellation: CancellationToken, message: Callable[[str, str], str],
+    ) -> AssistantCandidate:
+        descriptor = self.capabilities.registry.descriptor("application.list")
+        if descriptor is None:
+            return AssistantCandidate(
+                text=message("Lista aplikacji jest niedostępna.", "Application listing is unavailable.")
+            )
+        task_id = f"action:{turn.record_id}"
+        listing = normalize_request(
+            descriptor, {"task_id": task_id, "query": intent.query.strip()}, actor=turn.producer,
+            request_id=f"{turn.record_id}:applications", data_class=turn.data_class,
+        )
+        _, listed = await self.capabilities.invoke(listing, cancellation)
+        if isinstance(listed, Failure):
+            return AssistantCandidate(
+                text=message(f"Nie mogę sprawdzić aplikacji: {listed.failure().code}.",
+                             f"Application discovery failed: {listed.failure().code}.")
+            )
+        applications = listed.unwrap().output["applications"]
+        names = [str(app["name"]) for app in applications]
+        if not names:
+            return AssistantCandidate(
+                text=message("Nie znalazłem zainstalowanych aplikacji w systemie.",
+                             "I could not find installed applications in the system.")
+            )
+        sample = names[:MAX_DISPLAYED_APPLICATIONS]
+        more = (
+            f" (oraz {len(names) - MAX_DISPLAYED_APPLICATIONS} innych)"
+            if len(names) > MAX_DISPLAYED_APPLICATIONS
+            else ""
+        )
+        if intent.language == "pl":
+            reply = (
+                "W Twoim systemie mogę uruchomić zainstalowane aplikacje, na przykład:\n"
+                + "\n".join(f"- {n}" for n in sample)
+                + f"{more}\n\nAby uruchomić wybraną aplikację, napisz po prostu np. 'Uruchom {sample[0]}'."
+            )
+        else:
+            reply = (
+                "I can launch installed applications on your system, for example:\n"
+                + "\n".join(f"- {n}" for n in sample)
+                + f"{more}\n\nTo launch an application, simply say e.g. 'Launch {sample[0]}'."
+            )
+        return AssistantCandidate(
+            text=reply,
+            metadata={
+                "action_choices": {"kind": "application", "task_id": task_id, "entries": applications},
+                "action_result": {"status": "SUCCEEDED", "output": {"applications": applications}},
+            },
+        )

@@ -46,6 +46,8 @@ def _assistant_config(  # noqa: PLR0913
     system: str | None = None,
     thinking: bool | None = None,
     thinking_budget: int | None = None,
+    max_output_tokens: int | None = None,
+    context_window: int | None = None,
 ) -> dict[str, object]:
     from . import config_manager  # noqa: PLC0415
 
@@ -81,6 +83,10 @@ def _assistant_config(  # noqa: PLR0913
         assistant["enable_thinking"] = thinking
     if thinking_budget is not None:
         assistant["thinking_budget"] = thinking_budget
+    if max_output_tokens is not None:
+        assistant["max_output_tokens"] = max_output_tokens
+    if context_window is not None:
+        assistant["context_window"] = context_window
     config["assistant"] = assistant
     return config
 
@@ -271,6 +277,8 @@ def _run_assistant_ask(  # noqa: PLR0913
     thinking: bool | None = None,
     show_thinking: bool = False,
     thinking_budget: int | None = None,
+    max_output_tokens: int | None = None,
+    context_window: int | None = None,
 ) -> None:
     from returns.result import Success  # noqa: PLC0415
 
@@ -287,6 +295,8 @@ def _run_assistant_ask(  # noqa: PLR0913
                 system,
                 thinking=thinking,
                 thinking_budget=thinking_budget,
+                max_output_tokens=max_output_tokens,
+                context_window=context_window,
             )
         )
         service = container.assistant_service
@@ -344,6 +354,8 @@ def _run_assistant_chat(  # noqa: PLR0913, PLR0915
     thinking: bool | None = None,
     show_thinking: bool = False,
     thinking_budget: int | None = None,
+    max_output_tokens: int | None = None,
+    context_window: int | None = None,
 ) -> None:
     from returns.result import Success  # noqa: PLC0415
 
@@ -360,6 +372,8 @@ def _run_assistant_chat(  # noqa: PLR0913, PLR0915
                 system,
                 thinking=thinking,
                 thinking_budget=thinking_budget,
+                max_output_tokens=max_output_tokens,
+                context_window=context_window,
             )
         )
         service = container.assistant_service
@@ -808,6 +822,18 @@ def register_assistant_commands(root: click.Group) -> None:  # noqa: PLR0915
         type=int,
         help="Token budget for model thinking (llama.cpp engine).",
     )
+    @click.option(
+        "--max-output-tokens",
+        default=None,
+        type=int,
+        help="Maximum generated token limit for model responses.",
+    )
+    @click.option(
+        "--context-window",
+        default=None,
+        type=int,
+        help="Context window size in tokens.",
+    )
     def ask_command(  # noqa: PLR0913
         prompt: str,
         session_id: str | None,
@@ -819,6 +845,8 @@ def register_assistant_commands(root: click.Group) -> None:  # noqa: PLR0915
         thinking: bool | None,
         show_thinking: bool,
         thinking_budget: int | None,
+        max_output_tokens: int | None,
+        context_window: int | None,
     ) -> None:
         """Send a single prompt to the assistant."""
         _run_assistant_ask(
@@ -832,6 +860,8 @@ def register_assistant_commands(root: click.Group) -> None:  # noqa: PLR0915
             thinking=thinking,
             show_thinking=show_thinking,
             thinking_budget=thinking_budget,
+            max_output_tokens=max_output_tokens,
+            context_window=context_window,
         )
 
     @assistant.command(name="chat")
@@ -867,6 +897,18 @@ def register_assistant_commands(root: click.Group) -> None:  # noqa: PLR0915
         type=int,
         help="Token budget for model thinking (llama.cpp engine).",
     )
+    @click.option(
+        "--max-output-tokens",
+        default=None,
+        type=int,
+        help="Maximum generated token limit for model responses.",
+    )
+    @click.option(
+        "--context-window",
+        default=None,
+        type=int,
+        help="Context window size in tokens.",
+    )
     def chat_command(  # noqa: PLR0913
         session_id: str | None,
         backend: str,
@@ -877,6 +919,8 @@ def register_assistant_commands(root: click.Group) -> None:  # noqa: PLR0915
         thinking: bool | None,
         show_thinking: bool,
         thinking_budget: int | None,
+        max_output_tokens: int | None,
+        context_window: int | None,
     ) -> None:
         """Start an interactive chat session with the assistant."""
         _run_assistant_chat(
@@ -889,6 +933,8 @@ def register_assistant_commands(root: click.Group) -> None:  # noqa: PLR0915
             thinking=thinking,
             show_thinking=show_thinking,
             thinking_budget=thinking_budget,
+            max_output_tokens=max_output_tokens,
+            context_window=context_window,
         )
 
     @assistant.command(name="memories")

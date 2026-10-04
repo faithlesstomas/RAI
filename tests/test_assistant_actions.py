@@ -72,19 +72,19 @@ async def test_assistant_launch_is_verified_audited_and_not_repeated(tmp_path: P
 
 async def test_application_clarification_preserves_selected_handle(tmp_path: Path) -> None:
     class MultipleApplications(Applications):
-        selected = []
+        selected: list[str] = []
 
-        async def discover(self):
+        async def discover(self) -> Result[tuple[Application, ...], Exception]:
             return Success(tuple(Application(f'example-{i}.desktop', f'Example {i}',
                                              Path(f'/example-{i}.desktop'), f'digest-{i}', f'/example-{i}')
                                  for i in (1, 2)))
 
-        async def launch(self, app, cancellation):
+        async def launch(self, app: Application, cancellation: CancellationToken) -> Result[LaunchEvidence, Exception]:
             self.selected.append(app.desktop_id)
             return Success(LaunchEvidence(123, '456', app.executable))
 
     class Recognizer:
-        async def recognize(self, turn, cancellation):
+        async def recognize(self, turn: ConversationTurn, cancellation: CancellationToken) -> Result[ActionIntent, str]:
             return Success(ActionIntent(source_turn_id=turn.record_id, language='pl', outcome='application.launch',
                                         query='Example' if turn.text == 'Otwórz Example' else '',
                                         selection=None if turn.text == 'Otwórz Example' else 2))
@@ -109,5 +109,41 @@ async def test_application_clarification_preserves_selected_handle(tmp_path: Pat
         answer = (await assistant.accept_turn(second, request_id='second')).unwrap()
         assert 'Uruchomiłem Example 2' in answer.text
         assert apps.selected == ['example-2.desktop']
+    finally:
+        await assistant.stop()
+
+
+async def test_assistant_lists_applications_on_list_intent(tmp_path: Path) -> None:
+    class MultipleApplications(Applications):
+        async def discover(self) -> Result[tuple[Application, ...], Exception]:
+            return Success((
+                Application('calc.desktop', 'Kalkulator', Path('/calc.desktop'), 'd1', '/calc'),
+                Application('term.desktop', 'Terminal', Path('/term.desktop'), 'd2', '/term'),
+            ))
+
+        async def launch(self, app: Application, cancellation: CancellationToken) -> Result[LaunchEvidence, Exception]:
+            return Success(LaunchEvidence(123, '456', app.executable))
+
+    class Recognizer:
+        async def recognize(self, turn: ConversationTurn, cancellation: CancellationToken) -> Result[ActionIntent, str]:
+            return Success(ActionIntent(source_turn_id=turn.record_id, language='pl', outcome='application.list'))
+
+    apps = MultipleApplications()
+    handles = SQLiteHandleStore(tmp_path / 'handles.db')
+    registry = CapabilityRegistry()
+    register_application_capabilities(registry, apps, handles)
+    runtime = ActionCapabilityService(registry, PolicyEngine(), InMemoryAuditLedger(), SyntheticApprovalBroker())
+    runtime.handles = handles
+    runtime.executions = SQLiteExecutionStore(tmp_path / 'executions.db')
+    store = SQLiteMemoryGraphStore(tmp_path / 'memory.db')
+    assistant = AssistantService(store, actions=AssistantActions(runtime, Recognizer(), store))
+    actor = ProducerIdentity(producer_id='user', kind='user', version='1.0.0')
+    await assistant.start()
+    try:
+        turn = ConversationTurn(producer=actor, session_id='list-test', role='user', text='Jakie aplikacje możesz uruchomić?')
+        answer = (await assistant.accept_turn(turn, request_id='list-req')).unwrap()
+        assert 'Kalkulator' in answer.text
+        assert 'Terminal' in answer.text
+        assert 'W Twoim systemie mogę uruchomić' in answer.text
     finally:
         await assistant.stop()

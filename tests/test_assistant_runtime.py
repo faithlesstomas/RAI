@@ -8,11 +8,13 @@ from unittest.mock import patch
 from click.testing import CliRunner
 import pytest
 
+from rai.assistant.context import format_capabilities_instruction
 from rai.assistant.runtime import (
     AssistantConfigurationError,
     resolve_assistant_config,
 )
 from rai.cli import cli
+from rai.kernel.capabilities import CapabilityRegistry
 
 MINIMUM_GUILE_OCCURRENCES = 2
 
@@ -118,3 +120,11 @@ def test_cli_remembers_name_across_process_like_invocations(tmp_path: Path) -> N
     assert "Zapamiętałem Twoje imię" in admission.output
     assert recall.exit_code == 0, recall.output
     assert "Masz na imię Tomek" in recall.output
+
+
+def test_format_capabilities_instruction_includes_system_capabilities() -> None:
+    prompt = format_capabilities_instruction(CapabilityRegistry(), base_instruction="Base system instruction.")
+    assert "Base system instruction." in prompt
+    assert "System Capabilities:" in prompt
+    assert "Applications:" in prompt
+    assert "Never claim that you lack access to the operating system" in prompt

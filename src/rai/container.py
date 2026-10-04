@@ -13,6 +13,7 @@ if TYPE_CHECKING:
     from .assistant.ports import MemoryGraphStore
     from .assistant.service import AssistantService
 
+from .assistant.context import format_capabilities_instruction
 from .kernel.audit import InMemoryAuditLedger, JsonlAuditLedger
 from .kernel.capabilities import CapabilityRegistry
 from .kernel.defaults import (
@@ -345,7 +346,10 @@ class ApplicationContainer:
                 memory_extractor=memory_extractor,
                 context_builder=AssistantContextBuilder(
                     store=self.memory_graph_store,
-                    system_instruction=runtime.system_instruction,
+                    system_instruction=format_capabilities_instruction(
+                        self.capability_registry,
+                        base_instruction=runtime.system_instruction,
+                    ),
                     profile_scope=runtime.profile_scope,
                     evidence_providers=evidence_providers,
                     max_context_characters=runtime.max_context_characters,
