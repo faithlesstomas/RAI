@@ -26,7 +26,19 @@ from .kernel.dispatch import DeterministicEventDispatcher
 from .kernel.journal import SQLiteEventJournal
 from .kernel.ports import EventJournal
 from .kernel.socket_transport import EventSocketServer
-from .kernel.service import AuditLedger, CapabilityService
+from .kernel.service import AuditLedger
+from .actions.service import ActionCapabilityService
+from .actions.assistant import AssistantActions
+from .actions.intent import LocalIntentRecognizer
+from .actions.applications import LinuxApplicationBackend
+from .actions.browser import CdpBrowserBackend, register_browser_capabilities
+from .actions.files import register_file_capabilities
+from .actions.documents import LinuxDocumentBackend
+from .actions.volume import PactlVolumeBackend, register_volume_capabilities
+from .actions.processes import register_process_capability
+from .actions.execution import SQLiteExecutionStore
+from .actions.handles import SQLiteHandleStore
+from .paths import data_dir
 from .services.history import HistoryService
 from .services.model_registry import ModelRegistry
 from .history.service import RichHistoryService
@@ -76,11 +88,33 @@ class ApplicationContainer:
             )
         if self.policy_engine is None:
             self.policy_engine = PolicyEngine(isolation_available=isolation_available)
-        self.capability_service = CapabilityService(
+        self.capability_service = ActionCapabilityService(
             self.capability_registry,
             self.policy_engine,
             self.audit_ledger,
             HitlApprovalBroker(),
+        )
+        self.capability_service.handles = SQLiteHandleStore(
+            data_dir() / "actions" / "handles.sqlite3"
+        )
+        action_config = self.config.get("actions", {})
+        raw_roots = action_config.get("allowed_file_roots", []) if isinstance(action_config, dict) else []
+        roots = tuple(Path(root).expanduser().absolute() for root in raw_roots
+                      if isinstance(root, str) and Path(root).expanduser().is_absolute()
+                      and Path(root).expanduser().absolute() != Path("/")) if isinstance(raw_roots, list) else ()
+        if self.capability_registry.descriptor("file.search") is None:
+            register_file_capabilities(self.capability_registry, roots,
+                                       self.capability_service.handles, LinuxDocumentBackend())
+        if self.capability_registry.descriptor("system.volume.get") is None:
+            register_volume_capabilities(self.capability_registry, self.capability_service.handles, PactlVolumeBackend())
+        if self.capability_registry.descriptor("process.inspect") is None:
+            register_process_capability(self.capability_registry, self.capability_service.handles)
+        if self.capability_registry.descriptor("browser.search") is None:
+            endpoint = action_config.get("browser_endpoint") if isinstance(action_config, dict) else None
+            register_browser_capabilities(self.capability_registry, self.capability_service.handles,
+                                          CdpBrowserBackend(endpoint))
+        self.capability_service.executions = SQLiteExecutionStore(
+            data_dir() / "actions" / "executions.sqlite3"
         )
         if self.event_journal is None:
             path = self.event_journal_path
@@ -300,6 +334,12 @@ class ApplicationContainer:
                 except KeyUnavailableError:
                     self._rich_history_error = "KEY_UNAVAILABLE"
             self._assistant_service = AssistantService(
+                actions=(AssistantActions(self.capability_service,
+                                          LocalIntentRecognizer(backend.engine, self.memory_graph_store, runtime.profile_scope,
+                                                                applications=LinuxApplicationBackend()),
+                                          self.memory_graph_store, runtime.profile_scope)
+                         if isinstance(backend, LocalAssistantBackend) and backend.engine is not None
+                         else None),
                 store=self.memory_graph_store,
                 backend=backend,
                 memory_extractor=memory_extractor,

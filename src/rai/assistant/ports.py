@@ -244,3 +244,11 @@ class AssistantModelBackend(Protocol):
     def stream(
         self, request: InferenceRequest, cancellation: CancellationToken
     ) -> AsyncIterator[Result[str, ActionFailure]]: ...
+
+
+class AssistantActionHandler(Protocol):
+    """Explicit user intents producing capability-backed response candidates."""
+
+    async def handle(
+        self, turn: ConversationTurn, cancellation: CancellationToken,
+    ) -> AssistantCandidate | None: ...

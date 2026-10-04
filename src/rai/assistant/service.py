@@ -31,6 +31,7 @@ from .backends.deterministic import DeterministicAssistantBackend
 from .context import AssistantContextBuilder
 from .ports import (
     AssistantModelBackend,
+    AssistantActionHandler,
     MemoryGraphStore,
     MemoryProposalExtractor,
     MemoryQuery,
@@ -99,8 +100,10 @@ class AssistantService:
         audit_ledger: AssistantAuditLedger | None = None,
         producer: ProducerIdentity | None = None,
         profile_scope: str = "default",
+        actions: AssistantActionHandler | None = None,
     ) -> None:
         self.store = store
+        self.actions = actions
         self.backend = backend or DeterministicAssistantBackend()
         self.context_builder = context_builder or AssistantContextBuilder(
             store=store,
@@ -848,7 +851,13 @@ class AssistantService:
             model_name=str(getattr(self.backend, "model_name", "deterministic")),
         )
 
-        if manifest.evidence_required and manifest.routing_decision == "no_evidence":
+        action_candidate = (
+            await self.actions.handle(turn, token) if self.actions is not None else None
+        )
+        if action_candidate is not None:
+            candidate = action_candidate
+            latency_ms = 0.0
+        elif manifest.evidence_required and manifest.routing_decision == "no_evidence":
             candidate = AssistantCandidate(
                 text=_MEMORY_ABSTENTION_TEXT,
                 metadata={
@@ -920,6 +929,8 @@ class AssistantService:
 
         assistant_turn_id = _new_id()
         assistant_turn_metadata: dict[str, object] = {"profile_scope": self.profile_scope}
+        if action_candidate is not None:
+            assistant_turn_metadata["action"] = action_candidate.metadata
         if reasoning_content := candidate.metadata.get("reasoning_content"):
             assistant_turn_metadata["reasoning_content"] = reasoning_content
 

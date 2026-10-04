@@ -190,9 +190,12 @@ def _response_from_row(row: sqlite3.Row) -> AssistantResponse:
     return AssistantResponse(
         record_id=row["response_id"],
         timestamp=datetime.fromisoformat(row["created_at"]),
-        producer=ProducerIdentity(
-            producer_id="assistant-store", kind="store", version="1.0.0"
-        ),
+        producer=(ProducerIdentity.model_validate_json(row["producer_json"])
+                  if row["producer_json"] else ProducerIdentity(
+                      producer_id="assistant-store", kind="store", version="1.0.0")),
+        correlation_id=row["correlation_id"],
+        schema_version=row["schema_version"] or "1.0.0",
+        reasoning_content=row["reasoning_content"],
         session_id=row["session_id"],
         turn_id=row["assistant_turn_id"] or row["user_turn_id"],
         user_turn_id=row["user_turn_id"],
@@ -462,80 +465,45 @@ class SQLiteMemoryGraphStore:
                 ON memory_operations(profile_scope, created_at, operation_id);
                 """
             )
-            response_columns = {
-                str(row[1]) for row in conn.execute("PRAGMA table_info(responses)")
-            }
-            if "memory_operations_json" not in response_columns:
-                conn.execute(
-                    "ALTER TABLE responses ADD COLUMN memory_operations_json "
-                    "TEXT NOT NULL DEFAULT '[]'"
-                )
-            manifest_columns = {
-                str(row[1]) for row in conn.execute("PRAGMA table_info(manifests)")
-            }
-            if "context_json" not in manifest_columns:
-                conn.execute("ALTER TABLE manifests ADD COLUMN context_json TEXT")
-            turn_columns = {
-                str(row[1]) for row in conn.execute("PRAGMA table_info(turns)")
-            }
-            if "domain_scope" not in turn_columns:
-                conn.execute(
-                    "ALTER TABLE turns ADD COLUMN domain_scope TEXT NOT NULL "
-                    "DEFAULT 'unknown'"
-                )
-            if "purpose" not in turn_columns:
-                conn.execute(
-                    "ALTER TABLE turns ADD COLUMN purpose TEXT NOT NULL "
-                    "DEFAULT 'assistant'"
-                )
-            memory_columns = {
-                str(row[1]) for row in conn.execute("PRAGMA table_info(memories)")
-            }
-            if "source_type" not in memory_columns:
-                conn.execute(
-                    "ALTER TABLE memories ADD COLUMN source_type TEXT NOT NULL "
-                    "DEFAULT 'conversation_turn'"
-                )
-            if "epistemic_status" not in memory_columns:
-                conn.execute(
-                    "ALTER TABLE memories ADD COLUMN epistemic_status TEXT NOT NULL "
-                    "DEFAULT 'asserted'"
-                )
-            if "domain_scope" not in memory_columns:
-                conn.execute(
-                    "ALTER TABLE memories ADD COLUMN domain_scope TEXT NOT NULL "
-                    "DEFAULT 'unknown'"
-                )
-            if "purpose" not in memory_columns:
-                conn.execute(
-                    "ALTER TABLE memories ADD COLUMN purpose TEXT NOT NULL "
-                    "DEFAULT 'assistant'"
-                )
-            if "recorded_at" not in memory_columns:
-                conn.execute("ALTER TABLE memories ADD COLUMN recorded_at TEXT")
-                conn.execute(
-                    "UPDATE memories SET recorded_at = created_at WHERE recorded_at IS NULL"
-                )
-            if "expired_at" not in memory_columns:
-                conn.execute("ALTER TABLE memories ADD COLUMN expired_at TEXT")
-            scope_migration = conn.execute(
-                "SELECT value FROM assistant_schema_metadata "
-                "WHERE key = 'domain_scope_semantics'"
-            ).fetchone()
-            if scope_migration is None:
-                conn.execute(
-                    "UPDATE turns SET domain_scope = ? WHERE domain_scope = 'general'",
-                    (UNKNOWN_DOMAIN_SCOPE,),
-                )
-                conn.execute(
-                    "UPDATE memories SET domain_scope = ? WHERE domain_scope = 'general'",
-                    (UNKNOWN_DOMAIN_SCOPE,),
-                )
-                conn.execute(
-                    "INSERT INTO assistant_schema_metadata (key, value) VALUES (?, ?)",
-                    ("domain_scope_semantics", "global-unknown-v1"),
-                )
+            self._migrate_schema(conn)
         self._initialized = True
+
+    def _migrate_schema(self, conn: sqlite3.Connection) -> None:
+        def add_column_if_missing(table: str, col: str, col_type: str) -> None:
+            cols = {str(row[1]) for row in conn.execute(f"PRAGMA table_info({table})")}
+            if col not in cols:
+                conn.execute(f"ALTER TABLE {table} ADD COLUMN {col} {col_type}")
+
+        add_column_if_missing("responses", "memory_operations_json", "TEXT NOT NULL DEFAULT '[]'")
+        for column in ("producer_json", "correlation_id", "schema_version", "reasoning_content"):
+            add_column_if_missing("responses", column, "TEXT")
+        add_column_if_missing("manifests", "context_json", "TEXT")
+        add_column_if_missing("turns", "domain_scope", "TEXT NOT NULL DEFAULT 'unknown'")
+        add_column_if_missing("turns", "purpose", "TEXT NOT NULL DEFAULT 'assistant'")
+        add_column_if_missing("memories", "source_type", "TEXT NOT NULL DEFAULT 'conversation_turn'")
+        add_column_if_missing("memories", "epistemic_status", "TEXT NOT NULL DEFAULT 'asserted'")
+        add_column_if_missing("memories", "domain_scope", "TEXT NOT NULL DEFAULT 'unknown'")
+        add_column_if_missing("memories", "purpose", "TEXT NOT NULL DEFAULT 'assistant'")
+        add_column_if_missing("memories", "recorded_at", "TEXT")
+        conn.execute("UPDATE memories SET recorded_at = created_at WHERE recorded_at IS NULL")
+        add_column_if_missing("memories", "expired_at", "TEXT")
+        scope_migration = conn.execute(
+            "SELECT value FROM assistant_schema_metadata "
+            "WHERE key = 'domain_scope_semantics'"
+        ).fetchone()
+        if scope_migration is None:
+            conn.execute(
+                "UPDATE turns SET domain_scope = ? WHERE domain_scope = 'general'",
+                (UNKNOWN_DOMAIN_SCOPE,),
+            )
+            conn.execute(
+                "UPDATE memories SET domain_scope = ? WHERE domain_scope = 'general'",
+                (UNKNOWN_DOMAIN_SCOPE,),
+            )
+            conn.execute(
+                "INSERT INTO assistant_schema_metadata (key, value) VALUES (?, ?)",
+                ("domain_scope_semantics", "global-unknown-v1"),
+            )
 
     async def start(self) -> Result[LifecycleState, ActionFailure]:
         async with self._lock:
@@ -1184,8 +1152,9 @@ class SQLiteMemoryGraphStore:
                         response_id, request_id, session_id, user_turn_id,
                         assistant_turn_id, manifest_id, status, text,
                         error_message, admitted_memories_json, provenance_json,
-                        created_at, memory_operations_json
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        created_at, memory_operations_json, producer_json, correlation_id,
+                        schema_version, reasoning_content
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """,
                     (
                         response_to_store.record_id,
@@ -1208,6 +1177,10 @@ class SQLiteMemoryGraphStore:
                         ),
                         response_to_store.timestamp.isoformat(),
                         json.dumps(list(response_to_store.memory_operation_ids)),
+                        response_to_store.producer.model_dump_json(),
+                        response_to_store.correlation_id,
+                        response_to_store.schema_version,
+                        response_to_store.reasoning_content,
                     ),
                 )
 
