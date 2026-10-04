@@ -1,0 +1,476 @@
+{
+  "$defs": {
+    "ActionFailure": {
+      "additionalProperties": false,
+      "properties": {
+        "capability": {
+          "minLength": 1,
+          "title": "Capability",
+          "type": "string"
+        },
+        "code": {
+          "minLength": 1,
+          "title": "Code",
+          "type": "string"
+        },
+        "correlation_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Correlation Id"
+        },
+        "message": {
+          "minLength": 1,
+          "title": "Message",
+          "type": "string"
+        },
+        "producer": {
+          "$ref": "#/$defs/ProducerIdentity"
+        },
+        "provenance": {
+          "default": [],
+          "items": {
+            "$ref": "#/$defs/ProvenanceReference"
+          },
+          "title": "Provenance",
+          "type": "array"
+        },
+        "record_id": {
+          "minLength": 1,
+          "title": "Record Id",
+          "type": "string"
+        },
+        "record_type": {
+          "const": "action_failure",
+          "default": "action_failure",
+          "title": "Record Type",
+          "type": "string"
+        },
+        "request_id": {
+          "minLength": 1,
+          "title": "Request Id",
+          "type": "string"
+        },
+        "retryable": {
+          "default": false,
+          "title": "Retryable",
+          "type": "boolean"
+        },
+        "schema_version": {
+          "default": "1.0.0",
+          "pattern": "^1\\.(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)(?:[-+][0-9A-Za-z.-]+)?$",
+          "title": "Schema Version",
+          "type": "string"
+        },
+        "terminal": {
+          "const": true,
+          "default": true,
+          "title": "Terminal",
+          "type": "boolean"
+        },
+        "timestamp": {
+          "format": "date-time",
+          "title": "Timestamp",
+          "type": "string"
+        }
+      },
+      "required": [
+        "producer",
+        "request_id",
+        "capability",
+        "code",
+        "message"
+      ],
+      "title": "ActionFailure",
+      "type": "object"
+    },
+    "ActionProposal": {
+      "additionalProperties": false,
+      "description": "Untrusted intent referencing a resource issued by the runtime.",
+      "properties": {
+        "capability": {
+          "enum": [
+            "application.launch",
+            "document.open",
+            "browser.open_result",
+            "browser.read_page",
+            "process.inspect",
+            "system.volume.set"
+          ],
+          "title": "Capability",
+          "type": "string"
+        },
+        "correlation_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Correlation Id"
+        },
+        "data_class": {
+          "$ref": "#/$defs/DataClass",
+          "default": "LOCAL"
+        },
+        "producer": {
+          "$ref": "#/$defs/ProducerIdentity"
+        },
+        "record_id": {
+          "minLength": 1,
+          "title": "Record Id",
+          "type": "string"
+        },
+        "record_type": {
+          "const": "action_proposal",
+          "default": "action_proposal",
+          "title": "Record Type",
+          "type": "string"
+        },
+        "resource_handle": {
+          "maxLength": 128,
+          "minLength": 1,
+          "title": "Resource Handle",
+          "type": "string"
+        },
+        "schema_version": {
+          "default": "1.0.0",
+          "pattern": "^1\\.(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)(?:[-+][0-9A-Za-z.-]+)?$",
+          "title": "Schema Version",
+          "type": "string"
+        },
+        "source_turn_id": {
+          "minLength": 1,
+          "title": "Source Turn Id",
+          "type": "string"
+        },
+        "task_id": {
+          "minLength": 1,
+          "title": "Task Id",
+          "type": "string"
+        },
+        "timestamp": {
+          "format": "date-time",
+          "title": "Timestamp",
+          "type": "string"
+        }
+      },
+      "required": [
+        "producer",
+        "source_turn_id",
+        "task_id",
+        "capability",
+        "resource_handle"
+      ],
+      "title": "ActionProposal",
+      "type": "object"
+    },
+    "ActionResult": {
+      "additionalProperties": false,
+      "properties": {
+        "capability": {
+          "minLength": 1,
+          "title": "Capability",
+          "type": "string"
+        },
+        "correlation_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Correlation Id"
+        },
+        "output": {
+          "additionalProperties": true,
+          "title": "Output",
+          "type": "object"
+        },
+        "producer": {
+          "$ref": "#/$defs/ProducerIdentity"
+        },
+        "provenance": {
+          "default": [],
+          "items": {
+            "$ref": "#/$defs/ProvenanceReference"
+          },
+          "title": "Provenance",
+          "type": "array"
+        },
+        "record_id": {
+          "minLength": 1,
+          "title": "Record Id",
+          "type": "string"
+        },
+        "record_type": {
+          "const": "action_result",
+          "default": "action_result",
+          "title": "Record Type",
+          "type": "string"
+        },
+        "request_id": {
+          "minLength": 1,
+          "title": "Request Id",
+          "type": "string"
+        },
+        "schema_version": {
+          "default": "1.0.0",
+          "pattern": "^1\\.(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)(?:[-+][0-9A-Za-z.-]+)?$",
+          "title": "Schema Version",
+          "type": "string"
+        },
+        "terminal": {
+          "const": true,
+          "default": true,
+          "title": "Terminal",
+          "type": "boolean"
+        },
+        "timestamp": {
+          "format": "date-time",
+          "title": "Timestamp",
+          "type": "string"
+        },
+        "verification": {
+          "additionalProperties": true,
+          "title": "Verification",
+          "type": "object"
+        }
+      },
+      "required": [
+        "producer",
+        "request_id",
+        "capability",
+        "output",
+        "verification"
+      ],
+      "title": "ActionResult",
+      "type": "object"
+    },
+    "DataClass": {
+      "description": "Policy classification attached to persisted and outbound data.",
+      "enum": [
+        "PUBLIC",
+        "LOCAL",
+        "PRIVATE",
+        "SECRET",
+        "BLOCKED"
+      ],
+      "title": "DataClass",
+      "type": "string"
+    },
+    "ProducerIdentity": {
+      "additionalProperties": false,
+      "description": "Identity of the component which produced a record.",
+      "properties": {
+        "device_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Device Id"
+        },
+        "kind": {
+          "minLength": 1,
+          "title": "Kind",
+          "type": "string"
+        },
+        "producer_id": {
+          "minLength": 1,
+          "title": "Producer Id",
+          "type": "string"
+        },
+        "version": {
+          "minLength": 1,
+          "title": "Version",
+          "type": "string"
+        }
+      },
+      "required": [
+        "producer_id",
+        "kind",
+        "version"
+      ],
+      "title": "ProducerIdentity",
+      "type": "object"
+    },
+    "ProvenanceReference": {
+      "additionalProperties": false,
+      "description": "Typed edge from a derived record to one of its sources.",
+      "properties": {
+        "producer": {
+          "$ref": "#/$defs/ProducerIdentity"
+        },
+        "relation": {
+          "minLength": 1,
+          "title": "Relation",
+          "type": "string"
+        },
+        "source_id": {
+          "minLength": 1,
+          "title": "Source Id",
+          "type": "string"
+        },
+        "source_type": {
+          "minLength": 1,
+          "title": "Source Type",
+          "type": "string"
+        },
+        "source_version": {
+          "minLength": 1,
+          "title": "Source Version",
+          "type": "string"
+        }
+      },
+      "required": [
+        "source_id",
+        "source_type",
+        "source_version",
+        "relation",
+        "producer"
+      ],
+      "title": "ProvenanceReference",
+      "type": "object"
+    },
+    "ResourceHandle": {
+      "additionalProperties": false,
+      "description": "Opaque authority; target/fingerprint stay in trusted runtime storage.",
+      "properties": {
+        "actor_id": {
+          "minLength": 1,
+          "title": "Actor Id",
+          "type": "string"
+        },
+        "correlation_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Correlation Id"
+        },
+        "data_class": {
+          "$ref": "#/$defs/DataClass",
+          "default": "LOCAL"
+        },
+        "expires_at": {
+          "format": "date-time",
+          "title": "Expires At",
+          "type": "string"
+        },
+        "fingerprint": {
+          "maxLength": 256,
+          "minLength": 1,
+          "title": "Fingerprint",
+          "type": "string"
+        },
+        "kind": {
+          "enum": [
+            "application",
+            "file",
+            "url",
+            "process",
+            "audio_sink"
+          ],
+          "title": "Kind",
+          "type": "string"
+        },
+        "operations": {
+          "items": {
+            "type": "string"
+          },
+          "maxItems": 8,
+          "minItems": 1,
+          "title": "Operations",
+          "type": "array"
+        },
+        "producer": {
+          "$ref": "#/$defs/ProducerIdentity"
+        },
+        "record_id": {
+          "minLength": 1,
+          "title": "Record Id",
+          "type": "string"
+        },
+        "record_type": {
+          "const": "resource_handle",
+          "default": "resource_handle",
+          "title": "Record Type",
+          "type": "string"
+        },
+        "schema_version": {
+          "default": "1.0.0",
+          "pattern": "^1\\.(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)(?:[-+][0-9A-Za-z.-]+)?$",
+          "title": "Schema Version",
+          "type": "string"
+        },
+        "target": {
+          "maxLength": 8192,
+          "minLength": 1,
+          "title": "Target",
+          "type": "string"
+        },
+        "task_id": {
+          "minLength": 1,
+          "title": "Task Id",
+          "type": "string"
+        },
+        "timestamp": {
+          "format": "date-time",
+          "title": "Timestamp",
+          "type": "string"
+        }
+      },
+      "required": [
+        "producer",
+        "actor_id",
+        "task_id",
+        "kind",
+        "target",
+        "fingerprint",
+        "operations",
+        "expires_at"
+      ],
+      "title": "ResourceHandle",
+      "type": "object"
+    }
+  },
+  "$id": "https://tk-lab1.gitlab.io/ai/rai/schemas/rai.actions.v1.schema.json",
+  "anyOf": [
+    {
+      "$ref": "#/$defs/ActionProposal"
+    },
+    {
+      "$ref": "#/$defs/ResourceHandle"
+    },
+    {
+      "$ref": "#/$defs/ActionResult"
+    },
+    {
+      "$ref": "#/$defs/ActionFailure"
+    }
+  ],
+  "title": "RAI Linux action records v1",
+  "x-rai-schema-version": "1.0.0"
+}
