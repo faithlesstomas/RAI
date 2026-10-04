@@ -122,9 +122,26 @@ def test_cli_remembers_name_across_process_like_invocations(tmp_path: Path) -> N
     assert "Masz na imię Tomek" in recall.output
 
 
-def test_format_capabilities_instruction_includes_system_capabilities() -> None:
+def test_empty_capability_registry_does_not_advertise_actions() -> None:
     prompt = format_capabilities_instruction(CapabilityRegistry(), base_instruction="Base system instruction.")
     assert "Base system instruction." in prompt
-    assert "System Capabilities:" in prompt
-    assert "Applications:" in prompt
-    assert "Never claim that you lack access to the operating system" in prompt
+    assert "No executable Linux actions" in prompt
+    assert "application.launch" not in prompt
+    assert "browser.search" not in prompt
+
+
+def test_partial_registry_only_advertises_registered_actions() -> None:
+    from rai.kernel.capabilities import CapabilityDescriptor, RegisteredCapability
+    registry = CapabilityRegistry()
+    registry.register(RegisteredCapability(CapabilityDescriptor(
+        name="application.list", description="List applications", input_schema={"type": "object"},
+        risk_class="LOW", isolation="host-api", verification_plan=("discovery",),
+    ), handler=lambda _: {}))
+    prompt = format_capabilities_instruction(registry)
+    assert "application.list" in prompt
+    assert "application.launch" not in prompt
+    assert "Report unavailable or denied actions honestly" in prompt
+
+
+def test_disconnected_executor_does_not_advertise_actions() -> None:
+    assert "No executable Linux actions" in format_capabilities_instruction(None)

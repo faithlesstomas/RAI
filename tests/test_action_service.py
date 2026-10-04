@@ -157,3 +157,46 @@ async def test_cancellation_after_effect_started_is_unknown_and_not_retried(tmp_
     assert (await runtime.invoke(request))[1] == outcome
     assert calls == [request.record_id]
     assert len([entry for entry in audit.entries if entry.stage == 'TERMINAL']) == 1
+
+
+async def test_terminal_audit_recovers_after_restart_without_reexecution(tmp_path):
+    from rai.actions.capabilities import failure
+
+    class RecoverableAudit(InMemoryAuditLedger):
+        unavailable = True
+
+        async def append(self, entry):
+            if entry.stage == 'TERMINAL' and self.unavailable:
+                request = normalize_request(runtime.registry.descriptor('application.launch'), {},
+                                            request_id=entry.decision.request_id)
+                return Failure(failure(request, 'AUDIT_UNAVAILABLE'))
+            return await super().append(entry)
+
+    audit = RecoverableAudit()
+    runtime = service(tmp_path, audit)
+    request = normalize_request(runtime.registry.descriptor('application.launch'), {})
+    assert (await runtime.invoke(request))[1].failure().code == 'AUDIT_UNAVAILABLE'
+    restarted = service(tmp_path, audit)
+    restarted.approvals = SyntheticApprovalBroker(approved=False)
+    assert (await restarted.invoke(request))[1].failure().code == 'AUDIT_UNAVAILABLE'
+    audit.unavailable = False
+    recovered = await restarted.invoke(request)
+    assert isinstance(recovered[1], Success)
+    assert await restarted.invoke(request) == recovered
+    assert [entry.stage for entry in audit.entries] == ['DECISION', 'TERMINAL']
+    assert audit.entries[-1].approval_id == f'approval-{request.record_id}'
+
+
+async def test_terminal_audit_replay_after_lost_ack_is_idempotent(tmp_path, monkeypatch):
+    from rai.kernel.audit import JsonlAuditLedger
+    import json
+    audit = JsonlAuditLedger(tmp_path / 'audit.jsonl')
+    runtime = service(tmp_path, audit)
+    request = normalize_request(runtime.registry.descriptor('application.launch'), {})
+    monkeypatch.setattr(runtime.executions, 'acknowledge_audit', lambda _: Failure('EXECUTION_STORE_UNAVAILABLE'))
+    assert (await runtime.invoke(request))[1].failure().code == 'EXECUTION_STORE_UNAVAILABLE'
+    restarted = service(tmp_path, JsonlAuditLedger(tmp_path / 'audit.jsonl'))
+    restarted.approvals = SyntheticApprovalBroker(approved=False)
+    assert isinstance((await restarted.invoke(request))[1], Success)
+    entries = [json.loads(line) for line in (tmp_path / 'audit.jsonl').read_text().splitlines()]
+    assert [entry['stage'] for entry in entries] == ['DECISION', 'TERMINAL']

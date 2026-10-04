@@ -347,7 +347,8 @@ class ApplicationContainer:
                 context_builder=AssistantContextBuilder(
                     store=self.memory_graph_store,
                     system_instruction=format_capabilities_instruction(
-                        self.capability_registry,
+                        (self.capability_registry if isinstance(backend, LocalAssistantBackend)
+                         and backend.engine is not None else None),
                         base_instruction=runtime.system_instruction,
                     ),
                     profile_scope=runtime.profile_scope,

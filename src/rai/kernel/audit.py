@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import fcntl
 import json
 import os
 from pathlib import Path
@@ -39,6 +40,11 @@ class InMemoryAuditLedger:
         self.entries.append(entry)
         return Success(entry)
 
+    async def append_once(self, entry: AuditEntry) -> Result[AuditEntry, ActionFailure]:
+        if entry not in self.entries:
+            return await self.append(entry)
+        return Success(entry)
+
 
 class JsonlAuditLedger:
     """Durable local JSONL ledger with serialized, flush-before-return appends."""
@@ -48,9 +54,15 @@ class JsonlAuditLedger:
         self._lock = asyncio.Lock()
 
     async def append(self, entry: AuditEntry) -> Result[AuditEntry, ActionFailure]:
+        return await self._append(entry, deduplicate=False)
+
+    async def append_once(self, entry: AuditEntry) -> Result[AuditEntry, ActionFailure]:
+        return await self._append(entry, deduplicate=True)
+
+    async def _append(self, entry: AuditEntry, *, deduplicate: bool) -> Result[AuditEntry, ActionFailure]:
         try:
             async with self._lock:
-                self._append_sync(entry)
+                self._append_sync(entry, deduplicate=deduplicate)
             return Success(entry)
         except OSError as exc:
             request_id = entry.decision.request_id
@@ -65,9 +77,23 @@ class JsonlAuditLedger:
                 )
             )
 
-    def _append_sync(self, entry: AuditEntry) -> None:
+    def _append_sync(self, entry: AuditEntry, *, deduplicate: bool = False) -> None:
         self.path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
-        with self.path.open("a", encoding="utf-8") as stream:
-            stream.write(json.dumps(entry.model_dump(mode="json"), sort_keys=True) + "\n")
+        with self.path.open("a+", encoding="utf-8") as stream:
+            fcntl.flock(stream.fileno(), fcntl.LOCK_EX)
+            payload = entry.model_dump(mode="json")
+            if deduplicate and entry.stage == "TERMINAL":
+                stream.seek(0)
+                for line in stream:
+                    try:
+                        existing = json.loads(line)
+                    except ValueError as exc:
+                        raise OSError("audit ledger contains an incomplete record") from exc
+                    if existing == payload:
+                        # A previous append may have succeeded before its acknowledgement failed.
+                        stream.flush()
+                        os.fsync(stream.fileno())
+                        return
+            stream.write(json.dumps(payload, sort_keys=True) + "\n")
             stream.flush()
             os.fsync(stream.fileno())

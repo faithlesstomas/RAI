@@ -12,6 +12,7 @@ import sqlite3
 
 from returns.result import Failure, Result, Success
 
+from rai.kernel.audit import AuditEntry
 from rai.kernel.records import ActionFailure, ActionResult, CapabilityRequest, PolicyDecision
 
 
@@ -39,6 +40,8 @@ class SQLiteExecutionStore:
                     "CREATE TABLE IF NOT EXISTS executions "
                     "(id TEXT PRIMARY KEY, digest TEXT NOT NULL, terminal TEXT, decision TEXT)"
                 )
+                connection.execute("CREATE TABLE IF NOT EXISTS audit_outbox "
+                                   "(id TEXT PRIMARY KEY, payload TEXT NOT NULL, delivered INTEGER NOT NULL DEFAULT 0)")
                 yield connection
         finally:
             connection.close()
@@ -81,7 +84,7 @@ class SQLiteExecutionStore:
 
     def finish(
         self, request: CapabilityRequest, terminal: ActionResult | ActionFailure,
-        decision: PolicyDecision | None = None,
+        decision: PolicyDecision | None = None, approval_id: str | None = None,
     ) -> Result[None, str]:
         """A completed reservation cannot be overwritten with another outcome."""
         if terminal.request_id != request.record_id or terminal.capability != request.capability:
@@ -98,6 +101,10 @@ class SQLiteExecutionStore:
                 ).rowcount
                 if changed != 1:
                     return Failure("TERMINAL_CONFLICT")
+                if decision is not None:
+                    entry = AuditEntry(stage="TERMINAL", decision=decision, approval_id=approval_id, result=terminal)
+                    connection.execute("INSERT INTO audit_outbox (id, payload) VALUES (?, ?)",
+                                       (request.record_id, entry.model_dump_json()))
             return Success(None)
         except (OSError, sqlite3.Error):
             return Failure("EXECUTION_STORE_UNAVAILABLE")
@@ -108,3 +115,26 @@ class SQLiteExecutionStore:
             row = connection.execute("SELECT decision FROM executions WHERE id = ?",
                                      (request_id,)).fetchone()
         return PolicyDecision.model_validate_json(row[0]) if row and row[0] else None
+
+    def pending_audit(self, request_id: str) -> Result[AuditEntry | None, str]:
+        """Read the exact terminal envelope committed with the effect result."""
+        try:
+            with self._connect() as connection:
+                row = connection.execute("SELECT payload, delivered FROM audit_outbox WHERE id = ?",
+                                         (request_id,)).fetchone()
+                if row is None:
+                    legacy = connection.execute("SELECT decision FROM executions WHERE id = ?", (request_id,)).fetchone()
+                    if legacy and legacy[0]:
+                        return Failure("AUDIT_STATE_UNVERIFIED")
+            return Success(AuditEntry.model_validate_json(row[0]) if row and not row[1] else None)
+        except (OSError, sqlite3.Error, ValueError):
+            return Failure("EXECUTION_STORE_UNAVAILABLE")
+
+    def acknowledge_audit(self, request_id: str) -> Result[None, str]:
+        """Acknowledge only after the ledger durably accepted this envelope."""
+        try:
+            with self._connect() as connection:
+                connection.execute("UPDATE audit_outbox SET delivered = 1 WHERE id = ?", (request_id,))
+            return Success(None)
+        except (OSError, sqlite3.Error):
+            return Failure("EXECUTION_STORE_UNAVAILABLE")

@@ -119,3 +119,17 @@ On 2026-10-04 the `ddgs` search adapter returned five valid results for the
 synthetic public query “Python official documentation”, including python.org
 and docs.python.org. The legacy `duckduckgo-search` client had returned an empty
 list for that probe; the new browser catalog uses `ddgs` instead.
+
+## Audit recovery
+
+Terminal execution evidence and its audit envelope (including approval identity)
+are committed together to a SQLite outbox. If ledger delivery fails, retries
+attempt audit delivery before exposing the stored result; they never repeat the
+system effect. JSONL terminal delivery is idempotent across a restart, including
+when the ledger append succeeded but its outbox acknowledgement was lost.
+Pre-outbox results with a policy decision cannot prove delivery and return
+`AUDIT_STATE_UNVERIFIED` instead of an unaudited success.
+
+Conversation capability descriptions list individual registered actions only
+when a local action executor is connected. They explicitly qualify availability
+by configuration, backend health, policy and approval.

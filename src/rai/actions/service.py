@@ -71,6 +71,9 @@ class ActionCapabilityService(CapabilityService):
         previous = reservation.unwrap()
         if previous is not None:
             decision = self.executions.decision(request.record_id)
+            delivered = await self._deliver_audit(request.record_id)
+            if isinstance(delivered, Failure):
+                return decision, Failure(failure(request, delivered.failure()))
             return decision, Success(previous) if isinstance(previous, ActionResult) else Failure(previous)
         original = request
         decision = None
@@ -152,13 +155,26 @@ class ActionCapabilityService(CapabilityService):
             if acquired:
                 self._active_actions -= 1
         # Store first so even an audit I/O failure cannot replay the OS effect.
-        saved = self.executions.finish(original, terminal, decision)
+        saved = self.executions.finish(original, terminal, decision, approval_id)
         if isinstance(saved, Failure):
             return decision, Failure(failure(original, "EXECUTION_STORE_UNAVAILABLE"))
-        if decision is not None:
-            audited = await self.audit.append(AuditEntry(
-                stage="TERMINAL", decision=decision, approval_id=approval_id, result=terminal,
-            ))
-            if isinstance(audited, Failure):
-                return decision, Failure(failure(original, "AUDIT_UNAVAILABLE"))
+        delivered = await self._deliver_audit(original.record_id)
+        if isinstance(delivered, Failure):
+            return decision, Failure(failure(original, delivered.failure()))
         return decision, Success(terminal) if isinstance(terminal, ActionResult) else Failure(terminal)
+
+    async def _deliver_audit(self, request_id: str) -> Result[None, str]:
+        pending = self.executions.pending_audit(request_id)
+        if isinstance(pending, Failure):
+            return Failure(pending.failure())
+        entry = pending.unwrap()
+        if entry is None:
+            return Success(None)
+        try:
+            append = getattr(self.audit, "append_once", self.audit.append)
+            delivered = await append(entry)
+        except Exception:  # pylint: disable=broad-exception-caught
+            return Failure("AUDIT_UNAVAILABLE")
+        if isinstance(delivered, Failure):
+            return Failure("AUDIT_UNAVAILABLE")
+        return self.executions.acknowledge_audit(request_id)
