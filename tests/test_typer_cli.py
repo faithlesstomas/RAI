@@ -200,3 +200,67 @@ def test_neural_layer_options_preserve_tuple_contract(tmp_path, layers):
         result = CliRunner().invoke(cli, args)
     assert result.exit_code == 0, result.output
     assert fit.call_args.args[0].layers == ((2, 4) if layers else ())
+
+
+@pytest.mark.parametrize("command", ["ask", "chat"])
+def test_cli_accepts_token_and_context_limits(command):
+    with patch(f"rai.commands.assistant._run_assistant_{command}") as run:
+        result = CliRunner().invoke(
+            cli,
+            [
+                "assistant",
+                command,
+                *(["hello"] if command == "ask" else []),
+                "--max-output-tokens",
+                "4096",
+                "--context-window",
+                "8192",
+            ],
+        )
+    assert result.exit_code == 0, result.output
+    assert run.call_args.kwargs["max_output_tokens"] == 4096
+    assert run.call_args.kwargs["context_window"] == 8192
+
+
+@pytest.mark.parametrize("command", ["ask", "chat"])
+@pytest.mark.parametrize("option,value", [
+    ("--max-output-tokens", "0"),
+    ("--context-window", "-1"),
+    ("--thinking-budget", "-1"),
+])
+def test_cli_rejects_invalid_budgets_before_runtime(command, option, value):
+    with patch(f"rai.commands.assistant._run_assistant_{command}") as run:
+        result = CliRunner().invoke(
+            cli, ["assistant", command, *(["hello"] if command == "ask" else []), option, value]
+        )
+    assert result.exit_code == 2
+    run.assert_not_called()
+
+
+@pytest.mark.parametrize("backend", ["lemonade", "deterministic"])
+def test_budget_defaults_and_cli_overrides_match_runtime(tmp_path, monkeypatch, backend):
+    from rai.commands.settings import _assistant_config
+    from rai.assistant.runtime import resolve_assistant_config
+    from rai.configuration.resolution import effective_model_settings
+
+    monkeypatch.setenv("RAI_CONFIG_DIR", str(tmp_path))
+    config = _assistant_config(backend, "test-model")
+    effective, _ = effective_model_settings(config)
+    runtime = resolve_assistant_config(config)
+    for name, expected in {
+        "max_output_tokens": 4096,
+        "context_window": 8192,
+        "max_context_characters": 32000,
+    }.items():
+        assert effective[name] == getattr(runtime, name) == expected
+    config = _assistant_config(
+        backend, "test-model", max_output_tokens=512, context_window=4096,
+        thinking_budget=0,
+    )
+    effective, sources = effective_model_settings(config)
+    runtime = resolve_assistant_config(config)
+    assert effective["max_output_tokens"] == runtime.max_output_tokens == 512
+    assert effective["context_window"] == runtime.context_window == 4096
+    assert sources["max_output_tokens"] == sources["context_window"] == "CLI"
+    if backend != "deterministic":
+        assert runtime.thinking_budget == 0

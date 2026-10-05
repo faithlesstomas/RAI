@@ -26,6 +26,8 @@ def _run_assistant_ask(  # noqa: PLR0913
     thinking: bool | None = None,
     show_thinking: bool = False,
     thinking_budget: int | None = None,
+    max_output_tokens: int | None = None,
+    context_window: int | None = None,
     data_class: DataClass = DataClass.LOCAL,
 ) -> None:
     from returns.result import Success  # noqa: PLC0415
@@ -43,6 +45,8 @@ def _run_assistant_ask(  # noqa: PLR0913
                 system,
                 thinking=thinking,
                 thinking_budget=thinking_budget,
+                max_output_tokens=max_output_tokens,
+                context_window=context_window,
             )
         )
         service = container.assistant_service
@@ -104,6 +108,8 @@ def _run_assistant_chat(  # noqa: PLR0913, PLR0915
     thinking: bool | None = None,
     show_thinking: bool = False,
     thinking_budget: int | None = None,
+    max_output_tokens: int | None = None,
+    context_window: int | None = None,
     data_class: DataClass = DataClass.LOCAL,
 ) -> None:
     from returns.result import Success  # noqa: PLC0415
@@ -121,6 +127,8 @@ def _run_assistant_chat(  # noqa: PLR0913, PLR0915
                 system,
                 thinking=thinking,
                 thinking_budget=thinking_budget,
+                max_output_tokens=max_output_tokens,
+                context_window=context_window,
             )
         )
         service = container.assistant_service

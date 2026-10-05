@@ -2361,6 +2361,8 @@ migration layer without a concrete consumer requirement.
 - The CLI now uses modular Typer commands and a shared typed JSON/YAML configuration
   boundary (#6/#46). `cli_compatibility.py` has been removed. The obsolete Textual TUI and its configuration UI have also been removed. Remaining REST
   adapters in `config_manager.py` and legacy server execution remain part of #43.
+  Issue #46 remains open for runtime plugin/live model discovery and streaming
+  Markdown rendering. Memory inspection currently stays under `assistant`.
 - `AssistantService` owns the default chat path. The disabled-by-default
   Antigravity compatibility endpoints and `ChatService` facade still require
   removal; they are not the explicitly selectable native Antigravity model backend.

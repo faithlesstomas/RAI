@@ -1,6 +1,6 @@
 # Configuration and Typer CLI
 
-This pre-1.0 breaking change addresses #6 and #46. Configuration parsing and
+This pre-1.0 breaking change resolves #6 and implements the core refactor in #46. Configuration parsing and
 persistence are shared by CLI and server. The retired Click compatibility CLI
 and its `ChatService` client have been removed. The native assistant, capabilities,
 benchmarks and neural sidecar commands use modular Typer adapters.
@@ -27,6 +27,13 @@ Model-setting precedence, highest first:
 4. `local_ai` settings (also used by the local processor supervisor).
 5. Selected `agents` profile.
 6. Runtime defaults; the existing auto backend/GGUF discovery applies when unset.
+
+The shared defaults are 4096 output tokens, an 8192-token model context window,
+and a 32000-character context selection limit. `assistant ask` and `assistant chat`
+accept `--max-output-tokens` and `--context-window` to override these settings for
+one invocation. Both must be positive; `--thinking-budget` accepts zero or more.
+The character limit is a selection bound, not an exact token count. Models with
+smaller contexts need explicit lower limits.
 
 A profile is model configuration and memory scope. `--session-id` identifies a
 conversation, independently of the profile. Explicit `false` overrides inherited
@@ -111,7 +118,10 @@ and do not preserve comments.
 
 Typer supplies shell completion (`--install-completion` / `--show-completion`).
 Backend completion uses the runtime catalog; profiles and model names come from
-configuration. Model-name completion does not query an inference server.
+configuration. Model-name completion does not query an inference server. Runtime plugin discovery,
+live server model discovery and streaming Markdown rendering remain in #46.
+Memory inspection stays under `assistant` (`sessions`, `history`, `context` and
+chat slash commands); there is no separate top-level `memory` or `system` group.
 
 `assistant ask/chat --data-class PUBLIC|LOCAL|PRIVATE` classifies new turns only.
 LOCAL remains the default. The remote native Antigravity backend reviews an

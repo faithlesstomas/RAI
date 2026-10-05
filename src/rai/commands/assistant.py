@@ -68,7 +68,20 @@ def ask_command(  # noqa: PLR0913
     thinking_budget: int | None = typer.Option(
         None,
         "--thinking-budget",
+        min=0,
         help="Token budget for model thinking (llama.cpp engine).",
+    ),
+    max_output_tokens: int | None = typer.Option(
+        None,
+        "--max-output-tokens",
+        min=1,
+        help="Maximum generated token limit for model responses.",
+    ),
+    context_window: int | None = typer.Option(
+        None,
+        "--context-window",
+        min=1,
+        help="Context window size in tokens.",
     ),
     data_class: DataClass = typer.Option(
         DataClass.LOCAL,
@@ -88,6 +101,8 @@ def ask_command(  # noqa: PLR0913
         thinking=thinking,
         show_thinking=show_thinking,
         thinking_budget=thinking_budget,
+        max_output_tokens=max_output_tokens,
+        context_window=context_window,
         data_class=data_class,
     )
 
@@ -133,7 +148,20 @@ def chat_command(  # noqa: PLR0913
     thinking_budget: int | None = typer.Option(
         None,
         "--thinking-budget",
+        min=0,
         help="Token budget for model thinking (llama.cpp engine).",
+    ),
+    max_output_tokens: int | None = typer.Option(
+        None,
+        "--max-output-tokens",
+        min=1,
+        help="Maximum generated token limit for model responses.",
+    ),
+    context_window: int | None = typer.Option(
+        None,
+        "--context-window",
+        min=1,
+        help="Context window size in tokens.",
     ),
     data_class: DataClass = typer.Option(
         DataClass.LOCAL,
@@ -152,6 +180,8 @@ def chat_command(  # noqa: PLR0913
         thinking=thinking,
         show_thinking=show_thinking,
         thinking_budget=thinking_budget,
+        max_output_tokens=max_output_tokens,
+        context_window=context_window,
         data_class=data_class,
     )
 

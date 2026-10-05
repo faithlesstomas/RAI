@@ -9,6 +9,11 @@ from typing import Any, Literal
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 
+DEFAULT_MAX_OUTPUT_TOKENS = 4096
+DEFAULT_CONTEXT_WINDOW = 8192
+DEFAULT_MAX_CONTEXT_CHARACTERS = 32_000
+
+
 class SettingsRecord(BaseModel):
     """Reject misspellings and coercions such as the string 'false'."""
 
@@ -23,10 +28,10 @@ class ModelSettings(SettingsRecord):
     ollama_host: str | None = None
     lemonade_host: str | None = None
     lemonade_api_key: str | None = None
-    max_output_tokens: int = Field(default=256, gt=0)
+    max_output_tokens: int = Field(default=DEFAULT_MAX_OUTPUT_TOKENS, gt=0)
     temperature: float = Field(default=0.2, ge=0, le=2)
-    context_window: int = Field(default=2048, gt=0)
-    max_context_characters: int = Field(default=8000, gt=0)
+    context_window: int = Field(default=DEFAULT_CONTEXT_WINDOW, gt=0)
+    max_context_characters: int = Field(default=DEFAULT_MAX_CONTEXT_CHARACTERS, gt=0)
     max_recent_turns: int = Field(default=10, ge=0)
     max_memories: int = Field(default=5, ge=0)
     max_episodic_turns: int = Field(default=5, ge=0)

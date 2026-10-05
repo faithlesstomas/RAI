@@ -11,6 +11,8 @@ def _assistant_config(  # noqa: PLR0913
     system: str | None = None,
     thinking: bool | None = None,
     thinking_budget: int | None = None,
+    max_output_tokens: int | None = None,
+    context_window: int | None = None,
 ) -> dict[str, object]:
     from rai import config_manager  # noqa: PLC0415
 
@@ -46,6 +48,10 @@ def _assistant_config(  # noqa: PLR0913
         assistant["enable_thinking"] = thinking
     if thinking_budget is not None:
         assistant["thinking_budget"] = thinking_budget
+    if max_output_tokens is not None:
+        assistant["max_output_tokens"] = max_output_tokens
+    if context_window is not None:
+        assistant["context_window"] = context_window
     config["assistant"] = assistant
     config["_cli_overrides"] = {
         k: v
@@ -55,6 +61,8 @@ def _assistant_config(  # noqa: PLR0913
             "system": system,
             "enable_thinking": thinking,
             "thinking_budget": thinking_budget,
+            "max_output_tokens": max_output_tokens,
+            "context_window": context_window,
         }.items()
         if v is not None
     }
