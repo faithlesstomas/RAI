@@ -9,7 +9,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 import pytest
-from click.testing import CliRunner
+from typer.testing import CliRunner
 from returns.result import Failure, Success
 
 from conftest import ASGITestClient

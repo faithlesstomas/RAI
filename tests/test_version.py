@@ -14,7 +14,7 @@ from packaging.requirements import Requirement
 from packaging.utils import canonicalize_name
 from packaging.version import Version
 
-from click.testing import CliRunner
+from typer.testing import CliRunner
 import pytest
 
 from rai import __version__

@@ -1,5 +1,15 @@
 import os
 import sys
+import atexit
+import tempfile
+
+# Autodoc imports the ASGI module. Never read or mutate a developer's settings,
+# databases or credentials while building documentation.
+_docs_runtime = tempfile.TemporaryDirectory(prefix="rai-sphinx-")
+atexit.register(_docs_runtime.cleanup)
+for _kind in ("CONFIG", "DATA", "CACHE", "RUNTIME", "STATE"):
+    os.environ[f"RAI_{_kind}_DIR"] = os.path.join(_docs_runtime.name, _kind.lower())
+os.environ.pop("RAI_CONFIG_FILE", None)
 
 # -- Path setup --------------------------------------------------------------
 # If extensions (or modules to document with autodoc) are in another directory,

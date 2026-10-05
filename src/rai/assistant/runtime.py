@@ -10,6 +10,11 @@ from typing import Any
 
 from returns.result import Failure
 
+from rai.configuration.models import (
+    DEFAULT_CONTEXT_WINDOW,
+    DEFAULT_MAX_CONTEXT_CHARACTERS,
+    DEFAULT_MAX_OUTPUT_TOKENS,
+)
 from rai.inference.engines.llama import AsyncLlamaEngine
 from rai.inference.factory import load_local_model
 
@@ -29,16 +34,16 @@ class AssistantRuntimeConfig:
 
     backend: str
     model: str
-    max_output_tokens: int = 256
+    max_output_tokens: int = DEFAULT_MAX_OUTPUT_TOKENS
     temperature: float = 0.2
-    context_window: int = 2048
+    context_window: int = DEFAULT_CONTEXT_WINDOW
     model_artifact_version: str | None = None
     ollama_host: str = "http://127.0.0.1:11434"
     lemonade_host: str = "http://127.0.0.1:13305"
     lemonade_api_key: str | None = None
     profile_scope: str = "default"
     system_instruction: str = DEFAULT_SYSTEM_INSTRUCTION
-    max_context_characters: int = 8_000
+    max_context_characters: int = DEFAULT_MAX_CONTEXT_CHARACTERS
     max_recent_turns: int = 10
     max_memories: int = 5
     max_episodic_turns: int = 5
@@ -83,19 +88,22 @@ def resolve_assistant_config(  # noqa: PLR0913
     thinking_level: str | None = None,
 ) -> AssistantRuntimeConfig:
     """Resolve CLI, environment and persisted config into one runtime config."""
-    raw_assistant = config.get("assistant", {})
-    assistant = raw_assistant if isinstance(raw_assistant, dict) else {}
-    raw_local = config.get("local_ai", {})
-    local_ai = raw_local if isinstance(raw_local, dict) else {}
+    from rai.configuration.resolution import effective_model_settings  # noqa: PLC0415
+
     profile_name = str(profile_override or config.get("active_agent") or "default")
-    raw_profiles = config.get("agents", {})
-    profiles = raw_profiles if isinstance(raw_profiles, dict) else {}
-    raw_profile = profiles.get(profile_name, {})
-    profile = raw_profile if isinstance(raw_profile, dict) else {}
+    overrides = dict(config.get("_cli_overrides", {}))
+    if backend_override is not None:
+        overrides["backend"] = backend_override
+    if model_override is not None:
+        overrides["model"] = model_override
+    assistant, _sources = effective_model_settings(
+        config, profile=profile_name, overrides=overrides
+    )
+    local_ai = {}
+    profile = {}
 
     backend = (
         backend_override
-        or os.environ.get("RAI_ASSISTANT_BACKEND")
         or assistant.get("backend")
         or local_ai.get("backend")
         or profile.get("backend")
@@ -103,7 +111,6 @@ def resolve_assistant_config(  # noqa: PLR0913
     )
     model = (
         model_override
-        or os.environ.get("RAI_ASSISTANT_MODEL")
         or assistant.get("model")
         or local_ai.get("model")
         or profile.get("model")
@@ -114,13 +121,17 @@ def resolve_assistant_config(  # noqa: PLR0913
         return AssistantRuntimeConfig(
             backend=backend,
             model="deterministic-conformance",
+            max_output_tokens=int(assistant["max_output_tokens"]),
+            context_window=int(assistant["context_window"]),
             profile_scope=profile_name,
             system_instruction=str(
                 assistant.get("system")
                 or profile.get("system")
                 or DEFAULT_SYSTEM_INSTRUCTION
             ),
-            max_context_characters=int(assistant.get("max_context_characters", 8_000)),
+            max_context_characters=int(
+                assistant.get("max_context_characters", DEFAULT_MAX_CONTEXT_CHARACTERS)
+            ),
             max_recent_turns=int(assistant.get("max_recent_turns", 10)),
             max_memories=int(assistant.get("max_memories", 5)),
             max_episodic_turns=int(assistant.get("max_episodic_turns", 5)),
@@ -152,24 +163,18 @@ def resolve_assistant_config(  # noqa: PLR0913
     model = str(model)
     if backend == "auto":
         backend = "llama" if Path(model).suffix.lower() == ".gguf" else "ollama"
-    if backend not in {"llama", "ollama", "lemonade", "antigravity"}:
+    from rai.configuration.resolution import SUPPORTED_BACKENDS  # noqa: PLC0415
+    if backend not in SUPPORTED_BACKENDS:
         raise AssistantConfigurationError(
             f"Unsupported assistant backend {backend!r}; choose llama, ollama, lemonade, or antigravity."
         )
 
-    resolved_enable_thinking = bool(
-        enable_thinking
-        if enable_thinking is not None
-        else (assistant.get("enable_thinking", False) or local_ai.get("enable_thinking", False))
-    )
-    max_tokens_default = 1024 if resolved_enable_thinking else 256
-
     return AssistantRuntimeConfig(
         backend=backend,
         model=model,
-        max_output_tokens=int(assistant.get("max_output_tokens", max_tokens_default)),
+        max_output_tokens=int(assistant.get("max_output_tokens", DEFAULT_MAX_OUTPUT_TOKENS)),
         temperature=float(assistant.get("temperature", 0.2)),
-        context_window=int(assistant.get("context_window", 2048)),
+        context_window=int(assistant.get("context_window", DEFAULT_CONTEXT_WINDOW)),
         model_artifact_version=(
             str(assistant["model_artifact_version"])
             if assistant.get("model_artifact_version")
@@ -209,7 +214,9 @@ def resolve_assistant_config(  # noqa: PLR0913
             or profile.get("system")
             or DEFAULT_SYSTEM_INSTRUCTION
         ),
-        max_context_characters=int(assistant.get("max_context_characters", 8_000)),
+        max_context_characters=int(
+            assistant.get("max_context_characters", DEFAULT_MAX_CONTEXT_CHARACTERS)
+        ),
         max_recent_turns=int(assistant.get("max_recent_turns", 10)),
         max_memories=int(assistant.get("max_memories", 5)),
         max_episodic_turns=int(assistant.get("max_episodic_turns", 5)),
@@ -220,12 +227,12 @@ def resolve_assistant_config(  # noqa: PLR0913
         enable_thinking=bool(
             enable_thinking
             if enable_thinking is not None
-            else (assistant.get("enable_thinking", False) or local_ai.get("enable_thinking", False))
+            else assistant.get("enable_thinking", False)
         ),
         thinking_budget=(
             thinking_budget
             if thinking_budget is not None
-            else (assistant.get("thinking_budget") or local_ai.get("thinking_budget"))
+            else assistant.get("thinking_budget")
         ),
         thinking_level=(
             thinking_level

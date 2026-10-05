@@ -181,35 +181,28 @@ uv run rai assistant chat --backend llama --model /path/to/model.gguf --show-con
 
 When the current working tree contains `models/*.gguf`, `--backend` and
 `--model` may be omitted; RAI prefers a filename containing `chat`. The same
-settings can be persisted in `$XDG_CONFIG_HOME/rai/config.json`:
+settings can be persisted as YAML in `$XDG_CONFIG_HOME/rai/config.yaml`:
 
-```json
-{
-  "assistant": {
-    "backend": "llama",
-    "model": "/path/to/model.gguf",
-    "context_window": 2048,
-    "max_output_tokens": 256,
-    "temperature": 0.2
-  }
-}
+```yaml
+schema_version: 1
+assistant:
+  backend: lemonade
+  model: Qwen3.5-4B-GGUF
+  max_output_tokens: 4096
+  context_window: 8192
 ```
 
-The active agent profile is also a supported configuration source. Its
-`backend`, `model`, `ollama_host` and `system` fields are used when no explicit
-assistant or CLI override exists. For example, with an active Ollama profile,
-both commands below select the same graph-memory runtime:
-
-```bash
-uv run rai
-uv run rai assistant chat
-```
+JSON remains supported through the same schema. Use `rai config validate` and
+`rai config show --effective` to inspect settings and their sources. CLI options
+override environment settings, then `assistant`, `local_ai`, the selected profile
+and defaults. See [configuration and migration](docs/configuration.md) for profiles,
+file selection, state storage and the pre-1.0 CLI changes.
 
 Use `--backend ollama --model MODEL_NAME` for an explicit locally running
 Ollama model. `--profile NAME` selects both a configuration profile and its
 durable-memory scope; `--session-id ID` selects only the bounded recent-dialogue
 window. Inside interactive chat, use `/remember TEXT`, `/forget TEXT`,
-`/memories`, `/history`, `/context`, `/operations`, `/diagnostics`, `/session`
+`/config`, `/memories`, `/history`, `/context`, `/operations`, `/diagnostics`, `/session`
 and `/help`. The same state can be inspected without loading a model:
 
 ```bash
@@ -237,8 +230,8 @@ limitations.
 ## Running RAI
 
 ```bash
-# Standalone graph-memory assistant (same runtime as `rai assistant chat`)
-uv run rai
+# Standalone graph-memory assistant
+uv run rai assistant chat
 
 # List policy-controlled kernel capabilities
 uv run rai capability list
@@ -247,10 +240,10 @@ uv run rai capability list
 uv run rai capability invoke '{...}'
 
 # Local daemon (loopback by default)
-uv run rai serve
+uv run rai server serve
 
-# Explicit legacy compatibility client connected to the daemon
-uv run rai --connect
+# Inspect resolved settings
+uv run rai config show --effective
 ```
 
 The daemon protects control endpoints with a per-user token. By default it is
