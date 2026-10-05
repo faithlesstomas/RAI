@@ -48,6 +48,12 @@ from .tasks import (
     SalienceLevel,
     get_bounded_task_contract,
 )
+from .capabilities import (
+    BOUNDED_TASK_CAPABILITY,
+    BoundedTaskCapability,
+    bounded_task_descriptor,
+    register_bounded_inference_capabilities,
+)
 
 __all__ = [
     "AsyncEngineAdapter",
@@ -93,4 +99,8 @@ __all__ = [
     "is_backend_available",
     "is_lemonade_available",
     "load_local_model",
+    "BOUNDED_TASK_CAPABILITY",
+    "BoundedTaskCapability",
+    "bounded_task_descriptor",
+    "register_bounded_inference_capabilities",
 ]

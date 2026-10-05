@@ -53,6 +53,8 @@ result schema.
 
 ## Usage
 
+### In-process Supervisor API
+
 ```python
 from rai.inference import BoundedTaskKind
 
@@ -68,6 +70,39 @@ result = await supervisor.process_bounded(
 The returned claim keeps the sanitized context package as provenance, preserves
 the highest retained input data class, uses validated model confidence, and
 records the task kind and contract version in `epistemic_status`.
+
+### Governed Capability Dispatch
+
+Bounded tasks are exposed to the RAI capability plane under the capability name
+`inference.bounded_task`. This capability is automatically registered in
+`ApplicationContainer` and governed by the `PolicyEngine` and `AuditLedger`:
+
+```python
+from rai.inference.capabilities import BOUNDED_TASK_CAPABILITY
+from rai.kernel.records import CapabilityRequest
+
+request = CapabilityRequest(
+    capability=BOUNDED_TASK_CAPABILITY,
+    arguments={
+        "kind": "routing_hint",
+        "objective": "Determine routing for task",
+        "content": {"query": "search local files"},
+        "data_class": "LOCAL",
+    },
+    # ... standard actor, isolation, verification fields
+)
+decision, result = await container.capability_service.invoke(request)
+```
+
+### Daemon REST API
+
+The FastAPI server provides endpoints under `/api/v1/inference`:
+
+- `GET /api/v1/inference/contracts`: Inspect all six versioned contracts, their
+  token and resource limits, minimum confidence, and JSON output schemas.
+- `POST /api/v1/inference/tasks`: Dispatch a schema-constrained bounded task
+  payload. The daemon validates the request, routes it through policy and audit,
+  executes it in the container's supervisor, and returns an `InvocationEnvelope`.
 
 ## Persistent result cache
 

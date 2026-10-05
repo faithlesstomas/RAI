@@ -9,7 +9,17 @@ from starlette.datastructures import Headers
 from starlette.types import ASGIApp, Receive, Scope, Send
 from dotenv import load_dotenv
 
-from .routers import activity, agents, assistant, capabilities, events, execution, history, mcp
+from .routers import (
+    activity,
+    agents,
+    assistant,
+    capabilities,
+    events,
+    execution,
+    history,
+    inference,
+    mcp,
+)
 from . import __version__
 from . import config_manager
 from .container import ApplicationContainer
@@ -78,6 +88,7 @@ def create_app(container: ApplicationContainer | None = None) -> FastAPI:
     application.include_router(assistant.router)
     application.include_router(execution.router)
     application.include_router(capabilities.router)
+    application.include_router(inference.router)
     application.include_router(events.router)
     application.include_router(mcp.router)
     application.add_api_route("/health", health_check, methods=["GET"], tags=["Server"])

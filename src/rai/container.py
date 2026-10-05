@@ -114,6 +114,13 @@ class ApplicationContainer:
             endpoint = action_config.get("browser_endpoint") if isinstance(action_config, dict) else None
             register_browser_capabilities(self.capability_registry, self.capability_service.handles,
                                           CdpBrowserBackend(endpoint))
+        if self.capability_registry.descriptor("inference.bounded_task") is None:
+            from .inference.capabilities import (  # noqa: PLC0415
+                register_bounded_inference_capabilities,
+            )
+            register_bounded_inference_capabilities(
+                self.capability_registry, lambda: self.processor_supervisor
+            )
         self.capability_service.executions = SQLiteExecutionStore(
             data_dir() / "actions" / "executions.sqlite3"
         )

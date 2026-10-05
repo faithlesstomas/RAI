@@ -336,11 +336,11 @@ creating an issue does not advance a completion checkbox.
 | Stage 8.1–8.3: native GNOME Shell assistant client and overview chat mode | [#47](https://gitlab.com/tk-lab1/ai/rai/-/issues/47) | Open |
 | Stage 8.1 / Sandbox: session and profile workspace retention and sandbox integration | [#48](https://gitlab.com/tk-lab1/ai/rai/-/issues/48) | Open |
 | Stage 6: integrated hybrid routing, approval and durable usage | [#39](https://gitlab.com/tk-lab1/ai/rai/-/issues/39) | Open |
-| Release follow-up / Stage 9: versioned docs and independent MR validation | [#40](https://gitlab.com/tk-lab1/ai/rai/-/issues/40) | Open |
+| Release follow-up / Stage 9: versioned docs and independent MR validation | [#40](https://gitlab.com/tk-lab1/ai/rai/-/issues/40) | Completed (#40) |
 | Stages 8–9: user service, status, pause/stop and privacy review | [#41](https://gitlab.com/tk-lab1/ai/rai/-/issues/41) | Open |
 | Stage 4.7 / 8: durable workflows and proactive triggers | [#42](https://gitlab.com/tk-lab1/ai/rai/-/issues/42) | Open |
 | Stage 4.7: legacy chat removal | [#43](https://gitlab.com/tk-lab1/ai/rai/-/issues/43) | Completed (#43) |
-| Stage 4.1–4.2: bounded-task dispatch and live acceptance | [#44](https://gitlab.com/tk-lab1/ai/rai/-/issues/44) | Open |
+| Stage 4.1–4.2: bounded-task dispatch and live acceptance | [#44](https://gitlab.com/tk-lab1/ai/rai/-/issues/44) | Completed (#44) |
 | Stages 4.4 / 5.5: bounded visual and semantic GUI fallback | [#45](https://gitlab.com/tk-lab1/ai/rai/-/issues/45) | Open |
 
 Existing issues remain authoritative for browser/history acceptance (#11/#12),
@@ -792,9 +792,11 @@ host-capacity reporting remain open.
 
 #### 4.2 Bounded local tasks
 
-Status: `[x]` — all six versioned task contracts and the persistent,
-policy-aware bounded-result cache are implemented. Cache reuse remains disabled
-until an operator supplies an immutable model artifact version.
+Status: `[x]` — all six versioned task contracts, persistent policy-aware
+bounded-result cache, container-registered capability `inference.bounded_task`, and
+daemon REST dispatch (`/api/v1/inference/contracts`, `/api/v1/inference/tasks`)
+are implemented with full policy, audit, budget and cancellation governance. Cache
+reuse remains disabled until an operator supplies an immutable model artifact version.
 
 - [x] Add schema-constrained intent classification, entity extraction, episode
   summarization, salience estimation, privacy-risk elevation and routing hints.
