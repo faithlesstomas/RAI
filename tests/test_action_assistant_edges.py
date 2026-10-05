@@ -406,3 +406,62 @@ async def test_assistant_actions_synthesizes_for_analytical_request(tmp_path: Pa
     finally:
         await service.stop()
 
+
+async def test_intent_recognizer_handles_null_fields_and_cot_thinking() -> None:
+    turn = user_turn("O czym ostatnio rozmawialiśmy?")
+
+    class CotThinkingEngine:
+        async def generate(self, **kwargs: Any) -> Result[InferenceResult, Exception]:
+            raw_text = (
+                "<think>The user asks about past topics. This is conversational.</think>"
+                '```json\n{"source_turn_id": "' + turn.record_id + '", "outcome": "no_action", '
+                '"language": "pl", "query": null, "question": null, "options": null}\n```'
+            )
+            return Success(InferenceResult(text=raw_text, stats=GenerationStats(10, 10, 0.1, 100)))
+
+    recognizer = LocalIntentRecognizer(CotThinkingEngine())
+    res = await recognizer.recognize(turn, CancellationToken())
+    assert isinstance(res, Success)
+    intent = res.unwrap()
+    assert intent.outcome == "no_action"
+    assert intent.query == ""
+    assert intent.options == ()
+
+
+async def test_intent_recognizer_filters_and_prioritizes_catalog_tokens() -> None:
+    from rai.actions.applications import Application
+
+    turn = user_turn("otwórz nautilus")
+
+    apps = [
+        Application(f"app-{i}.desktop", f"App {i}", Path(f"/app-{i}.desktop"), f"fp{i}", f"/app-{i}")
+        for i in range(100)
+    ]
+    nautilus = Application("org.gnome.Nautilus.desktop", "Files", Path("/nautilus.desktop"), "fpN", "/usr/bin/nautilus")
+    apps.append(nautilus)
+
+    class MockAppCatalog:
+        async def discover(self) -> Result[tuple[Application, ...], ActionFailure]:
+            return Success(tuple(apps))
+
+    class CapturingCatalogEngine:
+        captured_catalog = None
+
+        async def generate(self, **kwargs: Any) -> Result[InferenceResult, Exception]:
+            source = json.loads(kwargs["messages"][1]["content"])
+            self.captured_catalog = source["installed_applications"]
+            return Success(InferenceResult(
+                text=json.dumps({"source_turn_id": turn.record_id, "outcome": "application.launch",
+                                "language": "pl", "query": "org.gnome.Nautilus.desktop"}),
+                stats=GenerationStats(10, 10, 0.1, 100),
+            ))
+
+    engine = CapturingCatalogEngine()
+    recognizer = LocalIntentRecognizer(engine, applications=MockAppCatalog())
+    res = await recognizer.recognize(turn, CancellationToken())
+    assert isinstance(res, Success)
+    assert engine.captured_catalog is not None
+    assert len(engine.captured_catalog) <= 30
+    assert any(entry["desktop_id"] == "org.gnome.Nautilus.desktop" for entry in engine.captured_catalog)
+
+

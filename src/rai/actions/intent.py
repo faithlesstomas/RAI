@@ -3,6 +3,8 @@ from __future__ import annotations
 
 import asyncio
 import json
+from pathlib import Path
+import re
 from typing import Annotated, Literal, Protocol
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_validator
@@ -11,6 +13,7 @@ from returns.result import Failure, Result, Success
 from rai.assistant.records import ConversationTurn
 from rai.assistant.ports import MemoryGraphStore
 from .dialogue import previous_action
+from rai.inference.cot_utils import extract_reasoning_and_content
 from rai.inference.protocols import LocalTextEngine
 from rai.kernel.ports import CancellationToken
 
@@ -21,6 +24,7 @@ from .applications import ApplicationBackend
 MIN_CLARIFICATION_OPTIONS = 2
 MAX_OPTION_LENGTH = 256
 MAX_INTENT_OUTPUT = 8192
+MIN_KEYWORD_MATCH_LENGTH = 2
 
 
 class ActionIntent(BaseModel):
@@ -71,7 +75,7 @@ class LocalIntentRecognizer:
         self.profile = profile
         self.applications = applications
 
-    async def recognize(  # noqa: PLR0911, PLR0912
+    async def recognize(  # noqa: PLR0911, PLR0912, PLR0915
         self, turn: ConversationTurn, cancellation: CancellationToken,
     ) -> Result[ActionIntent, str]:
         instruction = (
@@ -129,8 +133,18 @@ class LocalIntentRecognizer:
                 discovered = await bounded(self.applications.discover(), cancellation, 3.0)
                 if isinstance(discovered, Failure):
                     return Failure("APPLICATION_CATALOG_UNAVAILABLE")
+                all_apps = discovered.unwrap()
+                tokens = {w.casefold() for w in re.findall(r"\w+", turn.text)}
+                matched_apps = [
+                    app for app in all_apps
+                    if any(t in app.name.casefold() or t in app.desktop_id.casefold() or t in Path(app.executable).name.casefold()
+                           for t in tokens if len(t) > MIN_KEYWORD_MATCH_LENGTH)
+                ]
+                seen_ids = {app.desktop_id for app in matched_apps}
+                other_apps = [app for app in all_apps if app.desktop_id not in seen_ids]
+                combined = (matched_apps + other_apps)[:30]
                 catalog = [{"desktop_id": app.desktop_id[:256], "name": app.name[:256]}
-                           for app in discovered.unwrap()[:256]]
+                           for app in combined]
             except (asyncio.TimeoutError, OSError):
                 return Failure("APPLICATION_CATALOG_UNAVAILABLE")
         source = json.dumps({"source_turn_id": turn.record_id, "text": turn.text,
@@ -138,17 +152,27 @@ class LocalIntentRecognizer:
                              "previous_choices": labels, "installed_applications": catalog,
                              "previous_clarification": previous.get("action_clarification", {})}, ensure_ascii=False)
         try:
-            generated = await bounded(self.engine.generate(
-                messages=[{"role": "system", "content": instruction},
-                          {"role": "user", "content": source}],
-                max_tokens=512, temperature=0.0,
-            ), cancellation, 20.0)
+            try:
+                gen_coro = self.engine.generate(
+                    messages=[{"role": "system", "content": instruction},
+                              {"role": "user", "content": source}],
+                    max_tokens=1024, temperature=0.0,
+                    enable_thinking=False,
+                )
+            except TypeError:
+                gen_coro = self.engine.generate(
+                    messages=[{"role": "system", "content": instruction},
+                              {"role": "user", "content": source}],
+                    max_tokens=1024, temperature=0.0,
+                )
+            generated = await bounded(gen_coro, cancellation, 30.0)
             if isinstance(generated, Failure):
                 return Failure("INTENT_BACKEND_FAILED")
             text = generated.unwrap().text
             if len(text) > MAX_INTENT_OUTPUT:
                 return Failure("INTENT_OUTPUT_TOO_LARGE")
-            payload = text.strip()
+            clean_text, _ = extract_reasoning_and_content(text)
+            payload = clean_text.strip() if clean_text.strip() else text.strip()
             if payload.startswith("```json\n") and payload.endswith("\n```"):
                 payload = payload[len("```json\n"):-len("\n```")].strip()
             elif payload.startswith("```") and payload.endswith("```"):
@@ -158,6 +182,14 @@ class LocalIntentRecognizer:
             raw_data = json.loads(payload)
             if not isinstance(raw_data, dict):
                 return Failure("INVALID_INTENT")
+            if raw_data.get("query") is None:
+                raw_data["query"] = ""
+            if raw_data.get("question") is None:
+                raw_data["question"] = ""
+            if raw_data.get("options") is None:
+                raw_data["options"] = ()
+            elif isinstance(raw_data.get("options"), list):
+                raw_data["options"] = [str(x) for x in raw_data["options"] if x is not None]
             if raw_data.get("outcome") == "clarify" and len(raw_data.get("options", ())) < MIN_CLARIFICATION_OPTIONS:
                 raw_data["outcome"] = "no_action"
                 raw_data["options"] = ()
