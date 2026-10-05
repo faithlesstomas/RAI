@@ -339,7 +339,7 @@ creating an issue does not advance a completion checkbox.
 | Release follow-up / Stage 9: versioned docs and independent MR validation | [#40](https://gitlab.com/tk-lab1/ai/rai/-/issues/40) | Open |
 | Stages 8–9: user service, status, pause/stop and privacy review | [#41](https://gitlab.com/tk-lab1/ai/rai/-/issues/41) | Open |
 | Stage 4.7 / 8: durable workflows and proactive triggers | [#42](https://gitlab.com/tk-lab1/ai/rai/-/issues/42) | Open |
-| Stage 4.7: legacy chat removal | [#43](https://gitlab.com/tk-lab1/ai/rai/-/issues/43) | Open |
+| Stage 4.7: legacy chat removal | [#43](https://gitlab.com/tk-lab1/ai/rai/-/issues/43) | Completed (#43) |
 | Stage 4.1–4.2: bounded-task dispatch and live acceptance | [#44](https://gitlab.com/tk-lab1/ai/rai/-/issues/44) | Open |
 | Stages 4.4 / 5.5: bounded visual and semantic GUI fallback | [#45](https://gitlab.com/tk-lab1/ai/rai/-/issues/45) | Open |
 
@@ -2366,9 +2366,10 @@ migration layer without a concrete consumer requirement.
   adapters in `config_manager.py` and legacy server execution remain part of #43.
   Issue #46 remains open for runtime plugin/live model discovery and streaming
   Markdown rendering. Memory inspection currently stays under `assistant`.
-- `AssistantService` owns the default chat path. The disabled-by-default
-  Antigravity compatibility endpoints and `ChatService` facade still require
-  removal; they are not the explicitly selectable native Antigravity model backend.
+- `AssistantService` owns the default chat path. The obsolete legacy chat
+  execution endpoints (`/api/v1/run`, `/api/v1/stream`, `/ws/v1/chat`) and
+  `ChatService` facade have been removed (#43); the explicitly selectable native
+  Antigravity model backend remains distinct.
 - Audit transcripts, semantic SQLite memory and Rich History are separate stores.
   Persistent domain-aware consolidation remains open despite the delivered M1–M6
   memory contracts; the assistant-to-action path has been delivered with the typed

@@ -142,11 +142,10 @@ and provider-owned resume from the CLI path. Obsolete tests specific to those
 removed internals are replaced by Typer/configuration contracts; native assistant
 memory, restart, cancellation and transport tests remain.
 
-The opt-in `/api/v1/run`, `/api/v1/stream`, `/ws/v1/chat` execution endpoints,
-`ChatService`, legacy
-Antigravity backend, transcript/trajectory helpers still have concrete consumers. Their removal, client migration and OpenAPI changes remain in #43.
-The unmaintained Textual TUI, configuration screen, model-tool detection helper
-and unused legacy configuration UI functions have been removed. Future graphical
-and editor clients (GNOME, Emacs and other environments) use the server API.
-`config_manager.py` retains adapters for the remaining server consumers; parsing and persistence
-have moved to `rai.configuration`. This change does not close #43 or #48.
+The opt-in `/api/v1/run`, `/api/v1/stream`, `/ws/v1/chat` execution endpoints
+and `ChatService` have been removed in Issue #43. The unmaintained Textual TUI,
+configuration screen, model-tool detection helper and unused legacy configuration UI
+functions have also been removed. Future graphical and editor clients (GNOME, Emacs
+and other environments) use the server API. `config_manager.py` retains adapters for
+the remaining server consumers; parsing and persistence have moved to `rai.configuration`.
+This change does not close #48.

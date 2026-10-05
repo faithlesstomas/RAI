@@ -68,8 +68,8 @@ The supported text surfaces are `rai assistant ask`, `rai assistant chat`,
 `/api/v1/assistant/ws` WebSocket. Read APIs expose sessions, turns, active
 memories, exact context packages, operation traces and memory diagnostics. The default
 standalone `rai`/`rai -p` path delegates to the same service. Legacy
-provider-owned `/api/v1/run`, `/api/v1/stream` and `/ws/v1/chat` behavior is
-disabled unless `legacy_chat.enabled` is explicitly set to `true`.
+provider-owned `/api/v1/run`, `/api/v1/stream` and `/ws/v1/chat` endpoints have been
+removed in Issue #43.
 
 ## State ownership
 
