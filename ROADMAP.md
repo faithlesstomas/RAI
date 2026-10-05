@@ -329,21 +329,24 @@ The 2026-10-02 readiness audit distinguishes existing infrastructure from
 complete user-facing acceptance. The following issues track remaining work;
 creating an issue does not advance a completion checkbox.
 
-| Roadmap scope | Delivery issue |
-| --- | --- |
-| Stage 4.7 / 5: assistant action proposals, Linux catalog and verified effects | [#38](https://gitlab.com/tk-lab1/ai/rai/-/issues/38) |
-| Stage 6: integrated hybrid routing, approval and durable usage | [#39](https://gitlab.com/tk-lab1/ai/rai/-/issues/39) |
-| Release follow-up / Stage 9: versioned docs and independent MR validation | [#40](https://gitlab.com/tk-lab1/ai/rai/-/issues/40) |
-| Stages 8–9: user service, status, pause/stop and privacy review | [#41](https://gitlab.com/tk-lab1/ai/rai/-/issues/41) |
-| Stage 4.7 / 8: durable workflows and proactive triggers | [#42](https://gitlab.com/tk-lab1/ai/rai/-/issues/42) |
-| Stage 4.7: legacy chat removal | [#43](https://gitlab.com/tk-lab1/ai/rai/-/issues/43) |
-| Stage 4.1–4.2: bounded-task dispatch and live acceptance | [#44](https://gitlab.com/tk-lab1/ai/rai/-/issues/44) |
-| Stages 4.4 / 5.5: bounded visual and semantic GUI fallback | [#45](https://gitlab.com/tk-lab1/ai/rai/-/issues/45) |
+| Roadmap scope | Delivery issue | Status |
+| --- | --- | --- |
+| Stage 4.7 / 5: assistant action proposals, Linux catalog and verified effects | [#38](https://gitlab.com/tk-lab1/ai/rai/-/issues/38) | Closed (!34, v0.12.0) |
+| Stage 8.1–8.3: modular Typer CLI redesign and shell completion | [#46](https://gitlab.com/tk-lab1/ai/rai/-/issues/46) | In progress (core in !35) |
+| Stage 8.1–8.3: native GNOME Shell assistant client and overview chat mode | [#47](https://gitlab.com/tk-lab1/ai/rai/-/issues/47) | Open |
+| Stage 8.1 / Sandbox: session and profile workspace retention and sandbox integration | [#48](https://gitlab.com/tk-lab1/ai/rai/-/issues/48) | Open |
+| Stage 6: integrated hybrid routing, approval and durable usage | [#39](https://gitlab.com/tk-lab1/ai/rai/-/issues/39) | Open |
+| Release follow-up / Stage 9: versioned docs and independent MR validation | [#40](https://gitlab.com/tk-lab1/ai/rai/-/issues/40) | Open |
+| Stages 8–9: user service, status, pause/stop and privacy review | [#41](https://gitlab.com/tk-lab1/ai/rai/-/issues/41) | Open |
+| Stage 4.7 / 8: durable workflows and proactive triggers | [#42](https://gitlab.com/tk-lab1/ai/rai/-/issues/42) | Open |
+| Stage 4.7: legacy chat removal | [#43](https://gitlab.com/tk-lab1/ai/rai/-/issues/43) | Open |
+| Stage 4.1–4.2: bounded-task dispatch and live acceptance | [#44](https://gitlab.com/tk-lab1/ai/rai/-/issues/44) | Open |
+| Stages 4.4 / 5.5: bounded visual and semantic GUI fallback | [#45](https://gitlab.com/tk-lab1/ai/rai/-/issues/45) | Open |
 
 Existing issues remain authoritative for browser/history acceptance (#11/#12),
 voice (#21–#25), memory (#35), HITL (#18), coverage (#13), lint (#19) and
-systemd log formatting (#28). The first action implementation should deliver
-application launch end-to-end; advanced inference research is not its dependency.
+systemd log formatting (#28). The application launch and desktop action
+catalog are delivered end-to-end in #38 / !34; advanced inference research is not their dependency.
 
 ## Delivery sequence
 
@@ -1620,11 +1623,11 @@ actions.
 
 #### 5.1 Capability catalog
 
-- [ ] Implement a minimal versioned catalog:
+- [x] Implement a minimal versioned catalog:
   `application.list`, `application.launch`, `file.access`, `file.list`, `file.search`, `document.open`,
   `browser.search`, `browser.open_result`, `browser.read_page`,
   `system.volume.get`, `system.volume.set`, `process.inspect` and
-  `shell.run_sandboxed`.
+  `shell.run_sandboxed` (`run_shell_command`). Delivered in `src/rai/actions` (!34, #38).
 - [x] Use stable resource/result IDs so follow-ups such as "open the first result"
   do not depend on a model repeating a path or URL.
 - [x] Declare inputs, outputs, side effects, risk class, required isolation,
@@ -2367,8 +2370,9 @@ migration layer without a concrete consumer requirement.
   Antigravity compatibility endpoints and `ChatService` facade still require
   removal; they are not the explicitly selectable native Antigravity model backend.
 - Audit transcripts, semantic SQLite memory and Rich History are separate stores.
-  Persistent domain-aware consolidation and the assistant-to-action path remain
-  incomplete despite the delivered M1–M6 memory contracts.
+  Persistent domain-aware consolidation remains open despite the delivered M1–M6
+  memory contracts; the assistant-to-action path has been delivered with the typed
+  Linux action catalog in `src/rai/actions` (!34, #38).
 - The processor supervisor and bounded-task contracts are container-owned and
   tested, but no daemon API or registered capability dispatches work to them and
   neither production adapter has a repeatable live-model acceptance test.
