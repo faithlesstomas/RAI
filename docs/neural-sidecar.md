@@ -92,7 +92,7 @@ Quantized loading and fitting are currently fail-closed. Passing a non-null
 quantization identity is rejected until the selected quantization backend is
 actually applied and its resolved identity can be verified.
 
-The ordinary `rai serve` process does not import Transformers or Torch, and it
+The ordinary `rai server serve` process does not import Transformers or Torch, and it
 continues to operate when this optional process is absent or fails.
 
 ## Fitting a lens

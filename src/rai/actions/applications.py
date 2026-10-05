@@ -35,6 +35,7 @@ class Application:
     fingerprint: str
     executable: str
     localized_names: tuple[str, ...] = ()
+    mime_types: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -86,7 +87,8 @@ def read_application(path: Path, desktop_id: str) -> Application | None:  # noqa
             return None
         return Application(desktop_id, entry.get("Name", desktop_id)[:256], path,
                            hashlib.sha256(payload).hexdigest(), str(Path(executable).resolve()),
-                           tuple(value[:256] for key, value in entry.items() if key.startswith("name[")))
+                           tuple(value[:256] for key, value in entry.items() if key.startswith("name[")),
+                           tuple(value for value in entry.get("MimeType", "").split(";") if value)[:64])
     except (OSError, UnicodeError, ConfigError, KeyError, ValueError):
         return None
 

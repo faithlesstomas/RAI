@@ -70,7 +70,7 @@ async def test_catalog_contains_display_identity_but_no_execution_authority():
     class Engine:
         async def generate(self, **kwargs):
             source = json.loads(kwargs['messages'][1]['content'])
-            assert source['installed_applications'] == [{'desktop_id': 'calculator.desktop', 'name': 'Calculator'}]
+            assert source['installed_applications'] == [{'desktop_id': 'calculator.desktop', 'name': 'Calculator', 'document_types': []}]
             assert '/private/' not in kwargs['messages'][1]['content']
             return Success(InferenceResult(text=json.dumps({'source_turn_id': turn.record_id,
                            'outcome': 'application.launch', 'language': 'pl', 'query': 'calculator.desktop'}),

@@ -72,7 +72,7 @@ class ApplicationList:
             handle = ResourceHandle(
                 producer=PRODUCER, timestamp=now, actor_id=request.actor.producer_id,
                 task_id=task_id, kind="application", target=app.desktop_id,
-                fingerprint=app.fingerprint, operations=("application.launch",),
+                fingerprint=app.fingerprint, operations=("application.launch", "document.open"),
                 expires_at=now + HANDLE_TTL, data_class=request.data_class,
             )
             issued = await asyncio.to_thread(self.handles.issue, handle)

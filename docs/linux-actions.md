@@ -29,7 +29,8 @@ it does not change the existing major wire-contract version.
 
 ## Configuration
 
-The runtime accepts an `actions` section in `$XDG_CONFIG_HOME/rai/config.json`:
+The runtime accepts an `actions` section in JSON or YAML configuration (see
+[configuration](configuration.md)). The following JSON is equivalent in either format:
 
 ```json
 {
@@ -71,8 +72,9 @@ identity/state metadata, excluding command arguments, environment and memory.
 | `application.list` | Installed application query | Desktop-entry discovery |
 | `application.launch` | Application handle | PID, executable and start time |
 | `file.access` | Document access scope | Runtime configuration |
+| `file.list` | Absolute allowed directory path | Direct metadata listing; no symlink traversal |
 | `file.search` | Document filename query | Allowed-root metadata |
-| `document.open` | Document handle | Open file descriptor identity |
+| `document.open` | File/directory handle and optional application handle | File descriptor identity or FileManager1 location and process identity |
 | `browser.search` | Public web query | Search response, issued result handles |
 | `browser.open_result` | Search-result handle | Observed browser URL |
 | `browser.read_page` | Search-result handle | Matching open tab and URL |
@@ -141,3 +143,58 @@ Pre-outbox results with a policy decision cannot prove delivery and return
 Conversation capability descriptions list individual registered actions only
 when a local action executor is connected. They explicitly qualify availability
 by configuration, backend health, policy and approval.
+
+
+## Directory and application selection
+
+Example requests with the Lemonade backend:
+
+- `Wylistuj zawartość katalogu /home/user/Documents`
+- `Otwórz katalog /home/user/Documents w aplikacji Pliki`
+- `Otwórz plik /home/user/Documents/note.txt w aplikacji Text Editor`
+
+Paths must fall inside `actions.allowed_file_roots`. `file.list` returns at most
+30 direct child names/types, with a truncation flag; it does not read file contents
+or traverse symlinks. File search still selects supported non-executable document
+types; an absolute directory path can also be resolved for opening. Arbitrary
+source/binary files are not promoted to openable documents by directory listing.
+
+A selected application is resolved from installed desktop entries into a second
+actor/task/classification-bound handle. The approval preview names both the path
+and application. Both resources are revalidated before GIO activation. Missing,
+ambiguous or changed applications never silently fall back to the desktop default.
+Directory confirmation checks the requested URI in FileManager1 and identifies its
+bus-owner process; a chosen application's executable must match. Unsupported
+file managers, cold-start delays, apps that close document descriptors immediately,
+or unavailable evidence produce `UNKNOWN`, even if a window may have opened.
+
+Recent intent dialogue is restricted to the session, profile and permitted data
+classification. Action outputs are returned directly; automatic model synthesis
+of action results is disabled until those results can pass through bounded context
+selection, provenance and outbound approval. Authority handles are not appended to
+model prompts after manifest construction.
+
+
+## Configuration/CLI integration acceptance (2026-10-05)
+
+With isolated configuration, state and handle databases, a real Lemonade
+`Gemma-4-E4B-it-GGUF` session through `rai assistant ask` listed a synthetic
+allowed directory and opened a new subdirectory in `org.gnome.Nautilus.desktop`.
+The terminal approval displayed both the directory and application; entering
+`y` led to a verified success using FileManager1 location/process evidence.
+No private files were used; no remote model tokens were sent.
+
+A separate HTTP JSON-RPC MCP client connected to a local RAI server with a
+fresh authentication token. It listed the synthetic directory, exercised denial
+through the approval API (`DENIED`), then approved a separate request and observed
+`SUCCEEDED` for directory opening. Approval previews named the exact resources.
+This is an external-process transport run, not an in-process transport fixture.
+The test server was terminated afterward. The approvals were driven by the test
+operator, not inferred from model output.
+
+The same local model selected Text Editor for a Polish document-opening intent
+when MIME metadata was included in its bounded catalog. This is intent evidence,
+not a verified end-to-end Text Editor document-opening test. In one probe the
+model retained sentence-final punctuation in an unquoted path; quoting paths is
+recommended, and the runtime never substitutes a different path automatically.
+Other desktop applications and document types retain their verification limits.

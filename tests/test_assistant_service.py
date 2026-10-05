@@ -502,3 +502,63 @@ async def test_route_is_recomputed_after_budget_removes_compact_memory(
     assert "compact_memory:removed_by_character_budget" in (
         result.unwrap().manifest.rejected_routes
     )
+
+
+@pytest.mark.asyncio
+async def test_approved_manifest_persists_and_replay_does_not_prompt_again(service):
+    """Approval binds to the transmitted context and its durable terminal record."""
+
+    async def approve(package, token):
+        return Success(
+            package.model_copy(
+                update={
+                    "manifest": package.manifest.model_copy(update={"approved": True})
+                }
+            )
+        )
+
+    approver = AsyncMock(side_effect=approve)
+    service.context_approver = approver
+    turn = ConversationTurn(
+        producer=PRODUCER,
+        session_id="approval-session",
+        role="user",
+        text="hello",
+        data_class=DataClass.PUBLIC,
+    )
+    result = await service.accept_turn(turn)
+    assert isinstance(result, Success)
+    manifest = (await service.store.get_manifest(result.unwrap().manifest_id)).unwrap()
+    assert manifest.approved
+    await service.accept_turn(turn)
+    assert approver.await_count == 1
+
+
+@pytest.mark.asyncio
+async def test_denied_egress_never_calls_backend_and_records_terminal(service):
+    from rai.assistant.records import make_assistant_failure
+
+    service.context_approver = AsyncMock(
+        return_value=Failure(
+            make_assistant_failure(
+                code="EGRESS_DENIED", message="Denied", request_id="turn-denied"
+            )
+        )
+    )
+    service.backend.generate = AsyncMock()
+    turn = ConversationTurn(
+        record_id="turn-denied",
+        producer=PRODUCER,
+        session_id="denied-session",
+        role="user",
+        text="hello",
+        data_class=DataClass.PRIVATE,
+    )
+    await service.accept_turn(turn)
+    service.backend.generate.assert_not_called()
+    manifest = (
+        await service.store.get_latest_manifest_for_session(turn.session_id)
+    ).unwrap()
+    assert manifest is not None and not manifest.approved
+    await service.accept_turn(turn)
+    assert service.context_approver.await_count == 1

@@ -226,12 +226,20 @@ class GioError(Exception):
 
 
 def install_gi(monkeypatch: pytest.MonkeyPatch, *, app: Any, bus: Any = None) -> None:
+    class KeyFile:
+        def load_from_data(self, payload, length, flags):
+            assert payload.startswith("[Desktop Entry]")
+            assert length == len(payload.encode())
+        def set_boolean(self, group, name, value):
+            assert (group, name, value) == ("Desktop Entry", "DBusActivatable", False)
+
     glib = SimpleNamespace(
+        KeyFile=KeyFile, KeyFileFlags=SimpleNamespace(NONE=0),
         SpawnFlags=SimpleNamespace(SEARCH_PATH=1), Error=GioError,
         Variant=lambda *a: a, VariantType=SimpleNamespace(new=lambda signature: signature),
     )
     gio = SimpleNamespace(
-        DesktopAppInfo=SimpleNamespace(new_from_filename=lambda _path: app),
+        DesktopAppInfo=SimpleNamespace(new_from_filename=lambda _path: app, new_from_keyfile=lambda _keyfile: app),
         AppLaunchContext=lambda: object(), BusType=SimpleNamespace(SESSION=0),
         DBusCallFlags=SimpleNamespace(NONE=0), bus_get_sync=lambda *_a: bus,
     )
@@ -249,6 +257,7 @@ class FakeDesktopApp:
 
     def launch_uris_as_manager(self, _uris: Any, _context: Any, _flags: Any, _a: Any, _b: Any,
                                callback: Any, data: Any) -> bool:
+        self.uris = _uris
         if self.pid is not None:
             callback(self, self.pid, data)
         return self.accepted
@@ -257,14 +266,14 @@ class FakeDesktopApp:
         return key == "DBusActivatable" and self.dbus
 
 
-def run_helper(monkeypatch: pytest.MonkeyPatch, tmp_path: Path, digest: str | None = None) -> tuple[int, Path]:
+def run_helper(monkeypatch: pytest.MonkeyPatch, tmp_path: Path, digest: str | None = None, uri: str | None = None) -> tuple[int, Path]:
     entry = tmp_path / "example.desktop"
     if not entry.exists():
         entry.write_text("[Desktop Entry]\nType=Application\nName=Example\nExec=true\n")
     import hashlib  # noqa: PLC0415
     expected = digest or hashlib.sha256(entry.read_bytes()).hexdigest()
     receipt = tmp_path / "receipt.json"
-    monkeypatch.setattr(sys, "argv", ["helper", str(entry), expected, str(receipt)])
+    monkeypatch.setattr(sys, "argv", ["helper", str(entry), expected, str(receipt), *([uri] if uri else [])])
     return launch_helper.main(), receipt
 
 
@@ -320,3 +329,13 @@ def test_helper_uses_dbus_owner_even_when_launcher_pid_was_reported(monkeypatch,
     code, receipt = run_helper(monkeypatch, tmp_path)
     assert code == 0
     assert json.loads(receipt.read_text())['pids'] == [77, 42]
+
+
+def test_document_helper_delivers_uri_from_verified_entry(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    app = FakeDesktopApp()
+    install_gi(monkeypatch, app=app)
+    uri = "file:///tmp/rai-test/a%20b.txt"
+    code, receipt = run_helper(monkeypatch, tmp_path, uri=uri)
+    assert code == 0
+    assert app.uris == [uri]
+    assert json.loads(receipt.read_text())["accepted"]

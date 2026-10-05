@@ -18,7 +18,7 @@ from .execution import SQLiteExecutionStore
 from .handles import SQLiteHandleStore
 
 ACTION_NAMES = frozenset({
-    "application.list", "application.launch", "file.access", "file.search", "document.open",
+    "application.list", "application.launch", "file.access", "file.list", "file.search", "document.open",
     "browser.search", "browser.open_result", "browser.read_page",
     "system.volume.get", "system.volume.set", "process.inspect",
 })
@@ -107,6 +107,18 @@ class ActionCapabilityService(CapabilityService):
                             request = request.model_copy(update={
                                 "target_resource": f"{resource.kind}://{resource.target}",
                             })
+                if not preflight and "application_handle" in request.arguments:
+                    app = self.handles.resolve(request.arguments["application_handle"],
+                        actor_id=request.actor.producer_id, task_id=request.arguments.get("task_id", ""),
+                        operation=request.capability)
+                    if isinstance(app, Failure):
+                        preflight = app.failure()
+                    elif app.unwrap().kind != "application" or app.unwrap().data_class != request.data_class:
+                        preflight = "RESOURCE_CLASS_MISMATCH"
+                    else:
+                        request = request.model_copy(update={
+                            "target_resource": f"{request.target_resource} using application://{app.unwrap().target}",
+                        })
                 decision = self.policy.evaluate(request, descriptor)
                 if preflight:
                     decision = decision.model_copy(update={

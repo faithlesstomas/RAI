@@ -29,6 +29,7 @@ in the roadmap are not assumed to exist until their acceptance gate is complete.
 :caption: Contents:
 
 architecture
+configuration
 kernel-contracts
 event-plane
 rich-history

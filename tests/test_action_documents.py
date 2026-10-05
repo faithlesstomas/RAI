@@ -132,3 +132,22 @@ async def test_timeout_without_evidence_is_unknown_and_reaps_viewer(
     fake_gio(tmp_path, monkeypatch, "sleep 30")
     monkeypatch.setattr(documents, "document_reader", lambda _document: None)
     assert await LinuxDocumentBackend().open(target, CancellationToken()) == Failure("UNKNOWN")
+
+
+async def test_directory_verification_requires_exact_application(tmp_path, monkeypatch):
+    import json
+    import rai.actions.commands as commands
+    from rai.actions.applications import Application
+    from rai.actions.documents import directory_reader
+    target = Document(tmp_path, "directory-fingerprint")
+    async def receipt(*args):
+        return Success(json.dumps({"pid": os.getpid()}))
+    monkeypatch.setattr(commands, "run_command", receipt)
+    evidence = await directory_reader(target, None, CancellationToken())
+    assert evidence["directory_location_observed"]
+    wrong = Application("wrong.desktop", "Wrong", tmp_path / "wrong.desktop", "fp", "/not-this-process")
+    assert await directory_reader(target, wrong, CancellationToken()) is None
+    async def unavailable(*args):
+        return Failure("COMMAND_FAILED")
+    monkeypatch.setattr(commands, "run_command", unavailable)
+    assert await directory_reader(target, None, CancellationToken()) is None

@@ -9,7 +9,7 @@ from typing import Any
 
 import pytest
 from pydantic import ValidationError
-from returns.result import Failure, Success
+from returns.result import Failure, Result, Success
 
 from rai.actions.assistant import AssistantActions
 from rai.actions.capabilities import register_application_capabilities
@@ -249,8 +249,8 @@ async def test_assistant_actions_document_file_search_and_open(tmp_path: Path) -
 async def test_local_intent_recognizer_includes_recent_dialogue_from_store(tmp_path: Path) -> None:
     store = SQLiteMemoryGraphStore(tmp_path / "memory.db")
     await store.start()
-    t1 = ConversationTurn(producer=ACTOR, session_id="s1", role="user", text="Poprzednie pytanie", status="COMPLETED")
-    t2 = ConversationTurn(producer=ACTOR, session_id="s1", role="assistant", text="Poprzednia odpowiedź", status="COMPLETED", reply_to_turn_id=t1.record_id)
+    t1 = ConversationTurn(producer=ACTOR, session_id="s1", role="user", text="Poprzednie pytanie", metadata={"profile_scope": "default"}, status="COMPLETED")
+    t2 = ConversationTurn(producer=ACTOR, session_id="s1", role="assistant", text="Poprzednia odpowiedź", metadata={"profile_scope": "default"}, status="COMPLETED", reply_to_turn_id=t1.record_id)
     await store.accept_turn(t1)
     await store.accept_turn(t2)
 
@@ -338,7 +338,7 @@ async def test_application_list_matches_executable_name(tmp_path: Path) -> None:
     assert apps[0]["desktop_id"] == "org.gnome.Nautilus.desktop"
 
 
-async def test_assistant_actions_synthesizes_for_analytical_request(tmp_path: Path) -> None:
+async def test_action_output_does_not_bypass_context_manifest(tmp_path: Path) -> None:
     from rai.actions.applications import Application
     from rai.actions.capabilities import register_application_capabilities
     from rai.assistant.records import AssistantCandidate, AssistantResponse
@@ -396,10 +396,8 @@ async def test_assistant_actions_synthesizes_for_analytical_request(tmp_path: Pa
             text="Wypisz wszystkie aplikacje jakie możesz uruchomić i przeanalizuj, która z nich może do tego służyć.",
         )
         res = (await service.accept_turn(turn, request_id="req-analysis")).unwrap()
-        assert "Przeanalizowałem: aplikacja Files" in res.text
-        assert backend.received_context is not None
-        evidence = backend.received_context.content.get("external_evidence", ())
-        assert len(evidence) >= 1
+        assert "Files" in res.text
+        assert backend.received_context is None
         recent = (await store.get_recent_reply_chain(turn.session_id, limit=1)).unwrap()
         assert len(recent) == 1
         assert recent[0].metadata["action"]["action_choices"]["entries"][0]["name"] == "Files"
@@ -465,3 +463,23 @@ async def test_intent_recognizer_filters_and_prioritizes_catalog_tokens() -> Non
     assert any(entry["desktop_id"] == "org.gnome.Nautilus.desktop" for entry in engine.captured_catalog)
 
 
+
+
+@pytest.mark.parametrize("classification,profile", [("PRIVATE", "default"), ("LOCAL", "default"), ("PUBLIC", "other")])
+async def test_recognizer_excludes_ineligible_dialogue(tmp_path: Path, classification: str, profile: str) -> None:
+    from rai.kernel.records import DataClass
+    store = SQLiteMemoryGraphStore(tmp_path / "privacy.db")
+    await store.start()
+    try:
+        past = ConversationTurn(producer=ACTOR, session_id="privacy", role="user", text="excluded-secret",
+            data_class=DataClass(classification), metadata={"profile_scope": profile}, status="COMPLETED")
+        await store.accept_turn(past)
+        current = ConversationTurn(producer=ACTOR, session_id="privacy", role="user", text="hello", data_class=DataClass.PUBLIC)
+        class Engine:
+            async def generate(self, **kwargs: Any) -> Any:
+                assert "excluded-secret" not in json.dumps(kwargs["messages"])
+                return Success(InferenceResult(text=json.dumps({"source_turn_id": current.record_id,
+                    "outcome": "no_action", "language": "en"}), stats=GenerationStats(1, 1, 0.1, 10)))
+        assert isinstance(await LocalIntentRecognizer(Engine(), store).recognize(current, CancellationToken()), Success)
+    finally:
+        await store.stop()

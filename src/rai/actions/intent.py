@@ -12,7 +12,7 @@ from returns.result import Failure, Result, Success
 
 from rai.assistant.records import ConversationTurn
 from rai.assistant.ports import MemoryGraphStore
-from .dialogue import previous_action
+from .dialogue import previous_action, PRIVACY_RANK
 from rai.inference.cot_utils import extract_reasoning_and_content
 from rai.inference.protocols import LocalTextEngine
 from rai.kernel.ports import CancellationToken
@@ -32,11 +32,12 @@ class ActionIntent(BaseModel):
 
     model_config = ConfigDict(extra="forbid", frozen=True)
     source_turn_id: str = Field(min_length=1)
-    outcome: Literal["no_action", "clarify", "application.list", "application.launch", "file.access", "file.search", "document.open",
+    outcome: Literal["no_action", "clarify", "application.list", "application.launch", "file.access", "file.list", "file.search", "document.open",
                      "browser.search", "browser.open_result", "browser.read_page",
                      "system.volume.get", "system.volume.set", "process.inspect"]
     language: Literal["pl", "en"]
     query: Annotated[str, Field(max_length=256)] = ""
+    application: Annotated[str, Field(max_length=256)] = ""
     percent: int | None = Field(default=None, strict=True, ge=0, le=100)
     selection: int | None = Field(default=None, ge=1, le=30)
     question: Annotated[str, Field(max_length=512)] = ""
@@ -44,7 +45,7 @@ class ActionIntent(BaseModel):
 
     @model_validator(mode="after")
     def validate_outcome(self) -> ActionIntent:
-        if self.outcome in {"file.search", "browser.search", "process.inspect"} and not self.query.strip():
+        if self.outcome in {"file.list", "file.search", "browser.search", "process.inspect"} and not self.query.strip():
             raise ValueError("this action needs a target query")
         if self.outcome == "application.launch" and not self.query.strip() and self.selection is None:
             raise ValueError("launch needs a query or previous selection")
@@ -85,7 +86,12 @@ class LocalIntentRecognizer:
             "Available actions: file.access (describe configured allowed file paths, access scope, and editing support), "
             "application.list (list, discover, or ask what applications are installed or can be launched), "
             "application.launch (start an installed application by query or previous 1-based selection), file.search (find a document by name), "
-            "document.open (open a supplied absolute path in query, or one previously listed document using a 1-based selection), "
+            "file.list (list direct children of an allowed directory; query is its absolute path), "
+            "document.open (open a file OR directory absolute path in query, or one previously searched document using selection), "
+            "For opening a file or directory in a chosen application, set application to its installed desktop_id and query to the path. "
+            "Never drop a requested application: if a role such as text editor cannot be matched confidently, return clarify instead of using a default. "
+            "Separate sentence punctuation from a path; retain punctuation only when it is part of a quoted path or filename. "
+            "If no application was requested leave application empty to use the desktop default. "
             "For a request to open a concrete path, use document.open and preserve that exact path in query; "
             "do not reduce it to file.search. No action can edit file contents. "
             "browser.search (search the public web), browser.open_result and browser.read_page "
@@ -93,7 +99,7 @@ class LocalIntentRecognizer:
             "system.volume.set (absolute integer percent 0–100), process.inspect (query by name or PID). "
             "When the user asks what applications can be launched, what applications are installed, or asks to list/show programs "
             "(e.g. 'jakie aplikacje możesz uruchomić?', 'wypisz aplikacje', 'what applications can you launch?'), return application.list. "
-            "Questions asking ONLY about allowed filesystem roots or directories MUST use file.access, not application.list or clarify. "
+            "Questions asking ONLY about configured access permissions or allowed filesystem roots MUST use file.access, not application.list or clarify. "
             "If the user provides a path in response to a previous question asking for a path or directory, use document.open with that path. "
             "If the user rejects previous choices (e.g. 'none of the above', 'żadna z podanych') or asks what application fits a description "
             "(e.g. 'file manager', 'przeglądarka plików', 'nautilus'), match it against installed_applications (matching desktop_id or name "
@@ -125,7 +131,10 @@ class LocalIntentRecognizer:
             history_res = await self.store.get_recent_reply_chain(session_id=turn.session_id, limit=4)
             if not isinstance(history_res, Failure):
                 for past in history_res.unwrap():
-                    if past.record_id != turn.record_id and past.text:
+                    if (past.record_id != turn.record_id and past.text
+                            and past.session_id == turn.session_id
+                            and past.metadata.get("profile_scope") == self.profile
+                            and PRIVACY_RANK.get(past.data_class, 99) <= PRIVACY_RANK.get(turn.data_class, -1)):
                         recent_dialogue.append({"role": past.role, "text": past.text[:256]})
         catalog = []
         if self.applications is not None:
@@ -141,9 +150,13 @@ class LocalIntentRecognizer:
                            for t in tokens if len(t) > MIN_KEYWORD_MATCH_LENGTH)
                 ]
                 seen_ids = {app.desktop_id for app in matched_apps}
-                other_apps = [app for app in all_apps if app.desktop_id not in seen_ids]
+                other_apps = sorted(
+                    (app for app in all_apps if app.desktop_id not in seen_ids),
+                    key=lambda app: not bool(set(app.mime_types) & {"inode/directory", "text/plain", "application/pdf"}),
+                )
                 combined = (matched_apps + other_apps)[:30]
-                catalog = [{"desktop_id": app.desktop_id[:256], "name": app.name[:256]}
+                catalog = [{"desktop_id": app.desktop_id[:256], "name": app.name[:256],
+                            "document_types": sorted(set(app.mime_types) & {"inode/directory", "text/plain", "application/pdf"})}
                            for app in combined]
             except (asyncio.TimeoutError, OSError):
                 return Failure("APPLICATION_CATALOG_UNAVAILABLE")
@@ -182,6 +195,8 @@ class LocalIntentRecognizer:
             raw_data = json.loads(payload)
             if not isinstance(raw_data, dict):
                 return Failure("INVALID_INTENT")
+            if raw_data.get("application") is None:
+                raw_data["application"] = ""
             if raw_data.get("query") is None:
                 raw_data["query"] = ""
             if raw_data.get("question") is None:

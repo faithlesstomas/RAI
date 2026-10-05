@@ -45,7 +45,7 @@ class AssistantActions:
         def message(polish: str, english: str) -> str:
             return polish if intent.language == "pl" else english
 
-        if intent.outcome in {"file.access", "file.search", "document.open"}:
+        if intent.outcome in {"file.access", "file.list", "file.search", "document.open"}:
             return await self._document_intent(turn, intent, cancellation)
         if intent.outcome == "application.list":
             return await self._list_applications_intent(turn, intent, cancellation, message)
@@ -144,6 +144,19 @@ class AssistantActions:
                         if roots else "No document directories are configured. Set actions.allowed_file_roots in the RAI configuration.")
                 text += "\nFile editing is not currently supported. This describes document actions, not all OS process permissions."
             return AssistantCandidate(text=text, metadata={"action_result": accessed.unwrap().model_dump(mode="json"), "remote_tokens": 0})
+        if intent.outcome == "file.list":
+            request = normalize_request(descriptor, {"query": intent.query, "task_id": task_id},
+                                        actor=turn.producer, request_id=f"{turn.record_id}:file-list", data_class=turn.data_class)
+            _, listed = await self.capabilities.invoke(request, cancellation)
+            if isinstance(listed, Failure):
+                return AssistantCandidate(text=(f"Nie mogę wylistować katalogu: {listed.failure().code}."
+                    if intent.language == "pl" else f"Cannot list directory: {listed.failure().code}."))
+            output = listed.unwrap().output
+            text = "\n".join(f"- {entry['name']} ({entry['kind']})" for entry in output["entries"])
+            if output["truncated"]:
+                text += "\n" + ("Lista skrócona." if intent.language == "pl" else "List truncated.")
+            return AssistantCandidate(text=text or ("Katalog jest pusty." if intent.language == "pl" else "Directory is empty."),
+                metadata={"action_result": listed.unwrap().model_dump(mode="json"), "remote_tokens": 0})
         if intent.outcome == "file.search":
             descriptor = self.capabilities.registry.descriptor("file.search")
             request = normalize_request(descriptor, {"query": intent.query, "task_id": task_id},
@@ -183,7 +196,25 @@ class AssistantActions:
         proposal = ActionProposal(producer=turn.producer, source_turn_id=turn.record_id,
                                   task_id=choices["task_id"], capability="document.open",
                                   resource_handle=selected["handle"], data_class=turn.data_class)
-        request = normalize_request(descriptor, {"task_id": choices["task_id"], "handle": selected["handle"]},
+        arguments = {"task_id": choices["task_id"], "handle": selected["handle"]}
+        if intent.application:
+            app_descriptor = self.capabilities.registry.descriptor("application.list")
+            if app_descriptor is None:
+                return AssistantCandidate(text="Application selection unavailable.")
+            listing = normalize_request(app_descriptor, {"task_id": choices["task_id"], "query": intent.application},
+                actor=turn.producer, request_id=f"{turn.record_id}:document-applications", data_class=turn.data_class)
+            _, apps = await self.capabilities.invoke(listing, cancellation)
+            if isinstance(apps, Failure):
+                return AssistantCandidate(text="Nie mogę sprawdzić aplikacji." if intent.language == "pl" else "Cannot resolve application.")
+            matches = apps.unwrap().output["applications"]
+            exact = [app for app in matches if intent.application.casefold() in {app["desktop_id"].casefold(), app["name"].casefold()}]
+            matches = exact or matches
+            if len(matches) != 1:
+                names = ", ".join(app["desktop_id"] for app in matches)
+                return AssistantCandidate(text=("Doprecyzuj aplikację i ścieżkę: " if intent.language == "pl"
+                    else "Specify the application and path: ") + (names or intent.application))
+            arguments["application_handle"] = matches[0]["handle"]
+        request = normalize_request(descriptor, arguments,
                                     actor=turn.producer, request_id=f"{turn.record_id}:document-open", data_class=turn.data_class)
         decision, executed = await self.capabilities.invoke(request, cancellation)
         terminal = executed.failure() if isinstance(executed, Failure) else executed.unwrap()
@@ -244,13 +275,6 @@ class AssistantActions:
             "action_choices": {"kind": "application", "task_id": task_id, "entries": applications},
             "action_result": {"status": "SUCCEEDED", "output": {"applications": applications}},
         }
-        analytical_tokens = {
-            "przeanalizuj", "analizuj", "analyze", "wyjaśnij", "explain",
-            "porównaj", "compare", "rekomenduj", "recommend",
-        }
-        words = {w.strip("?,.!:").casefold() for w in turn.text.split()}
-        if bool(words & analytical_tokens):
-            metadata["synthesize_with_model"] = True
         return AssistantCandidate(
             text=reply,
             metadata=metadata,

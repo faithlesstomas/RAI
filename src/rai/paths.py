@@ -47,3 +47,11 @@ def runtime_dir() -> Path:
         return Path(xdg_runtime) / "rai"
     return cache_dir() / "run"
 
+
+
+def state_dir() -> Path:
+    """Return persistent runtime state, separate from user-edited settings."""
+    override = os.environ.get("RAI_STATE_DIR")
+    if override:
+        return Path(override).expanduser()
+    return _xdg_dir("XDG_STATE_HOME", "~/.local/state") / "rai"

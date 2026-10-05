@@ -6,7 +6,7 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
 
-from click.testing import CliRunner
+from typer.testing import CliRunner
 from fastapi import WebSocketDisconnect
 import pytest
 from returns.result import Success
@@ -241,7 +241,7 @@ def test_cli_exposes_sessions_history_memory_context_and_operations(
     environment = {"RAI_DATA_DIR": str(tmp_path / "data")}
     config = {"assistant": {"backend": "deterministic"}}
 
-    with patch("rai.cli_commands._assistant_config", return_value=config):
+    with patch("rai.commands.dialog._assistant_config", return_value=config):
         answer = runner.invoke(
             cli,
             [

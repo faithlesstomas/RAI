@@ -105,7 +105,7 @@ class ApplicationContainer:
                       and Path(root).expanduser().absolute() != Path("/")) if isinstance(raw_roots, list) else ()
         if self.capability_registry.descriptor("file.search") is None:
             register_file_capabilities(self.capability_registry, roots,
-                                       self.capability_service.handles, LinuxDocumentBackend())
+                                       self.capability_service.handles, LinuxDocumentBackend(), LinuxApplicationBackend())
         if self.capability_registry.descriptor("system.volume.get") is None:
             register_volume_capabilities(self.capability_registry, self.capability_service.handles, PactlVolumeBackend())
         if self.capability_registry.descriptor("process.inspect") is None:

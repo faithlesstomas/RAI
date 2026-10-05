@@ -219,3 +219,15 @@ remove the disposable cache database.
 
 Do not include secrets or exploit details in a public issue. Contact the project
 maintainer privately, then coordinate a disclosure and credential rotation plan.
+
+
+## Linux action context and selected applications
+
+Intent recognition may use recent dialogue only from the current session/profile
+and at an equal or lower data classification. Action results are not appended to
+model context outside its budget and manifest. Directory listing is metadata-only,
+bounded, and traverses directory descriptors without following symlinks. Opening
+in a chosen application requires a separate scoped application handle; the approval
+target includes both resources and execution checks their identities again.
+Directory verification emits only whether the requested location is open, never
+the user's other open locations. Missing desktop evidence yields `UNKNOWN`.

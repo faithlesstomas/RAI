@@ -22,7 +22,15 @@ def main() -> int:
         payload = source.read(MAX_ENTRY_BYTES + 1)
     if len(payload) > MAX_ENTRY_BYTES or hashlib.sha256(payload).hexdigest() != expected:
         return 2
-    app = Gio.DesktopAppInfo.new_from_filename(str(path))
+    if sys.argv[4:5]:
+        # GIO parses the verified desktop-entry Exec field and URI placeholders.
+        # URI delivery must not depend on desktop-session activation environment.
+        keyfile = GLib.KeyFile()
+        keyfile.load_from_data(payload.decode("utf-8"), len(payload), GLib.KeyFileFlags.NONE)
+        keyfile.set_boolean("Desktop Entry", "DBusActivatable", False)
+        app = Gio.DesktopAppInfo.new_from_keyfile(keyfile)
+    else:
+        app = Gio.DesktopAppInfo.new_from_filename(str(path))
     if app is None:
         return 2
     pids: list[int] = []
@@ -31,7 +39,7 @@ def main() -> int:
         pids.append(pid)
 
     accepted = app.launch_uris_as_manager(
-        [], Gio.AppLaunchContext(), GLib.SpawnFlags.SEARCH_PATH,
+        sys.argv[4:5], Gio.AppLaunchContext(), GLib.SpawnFlags.SEARCH_PATH,
         None, None, launched, None,
     )
     if accepted and app.get_boolean("DBusActivatable"):
