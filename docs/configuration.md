@@ -56,9 +56,9 @@ rich_history:
   enabled: false
 ```
 
-`actions.allowed_file_roots` and `actions.browser_endpoint` are recognized and
-preserved by the schema in preparation for the Linux action catalog in MR !34.
-Their presence alone does not install capabilities on this branch. Workspace
+`actions.allowed_file_roots` configures file listing, search and document/directory
+opening. `actions.browser_endpoint` selects the isolated browser adapter endpoint.
+See [Linux actions](linux-actions.md) for capabilities and verification limits. Workspace
 retention and client leases remain tracked separately in #48.
 
 ## Inspection and editing

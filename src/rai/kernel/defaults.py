@@ -2,6 +2,11 @@
 
 from __future__ import annotations
 
+from rai.actions.applications import LinuxApplicationBackend
+from rai.actions.capabilities import register_application_capabilities
+from rai.actions.handles import SQLiteHandleStore
+from rai.paths import data_dir
+
 from collections.abc import Callable
 from typing import Any
 
@@ -631,6 +636,10 @@ def create_default_capability_registry() -> CapabilityRegistry:
             compatibility_groups=groups,
         )
     register_speech_synthesis(registry, create_default_speech_actuator())
+    register_application_capabilities(
+        registry, LinuxApplicationBackend(),
+        SQLiteHandleStore(data_dir() / "actions" / "handles.sqlite3"),
+    )
     return registry
 
 

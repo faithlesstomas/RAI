@@ -33,6 +33,8 @@ async def test_mcp_list_tools_comes_from_capability_registry() -> None:
     tools = await list_tools(_service())
     names = {tool.name for tool in tools}
     assert names == {
+        "application.list",
+        "application.launch",
         "calculate",
         "client.eval_scheme",
         "finance.quote",

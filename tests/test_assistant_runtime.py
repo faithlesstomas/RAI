@@ -8,11 +8,13 @@ from unittest.mock import patch
 from typer.testing import CliRunner
 import pytest
 
+from rai.assistant.context import format_capabilities_instruction
 from rai.assistant.runtime import (
     AssistantConfigurationError,
     resolve_assistant_config,
 )
 from rai.cli import cli
+from rai.kernel.capabilities import CapabilityRegistry
 
 MINIMUM_GUILE_OCCURRENCES = 2
 
@@ -118,3 +120,28 @@ def test_cli_remembers_name_across_process_like_invocations(tmp_path: Path) -> N
     assert "Zapamiętałem Twoje imię" in admission.output
     assert recall.exit_code == 0, recall.output
     assert "Masz na imię Tomek" in recall.output
+
+
+def test_empty_capability_registry_does_not_advertise_actions() -> None:
+    prompt = format_capabilities_instruction(CapabilityRegistry(), base_instruction="Base system instruction.")
+    assert "Base system instruction." in prompt
+    assert "No executable Linux actions" in prompt
+    assert "application.launch" not in prompt
+    assert "browser.search" not in prompt
+
+
+def test_partial_registry_only_advertises_registered_actions() -> None:
+    from rai.kernel.capabilities import CapabilityDescriptor, RegisteredCapability
+    registry = CapabilityRegistry()
+    registry.register(RegisteredCapability(CapabilityDescriptor(
+        name="application.list", description="List applications", input_schema={"type": "object"},
+        risk_class="LOW", isolation="host-api", verification_plan=("discovery",),
+    ), handler=lambda _: {}))
+    prompt = format_capabilities_instruction(registry)
+    assert "application.list" in prompt
+    assert "application.launch" not in prompt
+    assert "Report unavailable or denied actions honestly" in prompt
+
+
+def test_disconnected_executor_does_not_advertise_actions() -> None:
+    assert "No executable Linux actions" in format_capabilities_instruction(None)

@@ -1621,24 +1621,24 @@ actions.
 #### 5.1 Capability catalog
 
 - [ ] Implement a minimal versioned catalog:
-  `application.list`, `application.launch`, `file.search`, `document.open`,
+  `application.list`, `application.launch`, `file.access`, `file.list`, `file.search`, `document.open`,
   `browser.search`, `browser.open_result`, `browser.read_page`,
   `system.volume.get`, `system.volume.set`, `process.inspect` and
   `shell.run_sandboxed`.
-- [ ] Use stable resource/result IDs so follow-ups such as "open the first result"
+- [x] Use stable resource/result IDs so follow-ups such as "open the first result"
   do not depend on a model repeating a path or URL.
-- [ ] Declare inputs, outputs, side effects, risk class, required isolation,
+- [x] Declare inputs, outputs, side effects, risk class, required isolation,
   verification and compensation for each capability.
-- [ ] Prefer D-Bus, application APIs, desktop entries, XDG Portals and AT-SPI in
+- [x] Prefer D-Bus, application APIs, desktop entries, XDG Portals and AT-SPI in
   that order before pointer/keyboard simulation.
 
 #### 5.2 Resource authority
 
-- [ ] Replace raw paths, URLs, window coordinates and PIDs in model-facing calls
+- [x] Replace raw paths, URLs, window coordinates and PIDs in model-facing calls
   with scoped handles where practical.
-- [ ] Bind handles to user, task, expiry, allowed operations and source policy.
-- [ ] Reject stale, substituted or broadened handles.
-- [ ] Resolve the final target again immediately before a state-changing action.
+- [x] Bind handles to user, task, expiry, allowed operations and source policy.
+- [x] Reject stale, substituted or broadened handles.
+- [x] Resolve the final target again immediately before a state-changing action.
 
 #### 5.3 Risk and approval policy
 

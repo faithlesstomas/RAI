@@ -3,13 +3,14 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-import json
 from datetime import datetime, timezone
+import json
 import re
 import unicodedata
 
 from returns.result import Failure, Result, Success
 
+from rai.kernel.capabilities import CapabilityRegistry
 from rai.kernel.records import (
     ActionFailure,
     DataClass,
@@ -38,6 +39,37 @@ DEFAULT_SYSTEM_INSTRUCTION = (
     "You are Rich AI (RAI), an intelligent and secure local assistant for the GNU/Linux desktop. "
     "You respect user preferences stored in durable memory and provide concise, accurate answers."
 )
+
+
+def format_capabilities_instruction(
+    registry: CapabilityRegistry | None = None,
+    base_instruction: str = DEFAULT_SYSTEM_INSTRUCTION,
+) -> str:
+    """Describe only registered actions; availability is checked at invocation."""
+    descriptions = {
+        "application.list": "Discover installed desktop applications",
+        "application.launch": "Launch an installed application and verify its process",
+        "file.access": "Describe configured document directories and editing support",
+        "file.list": "List direct children of an allowed directory",
+        "file.search": "Search filenames inside configured allowed directories",
+        "document.open": "Open a selected file or directory, optionally in a chosen installed application, and verify its identity",
+        "system.volume.get": "Read audio volume",
+        "system.volume.set": "Set audio volume and verify readback",
+        "process.inspect": "Inspect current-user process identity and state",
+        "browser.search": "Search public web information",
+        "browser.open_result": "Open a selected result in a configured browser",
+        "browser.read_page": "Read a selected public page in a configured browser",
+    }
+    names = {descriptor.name for descriptor in registry.descriptors()} if registry else set()
+    available = [f"- {name}: {description}." for name, description in descriptions.items() if name in names]
+    if not available:
+        return base_instruction + "\n\nNo executable Linux actions are connected to this conversation."
+    return (
+        base_instruction + "\n\nRegistered Linux actions:\n" + "\n".join(available)
+        + "\nThese actions are subject to policy, approval, configuration and backend availability. "
+        "Report unavailable or denied actions honestly. Claim success only from verified execution results."
+    )
+
 
 _EPISTEMIC_QUALITY = {
     "asserted": 1.0,

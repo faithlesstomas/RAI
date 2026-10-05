@@ -84,6 +84,7 @@ release = ["build", "twine>=6,<7"]
 tools = [
     "python-gitlab",
     "duckduckgo-search",
+    "ddgs>=9.16,<10",
     "wikipedia",
     "arxiv",
     "pypdf",
