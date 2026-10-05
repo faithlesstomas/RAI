@@ -240,10 +240,18 @@ class AssistantActions:
                 + "\n".join(f"- {n}" for n in sample)
                 + f"{more}\n\nTo launch an application, simply say e.g. 'Launch {sample[0]}'."
             )
+        metadata = {
+            "action_choices": {"kind": "application", "task_id": task_id, "entries": applications},
+            "action_result": {"status": "SUCCEEDED", "output": {"applications": applications}},
+        }
+        analytical_tokens = {
+            "przeanalizuj", "analizuj", "analyze", "wyjaśnij", "explain",
+            "porównaj", "compare", "rekomenduj", "recommend",
+        }
+        words = {w.strip("?,.!:").casefold() for w in turn.text.split()}
+        if bool(words & analytical_tokens):
+            metadata["synthesize_with_model"] = True
         return AssistantCandidate(
             text=reply,
-            metadata={
-                "action_choices": {"kind": "application", "task_id": task_id, "entries": applications},
-                "action_result": {"status": "SUCCEEDED", "output": {"applications": applications}},
-            },
+            metadata=metadata,
         )

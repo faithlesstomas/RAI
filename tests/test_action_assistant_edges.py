@@ -25,7 +25,7 @@ from rai.kernel.audit import InMemoryAuditLedger
 from rai.kernel.capabilities import CapabilityRegistry
 from rai.kernel.policy import PolicyEngine
 from rai.kernel.ports import CancellationToken
-from rai.kernel.records import ProducerIdentity
+from rai.kernel.records import ActionFailure, ProducerIdentity
 from rai.kernel.synthetic import SyntheticApprovalBroker
 
 ACTOR = ProducerIdentity(producer_id="user", kind="user", version="1.0.0")
@@ -244,3 +244,165 @@ async def test_assistant_actions_document_file_search_and_open(tmp_path: Path) -
     res_no_store = await actions_no_store.handle(user_turn(), CancellationToken())
     assert res_no_store is not None
     assert "Który dokument mam otworzyć?" in res_no_store.text
+
+
+async def test_local_intent_recognizer_includes_recent_dialogue_from_store(tmp_path: Path) -> None:
+    store = SQLiteMemoryGraphStore(tmp_path / "memory.db")
+    await store.start()
+    t1 = ConversationTurn(producer=ACTOR, session_id="s1", role="user", text="Poprzednie pytanie", status="COMPLETED")
+    t2 = ConversationTurn(producer=ACTOR, session_id="s1", role="assistant", text="Poprzednia odpowiedź", status="COMPLETED", reply_to_turn_id=t1.record_id)
+    await store.accept_turn(t1)
+    await store.accept_turn(t2)
+
+    current_turn = ConversationTurn(producer=ACTOR, session_id="s1", role="user", text="Bieżące pytanie")
+
+    class CapturingEngine:
+        captured_source = None
+        async def generate(self, **kwargs: Any) -> Any:
+            self.captured_source = json.loads(kwargs["messages"][1]["content"])
+            return Success(InferenceResult(
+                text=json.dumps({"source_turn_id": current_turn.record_id, "outcome": "no_action", "language": "pl"}),
+                stats=GenerationStats(10, 10, 0.1, 100),
+            ))
+
+    engine = CapturingEngine()
+    recognizer = LocalIntentRecognizer(engine, store=store)
+    result = await recognizer.recognize(current_turn, CancellationToken())
+    assert isinstance(result, Success)
+    assert engine.captured_source is not None
+    assert "recent_dialogue" in engine.captured_source
+    dialogue = engine.captured_source["recent_dialogue"]
+    assert len(dialogue) == 2
+    assert dialogue[0]["text"] == "Poprzednie pytanie"
+    assert dialogue[1]["text"] == "Poprzednia odpowiedź"
+    await store.stop()
+
+
+async def test_local_intent_recognizer_graceful_fallbacks() -> None:
+    turn = user_turn("Zadna z podanych. Chodzi o cos innego")
+
+    class EngineFallback:
+        payload: dict[str, Any] = {}
+        async def generate(self, **kwargs: Any) -> Any:
+            return Success(InferenceResult(
+                text=json.dumps(self.payload),
+                stats=GenerationStats(10, 10, 0.1, 100),
+            ))
+
+    engine = EngineFallback()
+    recognizer = LocalIntentRecognizer(engine)
+
+    # Empty clarify choices gracefully falls back to no_action
+    engine.payload = {"source_turn_id": turn.record_id, "outcome": "clarify", "language": "pl", "question": "Co?", "options": []}
+    res_clarify = await recognizer.recognize(turn, CancellationToken())
+    assert isinstance(res_clarify, Success)
+    assert res_clarify.unwrap().outcome == "no_action"
+
+    # Empty launch query gracefully falls back to no_action
+    engine.payload = {"source_turn_id": turn.record_id, "outcome": "application.launch", "language": "pl", "query": ""}
+    res_launch = await recognizer.recognize(turn, CancellationToken())
+    assert isinstance(res_launch, Success)
+    assert res_launch.unwrap().outcome == "no_action"
+
+
+async def test_application_list_matches_executable_name(tmp_path: Path) -> None:
+    from rai.actions.applications import Application
+    from rai.actions.capabilities import register_application_capabilities
+    from rai.kernel.service import CapabilityService
+    from rai.kernel.transport import normalize_request
+
+    class MockAppBackend:
+        async def discover(self) -> Any:
+            return Success((
+                Application(
+                    desktop_id="org.gnome.Nautilus.desktop",
+                    name="Files",
+                    path=Path("/usr/share/applications/org.gnome.Nautilus.desktop"),
+                    fingerprint="fp1",
+                    executable="/usr/bin/nautilus",
+                ),
+            ))
+        async def launch(self, *args: Any, **kwargs: Any) -> Any:
+            return Success(None)
+
+    handles = SQLiteHandleStore(tmp_path / "handles.db")
+    registry = CapabilityRegistry()
+    register_application_capabilities(registry, MockAppBackend(), handles)
+    service = CapabilityService(registry, PolicyEngine(), InMemoryAuditLedger())
+    listing = normalize_request(registry.descriptor("application.list"), {"task_id": "t1", "query": "nautilus"})
+    _, result = await service.invoke(listing)
+    assert isinstance(result, Success)
+    apps = result.unwrap().output["applications"]
+    assert len(apps) == 1
+    assert apps[0]["name"] == "Files"
+    assert apps[0]["desktop_id"] == "org.gnome.Nautilus.desktop"
+
+
+async def test_assistant_actions_synthesizes_for_analytical_request(tmp_path: Path) -> None:
+    from rai.actions.applications import Application
+    from rai.actions.capabilities import register_application_capabilities
+    from rai.assistant.records import AssistantCandidate, AssistantResponse
+    from rai.assistant.service import AssistantService
+    from rai.kernel.ports import LifecycleState
+
+    class MockAppBackend:
+        async def discover(self) -> Any:
+            return Success((
+                Application("files.desktop", "Files", Path("/files.desktop"), "fp1", "/files"),
+            ))
+        async def launch(self, *args: Any, **kwargs: Any) -> Any:
+            return Success(None)
+
+    handles = SQLiteHandleStore(tmp_path / "handles.db")
+    registry = CapabilityRegistry()
+    register_application_capabilities(registry, MockAppBackend(), handles)
+    runtime = ActionCapabilityService(registry, PolicyEngine(), InMemoryAuditLedger(), SyntheticApprovalBroker())
+    runtime.handles = handles
+    runtime.executions = SQLiteExecutionStore(tmp_path / "executions.db")
+    store = SQLiteMemoryGraphStore(tmp_path / "memory.db")
+
+    class Recognizer:
+        async def recognize(self, turn: ConversationTurn, cancellation: CancellationToken) -> Result[ActionIntent, str]:
+            return Success(ActionIntent(source_turn_id=turn.record_id, language="pl", outcome="application.list"))
+
+    actions = AssistantActions(runtime, Recognizer(), store)
+
+    class MockModelBackend:
+        model_name = "test-model"
+        received_context = None
+
+        async def start(self) -> Result[LifecycleState, ActionFailure]:
+            return Success(LifecycleState.RUNNING)
+
+        async def stop(self) -> Result[LifecycleState, ActionFailure]:
+            return Success(LifecycleState.STOPPED)
+
+        async def generate(self, req: Any, token: Any) -> Result[AssistantCandidate, ActionFailure]:
+            self.received_context = req.context
+            return Success(AssistantCandidate(
+                text="Przeanalizowałem: aplikacja Files służy do otwierania plików.",
+                tokens_in=10,
+                tokens_out=20,
+            ))
+
+    backend = MockModelBackend()
+    service = AssistantService(store, backend=backend, actions=actions)
+    await service.start()
+    try:
+        turn = ConversationTurn(
+            producer=ACTOR,
+            session_id="analysis-sess",
+            role="user",
+            text="Wypisz wszystkie aplikacje jakie możesz uruchomić i przeanalizuj, która z nich może do tego służyć.",
+        )
+        res = (await service.accept_turn(turn, request_id="req-analysis")).unwrap()
+        assert "Przeanalizowałem: aplikacja Files" in res.text
+        assert backend.received_context is not None
+        evidence = backend.received_context.content.get("external_evidence", ())
+        assert len(evidence) >= 1
+        recent = (await store.get_recent_reply_chain(turn.session_id, limit=1)).unwrap()
+        assert len(recent) == 1
+        assert recent[0].metadata["action"]["action_choices"]["entries"][0]["name"] == "Files"
+    finally:
+        await service.stop()
+

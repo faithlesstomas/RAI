@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 from dataclasses import asdict
 from datetime import timedelta
+from pathlib import Path
 from typing import Any
 
 from returns.result import Failure, Result, Success
@@ -20,6 +21,7 @@ from .records import ResourceHandle
 PRODUCER = ProducerIdentity(producer_id="rai.actions", kind="capability", version="1.0.0")
 HANDLE_TTL = timedelta(minutes=5)
 MAX_RESULTS = 30
+MAX_APPLICATION_RESULTS = 256
 MAX_QUERY_LENGTH = 256
 
 
@@ -61,9 +63,9 @@ class ApplicationList:
         if isinstance(discovered, Failure):
             return Failure(failure(request, discovered.failure()))
         matches = [app for app in discovered.unwrap()
-                   if any(query.casefold() in name.casefold() for name in (app.name, app.desktop_id, *app.localized_names))]
+                   if any(query.casefold() in name.casefold() for name in (app.name, app.desktop_id, Path(app.executable).name, *app.localized_names))]
         output = []
-        for app in matches[:MAX_RESULTS]:
+        for app in matches[:MAX_APPLICATION_RESULTS]:
             if cancellation.cancelled:
                 return Failure(failure(request, "CANCELLED"))
             now = _utc_now()
@@ -78,7 +80,7 @@ class ApplicationList:
                 return Failure(failure(request, issued.failure()))
             output.append({"desktop_id": app.desktop_id, "name": app.name,
                            "handle": issued.unwrap(), "expires_at": handle.expires_at.isoformat()})
-        return Success(result(request, {"applications": output, "truncated": len(matches) > MAX_RESULTS},
+        return Success(result(request, {"applications": output, "truncated": len(matches) > MAX_APPLICATION_RESULTS},
                               {"source": "installed-desktop-entries"}))
 
 

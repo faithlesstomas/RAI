@@ -124,7 +124,7 @@ def discover_applications(roots: tuple[Path, ...]) -> tuple[Application, ...]:
         application = read_application(path, desktop_id)
         if application is not None:
             found.append(application)
-    return tuple(sorted(found, key=lambda app: app.desktop_id))
+    return tuple(sorted(found, key=lambda app: (app.name.casefold(), app.desktop_id)))
 
 
 def matching_processes(executable: str) -> dict[int, LaunchEvidence]:

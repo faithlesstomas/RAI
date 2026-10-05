@@ -855,8 +855,32 @@ class AssistantService:
             await self.actions.handle(turn, token) if self.actions is not None else None
         )
         if action_candidate is not None:
-            candidate = action_candidate
-            latency_ms = 0.0
+            if action_candidate.metadata.get("synthesize_with_model") and self.backend is not None:
+                evidence_list = list(context_package.content.get("external_evidence", []))
+                action_res = action_candidate.metadata.get("action_result", {})
+                evidence_list.append({
+                    "source_id": f"action:{turn.record_id}",
+                    "source_type": "verified_action_result",
+                    "timestamp": _utc_now().isoformat(),
+                    "content": action_res.get("output", action_res),
+                })
+                new_content = dict(context_package.content)
+                new_content["external_evidence"] = tuple(evidence_list)
+                syn_package = context_package.model_copy(update={"content": new_content})
+                syn_req = inference_req.model_copy(update={"context": syn_package})
+                start_time = time.perf_counter()
+                backend_res = await self.backend.generate(syn_req, token)
+                latency_ms = (time.perf_counter() - start_time) * 1000
+                if isinstance(backend_res, Success):
+                    model_candidate = backend_res.unwrap()
+                    merged_metadata = dict(action_candidate.metadata)
+                    merged_metadata.update(model_candidate.metadata)
+                    candidate = model_candidate.model_copy(update={"metadata": merged_metadata})
+                else:
+                    candidate = action_candidate
+            else:
+                candidate = action_candidate
+                latency_ms = 0.0
         elif manifest.evidence_required and manifest.routing_decision == "no_evidence":
             candidate = AssistantCandidate(
                 text=_MEMORY_ABSTENTION_TEXT,

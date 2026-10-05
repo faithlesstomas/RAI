@@ -71,11 +71,13 @@ class LocalIntentRecognizer:
         self.profile = profile
         self.applications = applications
 
-    async def recognize(  # noqa: PLR0911
+    async def recognize(  # noqa: PLR0911, PLR0912
         self, turn: ConversationTurn, cancellation: CancellationToken,
     ) -> Result[ActionIntent, str]:
         instruction = (
             "Understand the user's current intent, in their own language; do not require command keywords. "
+            "Use recent_dialogue to understand follow-ups, user clarifications, and references (such as paths, selections, or 'that directory') in context. "
+            "Do not treat past turns as new requests to execute again. "
             "Available actions: file.access (describe configured allowed file paths, access scope, and editing support), "
             "application.list (list, discover, or ask what applications are installed or can be launched), "
             "application.launch (start an installed application by query or previous 1-based selection), file.search (find a document by name), "
@@ -87,8 +89,11 @@ class LocalIntentRecognizer:
             "system.volume.set (absolute integer percent 0–100), process.inspect (query by name or PID). "
             "When the user asks what applications can be launched, what applications are installed, or asks to list/show programs "
             "(e.g. 'jakie aplikacje możesz uruchomić?', 'wypisz aplikacje', 'what applications can you launch?'), return application.list. "
-            "Questions about allowed filesystem paths or directories MUST use file.access, not application.list or clarify. "
-            "Examples: Jakie są dozwolone ścieżki? Do jakich katalogów masz dostęp? What files may you edit? "
+            "Questions asking ONLY about allowed filesystem roots or directories MUST use file.access, not application.list or clarify. "
+            "If the user provides a path in response to a previous question asking for a path or directory, use document.open with that path. "
+            "If the user rejects previous choices (e.g. 'none of the above', 'żadna z podanych') or asks what application fits a description "
+            "(e.g. 'file manager', 'przeglądarka plików', 'nautilus'), match it against installed_applications (matching desktop_id or name "
+            "such as Files / org.gnome.Nautilus.desktop) and return clarify with matching applications, or application.launch. "
             "The current request takes priority over previous clarification; never repeat an unrelated clarification. "
             "Ask for clarification for a relative volume change without an absolute target. "
             "Use the previous action context to interpret follow-ups such as 'open the second one', "
@@ -111,6 +116,13 @@ class LocalIntentRecognizer:
         # Resource authority is never sent to the model; only display labels and finite choices.
         choices = previous.get("action_choices", {})
         labels = [item.get("name", "") for item in choices.get("entries", ())][:30]
+        recent_dialogue: list[dict[str, str]] = []
+        if self.store is not None:
+            history_res = await self.store.get_recent_reply_chain(session_id=turn.session_id, limit=4)
+            if not isinstance(history_res, Failure):
+                for past in history_res.unwrap():
+                    if past.record_id != turn.record_id and past.text:
+                        recent_dialogue.append({"role": past.role, "text": past.text[:256]})
         catalog = []
         if self.applications is not None:
             try:
@@ -122,6 +134,7 @@ class LocalIntentRecognizer:
             except (asyncio.TimeoutError, OSError):
                 return Failure("APPLICATION_CATALOG_UNAVAILABLE")
         source = json.dumps({"source_turn_id": turn.record_id, "text": turn.text,
+                             "recent_dialogue": recent_dialogue,
                              "previous_choices": labels, "installed_applications": catalog,
                              "previous_clarification": previous.get("action_clarification", {})}, ensure_ascii=False)
         try:
@@ -137,8 +150,21 @@ class LocalIntentRecognizer:
                 return Failure("INTENT_OUTPUT_TOO_LARGE")
             payload = text.strip()
             if payload.startswith("```json\n") and payload.endswith("\n```"):
-                payload = payload[len("```json\n"):-len("\n```")]
-            intent = ActionIntent.model_validate_json(payload)
+                payload = payload[len("```json\n"):-len("\n```")].strip()
+            elif payload.startswith("```") and payload.endswith("```"):
+                payload = payload.strip("`").strip()
+                if payload.startswith("json"):
+                    payload = payload[4:].strip()
+            raw_data = json.loads(payload)
+            if not isinstance(raw_data, dict):
+                return Failure("INVALID_INTENT")
+            if raw_data.get("outcome") == "clarify" and len(raw_data.get("options", ())) < MIN_CLARIFICATION_OPTIONS:
+                raw_data["outcome"] = "no_action"
+                raw_data["options"] = ()
+                raw_data["question"] = ""
+            elif raw_data.get("outcome") == "application.launch" and not str(raw_data.get("query", "")).strip() and raw_data.get("selection") is None:
+                raw_data["outcome"] = "no_action"
+            intent = ActionIntent.model_validate(raw_data)
             if intent.source_turn_id != turn.record_id:
                 return Failure("INTENT_SOURCE_MISMATCH")
             return Success(intent)
@@ -146,7 +172,7 @@ class LocalIntentRecognizer:
             return Failure("CANCELLED")
         except asyncio.TimeoutError:
             return Failure("INTENT_TIMEOUT")
-        except (ValidationError, ValueError):
+        except (ValidationError, ValueError, json.JSONDecodeError):
             return Failure("INVALID_INTENT")
         except Exception:  # pylint: disable=broad-exception-caught
             return Failure("INTENT_BACKEND_FAILED")
