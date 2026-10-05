@@ -2,6 +2,58 @@
 
 <!-- version list -->
 
+## v0.12.0 (2026-10-05)
+
+### Bug Fixes
+
+- **actions**: Improve multi-turn dialogue context, app matching, and analytical synthesis
+  ([`26b056e`](https://gitlab.com/tk-lab1/ai/rai/-/commit/26b056ec1ce5b8bd209057898e74407856a33bf7))
+
+- **actions**: Optimize catalog prompt tokens, normalize null intent fields, and disable CoT in
+  recognizer
+  ([`3dbe4ca`](https://gitlab.com/tk-lab1/ai/rai/-/commit/3dbe4ca5f96e2e2c9c53e3cafc52b609b62d39fe))
+
+- **actions**: Preserve document permissions and resolve explicit paths
+  ([`e7582cd`](https://gitlab.com/tk-lab1/ai/rai/-/commit/e7582cddddd11a274415d58c1ded89f0e338b59d))
+
+- **actions**: Recover terminal audit and report available capabilities
+  ([`3e3dd0c`](https://gitlab.com/tk-lab1/ai/rai/-/commit/3e3dd0c5000850d5d4483a6bd0f103e36b2597aa))
+
+- **cli**: Unify runtime budgets and expose invocation overrides
+  ([`5dfb4e4`](https://gitlab.com/tk-lab1/ai/rai/-/commit/5dfb4e4442fe1a79c03ac54dc25c99c85ea3e819))
+
+### Features
+
+- **actions**: Freeze v1 action schemas, resource handles, and durable execution store
+  ([`19c0e2a`](https://gitlab.com/tk-lab1/ai/rai/-/commit/19c0e2a1e25ba4416ad96ca8f9835beef5dbe843))
+
+- **actions**: Implement application, document, process, volume, and browser capability backends
+  ([`06fb16b`](https://gitlab.com/tk-lab1/ai/rai/-/commit/06fb16b5d22890980affe16741449904cfec5650))
+
+- **assistant**: Enable capability awareness, application listing, and 4k output tokens in chat
+  ([`1356370`](https://gitlab.com/tk-lab1/ai/rai/-/commit/135637038e6e04c7fb472d54059af4923b1aea1d))
+
+- **assistant**: Integrate action intent recognition, routing, and assistant action proposals
+  ([`3bd9a5c`](https://gitlab.com/tk-lab1/ai/rai/-/commit/3bd9a5c8dd3c10400bf8b9396e6c2f90789a3b02))
+
+- **cli**: Unify YAML configuration and replace legacy CLI with Typer
+  ([`9350262`](https://gitlab.com/tk-lab1/ai/rai/-/commit/935026280d15918ab00ce46e5ecdee048c8deb09))
+
+### Refactoring
+
+- **ui**: Remove unmaintained Textual client and dead configuration UI
+  ([`85a009e`](https://gitlab.com/tk-lab1/ai/rai/-/commit/85a009e63ee5c4ec170f8e01dce41f54b5b88249))
+
+### Breaking Changes
+
+- **cli**: Use rai assistant chat/ask, rai server serve and rai config show; legacy root prompts and
+  --connect are removed. Invalid or ambiguous configuration now fails explicitly. Remaining legacy
+  server and TUI removal stays in #43.
+
+- **ui**: The obsolete rai.tui and rai.config_screen modules and unused configuration UI helpers are
+  removed.
+
+
 ## v0.11.0 (2026-10-02)
 
 ### Bug Fixes
