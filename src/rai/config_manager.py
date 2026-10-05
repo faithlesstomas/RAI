@@ -183,6 +183,7 @@ def load_config(path: Optional[str] = None) -> Dict[str, Any]:
         "rich_history": state.get("rich_history", {}),
         "local_ai": state.get("local_ai", {}),
         "assistant": state.get("assistant", {}),
+        "actions": state.get("actions", {}),
         "legacy_chat": state.get("legacy_chat", {}),
     }
 
@@ -203,6 +204,7 @@ def save_config(config_data: Dict[str, Any], path: Optional[str] = None) -> None
         "rich_history": config_data.get("rich_history", {}),
         "local_ai": config_data.get("local_ai", {}),
         "assistant": config_data.get("assistant", {}),
+        "actions": config_data.get("actions", {}),
         "legacy_chat": config_data.get("legacy_chat", {}),
     }
     save_state(state, path)

@@ -29,14 +29,21 @@ it does not change the existing major wire-contract version.
 
 ## Configuration
 
-The runtime accepts an `actions` configuration section:
+The runtime accepts an `actions` section in `$XDG_CONFIG_HOME/rai/config.json`:
 
-```yaml
-actions:
-  allowed_file_roots:
-    - /absolute/path/to/documents
-  browser_endpoint: http://127.0.0.1:9222
+```json
+{
+  "actions": {
+    "allowed_file_roots": ["/absolute/path/to/documents"],
+    "browser_endpoint": "http://127.0.0.1:9222"
+  }
+}
 ```
+
+Restart the conversation after changing configuration. `file.access` reports
+the configured document roots and current editing limitations. Opening an
+absolute document path first resolves it within these roots, then uses the
+same handle and approval path as a selected search result.
 
 File search has no allowed roots by default. It searches supported document
 filenames, excludes symlinks and executable files, and bounds traversal and
@@ -63,6 +70,7 @@ identity/state metadata, excluding command arguments, environment and memory.
 | --- | --- | --- |
 | `application.list` | Installed application query | Desktop-entry discovery |
 | `application.launch` | Application handle | PID, executable and start time |
+| `file.access` | Document access scope | Runtime configuration |
 | `file.search` | Document filename query | Allowed-root metadata |
 | `document.open` | Document handle | Open file descriptor identity |
 | `browser.search` | Public web query | Search response, issued result handles |

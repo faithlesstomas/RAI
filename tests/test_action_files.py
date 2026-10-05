@@ -88,3 +88,14 @@ async def test_followup_opens_selected_result_and_rejects_replacement(tmp_path: 
         assert backend.opened == ["note-b.txt"]
     finally:
         await assistant.stop()
+
+
+def test_absolute_document_query_stays_within_allowed_roots(tmp_path):
+    allowed = tmp_path / 'allowed'
+    allowed.mkdir()
+    document = allowed / 'note.md'
+    document.write_text('test')
+    outside = tmp_path / 'outside.md'
+    outside.write_text('outside')
+    assert search_documents((allowed,), str(document))[0].path == document
+    assert search_documents((allowed,), str(allowed / '..' / 'outside.md')) == ()

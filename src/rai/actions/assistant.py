@@ -45,7 +45,7 @@ class AssistantActions:
         def message(polish: str, english: str) -> str:
             return polish if intent.language == "pl" else english
 
-        if intent.outcome in {"file.search", "document.open"}:
+        if intent.outcome in {"file.access", "file.search", "document.open"}:
             return await self._document_intent(turn, intent, cancellation)
         if intent.outcome == "application.list":
             return await self._list_applications_intent(turn, intent, cancellation, message)
@@ -120,19 +120,43 @@ class AssistantActions:
             metadata=metadata,
         )
 
-    async def _document_intent(self, turn: ConversationTurn, intent: ActionIntent,
+    async def _document_intent(self, turn: ConversationTurn, intent: ActionIntent,  # noqa: PLR0911, PLR0912, PLR0915
                                cancellation: CancellationToken) -> AssistantCandidate:
         task_id = f"action:{turn.record_id}"
         descriptor = self.capabilities.registry.descriptor(intent.outcome)
         if descriptor is None:
             return AssistantCandidate(text=("Obsługa dokumentów jest niedostępna."
                                             if intent.language == "pl" else "Document actions are unavailable."))
+        if intent.outcome == "file.access":
+            request = normalize_request(descriptor, {"task_id": task_id}, actor=turn.producer,
+                                        request_id=f"{turn.record_id}:file-access", data_class=turn.data_class)
+            _, accessed = await self.capabilities.invoke(request, cancellation)
+            if isinstance(accessed, Failure):
+                return AssistantCandidate(text=("Nie mogę odczytać konfiguracji dostępu." if intent.language == "pl"
+                                                else "Could not read access configuration."))
+            roots = accessed.unwrap().output["allowed_roots"]
+            if intent.language == "pl":
+                text = ("Dozwolone katalogi wyszukiwania i otwierania dokumentów:\n" + "\n".join(f"- {root}" for root in roots)
+                        if roots else "Nie skonfigurowano dozwolonych katalogów dokumentów. Ustaw actions.allowed_file_roots w konfiguracji RAI.")
+                text += "\nEdycja plików nie jest obecnie obsługiwana. To zakres akcji dokumentów, nie pełne uprawnienia procesu w systemie."
+            else:
+                text = ("Allowed document search/open directories:\n" + "\n".join(f"- {root}" for root in roots)
+                        if roots else "No document directories are configured. Set actions.allowed_file_roots in the RAI configuration.")
+                text += "\nFile editing is not currently supported. This describes document actions, not all OS process permissions."
+            return AssistantCandidate(text=text, metadata={"action_result": accessed.unwrap().model_dump(mode="json"), "remote_tokens": 0})
         if intent.outcome == "file.search":
             descriptor = self.capabilities.registry.descriptor("file.search")
             request = normalize_request(descriptor, {"query": intent.query, "task_id": task_id},
                                         actor=turn.producer, request_id=f"{turn.record_id}:file-search", data_class=turn.data_class)
             _, fetched = await self.capabilities.invoke(request, cancellation)
             if isinstance(fetched, Failure):
+                if fetched.failure().code == "FILE_ROOTS_NOT_CONFIGURED":
+                    return AssistantCandidate(text=(
+                        "Nie mogę wyszukać ani otworzyć pliku: nie skonfigurowano dozwolonych katalogów. "
+                        "Ustaw actions.allowed_file_roots w konfiguracji RAI, a następnie uruchom rozmowę ponownie."
+                        if intent.language == "pl" else
+                        "File search/open is unavailable: no directories are configured. "
+                        "Set actions.allowed_file_roots in the RAI configuration, then restart the conversation."))
                 return AssistantCandidate(text=(f"Wyszukiwanie dokumentów nie powiodło się: {fetched.failure().code}."
                                                 if intent.language == "pl" else
                                                 f"Document search failed: {fetched.failure().code}."))
@@ -140,13 +164,22 @@ class AssistantActions:
             text = "\n".join(f"{i}. {item['name']}" for i, item in enumerate(entries, 1))
             return AssistantCandidate(text=text or ("Nie znaleziono dokumentów." if intent.language == "pl" else "No documents found."),
                                       metadata={"action_choices": {"kind": "file", "task_id": task_id, "entries": entries}})
-        previous = await previous_action(self.store, turn, self.profile)
-        choices = previous.get("action_choices", {})
-        entries = choices.get("entries", ())
-        if choices.get("kind") != "file" or intent.selection is None or intent.selection > len(entries):
+        if intent.query and intent.selection is None:
+            searched = await self._document_intent(turn, intent.model_copy(update={"outcome": "file.search"}), cancellation)
+            choices = searched.metadata.get("action_choices", {})
+            entries = choices.get("entries", ())
+            if len(entries) != 1:
+                return searched
+            selection = 1
+        else:
+            previous = await previous_action(self.store, turn, self.profile)
+            choices = previous.get("action_choices", {})
+            entries = choices.get("entries", ())
+            selection = intent.selection
+        if choices.get("kind") != "file" or selection is None or selection > len(entries):
             return AssistantCandidate(text=("Który dokument mam otworzyć? Najpierw wyszukaj dokumenty i wybierz wynik."
                                             if intent.language == "pl" else "Which document should I open? Search for documents and select a result first."))
-        selected = entries[intent.selection - 1]
+        selected = entries[selection - 1]
         proposal = ActionProposal(producer=turn.producer, source_turn_id=turn.record_id,
                                   task_id=choices["task_id"], capability="document.open",
                                   resource_handle=selected["handle"], data_class=turn.data_class)

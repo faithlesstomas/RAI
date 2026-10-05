@@ -49,6 +49,7 @@ def format_capabilities_instruction(
     descriptions = {
         "application.list": "Discover installed desktop applications",
         "application.launch": "Launch an installed application and verify its process",
+        "file.access": "Describe configured document directories and editing support",
         "file.search": "Search filenames inside configured allowed directories",
         "document.open": "Open a selected document and verify its file identity",
         "system.volume.get": "Read audio volume",

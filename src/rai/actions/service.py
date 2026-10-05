@@ -18,7 +18,7 @@ from .execution import SQLiteExecutionStore
 from .handles import SQLiteHandleStore
 
 ACTION_NAMES = frozenset({
-    "application.list", "application.launch", "file.search", "document.open",
+    "application.list", "application.launch", "file.access", "file.search", "document.open",
     "browser.search", "browser.open_result", "browser.read_page",
     "system.volume.get", "system.volume.set", "process.inspect",
 })

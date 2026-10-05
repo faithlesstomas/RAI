@@ -33,7 +33,7 @@ class Document:
 def inspect_document(path: Path, roots: tuple[Path, ...]) -> Document | None:
     """Reject symlinks, executable files and targets outside approved roots."""
     try:
-        absolute = path.absolute()
+        absolute = Path(os.path.abspath(path))
         if not any(absolute.is_relative_to(root) for root in roots):
             return None
         if any(part.is_symlink() for part in (absolute, *absolute.parents)):
@@ -51,6 +51,9 @@ def inspect_document(path: Path, roots: tuple[Path, ...]) -> Document | None:
 
 def search_documents(roots: tuple[Path, ...], query: str) -> tuple[Document, ...]:
     """Bound work by visited directory entries; never read document contents."""
+    if Path(query).is_absolute():
+        document = inspect_document(Path(query), roots)
+        return (document,) if document else ()
     found: list[Document] = []
     pending = list(roots)
     visited = 0
@@ -79,6 +82,22 @@ def search_documents(roots: tuple[Path, ...], query: str) -> tuple[Document, ...
 
 class DocumentBackend(Protocol):
     async def open(self, document: Document, cancellation: CancellationToken) -> Result[dict, str]: ...
+
+
+class FileAccess:
+    """Describe the configured document boundary, not ambient OS permissions."""
+
+    name = "file.access"
+
+    def __init__(self, roots: tuple[Path, ...]) -> None:
+        self.roots = roots
+
+    async def invoke(self, request: CapabilityRequest, cancellation: CancellationToken) -> Result[ActionResult, ActionFailure]:
+        if cancellation.cancelled:
+            return Failure(failure(request, "CANCELLED"))
+        return Success(result(request, {"allowed_roots": [str(root) for root in self.roots],
+                                        "editing_supported": False, "scope": "document-actions"},
+                              {"source": "runtime-configuration"}))
 
 
 class FileSearch:
@@ -140,6 +159,7 @@ class DocumentOpen:
 def register_file_capabilities(registry: CapabilityRegistry, roots: tuple[Path, ...], handles: SQLiteHandleStore,
                                backend: DocumentBackend) -> None:
     for implementation, fields, risk, effects, checks in (
+        (FileAccess(roots), ("task_id",), RiskClass.LOW, (), ("runtime-configuration",)),
         (FileSearch(roots, handles), ("query", "task_id"), RiskClass.LOW, (), ("allowed-root-metadata",)),
         (DocumentOpen(roots, handles, backend), ("handle", "task_id"), RiskClass.MODERATE,
          ("document-open",), ("document-application-evidence",)),

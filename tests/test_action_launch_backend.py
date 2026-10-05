@@ -309,3 +309,14 @@ def test_helper_tolerates_dbus_failure(monkeypatch: pytest.MonkeyPatch, tmp_path
     code, receipt = run_helper(monkeypatch, tmp_path)
     assert code == 0
     assert json.loads(receipt.read_text()) == {"accepted": True, "pids": []}
+
+
+def test_helper_uses_dbus_owner_even_when_launcher_pid_was_reported(monkeypatch, tmp_path):
+    class Bus:
+        def call_sync(self, *_args):
+            return SimpleNamespace(unpack=lambda: (77,))
+
+    install_gi(monkeypatch, app=FakeDesktopApp(pid=42, dbus=True), bus=Bus())
+    code, receipt = run_helper(monkeypatch, tmp_path)
+    assert code == 0
+    assert json.loads(receipt.read_text())['pids'] == [77, 42]

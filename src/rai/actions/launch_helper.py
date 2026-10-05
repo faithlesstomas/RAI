@@ -34,7 +34,7 @@ def main() -> int:
         [], Gio.AppLaunchContext(), GLib.SpawnFlags.SEARCH_PATH,
         None, None, launched, None,
     )
-    if accepted and not pids and app.get_boolean("DBusActivatable"):
+    if accepted and app.get_boolean("DBusActivatable"):
         try:
             bus = Gio.bus_get_sync(Gio.BusType.SESSION, None)
             reply = bus.call_sync(
@@ -42,7 +42,9 @@ def main() -> int:
                 "GetConnectionUnixProcessID", GLib.Variant("(s)", (path.stem,)),
                 GLib.VariantType.new("(u)"), Gio.DBusCallFlags.NONE, 3000, None,
             )
-            pids.append(reply.unpack()[0])
+            owner_pid = reply.unpack()[0]
+            if owner_pid not in pids:
+                pids.insert(0, owner_pid)
         except GLib.Error:
             pass
     Path(sys.argv[3]).write_text(json.dumps({"accepted": bool(accepted), "pids": pids[:8]}), encoding="utf-8")
