@@ -1,5 +1,21 @@
 image: python:3.11
 
+# default:
+#   # Jobs wait when the laptop runner is unavailable; there is no automatic fallback.
+#   # To use GitLab.com, replace thinkpad with saas-linux-small-amd64 below,
+#   # commit/push this change, and run a new pipeline with instance runners enabled.
+#   # Hosted jobs consume compute minutes. A RUNNER_TAG variable does not override
+#   # this literal tag; restore thinkpad afterwards to use the laptop again.
+#   tags:
+#     - thinkpad
+
+variables:
+  RUNNER_TAG: "thinkpad"
+
+default:
+  tags:
+    - $RUNNER_TAG
+
 workflow:
   rules:
     - if: '$CI_PIPELINE_SOURCE == "push" && $CI_COMMIT_BRANCH =~ /^(main|alpha)$/ && $CI_COMMIT_AUTHOR =~ /^semantic-release-bot / && $CI_COMMIT_TITLE =~ /^chore\(release\): /'
