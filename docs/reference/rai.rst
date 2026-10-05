@@ -30,14 +30,6 @@ rai.config\_manager module
    :show-inheritance:
    :undoc-members:
 
-rai.config\_screen module
--------------------------
-
-.. automodule:: rai.config_screen
-   :members:
-   :show-inheritance:
-   :undoc-members:
-
 rai.container module
 --------------------
 

@@ -36,7 +36,6 @@ dependencies = [
     "click>=8.1,<8.3",
     "ollama",
     "packaging",
-    "textual",
     "prompt_toolkit",
     "sqlalchemy",
     "fastapi",
@@ -137,7 +136,6 @@ rai-history-atspi = "rai.history.sidecars.atspi:main"
 rai-history-process = "rai.history.sidecars.process:main"
 rai-history-filesystem = "rai.history.sidecars.filesystem:main"
 rai-history-install-gnome-extension = "rai.history.sidecars.install_gnome:main"
-# rai-tui = "rai.tui:run_tui_cli"
 
 [tool.setuptools.package-data]
 "rai.history" = ["gnome_extension/*.js", "gnome_extension/*.json"]

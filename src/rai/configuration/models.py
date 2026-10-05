@@ -43,7 +43,7 @@ class TtsSettings(SettingsRecord):
 
 
 class ProfileSettings(ModelSettings):
-    # These fields remain consumed by the legacy REST/TUI endpoints (#43).
+    # These fields remain consumed by the legacy REST endpoints (#43).
     name: str | None = None
     description: str | None = None
     system_prompt: str | None = None

@@ -2359,7 +2359,7 @@ migration layer without a concrete consumer requirement.
 ## Technical debt carried beyond Stage 1
 
 - The CLI now uses modular Typer commands and a shared typed JSON/YAML configuration
-  boundary (#6/#46). `cli_compatibility.py` has been removed. Remaining REST/TUI
+  boundary (#6/#46). `cli_compatibility.py` has been removed. The obsolete Textual TUI and its configuration UI have also been removed. Remaining REST
   adapters in `config_manager.py` and legacy server execution remain part of #43.
 - `AssistantService` owns the default chat path. The disabled-by-default
   Antigravity compatibility endpoints and `ChatService` facade still require
