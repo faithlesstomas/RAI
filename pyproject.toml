@@ -45,6 +45,9 @@ dependencies = [
     "mcp>=1.19,<2",
     "returns",
     "cryptography>=43",
+    "typer>=0.16,<1",
+    "pyyaml>=6,<7",
+    "pydantic>=2,<3",
 ]
 
 [project.urls]
@@ -128,7 +131,7 @@ jlens-reference = [
 ]
 
 [project.scripts]
-rai = "rai.cli:cli"
+rai = "rai.cli:run"
 rai-history-gnome = "rai.history.sidecars.gnome:main"
 rai-history-atspi = "rai.history.sidecars.atspi:main"
 rai-history-process = "rai.history.sidecars.process:main"

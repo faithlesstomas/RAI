@@ -212,11 +212,11 @@ authenticated bounded graph paths under equal retrieval/context budgets. Two
 live manifests and the opt-in decision are recorded in
 [the M4–M6 evaluation](assistant-m4-m6-evaluation.md).
 
-`rai`, `rai -p`, `rai assistant ask` and `rai assistant chat` instantiate this
-same service directly and do not require `rai serve`. The assistant HTTP routes
-are an alternative transport over a server-owned instance of the same service.
-Only explicit `rai --connect` enters the quarantined compatibility client; it
-does not define canonical assistant memory or session semantics.
+`rai assistant ask` and `rai assistant chat` instantiate the native service
+without requiring `rai server serve`. The assistant HTTP routes provide a server-owned
+instance of the same service. The Typer CLI has no legacy `--connect` execution
+path; remaining legacy server consumers are tracked in #43. See
+[configuration](configuration.md) for migration and precedence rules.
 
 The SQLite database and audit ledger use per-user directories/files (0700/0600)
 and secure deletion. They are not yet encrypted independently of the user

@@ -16,7 +16,7 @@ from textual.app import App, ComposeResult
 from textual.containers import Container
 from textual.widgets import Header, Input, LoadingIndicator, RichLog, Static
 
-from rai.cli import check_model_tool_support
+from rai.model_tools import check_model_tool_support
 from rai.config_screen import ConfigScreen
 from rai.core import RAI_CONFIG, setup_agent
 

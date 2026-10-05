@@ -35,7 +35,7 @@ uv run rai assistant diagnostics
 
 ## REST clients
 
-Run `uv run rai serve`, then authenticate in the same way as other `/api/*`
+Run `uv run rai server serve`, then authenticate in the same way as other `/api/*`
 control endpoints. The assistant surface is:
 
 | Method | Path | Purpose |

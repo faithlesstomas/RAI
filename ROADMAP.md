@@ -2358,8 +2358,9 @@ migration layer without a concrete consumer requirement.
 
 ## Technical debt carried beyond Stage 1
 
-- `cli_compatibility.py` and `config_manager.py` remain oversized compatibility
-  modules and still mix some I/O and UI concerns.
+- The CLI now uses modular Typer commands and a shared typed JSON/YAML configuration
+  boundary (#6/#46). `cli_compatibility.py` has been removed. Remaining REST/TUI
+  adapters in `config_manager.py` and legacy server execution remain part of #43.
 - `AssistantService` owns the default chat path. The disabled-by-default
   Antigravity compatibility endpoints and `ChatService` facade still require
   removal; they are not the explicitly selectable native Antigravity model backend.
@@ -2376,8 +2377,10 @@ migration layer without a concrete consumer requirement.
   Stage 2.
 - Full style linting contains legacy violations; critical lint is blocking now.
 - GitLab issues #8, #9, #16 and #17 were resolved by the Stage 4.1 supervisor
-  and Stage 4.2 bounded-result work. Issues #2 and #6 require reproduction
-  against the new contracts before implementation.
+  and Stage 4.2 bounded-result work. Issue #2 requires reproduction
+  against the new contracts before implementation. The configuration discrepancy
+  in #6 has regression coverage for effective settings, typed overrides, explicit
+  file selection and session-state preservation; see `docs/configuration.md`.
 
 ## Issue and merge-request template for roadmap work
 

@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import asyncio
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
 from datetime import timedelta
 import json
 import time
@@ -99,6 +99,11 @@ class AssistantService:
         audit_ledger: AssistantAuditLedger | None = None,
         producer: ProducerIdentity | None = None,
         profile_scope: str = "default",
+        context_approver: Callable[
+            [AssistantContextPackage, CancellationToken],
+            Awaitable[Result[AssistantContextPackage, ActionFailure]],
+        ]
+        | None = None,
     ) -> None:
         self.store = store
         self.backend = backend or DeterministicAssistantBackend()
@@ -112,6 +117,7 @@ class AssistantService:
             producer_id="assistant-service", kind="service", version="1.0.0"
         )
         self.profile_scope = profile_scope
+        self.context_approver = context_approver
         self._state = LifecycleState.CREATED
         self._turn_locks: dict[str, asyncio.Lock] = {}
         self._turn_lock_references: dict[str, int] = {}
@@ -833,6 +839,17 @@ class AssistantService:
                 latency_ms=0,
             )
         context_package = self._attach_backend_metadata(ctx_res.unwrap())
+        if self.context_approver is not None:
+            approved = await self.context_approver(context_package, token)
+            if isinstance(approved, Failure):
+                return await self._commit_failure(
+                    turn=turn,
+                    request_id=request_id,
+                    manifest=context_package.manifest,
+                    error=approved.failure(),
+                    latency_ms=0,
+                )
+            context_package = approved.unwrap()
         manifest = context_package.manifest
 
         inference_req = InferenceRequest(
@@ -919,7 +936,9 @@ class AssistantService:
             )
 
         assistant_turn_id = _new_id()
-        assistant_turn_metadata: dict[str, object] = {"profile_scope": self.profile_scope}
+        assistant_turn_metadata: dict[str, object] = {
+            "profile_scope": self.profile_scope
+        }
         if reasoning_content := candidate.metadata.get("reasoning_content"):
             assistant_turn_metadata["reasoning_content"] = reasoning_content
 

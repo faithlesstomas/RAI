@@ -5,7 +5,7 @@ from __future__ import annotations
 from pathlib import Path
 from unittest.mock import patch
 
-from click.testing import CliRunner
+from typer.testing import CliRunner
 import pytest
 
 from rai.assistant.runtime import (
@@ -66,7 +66,7 @@ def test_cli_chat_persists_memory_through_interactive_path(tmp_path: Path) -> No
     environment = {"RAI_DATA_DIR": str(tmp_path / "data")}
     config = {"assistant": {"backend": "deterministic"}}
 
-    with patch("rai.cli_commands._assistant_config", return_value=config):
+    with patch("rai.commands.dialog._assistant_config", return_value=config):
         result = runner.invoke(
             cli,
             ["assistant", "chat", "--backend", "deterministic", "--show-context"],
@@ -86,7 +86,7 @@ def test_cli_chat_persists_memory_through_interactive_path(tmp_path: Path) -> No
 def test_cli_ask_allows_explicit_conformance_backend(tmp_path: Path) -> None:
     runner = CliRunner()
     config = {"assistant": {"backend": "deterministic"}}
-    with patch("rai.cli_commands._assistant_config", return_value=config):
+    with patch("rai.commands.dialog._assistant_config", return_value=config):
         result = runner.invoke(
             cli,
             ["assistant", "ask", "hello", "--backend", "deterministic"],
@@ -102,7 +102,7 @@ def test_cli_remembers_name_across_process_like_invocations(tmp_path: Path) -> N
     config = {"assistant": {"backend": "deterministic"}}
     environment = {"RAI_DATA_DIR": str(tmp_path / "data")}
 
-    with patch("rai.cli_commands._assistant_config", return_value=config):
+    with patch("rai.commands.dialog._assistant_config", return_value=config):
         admission = runner.invoke(
             cli,
             ["assistant", "ask", "Jestem Tomek, a Ty?", "--backend", "deterministic"],

@@ -83,19 +83,22 @@ def resolve_assistant_config(  # noqa: PLR0913
     thinking_level: str | None = None,
 ) -> AssistantRuntimeConfig:
     """Resolve CLI, environment and persisted config into one runtime config."""
-    raw_assistant = config.get("assistant", {})
-    assistant = raw_assistant if isinstance(raw_assistant, dict) else {}
-    raw_local = config.get("local_ai", {})
-    local_ai = raw_local if isinstance(raw_local, dict) else {}
+    from rai.configuration.resolution import effective_model_settings  # noqa: PLC0415
+
     profile_name = str(profile_override or config.get("active_agent") or "default")
-    raw_profiles = config.get("agents", {})
-    profiles = raw_profiles if isinstance(raw_profiles, dict) else {}
-    raw_profile = profiles.get(profile_name, {})
-    profile = raw_profile if isinstance(raw_profile, dict) else {}
+    overrides = dict(config.get("_cli_overrides", {}))
+    if backend_override is not None:
+        overrides["backend"] = backend_override
+    if model_override is not None:
+        overrides["model"] = model_override
+    assistant, _sources = effective_model_settings(
+        config, profile=profile_name, overrides=overrides
+    )
+    local_ai = {}
+    profile = {}
 
     backend = (
         backend_override
-        or os.environ.get("RAI_ASSISTANT_BACKEND")
         or assistant.get("backend")
         or local_ai.get("backend")
         or profile.get("backend")
@@ -103,7 +106,6 @@ def resolve_assistant_config(  # noqa: PLR0913
     )
     model = (
         model_override
-        or os.environ.get("RAI_ASSISTANT_MODEL")
         or assistant.get("model")
         or local_ai.get("model")
         or profile.get("model")
@@ -152,7 +154,8 @@ def resolve_assistant_config(  # noqa: PLR0913
     model = str(model)
     if backend == "auto":
         backend = "llama" if Path(model).suffix.lower() == ".gguf" else "ollama"
-    if backend not in {"llama", "ollama", "lemonade", "antigravity"}:
+    from rai.configuration.resolution import SUPPORTED_BACKENDS  # noqa: PLC0415
+    if backend not in SUPPORTED_BACKENDS:
         raise AssistantConfigurationError(
             f"Unsupported assistant backend {backend!r}; choose llama, ollama, lemonade, or antigravity."
         )
@@ -160,7 +163,7 @@ def resolve_assistant_config(  # noqa: PLR0913
     resolved_enable_thinking = bool(
         enable_thinking
         if enable_thinking is not None
-        else (assistant.get("enable_thinking", False) or local_ai.get("enable_thinking", False))
+        else assistant.get("enable_thinking", False)
     )
     max_tokens_default = 1024 if resolved_enable_thinking else 256
 
@@ -220,7 +223,7 @@ def resolve_assistant_config(  # noqa: PLR0913
         enable_thinking=bool(
             enable_thinking
             if enable_thinking is not None
-            else (assistant.get("enable_thinking", False) or local_ai.get("enable_thinking", False))
+            else assistant.get("enable_thinking", False)
         ),
         thinking_budget=(
             thinking_budget

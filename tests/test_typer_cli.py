@@ -1,0 +1,202 @@
+"""Public Typer contracts replacing removed compatibility CLI tests."""
+
+from unittest.mock import patch
+
+import pytest
+from returns.result import Failure, Success
+from typer.testing import CliRunner
+
+from rai.cli import cli
+from rai.commands import approval
+from rai.kernel.ports import CancellationToken
+from rai.kernel.records import DataClass, ProducerIdentity
+from rai.assistant.records import (
+    AssistantContextManifest,
+    AssistantContextManifestItem,
+    AssistantContextPackage,
+)
+
+
+@pytest.mark.parametrize(
+    "args",
+    [
+        [],
+        ["--help"],
+        ["assistant", "--help"],
+        ["capability", "--help"],
+        ["neural", "--help"],
+        ["server", "--help"],
+        ["config", "--help"],
+        ["profile", "--help"],
+    ],
+)
+def test_modular_cli_help(args):
+    result = CliRunner().invoke(cli, args)
+    assert result.exit_code in (0, 2), result.output
+    assert "Usage:" in result.output
+
+
+def test_cli_accepts_native_remote_backend_and_classification():
+    with patch("rai.commands.assistant._run_assistant_ask") as run:
+        result = CliRunner().invoke(
+            cli,
+            [
+                "assistant",
+                "ask",
+                "hello",
+                "--backend",
+                "antigravity",
+                "--data-class",
+                "PUBLIC",
+            ],
+        )
+    assert result.exit_code == 0, result.output
+    assert run.call_args.args[2] == "antigravity"
+    assert run.call_args.kwargs["data_class"] == DataClass.PUBLIC
+
+
+def test_unknown_backend_reaches_runtime_validation(tmp_path, monkeypatch):
+    monkeypatch.setenv("RAI_CONFIG_DIR", str(tmp_path))
+    result = CliRunner().invoke(
+        cli, ["assistant", "ask", "hello", "--backend", "bogus", "--model", "dummy"]
+    )
+    assert result.exit_code != 0
+    assert "Unsupported assistant backend" in result.output
+
+
+def test_cli_overrides_environment(tmp_path, monkeypatch):
+    from rai.commands.settings import _assistant_config
+    from rai.assistant.runtime import resolve_assistant_config
+
+    monkeypatch.setenv("RAI_CONFIG_DIR", str(tmp_path))
+    monkeypatch.setenv("RAI_ASSISTANT_BACKEND", "ollama")
+    monkeypatch.setenv("RAI_ASSISTANT_MODEL", "environment-model")
+    runtime = resolve_assistant_config(_assistant_config("lemonade", "cli-model"))
+    assert runtime.backend == "lemonade" and runtime.model == "cli-model"
+
+
+@pytest.mark.asyncio
+async def test_noninteractive_approval_denies(monkeypatch):
+    monkeypatch.setattr(approval.sys.stdin, "isatty", lambda: False)
+    assert not await approval.confirm("approve?", CancellationToken())
+
+
+def package(data_class):
+    producer = ProducerIdentity(producer_id="test", kind="test", version="1.0.0")
+    manifest = AssistantContextManifest(
+        producer=producer,
+        session_id="session",
+        turn_id="turn",
+        items=(
+            AssistantContextManifestItem(
+                source_id="turn",
+                source_type="turn",
+                layer="recent",
+                data_class=data_class,
+            ),
+        ),
+    )
+    return AssistantContextPackage(
+        producer=producer,
+        session_id="session",
+        turn_id="turn",
+        manifest=manifest,
+        content={},
+    )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "classification", [DataClass.LOCAL, DataClass.SECRET, DataClass.BLOCKED]
+)
+async def test_egress_never_approves_local_or_forbidden_data(
+    monkeypatch, classification
+):
+    async def unexpected(*args):
+        pytest.fail("Must reject before prompting")
+
+    monkeypatch.setattr(approval, "confirm", unexpected)
+    assert isinstance(
+        await approval.approve_egress(package(classification), CancellationToken()),
+        Failure,
+    )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("accepted", [True, False])
+async def test_egress_approval_changes_only_exact_manifest(monkeypatch, accepted):
+    async def answer(*args):
+        return accepted
+
+    monkeypatch.setattr(approval, "confirm", answer)
+    original = package(DataClass.PRIVATE)
+    result = await approval.approve_egress(original, CancellationToken())
+    assert not original.manifest.approved
+    if accepted:
+        assert isinstance(result, Success)
+        assert result.unwrap().manifest.approved
+        assert result.unwrap().manifest.items == original.manifest.items
+    else:
+        assert isinstance(result, Failure)
+
+
+@pytest.mark.asyncio
+async def test_terminal_prompt_cancellation_reaps_input(monkeypatch):
+    import asyncio
+    import prompt_toolkit
+
+    started = asyncio.Event()
+    reaped = asyncio.Event()
+
+    class Prompt:
+        async def prompt_async(self, text):
+            started.set()
+            try:
+                await asyncio.Future()
+            finally:
+                reaped.set()
+
+    monkeypatch.setattr(prompt_toolkit, "PromptSession", Prompt)
+    monkeypatch.setattr(approval.sys.stdin, "isatty", lambda: True)
+    token = CancellationToken()
+    task = asyncio.create_task(approval.confirm("approve?", token))
+    await started.wait()
+    token.cancel()
+    assert not await task
+    assert reaped.is_set()
+
+
+@pytest.mark.parametrize("layers", [[], ["--layer", "2", "--layer", "4"]])
+def test_neural_layer_options_preserve_tuple_contract(tmp_path, layers):
+    from types import SimpleNamespace
+
+    source = tmp_path / "prompts.txt"
+    source.write_text("hello")
+    args = [
+        "neural",
+        "fit-lens",
+        "--model",
+        "model",
+        "--revision",
+        "rev",
+        "--lens-id",
+        "lens",
+        "--lens-revision",
+        "rev",
+        "--prompts",
+        str(source),
+        "--output",
+        str(tmp_path / "out"),
+        "--corpus-id",
+        "test",
+        "--corpus-license",
+        "test",
+        *layers,
+    ]
+    with patch(
+        "rai.neural.fitting.fit_lens_artifact",
+        return_value=SimpleNamespace(lens_id="lens", lens_revision="rev", layers=[]),
+    ) as fit:
+        result = CliRunner().invoke(cli, args)
+    assert result.exit_code == 0, result.output
+    assert fit.call_args.args[0].layers == ((2, 4) if layers else ())

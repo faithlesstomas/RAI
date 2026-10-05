@@ -15,6 +15,7 @@ _TEST_ROOT = tempfile.mkdtemp(prefix="rai-tests-")
 os.environ.setdefault("RAI_CONFIG_DIR", os.path.join(_TEST_ROOT, "config"))
 os.environ.setdefault("RAI_CACHE_DIR", os.path.join(_TEST_ROOT, "cache"))
 os.environ.setdefault("RAI_DATA_DIR", os.path.join(_TEST_ROOT, "data"))
+os.environ.setdefault("RAI_STATE_DIR", os.path.join(_TEST_ROOT, "state"))
 os.environ.setdefault("RAI_RUNTIME_DIR", os.path.join(_TEST_ROOT, "run"))
 os.environ.setdefault("RAI_DISABLE_AUTH", "1")
 

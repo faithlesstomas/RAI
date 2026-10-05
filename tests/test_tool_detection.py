@@ -1,6 +1,6 @@
 from unittest.mock import MagicMock, patch
 from ollama import ResponseError
-from rai.cli import check_model_tool_support
+from rai.model_tools import check_model_tool_support
 
 def test_check_model_tool_support_ministral():
     """Test detection with ministral-style template."""
