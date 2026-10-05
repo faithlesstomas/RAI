@@ -49,7 +49,7 @@ class AssistantActions:
             return await self._document_intent(turn, intent, cancellation)
         if intent.outcome == "application.list":
             return await self._list_applications_intent(turn, intent, cancellation, message)
-        if intent.outcome.startswith(("browser.", "system.volume.", "process.")):
+        if intent.outcome.startswith(("browser.", "system.volume.", "process.", "activity.")):
             from .routing import route_action  # noqa: PLC0415
             return await route_action(self.capabilities, self.store, self.profile, turn, intent, cancellation)
         query = intent.query.strip()

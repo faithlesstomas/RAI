@@ -34,7 +34,7 @@ class ActionIntent(BaseModel):
     source_turn_id: str = Field(min_length=1)
     outcome: Literal["no_action", "clarify", "application.list", "application.launch", "file.access", "file.list", "file.search", "document.open",
                      "browser.search", "browser.open_result", "browser.read_page",
-                     "system.volume.get", "system.volume.set", "process.inspect"]
+                     "system.volume.get", "system.volume.set", "process.inspect", "activity.query"]
     language: Literal["pl", "en"]
     query: Annotated[str, Field(max_length=256)] = ""
     application: Annotated[str, Field(max_length=256)] = ""
@@ -96,7 +96,12 @@ class LocalIntentRecognizer:
             "do not reduce it to file.search. No action can edit file contents. "
             "browser.search (search the public web), browser.open_result and browser.read_page "
             "(select a previously listed web result by 1-based selection), system.volume.get, "
-            "system.volume.set (absolute integer percent 0–100), process.inspect (query by name or PID). "
+            "system.volume.set (absolute integer percent 0–100), process.inspect (query by name or PID), "
+            "activity.query (inspect recent system and desktop activity episodes, events, or applications used; query is optional). "
+            "When the user asks what was happening in the system or on the desktop, asks about activity history, recent events, "
+            "or what was worked on (e.g. 'co ostatnio działo się w systemie', 'historia aktywności', 'show recent activity', 'what was I doing'), "
+            "return activity.query (optional query string to filter, or empty for recent). "
+            "NEVER return application.launch for an application named Activity or Activities when the user is asking about activity history or system events! "
             "When the user asks what applications can be launched, what applications are installed, or asks to list/show programs "
             "(e.g. 'jakie aplikacje możesz uruchomić?', 'wypisz aplikacje', 'what applications can you launch?'), return application.list. "
             "Questions asking ONLY about configured access permissions or allowed filesystem roots MUST use file.access, not application.list or clarify. "

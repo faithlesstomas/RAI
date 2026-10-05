@@ -29,6 +29,32 @@ def _searchable(value: str) -> str:
     )
 
 
+_ACTIVITY_STEMS = (
+    "aktywn",
+    "histor",
+    "dzial",
+    "zdarzen",
+    "wydarzen",
+    "robil",
+    "robion",
+    "zrobion",
+    "pracow",
+    "ostatn",
+    "ostan",
+    "wczoraj",
+    "dzis",
+    "activ",
+    "action",
+    "happen",
+    "event",
+    "recent",
+    "yesterday",
+    "today",
+    "worked",
+    "working",
+)
+
+
 class RichHistoryEvidenceProvider:
     """Retrieve bounded episode evidence without promoting it to a user claim."""
 
@@ -51,15 +77,19 @@ class RichHistoryEvidenceProvider:
                 for value in data_classes
             }
             terms = tuple(_searchable(term) for term in query.keywords if term)
-            activity_intent = any(
-                marker in _searchable(query.raw_text)
-                for marker in (
-                    "co robilem",
-                    "nad czym pracowalem",
-                    "moja aktywnosc",
-                    "what was i working on",
-                    "my activity",
-                )
+            searchable_raw = _searchable(query.raw_text)
+            has_activity_domain = "activity" in query.domain_scopes
+            has_activity_topic = query.topic in {
+                "activity",
+                "system.activity",
+                "user.activity",
+            }
+            has_activity_terms = any(
+                any(stem in word for stem in _ACTIVITY_STEMS)
+                for word in (*terms, *searchable_raw.split())
+            )
+            activity_intent = (
+                has_activity_domain or has_activity_topic or has_activity_terms
             )
             ranked: list[tuple[float, Episode, tuple[str, ...]]] = []
             for episode in episodes:

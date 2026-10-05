@@ -48,6 +48,9 @@ async def route_action(  # noqa: PLR0913, PLR0912
         arguments.update(handle=initial[1].unwrap().output["handle"], percent=intent.percent)
     elif name in {"browser.search", "process.inspect"}:
         arguments["query"] = intent.query
+    elif name == "activity.query":
+        if intent.query:
+            arguments["query"] = intent.query
     if "handle" in arguments:
         proposal = ActionProposal(producer=turn.producer, source_turn_id=turn.record_id,
                                   task_id=arguments["task_id"], capability=name,
@@ -76,6 +79,30 @@ async def route_action(  # noqa: PLR0913, PLR0912
             metadata["untrusted_content"] = True
         elif name == "system.volume.get":
             text = ("Głośność: " if polish else "Volume: ") + ", ".join(f"{v}%" for v in output["volumes"])
+        elif name == "activity.query":
+            episodes = output.get("episodes", ())
+            if not episodes:
+                text = "Brak zarejestrowanej aktywności." if polish else "No recorded activity."
+            else:
+                lines = []
+                for ep in episodes:
+                    apps = ", ".join(ep.get("applications", ())) or ("system" if polish else "system")
+                    projects = ", ".join(ep.get("projects", ()))
+                    started = str(ep.get("started_at", ""))
+                    ended = str(ep.get("ended_at", ""))
+                    time_range = (
+                        f"{started[:16]} - {ended[11:16]}"
+                        if len(started) >= 16 and len(ended) >= 16
+                        else (started or ended or "")
+                    )
+                    summary = f"[{time_range}] {apps}" if time_range else f"[{apps}]"
+                    if projects:
+                        summary += f" ({projects})"
+                    if ep.get("activity_types"):
+                        summary += f": {', '.join(ep['activity_types'])}"
+                    lines.append(f"- {summary}")
+                prefix = "Ostatnia aktywność w systemie:\n" if polish else "Recent system activity:\n"
+                text = prefix + "\n".join(lines)
         else:
             text = "Wykonanie potwierdzone." if polish else "Execution verified."
         if choices:

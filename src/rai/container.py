@@ -121,6 +121,18 @@ class ApplicationContainer:
             register_bounded_inference_capabilities(
                 self.capability_registry, lambda: self.processor_supervisor
             )
+        if self.capability_registry.descriptor("activity.query") is None:
+            from .actions.activity import (  # noqa: PLC0415
+                register_activity_capabilities,
+            )
+
+            def _get_history_service() -> RichHistoryService | None:
+                try:
+                    return self.rich_history_service
+                except Exception:  # noqa: BLE001
+                    return None
+
+            register_activity_capabilities(self.capability_registry, _get_history_service)
         self.capability_service.executions = SQLiteExecutionStore(
             data_dir() / "actions" / "executions.sqlite3"
         )

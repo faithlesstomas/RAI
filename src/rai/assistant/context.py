@@ -59,6 +59,7 @@ def format_capabilities_instruction(
         "browser.search": "Search public web information",
         "browser.open_result": "Open a selected result in a configured browser",
         "browser.read_page": "Read a selected public page in a configured browser",
+        "activity.query": "Inspect recent system and desktop activity episodes (applications used, projects, activity types, and resources)",
     }
     names = {descriptor.name for descriptor in registry.descriptors()} if registry else set()
     available = [f"- {name}: {description}." for name, description in descriptions.items() if name in names]
