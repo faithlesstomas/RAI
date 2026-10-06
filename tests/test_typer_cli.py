@@ -1,6 +1,6 @@
 """Public Typer contracts replacing removed compatibility CLI tests."""
 
-from unittest.mock import patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from returns.result import Failure, Success
@@ -8,6 +8,7 @@ from typer.testing import CliRunner
 
 from rai.cli import cli
 from rai.commands import approval
+from rai.commands.dialog import _run_assistant_ask, _run_assistant_chat
 from rai.kernel.ports import CancellationToken
 from rai.kernel.records import DataClass, ProducerIdentity
 from rai.assistant.records import (
@@ -264,3 +265,40 @@ def test_budget_defaults_and_cli_overrides_match_runtime(tmp_path, monkeypatch, 
     assert sources["max_output_tokens"] == sources["context_window"] == "CLI"
     if backend != "deterministic":
         assert runtime.thinking_budget == 0
+
+
+@pytest.mark.parametrize("mode", ["ask", "chat"])
+@pytest.mark.parametrize("data_class", [DataClass.LOCAL, DataClass.PUBLIC, DataClass.PRIVATE])
+def test_dialog_preserves_classification_for_remote_backend(
+    mode: str, data_class: DataClass,
+) -> None:
+    mock_container = MagicMock()
+    mock_service = MagicMock()
+    mock_service.backend.is_remote = True
+    mock_candidate = MagicMock(
+        text="ok",
+        reasoning_content=None,
+        admitted_memory_ids=(),
+        manifest_id="m-1",
+    )
+    mock_service.accept_turn = AsyncMock(return_value=Success(mock_candidate))
+    mock_service.start = AsyncMock(return_value=Success(None))
+    mock_service.get_recent_turns = AsyncMock(return_value=Success(()))
+    mock_service.store.get_latest_manifest_for_session = AsyncMock(return_value=Success(None))
+    mock_container.assistant_service = mock_service
+    mock_container.close = AsyncMock()
+    with patch("rai.container.ApplicationContainer", return_value=mock_container):
+        with patch("rai.commands.approval.configure_approvals"):
+            if mode == "ask":
+                _run_assistant_ask(
+                    "hello", None, "antigravity", "gemini-3.8-flash", False,
+                    data_class=data_class,
+                )
+            else:
+                with patch("rai.commands.dialog.click.prompt", side_effect=["hello", "/exit"]):
+                    _run_assistant_chat(
+                        None, "antigravity", "gemini-3.8-flash", False,
+                        data_class=data_class,
+                    )
+    turn = mock_service.accept_turn.call_args[0][0]
+    assert turn.data_class == data_class

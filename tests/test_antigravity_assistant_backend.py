@@ -1,38 +1,57 @@
-"""Unit tests for AntigravityAssistantModelBackend and Lemonade worker integration."""
+"""Remote assistant privacy, SDK authority and lifecycle contracts."""
 
 import asyncio
 import os
+import uuid
+from datetime import datetime, timedelta, timezone
+from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-from returns.result import Failure, Success
-
-import uuid
+from returns.result import Failure, Result, Success
 
 from rai.assistant.backends.antigravity import (
     DEFAULT_ANTIGRAVITY_MODEL,
     AntigravityAssistantModelBackend,
 )
-from rai.assistant.ports import AssistantModelBackend
+from rai.assistant.context import AssistantContextBuilder
+from rai.assistant.ports import AssistantEvidence, AssistantModelBackend, MemoryQuery
 from rai.assistant.records import (
+    AssistantCandidate,
     AssistantContextManifest,
     AssistantContextManifestItem,
     AssistantContextPackage,
+    ConversationTurn,
     InferenceRequest,
 )
+from rai.assistant.service import AssistantService
+from rai.assistant.store import SQLiteMemoryGraphStore
 from rai.backends.antigravity import (
     DEFAULT_LEMONADE_URL,
     AntigravityBackend,
     resolve_lemonade_model,
 )
-from datetime import datetime, timedelta, timezone
+from rai.commands.approval import approve_egress
 from rai.kernel.ports import CancellationToken, LifecycleState
-from rai.kernel.records import DataClass, InferenceBudget, ProducerIdentity
+from rai.kernel.records import (
+    ActionFailure,
+    DataClass,
+    InferenceBudget,
+    ProducerIdentity,
+)
+
+
+@pytest.fixture(autouse=True)
+def synthetic_api_key(monkeypatch: pytest.MonkeyPatch) -> None:
+    """SDK sessions are mocked; tests must never depend on real credentials."""
+    monkeypatch.setenv("GEMINI_API_KEY", "synthetic-test-key")
+    monkeypatch.delenv("GOOGLE_API_KEY", raising=False)
 
 
 def test_antigravity_backend_implements_protocol() -> None:
     backend = AntigravityAssistantModelBackend()
     assert isinstance(backend, AssistantModelBackend)
+    assert backend.backend_name == "antigravity"
     assert backend.state == LifecycleState.CREATED
 
 
@@ -136,6 +155,7 @@ async def test_antigravity_generate_enforces_max_tool_calls_zero() -> None:
         config_kwargs = mock_config_class.call_args.kwargs
         assert config_kwargs.get("tools") == []
         assert config_kwargs.get("model") == "custom-gemini-pro"
+        assert config_kwargs.get("api_key") == backend.api_key
         capabilities = config_kwargs["capabilities"]
         assert capabilities.enable_subagents is False
         assert [tool.value for tool in capabilities.enabled_tools] == ["finish"]
@@ -355,3 +375,155 @@ async def test_antigravity_timeout_cancels_the_entire_sdk_session(phase: str) ->
     assert cancelled.is_set()
     if phase != "enter":
         session.__aexit__.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_antigravity_missing_api_key_fails_closed(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("GEMINI_API_KEY", raising=False)
+    monkeypatch.delenv("GOOGLE_API_KEY", raising=False)
+    backend = AntigravityAssistantModelBackend(api_key=None)
+    backend.api_key = None
+    request = _make_inference_request("Witaj!")
+    result = await backend.generate(request, CancellationToken())
+    assert isinstance(result, Failure)
+    assert result.failure().code == "AUTH_FAILED"
+
+
+def test_antigravity_backend_declared_remote() -> None:
+    backend = AntigravityAssistantModelBackend()
+    assert backend.is_remote is True
+
+
+@pytest.mark.asyncio
+async def test_context_builder_excludes_local_evidence_for_remote_backend(
+    tmp_path: Path,
+) -> None:
+    class DummyRichHistoryProvider:
+        async def retrieve(
+            self,
+            query: MemoryQuery,
+            data_classes: tuple[DataClass, ...],
+            limit: int,
+        ) -> Result[tuple[AssistantEvidence, ...], ActionFailure]:
+            if DataClass.LOCAL in data_classes:
+                return Success((
+                    AssistantEvidence(
+                        source_id="local-ep-1",
+                        source_type="rich_history_episode",
+                        timestamp=datetime.now(timezone.utc),
+                        content={"app": "terminal"},
+                        data_class=DataClass.LOCAL,
+                        ranking_reason="activity fallback",
+                    ),
+                ))
+            return Success(())
+
+    store = SQLiteMemoryGraphStore(path=tmp_path / "mem.sqlite3")
+    await store.start()
+    builder = AssistantContextBuilder(
+        store=store,
+        evidence_providers=(DummyRichHistoryProvider(),),  # type: ignore[arg-type]
+        is_remote=True,
+    )
+    turn = ConversationTurn(
+        record_id="turn-public",
+        producer=ProducerIdentity(producer_id="test", kind="user", version="1.0.0"),
+        session_id="session-remote",
+        role="user",
+        text="Podsumuj ostatnią rozmowę.",
+        data_class=DataClass.PUBLIC,
+    )
+    result = await builder.build_context(turn, is_remote=True)
+    assert isinstance(result, Success)
+    package = result.unwrap()
+    manifest_classes = [item.data_class for item in package.manifest.items]
+    assert DataClass.LOCAL not in manifest_classes
+    assert all(dc == DataClass.PUBLIC for dc in manifest_classes)
+    await store.stop()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("backend_name", ["antigravity", "other-remote-provider"])
+async def test_service_remote_backend_does_not_leak_local_history(
+    tmp_path: Path, backend_name: str,
+) -> None:
+    class DummyRichHistoryProvider:
+        async def retrieve(
+            self,
+            query: MemoryQuery,
+            data_classes: tuple[DataClass, ...],
+            limit: int,
+        ) -> Result[tuple[AssistantEvidence, ...], ActionFailure]:
+            if DataClass.LOCAL in data_classes:
+                return Success((
+                    AssistantEvidence(
+                        source_id="local-ep-1",
+                        source_type="rich_history_episode",
+                        timestamp=datetime.now(timezone.utc),
+                        content={"app": "terminal"},
+                        data_class=DataClass.LOCAL,
+                        ranking_reason="activity fallback",
+                    ),
+                ))
+            return Success(())
+
+    store = SQLiteMemoryGraphStore(path=tmp_path / "mem_service.sqlite3")
+    await store.start()
+    backend = AntigravityAssistantModelBackend(api_key="test-api-key")
+    backend.backend_name = backend_name
+    builder = AssistantContextBuilder(
+        store=store,
+        evidence_providers=(DummyRichHistoryProvider(),),  # type: ignore[arg-type]
+    )
+    service = AssistantService(
+        store=store,
+        backend=backend,
+        context_builder=builder,
+    )
+    # Mock user confirming egress approval in CLI
+    with patch("rai.commands.approval.confirm", AsyncMock(return_value=True)):
+        service.context_approver = approve_egress
+        with patch.object(backend, "generate") as mock_gen:
+            mock_candidate = AssistantCandidate(text="Podsumowanie rozmowy")
+            mock_gen.return_value = Success(mock_candidate)
+
+            turn = ConversationTurn(
+                record_id="turn-summary-1",
+                producer=ProducerIdentity(producer_id="test", kind="user", version="1.0.0"),
+                session_id="session-summary",
+                role="user",
+                text="Podsumuj ostatnią rozmowę.",
+                data_class=DataClass.PUBLIC,
+            )
+            res = await service.accept_turn(turn)
+            assert isinstance(res, Success)
+            assert res.unwrap().text == "Podsumowanie rozmowy"
+            sent = mock_gen.call_args.args[0].context
+            assert all(item.data_class == DataClass.PUBLIC for item in sent.manifest.items)
+            assert not sent.content.get("external_evidence")
+    await store.stop()
+
+
+@pytest.mark.asyncio
+async def test_service_remote_backend_blocks_local_turn_from_egress(
+    tmp_path: Path,
+) -> None:
+    store = SQLiteMemoryGraphStore(path=tmp_path / "mem_local_block.sqlite3")
+    await store.start()
+    backend = AntigravityAssistantModelBackend(api_key="test-api-key")
+    builder = AssistantContextBuilder(store=store, is_remote=True)
+    service = AssistantService(store=store, backend=backend, context_builder=builder)
+    service.context_approver = approve_egress
+
+    turn = ConversationTurn(
+        record_id="turn-local-fail",
+        producer=ProducerIdentity(producer_id="test", kind="user", version="1.0.0"),
+        session_id="session-local",
+        role="user",
+        text="Cześć!",
+        data_class=DataClass.LOCAL,
+    )
+    res = await service.accept_turn(turn)
+    assert isinstance(res, Failure)
+    assert res.failure().code == "EGRESS_LOCAL_DATA_LEAK"
+    await store.stop()

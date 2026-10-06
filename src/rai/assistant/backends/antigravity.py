@@ -48,13 +48,16 @@ UNTRUSTED_CONTEXT_INSTRUCTION = (
 class AntigravityAssistantModelBackend:
     """Conversational reasoning backend powered by Google Antigravity SDK."""
 
-    def __init__(
+    is_remote: bool = True
+
+    def __init__(  # noqa: PLR0913
         self,
         model_name: str | None = None,
         max_output_tokens: int = 1024,
         temperature: float = 0.2,
         governor: InferenceBudgetGovernor | None = None,
         egress_firewall: EgressFirewall | None = None,
+        api_key: str | None = None,
     ) -> None:
         self.model_name = (
             model_name
@@ -66,6 +69,12 @@ class AntigravityAssistantModelBackend:
         self.temperature = temperature
         self.governor = governor or InferenceBudgetGovernor()
         self.egress_firewall = egress_firewall or EgressFirewall()
+        self.api_key = (
+            api_key
+            or os.environ.get("GEMINI_API_KEY")
+            or os.environ.get("GOOGLE_API_KEY")
+        )
+        self.backend_name = "antigravity"
         self._state = LifecycleState.CREATED
         self.producer = ProducerIdentity(
             producer_id="assistant-backend-antigravity",
@@ -157,7 +166,7 @@ class AntigravityAssistantModelBackend:
                 )
         return tuple(dict.fromkeys(source_ids))
 
-    async def generate(
+    async def generate(  # noqa: PLR0911
         self, request: InferenceRequest, cancellation: CancellationToken
     ) -> Result[AssistantCandidate, ActionFailure]:
         if cancellation.cancelled:
@@ -235,9 +244,26 @@ class AntigravityAssistantModelBackend:
         if isinstance(egress_check, Failure):
             return egress_check
 
+        resolved_api_key = (
+            self.api_key
+            or os.environ.get("GEMINI_API_KEY")
+            or os.environ.get("GOOGLE_API_KEY")
+        )
+        if not resolved_api_key:
+            return Failure(
+                make_assistant_failure(
+                    code="AUTH_FAILED",
+                    message=(
+                        "Missing GEMINI_API_KEY or GOOGLE_API_KEY environment variable "
+                        "for Antigravity backend"
+                    ),
+                    request_id=request.request_id,
+                )
+            )
+
         try:
-            from google.antigravity import Agent, LocalAgentConfig
-            from google.antigravity.types import (
+            from google.antigravity import Agent, LocalAgentConfig  # noqa: PLC0415
+            from google.antigravity.types import (  # noqa: PLC0415
                 AgentBehavior,
                 BudgetConfig,
                 BuiltinTools,
@@ -248,6 +274,7 @@ class AntigravityAssistantModelBackend:
             config = LocalAgentConfig(
                 system_instructions=CustomSystemInstructions(text=sys_instructions),
                 model=resolved_model,
+                api_key=resolved_api_key,
                 tools=[],
                 capabilities=CapabilitiesConfig(
                     agent_behavior=AgentBehavior.MINIMAL,

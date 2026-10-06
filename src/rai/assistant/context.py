@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime, timezone
 import json
 import re
@@ -326,6 +326,8 @@ class AssistantContextBuilder:
         enable_recent_route: bool = True,
         profile_scope: str = "default",
         producer: ProducerIdentity | None = None,
+        allowed_data_classes: tuple[DataClass, ...] | None = None,
+        is_remote: bool = False,
     ) -> None:
         self.store = store
         self.query_resolver = query_resolver or MemoryQueryResolver()
@@ -345,12 +347,51 @@ class AssistantContextBuilder:
         self.producer = producer or ProducerIdentity(
             producer_id="assistant-context-builder", kind="service", version="1.0.0"
         )
+        self.allowed_data_classes = allowed_data_classes
+        self.is_remote = is_remote
 
     async def build_context(  # noqa: PLR0912, PLR0915
-        self, turn: ConversationTurn
+        self,
+        turn: ConversationTurn,
+        *,
+        is_remote: bool | None = None,
+        allowed_data_classes: tuple[DataClass, ...] | None = None,
     ) -> Result[AssistantContextPackage, ActionFailure]:
         """Assemble a bounded, inspectable AssistantContextPackage."""
-        query = self.query_resolver.resolve(turn.text, self.profile_scope)
+        remote = self.is_remote if is_remote is None else is_remote
+        turn_class = (
+            turn.data_class
+            if isinstance(turn.data_class, DataClass)
+            else DataClass(turn.data_class)
+        )
+        if allowed_data_classes is not None:
+            effective_data_classes = allowed_data_classes
+        elif self.allowed_data_classes is not None:
+            effective_data_classes = self.allowed_data_classes
+        elif remote:
+            # Remote destination: LOCAL, SECRET, BLOCKED can NEVER egress.
+            # Only exportable data classes are allowed.
+            if turn_class == DataClass.PRIVATE:
+                effective_data_classes = (DataClass.PUBLIC, DataClass.PRIVATE)
+            else:
+                effective_data_classes = (DataClass.PUBLIC,)
+        elif turn_class == DataClass.PUBLIC:
+            # Public turn: do not taint public context with local or private data.
+            effective_data_classes = (DataClass.PUBLIC,)
+        elif turn_class == DataClass.PRIVATE:
+            effective_data_classes = (
+                DataClass.PUBLIC,
+                DataClass.PRIVATE,
+                DataClass.LOCAL,
+            )
+        else:
+            effective_data_classes = (DataClass.PUBLIC, DataClass.LOCAL)
+
+        query = self.query_resolver.resolve(
+            turn.text, self.profile_scope, data_classes=effective_data_classes
+        )
+        if query.data_classes != effective_data_classes:
+            query = replace(query, data_classes=effective_data_classes)
 
         recent_res = await self.store.get_recent_reply_chain(
             session_id=turn.session_id,
@@ -547,6 +588,9 @@ class AssistantContextBuilder:
         episodic_ids: list[str] = []
         episodic_content: list[dict[str, object]] = []
         for source_turn, reason in episodic_with_reasons:
+            if _data_class(source_turn.data_class) not in query.data_classes:
+                exclusions.append(f"{source_turn.record_id}:privacy_class")
+                continue
             episodic_ids.append(source_turn.record_id)
             ranking_reasons[source_turn.record_id] = reason
             episodic_content.append(
@@ -574,6 +618,9 @@ class AssistantContextBuilder:
         external_ids: list[str] = []
         external_content: list[dict[str, object]] = []
         for evidence in external_evidence:
+            if _data_class(evidence.data_class) not in query.data_classes:
+                exclusions.append(f"{evidence.source_id}:privacy_class")
+                continue
             if not domain_scope_matches(evidence.domain_scope, query.domain_scopes):
                 exclusions.append(f"{evidence.source_id}:domain_scope")
                 continue

@@ -205,6 +205,10 @@ class _CandidateRecordingBackend:
     def max_output_tokens(self) -> int:
         return int(getattr(self._delegate, "max_output_tokens", 512))
 
+    @property
+    def is_remote(self) -> bool:
+        return self._delegate.is_remote
+
     async def start(self) -> Result[LifecycleState, ActionFailure]:
         return await self._delegate.start()
 

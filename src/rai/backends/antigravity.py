@@ -61,12 +61,12 @@ async def resolve_lemonade_model(
     if env_model:
         return env_model
     try:
-        import httpx
+        import httpx  # noqa: PLC0415
 
         host = base_url.replace("/api/v1", "").rstrip("/")
         async with httpx.AsyncClient(timeout=3.0) as client:
             resp = await client.get(f"{host}/api/v1/models")
-            if resp.status_code == 200:
+            if resp.status_code == 200:  # noqa: PLR2004
                 data = resp.json()
                 models = data.get("data", [])
                 if models and isinstance(models, list):
@@ -227,7 +227,7 @@ class AntigravityBackend:
         custom_sys_inst: Optional[CustomSystemInstructions],
         sys_inst: str,
         actual_conv_id: Optional[str],
-    ) -> Any:
+    ) -> Any:  # noqa: ANN401
         use_lemonade = (
             agent_config.get("backend") == "lemonade"
             or agent_config.get("use_lemonade")
@@ -275,9 +275,15 @@ class AntigravityBackend:
                 )
             )
 
+        api_key = (
+            agent_config.get("api_key")
+            or os.environ.get("GEMINI_API_KEY")
+            or os.environ.get("GOOGLE_API_KEY")
+        )
         return LocalAgentConfig(
             system_instructions=custom_sys_inst,
             model=main_model,
+            api_key=api_key,
             tools=agent_tools,
             conversation_id=actual_conv_id,
             save_dir=TRAJECTORY_DIR,

@@ -818,7 +818,9 @@ class AssistantService:
             return Failure(accepted_res.failure())
 
         trace("assistant.context.start", turn_id=turn.record_id)
-        ctx_res = await self.context_builder.build_context(turn)
+        ctx_res = await self.context_builder.build_context(
+            turn, is_remote=self.backend.is_remote
+        )
         if isinstance(ctx_res, Failure):
             manifest = AssistantContextManifest(
                 record_id=_new_id(),

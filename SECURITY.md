@@ -103,9 +103,12 @@ copied into the SDK budget, latency is bounded by the adapter timeout, and
 provider allowlists plus token quotas are checked by the inference governor
 before the call. The Antigravity adapter does not yet have a verified provider
 cost estimate or billing reconciliation, so production monetary enforcement
-remains a Stage 6 gate. The approval/preview workflow is not connected to the
-assistant runtime yet, so `PRIVATE` context fails closed unless a trusted caller
-supplies an explicitly approved manifest.
+remains a Stage 6 gate. The CLI previews and approves the outbound manifest for
+backends declaring `AssistantModelBackend.is_remote`. Selection of a remote
+backend never reclassifies a LOCAL turn. Retrieval excludes non-exportable
+sources, and the backend firewall independently validates the final manifest.
+Other callers must supply an explicitly approved manifest for PRIVATE context;
+missing approval fails closed.
 
 The Antigravity timeout covers SDK session entry, chat, response reading and
 session exit on every supported Python version, including 3.10. Expiry cancels

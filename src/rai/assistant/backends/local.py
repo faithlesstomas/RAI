@@ -55,6 +55,7 @@ class LocalAssistantBackend:
         self.thinking_budget = thinking_budget
         self.thinking_level = thinking_level
         self.prompt_template_version = "rai-assistant-messages-v5"
+        self.is_remote = False
         self._state = LifecycleState.CREATED
         self.producer = ProducerIdentity(
             producer_id=f"local-assistant-{self.backend_name}",

@@ -1771,9 +1771,10 @@ The Antigravity assistant slice now manifests the current turn and every
 serialized retrieved source, rejects missing manifest entries, and keeps
 retrieved state in the user role. Assistant manifests are persisted with the
 turn and response. Intended recipient, retention expectations, transmitted
-wire size, approval preview and a broker-backed transition to `approved=True`
-remain open; the current assistant runtime therefore fails closed for
-unapproved `PRIVATE` context.
+wire size and integrated profile routing remain open. The CLI now previews the
+manifest and records explicit approval for remote backends; other callers still
+fail closed for unapproved `PRIVATE` context. Backend selection never
+reclassifies `LOCAL` turns, and remote retrieval excludes non-exportable sources.
 
 #### 6.2 Token and cost governor
 

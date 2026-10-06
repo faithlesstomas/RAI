@@ -368,6 +368,7 @@ async def test_action_output_does_not_bypass_context_manifest(tmp_path: Path) ->
     actions = AssistantActions(runtime, Recognizer(), store)
 
     class MockModelBackend:
+        is_remote = False
         model_name = "test-model"
         received_context = None
 

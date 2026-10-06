@@ -126,9 +126,15 @@ chat slash commands); there is no separate top-level `memory` or `system` group.
 `assistant ask/chat --data-class PUBLIC|LOCAL|PRIVATE` classifies new turns only.
 LOCAL remains the default. The remote native Antigravity backend reviews an
 outbound context manifest and asks for approval, with no automatic conversion of
-stored LOCAL data to PUBLIC. LOCAL, SECRET and BLOCKED context cannot leave the
+new or stored LOCAL data to PUBLIC. Selecting a remote backend never changes
+`--data-class LOCAL`; that turn is rejected before transmission. Choose PUBLIC
+or PRIVATE explicitly only for new text that is eligible for export. Remote
+retrieval excludes LOCAL, SECRET and BLOCKED sources; PRIVATE sources are
+eligible only for a PRIVATE turn. LOCAL, SECRET and BLOCKED context cannot leave the
 machine. The final backend firewall still validates the full outbound manifest.
 Approval is bound to the exact context and persisted with its terminal result.
+Antigravity accepts an adapter API key or `GEMINI_API_KEY` / `GOOGLE_API_KEY`;
+missing credentials return `AUTH_FAILED` before opening an SDK session.
 
 Capability actions use a terminal approval broker bound to the policy decision.
 Noninteractive stdin, rejection, timeout and cancellation do not grant approval.

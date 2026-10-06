@@ -2,8 +2,11 @@
 
 from __future__ import annotations
 
+from dataclasses import replace
 import re
 import unicodedata
+
+from rai.kernel.records import DataClass
 
 from .ports import MemoryQuery
 
@@ -287,7 +290,11 @@ class MemoryQueryResolver:
     """Deterministically extracts semantic query topics and keywords from user text."""
 
     @staticmethod
-    def resolve(text: str, profile_scope: str = "default") -> MemoryQuery:
+    def resolve(
+        text: str,
+        profile_scope: str = "default",
+        data_classes: tuple[DataClass, ...] | None = None,
+    ) -> MemoryQuery:
         """Analyze turn text and return a structured MemoryQuery."""
         lowered = text.casefold()
         words = tuple(re.findall(r"\b\w+\b", lowered))
@@ -341,7 +348,7 @@ class MemoryQueryResolver:
             marker in lowered for marker in _MEMORY_INTENT_MARKERS
         ) or (question_like and bool(restrictive_domains))
 
-        return MemoryQuery(
+        query = MemoryQuery(
             topic=matched_topic,
             topic_is_complete=len(matched_topics) == 1,
             keywords=tuple(matched_keywords),
@@ -350,3 +357,4 @@ class MemoryQueryResolver:
             domain_scopes=tuple(dict.fromkeys(domains)),
             evidence_required=evidence_required,
         )
+        return replace(query, data_classes=data_classes) if data_classes is not None else query

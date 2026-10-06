@@ -144,7 +144,5 @@ def configure_approvals(
     container: ApplicationContainer, service: AssistantService
 ) -> None:
     container.capability_service.approvals = TerminalApprovalBroker(service.profile_scope)
-    from rai.assistant.backends.antigravity import AntigravityAssistantModelBackend  # noqa: PLC0415
-
-    if isinstance(service.backend, AntigravityAssistantModelBackend):
+    if service.backend.is_remote:
         service.context_approver = approve_egress

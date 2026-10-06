@@ -41,6 +41,7 @@ class DeterministicAssistantBackend:
         self.model_name = "deterministic-conformance"
         self.model_artifact_version = "1.0.0"
         self.prompt_template_version = "deterministic-v1"
+        self.is_remote = False
         self.producer = ProducerIdentity(
             producer_id="deterministic-backend", kind="test", version="1.0.0"
         )

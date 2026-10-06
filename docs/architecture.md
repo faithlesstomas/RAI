@@ -186,3 +186,13 @@ assistant service or registered capability currently dispatches work to that
 supervisor, and neither production text adapter has a repeatable live-model
 acceptance test. It is therefore implemented infrastructure, but not yet a
 complete Stage 1 routing or user-facing assistant path.
+
+### Assistant backend destination contract
+
+Every `AssistantModelBackend`, including decorators, declares `is_remote`.
+The service uses this property to restrict retrieved context, and the CLI uses
+it to attach manifest approval. Provider names and approval callback names do
+not determine the trust boundary. Custom adapters must implement the property;
+local adapters return `False`, remote adapters return `True`, and decorators
+forward the wrapped backend's value. The destination declaration does not
+replace independent egress validation in a remote adapter.
