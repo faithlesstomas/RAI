@@ -53,7 +53,7 @@ file to `.gitignore` is not a substitute for rotation.
   construction.
 - Add one backend through a conformance contract rather than branching core
   logic by provider name.
-- Use English commit messages and documentation/code identifiers.
+- Use English for commit messages, issues/MRs, code identifiers, and all documentation.
 
 ## Commits and semantic versioning
 
@@ -179,9 +179,13 @@ Documentation ownership is divided as follows:
 - `SECURITY.md` — trust model, supported controls and vulnerability reporting;
 - `CHANGELOG.md` — released user-visible changes generated from Conventional
   Commits by `python-semantic-release`;
-- `docs/` — publishable guides, architecture, protocols, operations and
-  generated Python API reference;
+- `docs/` — canonical, publishable guides, architecture, protocols, operations and
+  generated Python API reference (must not contain point-in-time audits or transient scratchpads);
+- GitLab Wiki (`rai.wiki.git`) — internal research notes, cognitive architecture cross-checks,
+  historical audit reports with verified remediation matrices, and Architecture Decision Records (ADRs);
 - FastAPI OpenAPI — generated HTTP endpoint and data-model reference.
+
+All documentation—including public Sphinx docs, internal wiki articles, git commit messages, and GitLab issues/MRs—must be written in English.
 
 When behavior, configuration, a public contract or an operator workflow
 changes, update the relevant documentation in the same merge request. Planned
