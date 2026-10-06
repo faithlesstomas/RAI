@@ -652,6 +652,27 @@ def isolation_available(isolation: str) -> bool:
 class HitlApprovalBroker:
     """Compatibility adapter from the existing UI broker to the kernel port."""
 
+    async def request_action(
+        self, decision: PolicyDecision, request: CapabilityRequest, cancellation: CancellationToken,
+    ) -> Result[str, ActionFailure]:
+        from rai.actions.consent import BROWSER_ACTIONS, review_text  # noqa: PLC0415
+
+        if request.capability not in BROWSER_ACTIONS:
+            return await self.request(decision, cancellation)
+        if cancellation.cancelled:
+            return Failure(self._failure(decision, "CANCELLED", "approval was cancelled"))
+        manager = get_approval_manager()
+        pending = manager.register_request(review_text(request), "BrowserEgress")
+        try:
+            approved = await manager.wait_for_approval(pending)
+            if approved and not cancellation.cancelled:
+                return Success(pending.id)
+            return Failure(self._failure(decision, "DENIED", "approval denied"))
+        finally:
+            # A timed-out or cancelled request must not remain approvable later.
+            manager.resolve_request(pending.id, False)
+            manager._pending.pop(pending.id, None)  # pylint: disable=protected-access
+
     async def request(
         self, decision: PolicyDecision, cancellation: CancellationToken
     ) -> Result[str, ActionFailure]:

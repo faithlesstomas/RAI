@@ -13,6 +13,7 @@ from returns.result import Failure, Result, Success
 from rai.kernel.capabilities import CapabilityDescriptor, CapabilityRegistry, RegisteredCapability
 from rai.kernel.ports import CancellationToken
 from rai.kernel.records import ActionFailure, ActionResult, CapabilityRequest, DataClass, RiskClass, _utc_now
+from .consent import has_browser_consent
 from .capabilities import HANDLE_TTL, PRODUCER, failure, result
 from .handles import SQLiteHandleStore
 from .records import ResourceHandle
@@ -150,7 +151,9 @@ class BrowserCapability:
         self.name, self.handles, self.backend = name, handles, backend
 
     async def invoke(self, request: CapabilityRequest, cancellation: CancellationToken) -> Result[ActionResult, ActionFailure]:  # noqa: PLR0911
-        if request.data_class != DataClass.PUBLIC:
+        if request.data_class != DataClass.PUBLIC and not (
+            request.data_class == DataClass.PRIVATE and has_browser_consent(request)
+        ):
             return Failure(failure(request, "PUBLIC_CONTEXT_REQUIRED"))
         if self.name == "browser.search":
             query = request.arguments["query"]

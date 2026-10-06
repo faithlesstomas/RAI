@@ -47,7 +47,26 @@ class TtsSettings(SettingsRecord):
     default_voice: str = "pl_PL-gosia-medium"
 
 
+class ApprovalRule(SettingsRecord):
+    """User-owned browser search consent; no arbitrary capability wildcards."""
+
+    id: str = Field(min_length=1, max_length=64, pattern=r"^[a-zA-Z0-9_-]+$")
+    capability: Literal["browser.search"] = "browser.search"
+    data_class: Literal["PUBLIC", "PRIVATE"]
+    decision: Literal["allow", "ask", "deny"]
+    query: str | None = Field(default=None, min_length=1, max_length=256)
+
+
 class ProfileSettings(ModelSettings):
+    approval_rules: list[ApprovalRule] = Field(default_factory=list, max_length=128)
+
+    @field_validator("approval_rules")
+    @classmethod
+    def unique_rule_ids(cls, rules: list[ApprovalRule]) -> list[ApprovalRule]:
+        if len({rule.id for rule in rules}) != len(rules):
+            raise ValueError("approval rule IDs must be unique")
+        return rules
+
     # These fields remain consumed by the legacy REST endpoints (#43).
     name: str | None = None
     description: str | None = None

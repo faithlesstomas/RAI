@@ -231,3 +231,13 @@ in a chosen application requires a separate scoped application handle; the appro
 target includes both resources and execution checks their identities again.
 Directory verification emits only whether the requested location is open, never
 the user's other open locations. Missing desktop evidence yields `UNKNOWN`.
+
+### Runtime tracing
+
+Opt-in `--trace` / `RAI_TRACE=1` diagnostics record execution metadata: request
+and turn identifiers, capability names, policy outcomes, result codes, durations,
+and history retrieval counts. They deliberately exclude arguments, history
+contents, prompts, model reasoning and tool result bodies. Counts can still
+reveal that activity exists, so treat trace output as local operational metadata
+and manage stderr/journal access and retention accordingly. Trace mode does not
+change collection consent, capability policy or the conversation's data class.

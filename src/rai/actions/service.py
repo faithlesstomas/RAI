@@ -13,6 +13,8 @@ from rai.kernel.ports import CancellationToken
 from rai.kernel.records import ActionFailure, ActionResult, CapabilityRequest, PolicyDecision, PolicyOutcome
 from rai.kernel.service import CapabilityService
 
+from rai.diagnostics import trace
+from .consent import BROWSER_ACTIONS, browser_consent
 from .capabilities import failure
 from .execution import SQLiteExecutionStore
 from .handles import SQLiteHandleStore
@@ -134,11 +136,23 @@ class ActionCapabilityService(CapabilityService):
                     terminal = failure(request, "POLICY_DENIED")
                     if token.cancelled:
                         raise asyncio.CancelledError
-                    if decision.outcome == PolicyOutcome.ASK:
+                    review_action = getattr(self.approvals, "request_action", None)
+                    export_review = (
+                        decision.outcome == PolicyOutcome.ESCALATE
+                        and decision.reason_codes == ("PRIVATE_DATA_EGRESS",)
+                        and request.capability in BROWSER_ACTIONS
+                        and review_action is not None
+                    )
+                    if decision.outcome == PolicyOutcome.ASK or export_review:
                         if self.approvals is None:
                             terminal = failure(request, "APPROVAL_UNAVAILABLE")
                         else:
-                            approval = await bounded(self.approvals.request(decision, token), token, APPROVAL_TIMEOUT)
+                            trace("approval.start", request_id=request.record_id, capability=request.capability)
+                            pending = (review_action(decision, request, token) if review_action
+                                       else self.approvals.request(decision, token))
+                            approval = await bounded(pending, token, APPROVAL_TIMEOUT)
+                            trace("approval.end", request_id=request.record_id,
+                                  outcome="approved" if isinstance(approval, Success) else "denied")
                             if isinstance(approval, Success):
                                 approval_id, permitted = approval.unwrap(), True
                             else:
@@ -148,7 +162,10 @@ class ActionCapabilityService(CapabilityService):
                     if permitted:
                         started = True
                         capability = self.registry.resolve(request).unwrap()
-                        invoked = await bounded(capability.invoke(request, token), token, ACTION_TIMEOUT)
+                        # Consent is task-local and bound to the exact immutable request.
+                        # Classification and handle labels remain PRIVATE.
+                        with browser_consent(request):
+                            invoked = await bounded(capability.invoke(request, token), token, ACTION_TIMEOUT)
                         if isinstance(invoked, Success):
                             terminal = invoked.unwrap()
                         elif invoked.failure().code == "CAPABILITY_FAILED":

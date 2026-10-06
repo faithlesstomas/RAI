@@ -44,7 +44,7 @@ class ApprovalManager:
         request_id = f"appr-{uuid.uuid4().hex[:8]}"
         req = ApprovalRequest(request_id, command, tool_name)
         self._pending[request_id] = req
-        logger.info("Registered approval request %s for command: %s", request_id, command)
+        logger.info("Registered approval request %s for tool: %s", request_id, tool_name)
         return req
 
     def get_request(self, request_id: str) -> Optional[ApprovalRequest]:
