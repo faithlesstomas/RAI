@@ -358,3 +358,102 @@ async def test_event_loop_responsiveness_during_inference() -> None:
     await asyncio.gather(inference_task, ticker_task)
     assert ticks >= 4, f"Event loop was blocked: only ticked {ticks} times"
     await supervisor.stop()
+
+
+@pytest.mark.asyncio
+async def test_bounded_task_preserves_privacy_taint_and_prevents_downgrade() -> None:
+    engine = ScriptedEngine(
+        [
+            '{"summary":"Private summary", "key_points":[], "confidence":0.95}',
+            '{"summary":"Elevated summary", "key_points":[], "confidence":0.95}',
+        ]
+    )
+    supervisor = ProcessorSupervisor(engine=engine, idle_unload_seconds=0)
+    capability = BoundedTaskCapability(supervisor)
+
+    # 1. Private request cannot be downgraded to PUBLIC by arguments
+    req_downgrade = _make_request(
+        BoundedTaskKind.EPISODE_SUMMARIZATION.value,
+        "Summarize",
+        content={"text": "sensitive text"},
+        data_class=DataClass.PRIVATE,
+        data_class_override="PUBLIC",
+    )
+    req_downgrade = req_downgrade.model_copy(
+        update={"arguments": {**req_downgrade.arguments, "data_class": "PUBLIC"}}
+    )
+    res_downgrade = await capability.invoke(req_downgrade, CancellationToken())
+    assert isinstance(res_downgrade, Success)
+    assert res_downgrade.unwrap().output["data_class"] == DataClass.PRIVATE
+
+    # 2. Argument can elevate LOCAL to PRIVATE
+    req_elevate = _make_request(
+        BoundedTaskKind.EPISODE_SUMMARIZATION.value,
+        "Summarize",
+        content={"text": "sensitive text"},
+        data_class=DataClass.LOCAL,
+    )
+    req_elevate = req_elevate.model_copy(
+        update={"arguments": {**req_elevate.arguments, "data_class": "PRIVATE"}}
+    )
+    res_elevate = await capability.invoke(req_elevate, CancellationToken())
+    assert isinstance(res_elevate, Success)
+    assert res_elevate.unwrap().output["data_class"] == DataClass.PRIVATE
+
+    await supervisor.stop()
+
+
+@pytest.mark.asyncio
+async def test_bounded_task_respects_caller_budget_and_expired_deadline() -> None:
+    engine = ScriptedEngine(
+        [
+            '{"summary":"Ignored", "key_points":[], "confidence":0.9}',
+            '{"summary":"Tight output", "key_points":[], "confidence":0.9}',
+        ]
+    )
+    supervisor = ProcessorSupervisor(engine=engine, idle_unload_seconds=0)
+    capability = BoundedTaskCapability(supervisor)
+
+    now = datetime.now(timezone.utc)
+    expired_budget = InferenceBudget(
+        producer=TEST_PRODUCER,
+        max_input_tokens=1000,
+        max_output_tokens=5,
+        max_agent_turns=1,
+        max_tool_calls=0,
+        max_images=0,
+        max_audio_seconds=0.0,
+        max_latency_seconds=1.0,
+        max_provider_cost=0.0,
+        max_ram_bytes=0,
+        max_vram_bytes=0,
+        cancellation_deadline=now - timedelta(seconds=60),
+    )
+
+    req_expired = _make_request(
+        BoundedTaskKind.EPISODE_SUMMARIZATION.value, "Summarize"
+    ).model_copy(update={"budget": expired_budget})
+
+    res_expired = await capability.invoke(req_expired, CancellationToken())
+    assert isinstance(res_expired, Failure)
+    assert res_expired.failure().code == "DEADLINE_EXCEEDED"
+    assert len(engine.prompts) == 0
+
+    # Non-expired budget with tight output tokens constrains the model execution
+    valid_tight_budget = expired_budget.model_copy(
+        update={
+            "cancellation_deadline": now + timedelta(seconds=30),
+            "max_output_tokens": 17,
+        }
+    )
+    req_tight = _make_request(
+        BoundedTaskKind.EPISODE_SUMMARIZATION.value, "Summarize"
+    ).model_copy(update={"budget": valid_tight_budget})
+
+    res_tight = await capability.invoke(req_tight, CancellationToken())
+    assert isinstance(res_tight, Success)
+    assert len(engine.max_tokens) == 1
+    assert engine.max_tokens[0] == 17  # noqa: PLR2004 - constrained output token bound
+
+    await supervisor.stop()
+

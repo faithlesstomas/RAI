@@ -28,6 +28,7 @@ from rai.kernel.records import (
     Task,
     _new_id,
     _utc_now,
+    max_data_class,
 )
 
 from .supervisor import ProcessorSupervisor
@@ -145,11 +146,7 @@ class BoundedTaskCapability:
         task_id = args.get("task_id") or request.record_id
 
         data_class_val = args.get("data_class")
-        data_class = (
-            DataClass(data_class_val)
-            if data_class_val
-            else request.data_class or DataClass.LOCAL
-        )
+        data_class = max_data_class(request.data_class, data_class_val)
 
         task = Task(
             record_id=f"task:{task_id}",
@@ -197,27 +194,54 @@ class BoundedTaskCapability:
             content=content,
         )
 
-        max_in = int(args.get("max_input_tokens", 2048))
-        max_out = int(args.get("max_output_tokens", 512))
-        max_lat = float(args.get("max_latency_seconds", 30.0))
         now = _utc_now()
-
-        budget = InferenceBudget(
-            record_id=f"budget:{_new_id()}",
-            producer=request.actor,
-            correlation_id=request.correlation_id,
-            max_input_tokens=max_in,
-            max_output_tokens=max_out,
-            max_agent_turns=1,
-            max_tool_calls=0,
-            max_images=0,
-            max_audio_seconds=0.0,
-            max_latency_seconds=max_lat,
-            max_provider_cost=0.0,
-            max_ram_bytes=0,
-            max_vram_bytes=0,
-            cancellation_deadline=now + timedelta(seconds=max_lat),
-        )
+        if request.budget is not None:
+            max_in = min(
+                request.budget.max_input_tokens,
+                int(args.get("max_input_tokens", request.budget.max_input_tokens)),
+            )
+            max_out = min(
+                request.budget.max_output_tokens,
+                int(args.get("max_output_tokens", request.budget.max_output_tokens)),
+            )
+            max_lat = min(
+                request.budget.max_latency_seconds,
+                float(args.get("max_latency_seconds", request.budget.max_latency_seconds)),
+            )
+            arg_deadline = now + timedelta(seconds=max_lat)
+            cancellation_deadline = (
+                min(request.budget.cancellation_deadline, arg_deadline)
+                if request.budget.cancellation_deadline.tzinfo is not None
+                else request.budget.cancellation_deadline
+            )
+            budget = request.budget.model_copy(
+                update={
+                    "max_input_tokens": max_in,
+                    "max_output_tokens": max_out,
+                    "max_latency_seconds": max_lat,
+                    "cancellation_deadline": cancellation_deadline,
+                }
+            )
+        else:
+            max_in = int(args.get("max_input_tokens", 2048))
+            max_out = int(args.get("max_output_tokens", 512))
+            max_lat = float(args.get("max_latency_seconds", 30.0))
+            budget = InferenceBudget(
+                record_id=f"budget:{_new_id()}",
+                producer=request.actor,
+                correlation_id=request.correlation_id,
+                max_input_tokens=max_in,
+                max_output_tokens=max_out,
+                max_agent_turns=1,
+                max_tool_calls=0,
+                max_images=0,
+                max_audio_seconds=0.0,
+                max_latency_seconds=max_lat,
+                max_provider_cost=0.0,
+                max_ram_bytes=0,
+                max_vram_bytes=0,
+                cancellation_deadline=now + timedelta(seconds=max_lat),
+            )
 
         if self.supervisor.state != LifecycleState.RUNNING:
             start_result = await self.supervisor.start()
