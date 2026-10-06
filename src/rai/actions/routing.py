@@ -1,15 +1,15 @@
-"""Resolve structured model choices to runtime-issued authority before invocation."""
+from datetime import timedelta
 from returns.result import Failure, Result
 
 from rai.assistant.ports import MemoryGraphStore
 from rai.assistant.records import AssistantCandidate, ConversationTurn
 from rai.kernel.ports import CancellationToken
 from rai.kernel.service import CapabilityService
-from rai.kernel.records import ActionFailure, ActionResult, PolicyDecision
+from rai.kernel.records import ActionFailure, ActionResult, PolicyDecision, _new_id, _utc_now
 from rai.kernel.transport import normalize_request
 from .dialogue import previous_action
 from .intent import ActionIntent
-from .records import ActionProposal
+from .records import ActionProposal, ActiveChoiceFrame, ChoiceEntry, ChoiceState
 
 
 async def route_action(  # noqa: PLR0913, PLR0912, PLR0915
@@ -104,7 +104,7 @@ async def route_action(  # noqa: PLR0913, PLR0912, PLR0915
                     ended = str(ep.get("ended_at", ""))
                     time_range = (
                         f"{started[:16]} - {ended[11:16]}"
-                        if len(started) >= 16 and len(ended) >= 16
+                        if len(started) >= 16 and len(ended) >= 16  # noqa: PLR2004
                         else (started or ended or "")
                     )
                     summary = f"[{time_range}] {apps}" if time_range else f"[{apps}]"
@@ -119,4 +119,32 @@ async def route_action(  # noqa: PLR0913, PLR0912, PLR0915
             text = "Wykonanie potwierdzone." if polish else "Execution verified."
         if choices:
             metadata["action_choices"] = choices
+            if name in {"browser.search", "process.inspect"} and entries:
+                choice_entries = tuple(
+                    ChoiceEntry(
+                        index=i,
+                        handle=entry["handle"],
+                        label=entry["name"],
+                        metadata={"url": entry["url"]} if "url" in entry else {},
+                    )
+                    for i, entry in enumerate(entries, 1)
+                    if "handle" in entry
+                )
+                if choice_entries:
+                    now = _utc_now()
+                    frame = ActiveChoiceFrame(
+                        record_id=_new_id(),
+                        timestamp=now,
+                        producer=turn.producer,
+                        session_id=turn.session_id,
+                        profile_scope=profile,
+                        task_id=task_id,
+                        source_turn_id=turn.record_id,
+                        intended_capability="browser.open_result" if name == "browser.search" else "process.inspect",
+                        entries=choice_entries,
+                        state=ChoiceState.ACTIVE,
+                        expires_at=now + timedelta(minutes=15),
+                        data_class=turn.data_class,
+                    )
+                    metadata["active_choice_frame"] = frame.model_dump(mode="json")
     return AssistantCandidate(text=text, metadata=metadata)
