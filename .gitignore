@@ -46,3 +46,7 @@ models/
 *.onnx
 *.onnx_data
 .antigravitycli/
+
+# Local audits and scratch research files
+AUDIT-*.md
+*.pdf
