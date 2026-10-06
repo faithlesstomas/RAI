@@ -68,6 +68,9 @@ def format_capabilities_instruction(
     return (
         base_instruction + "\n\nRegistered Linux actions:\n" + "\n".join(available)
         + "\nThese actions are subject to policy, approval, configuration and backend availability. "
+        "This registry is authoritative; prior assistant claims of missing capabilities may be incorrect. "
+        "An empty activity query does not mean history access is unavailable: data may be filtered by privacy or time. "
+        "Historical desktop activity is not a live list of open windows; no live window-list action is connected. "
         "Report unavailable or denied actions honestly. Claim success only from verified execution results."
     )
 

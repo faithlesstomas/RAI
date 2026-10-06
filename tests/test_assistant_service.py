@@ -13,6 +13,7 @@ from rai.assistant.audit import InMemoryAssistantAuditLedger
 from rai.assistant.backends.deterministic import DeterministicAssistantBackend
 from rai.assistant.context import AssistantContextBuilder
 from rai.assistant.records import (
+    AssistantCandidate,
     AssistantContextManifest,
     AssistantResponse,
     ConversationTurn,
@@ -562,3 +563,17 @@ async def test_denied_egress_never_calls_backend_and_records_terminal(service):
     assert manifest is not None and not manifest.approved
     await service.accept_turn(turn)
     assert service.context_approver.await_count == 1
+
+
+@pytest.mark.asyncio
+async def test_service_passes_trusted_system_instruction_to_model(service: AssistantService) -> None:
+
+    instruction = "Trusted registry: activity.query and process.inspect."
+    service.context_builder.system_instruction = instruction
+    service.backend.generate = AsyncMock(return_value=Success(AssistantCandidate(text="Available.")))
+    turn = ConversationTurn(producer=PRODUCER, session_id="system-contract", role="user", text="Hello")
+    result = await service.accept_turn(turn)
+    assert isinstance(result, Success)
+    request = service.backend.generate.call_args.args[0]
+    assert request.system_instruction == instruction
+    await service.stop()

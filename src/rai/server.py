@@ -51,6 +51,9 @@ async def health_check() -> JSONResponse:
 def create_app(container: ApplicationContainer | None = None) -> FastAPI:
     """Create one fully composed RAI ASGI application."""
     load_dotenv()
+    from rai.diagnostics import configure_trace  # noqa: PLC0415
+
+    configure_trace()
     application_container = container or ApplicationContainer(config_manager.load_config())
 
     @asynccontextmanager

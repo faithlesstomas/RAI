@@ -2,12 +2,15 @@
 
 from __future__ import annotations
 
+
 import asyncio
 from collections.abc import Awaitable, Callable
 from datetime import timedelta
 import json
 import time
 from typing import Any, AsyncIterator
+
+from rai.diagnostics import trace
 
 from returns.result import Failure, Result, Success
 
@@ -814,6 +817,7 @@ class AssistantService:
         if isinstance(accepted_res, Failure):
             return Failure(accepted_res.failure())
 
+        trace("assistant.context.start", turn_id=turn.record_id)
         ctx_res = await self.context_builder.build_context(turn)
         if isinstance(ctx_res, Failure):
             manifest = AssistantContextManifest(
@@ -854,6 +858,9 @@ class AssistantService:
                 )
             context_package = approved.unwrap()
         manifest = context_package.manifest
+        trace("assistant.context.end", turn_id=turn.record_id,
+              external_evidence=len(context_package.content.get("external_evidence", ())),
+              routing=manifest.routing_decision)
 
         inference_req = InferenceRequest(
             record_id=_new_id(),
@@ -865,6 +872,7 @@ class AssistantService:
             context=context_package,
             budget=self._budget(),
             strategy="DIRECT",
+            system_instruction=self.context_builder.system_instruction,
             model_name=str(getattr(self.backend, "model_name", "deterministic")),
         )
 
@@ -884,9 +892,12 @@ class AssistantService:
             )
             latency_ms = 0.0
         else:
+            trace("assistant.model.start", turn_id=turn.record_id)
             start_time = time.perf_counter()
             backend_res = await self.backend.generate(inference_req, token)
             latency_ms = (time.perf_counter() - start_time) * 1000
+            trace("assistant.model.end", turn_id=turn.record_id, elapsed_ms=round(latency_ms),
+                  status="failure" if isinstance(backend_res, Failure) else "success")
             if isinstance(backend_res, Failure):
                 return await self._commit_failure(
                     turn=turn,

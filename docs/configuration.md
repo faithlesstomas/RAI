@@ -149,3 +149,56 @@ functions have also been removed. Future graphical and editor clients (GNOME, Em
 and other environments) use the server API. `config_manager.py` retains adapters for
 the remaining server consumers; parsing and persistence have moved to `rai.configuration`.
 This change does not close #48.
+
+### Debugging assistant actions and Rich History
+
+The CLI chat runs its own local assistant container. It reads the shared history
+store; it does not connect to the daemon for chat or start collectors. Continuous
+collection belongs to the running daemon. Both processes must use the same
+configuration and XDG/RAI data directories.
+
+Use `rai --trace assistant chat --profile test` to print timestamped routing,
+context, model, policy and capability execution events to stderr. A capability
+trace includes its request ID, start/end, outcome code and duration. History
+queries report counts and the reason for an empty result, without logging
+application names, paths, query text, prompts, reasoning or response bodies.
+`--show-thinking` displays model output; it is not an execution trace.
+
+For the daemon, use `rai --trace server serve` or set `RAI_TRACE=1` in its service
+environment. Restart an existing daemon after changing its environment or code.
+The traces go to stderr (and the journal when managed by systemd). They are
+opt-in operational diagnostics, not a replacement for the durable audit ledger.
+
+Interactive commands:
+
+- `/capabilities`: display the trusted capabilities instruction for this chat.
+- `/status`: show local configuration/history paths, configured collectors and
+  the conversation's data class, stored counts and latest observation/episode
+  timestamps. This does not report live daemon health.
+- `/context`: inspect the latest response context manifest.
+
+The authenticated daemon endpoint `GET /api/v1/activity/collectors` reports live
+collector states, permissions, last event timestamps and errors. Inspect it when
+history is stale, even if `rich_history.enabled` is true. Enabling history in a
+configuration alone does not prove that collectors are producing observations.
+
+`activity.query` supports `lookback_minutes` (1–10080); the assistant can map
+“last two hours” to 120. Its optional `query` is a literal application, project or
+resource filter, not a natural-language sentence. Empty results distinguish no
+stored episodes in the requested period, no filter matches, and records excluded
+by classification. Chat defaults to `LOCAL`; desktop titles, paths and similar
+sensitive metadata often produce `PRIVATE` episodes. An explicit
+`rai assistant chat --profile test --data-class PRIVATE` permits that scope;
+classification is never raised automatically. Historical observations do not
+provide a live inventory of all open windows; no such action is currently
+connected to the assistant.
+
+GNOME, foreground-process and AT-SPI collectors need the optional `gnome-tools`
+dependencies in the Python environment used by their configured commands, plus
+native GI/AT-SPI libraries and the GNOME extension/session interfaces. Check
+`python -c 'import pydbus; from gi.repository import GLib'` in that environment.
+`uv sync --inexact --extra gnome-tools` adds the declared extra while retaining
+other installed optional packages; native build prerequisites may also be needed.
+A failed sidecar now reports `FAILED` and a content-free `SIDECAR_EXIT_<code>`;
+trace mode records collector failure/restart events. Stderr from sidecars is
+still discarded to avoid persisting arbitrary desktop content or exception text.

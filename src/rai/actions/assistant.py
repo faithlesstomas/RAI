@@ -6,6 +6,7 @@ from returns.result import Failure
 
 from rai.assistant.records import AssistantCandidate, ConversationTurn
 from rai.assistant.ports import MemoryGraphStore
+from rai.diagnostics import trace
 from .dialogue import previous_action
 from rai.kernel.ports import CancellationToken
 from rai.kernel.service import CapabilityService
@@ -30,11 +31,19 @@ class AssistantActions:
     ) -> AssistantCandidate | None:
         if turn.role != "user":
             return None
+        trace("assistant.intent.start", turn_id=turn.record_id)
         recognized = await self.recognizer.recognize(turn, cancellation)
         if isinstance(recognized, Failure):
+            trace("assistant.intent.end", turn_id=turn.record_id, status="failure")
             return AssistantCandidate(text="Nie udało się bezpiecznie rozpoznać intencji. Nie wykonałem działania.",
                                       metadata={"intent_failure": recognized.failure()})
         intent = recognized.unwrap()
+        trace("assistant.intent", turn_id=turn.record_id, outcome=intent.outcome,
+              query_present=bool(intent.query), data_class=turn.data_class)
+        if intent.outcome == "capabilities.list":
+            from rai.assistant.context import format_capabilities_instruction  # noqa: PLC0415
+
+            return AssistantCandidate(text=format_capabilities_instruction(self.capabilities.registry, base_instruction=""))
         if intent.outcome == "no_action":
             return None
         if intent.outcome == "clarify":

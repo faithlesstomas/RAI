@@ -190,12 +190,36 @@ def _run_assistant_chat(  # noqa: PLR0913, PLR0915
                         "/diagnostics stage-specific memory integrity report\n"
                         "/history [N] persisted turns in this session\n"
                         "/context   exact context window for the latest reply\n"
+                        "/capabilities registered actions for this conversation\n"
+                        "/status    local history configuration and conversation scope\n"
                         "/thinking [on|off|show|hide] toggle model thinking\n"
                         "/remember TEXT explicitly save a fact\n"
                         "/forget TEXT remove matching memory; use 'all' for everything\n"
                         "/session   current profile and session ID\n"
                         "/exit      leave the chat"
                     )
+                    continue
+                if stripped == "/capabilities":
+                    click.echo(service.context_builder.system_instruction)
+                    continue
+                if stripped == "/status":
+                    history = container.config.get("rich_history", {})
+                    from rai.configuration.storage import selected_path  # noqa: PLC0415
+                    from rai.paths import data_dir  # noqa: PLC0415
+                    from rai.history.diagnostics import history_storage_status  # noqa: PLC0415
+
+                    history_path = container.rich_history_path or data_dir() / "history" / "activity-v1.sqlite3"
+                    storage_status = await asyncio.to_thread(history_storage_status, history_path)
+                    click.echo(json.dumps({
+                        "storage": storage_status.unwrap() if isinstance(storage_status, Success) else {"error": storage_status.failure()},
+                        "mode": "local_cli_reads_shared_history; collectors_run_in_daemon",
+                        "config_path": str(selected_path()),
+                        "history_path": str(history_path),
+                        "history_enabled": bool(history.get("enabled", False)),
+                        "configured_collectors": sorted(history.get("collectors", {})),
+                        "data_class": data_class.value,
+                        "live_collector_status": "GET /api/v1/activity/collectors on the daemon",
+                    }, indent=2))
                     continue
                 if stripped in {"/config", "/config show"}:
                     from rai.configuration.resolution import effective_model_settings  # noqa: PLC0415

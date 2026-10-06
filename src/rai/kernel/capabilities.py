@@ -2,11 +2,16 @@
 
 from __future__ import annotations
 
+import asyncio
 import inspect
+import time
+
 from collections.abc import Awaitable, Callable
 from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
+from rai.diagnostics import trace
+
 from returns.result import Failure, Result, Success
 
 from .ports import CancellationToken, Capability
@@ -68,6 +73,23 @@ class RegisteredCapability:
         return self.descriptor.name
 
     async def invoke(
+        self, request: CapabilityRequest, cancellation: CancellationToken
+    ) -> Result[ActionResult, ActionFailure]:
+        started = time.monotonic()
+        trace("capability.start", request_id=request.record_id, capability=self.name)
+        try:
+            executed = await self._invoke(request, cancellation)
+        except asyncio.CancelledError:
+            trace("capability.end", request_id=request.record_id, capability=self.name,
+                  status="cancelled", elapsed_ms=round((time.monotonic() - started) * 1000))
+            raise
+        trace("capability.end", request_id=request.record_id, capability=self.name,
+              status="failure" if isinstance(executed, Failure) else "success",
+              code=executed.failure().code if isinstance(executed, Failure) else "OK",
+              elapsed_ms=round((time.monotonic() - started) * 1000))
+        return executed
+
+    async def _invoke(
         self, request: CapabilityRequest, cancellation: CancellationToken
     ) -> Result[ActionResult, ActionFailure]:
         if cancellation.cancelled:

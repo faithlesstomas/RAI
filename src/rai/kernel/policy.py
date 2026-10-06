@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Callable
 
+from rai.diagnostics import trace
 from .capabilities import CapabilityDescriptor
 from .records import (
     CapabilityRequest,
@@ -35,6 +36,8 @@ class PolicyEngine:
         self, request: CapabilityRequest, descriptor: CapabilityDescriptor
     ) -> PolicyDecision:
         outcome, reasons = self._outcome(request, descriptor)
+        trace("capability.policy", request_id=request.record_id, capability=descriptor.name,
+              outcome=outcome.value, reasons=",".join(reasons), data_class=request.data_class)
         return PolicyDecision(
             record_id=f"policy:{self.policy_version}:{request.record_id}",
             timestamp=request.timestamp,

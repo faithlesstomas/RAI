@@ -27,6 +27,7 @@ from rai.kernel.records import (
     ProvenanceReference,
     RiskClass,
 )
+from rai.kernel.transport import normalize_request
 from rai.kernel.synthetic import SyntheticApprovalBroker
 
 PRODUCER = ProducerIdentity(producer_id="test", kind="test", version="1.0.0")
@@ -102,7 +103,6 @@ async def test_activity_query_capability_success_and_filtering() -> None:
     assert desc is not None
     cap = registry._capabilities["activity.query"]
 
-    from rai.kernel.transport import normalize_request
 
     token = CancellationToken()
     # Query with LOCAL data_class -> ep1 (LOCAL) and ep2 (PUBLIC) allowed, ep3 (PRIVATE) excluded
@@ -127,7 +127,6 @@ async def test_activity_query_capability_success_and_filtering() -> None:
 
 @pytest.mark.asyncio
 async def test_activity_query_registration_and_unavailable_service() -> None:
-    from rai.kernel.transport import normalize_request
 
     registry = CapabilityRegistry()
     register_activity_capabilities(registry, lambda: None)
@@ -258,7 +257,7 @@ async def test_assistant_actions_activity_query_empty_and_english() -> None:
     )
     cand_en = await actions_en.handle(turn_en, CancellationToken())
     assert cand_en is not None
-    assert cand_en.text == "No recorded activity."
+    assert "No stored episodes in the selected period" in cand_en.text
 
     # Polish empty
     intent_pl = ActionIntent(
@@ -278,5 +277,48 @@ async def test_assistant_actions_activity_query_empty_and_english() -> None:
     )
     cand_pl = await actions_pl.handle(turn_pl, CancellationToken())
     assert cand_pl is not None
-    assert cand_pl.text == "Brak zarejestrowanej aktywności."
+    assert "Brak zapisanych epizodów w wybranym okresie" in cand_pl.text
 
+
+
+@pytest.mark.asyncio
+async def test_history_empty_reasons_and_time_filter() -> None:
+
+    class FilteredHistory(MockRichHistory):
+        filters: dict[str, Any]
+
+        def query(self, **filters: Any) -> tuple[Episode, ...]:  # noqa: ANN401
+            self.filters = filters
+            return self.episodes
+
+    history = FilteredHistory((_make_episode("private", data_class=DataClass.PRIVATE),))
+    registry = CapabilityRegistry()
+    register_activity_capabilities(registry, lambda: history)
+    descriptor = registry.descriptor("activity.query")
+    request = normalize_request(descriptor, {"task_id": "time", "lookback_minutes": 120})
+    result = await ActivityQuery(lambda: history).invoke(request, CancellationToken())
+    assert result.unwrap().output["empty_reason"] == "classification_filtered"
+    assert result.unwrap().output["episodes"] == ()
+    assert abs((history.filters["until"] - history.filters["since"]).total_seconds() - 7200) < 1
+    private_request = request.model_copy(update={"data_class": DataClass.PRIVATE})
+    result = await ActivityQuery(lambda: history).invoke(private_request, CancellationToken())
+    assert result.unwrap().output["count"] == 1
+    assert result.unwrap().output["empty_reason"] is None
+    history.episodes = (_make_episode("local"),)
+    unmatched = request.model_copy(update={"arguments": {"task_id": "filter", "query": "absent"}})
+    result = await ActivityQuery(lambda: history).invoke(unmatched, CancellationToken())
+    assert result.unwrap().output["empty_reason"] == "no_match"
+
+
+@pytest.mark.asyncio
+async def test_capabilities_question_does_not_list_installed_apps() -> None:
+    registry = CapabilityRegistry()
+    register_activity_capabilities(registry, lambda: MockRichHistory())
+    service = ActionCapabilityService(registry, PolicyEngine(), InMemoryAuditLedger())
+    turn = ConversationTurn(producer=PRODUCER, session_id="caps", role="user", text="Czy to wszystko?")
+    actions = AssistantActions(service, MockRecognizer(ActionIntent(
+        source_turn_id=turn.record_id, outcome="capabilities.list", language="pl",
+    )))
+    candidate = await actions.handle(turn, CancellationToken())
+    assert "activity.query" in candidate.text
+    assert "application.launch" not in candidate.text

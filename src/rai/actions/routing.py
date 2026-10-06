@@ -12,7 +12,7 @@ from .intent import ActionIntent
 from .records import ActionProposal
 
 
-async def route_action(  # noqa: PLR0913, PLR0912
+async def route_action(  # noqa: PLR0913, PLR0912, PLR0915
     service: CapabilityService, store: MemoryGraphStore | None, profile: str,
     turn: ConversationTurn, intent: ActionIntent, token: CancellationToken,
 ) -> AssistantCandidate:
@@ -49,6 +49,8 @@ async def route_action(  # noqa: PLR0913, PLR0912
     elif name in {"browser.search", "process.inspect"}:
         arguments["query"] = intent.query
     elif name == "activity.query":
+        if intent.lookback_minutes is not None:
+            arguments["lookback_minutes"] = intent.lookback_minutes
         if intent.query:
             arguments["query"] = intent.query
     if "handle" in arguments:
@@ -82,7 +84,17 @@ async def route_action(  # noqa: PLR0913, PLR0912
         elif name == "activity.query":
             episodes = output.get("episodes", ())
             if not episodes:
-                text = "Brak zarejestrowanej aktywności." if polish else "No recorded activity."
+                reason = output.get("empty_reason")
+                if reason == "classification_filtered":
+                    text = ("Historia istnieje, ale jej klasyfikacja prywatności przekracza zakres tej rozmowy. "
+                            "Dla danych PRIVATE uruchom czat z --data-class PRIVATE." if polish else
+                            "History exists, but its privacy classification exceeds this conversation scope. "
+                            "For PRIVATE data, start chat with --data-class PRIVATE.")
+                elif reason == "no_match":
+                    text = "Brak aktywności pasującej do filtra." if polish else "No activity matches the filter."
+                else:
+                    text = ("Brak zapisanych epizodów w wybranym okresie. Sprawdź /status oraz kolektory serwera."
+                            if polish else "No stored episodes in the selected period. Check /status and the daemon collectors.")
             else:
                 lines = []
                 for ep in episodes:

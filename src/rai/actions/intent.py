@@ -34,10 +34,11 @@ class ActionIntent(BaseModel):
     source_turn_id: str = Field(min_length=1)
     outcome: Literal["no_action", "clarify", "application.list", "application.launch", "file.access", "file.list", "file.search", "document.open",
                      "browser.search", "browser.open_result", "browser.read_page",
-                     "system.volume.get", "system.volume.set", "process.inspect", "activity.query"]
+                     "system.volume.get", "system.volume.set", "process.inspect", "activity.query", "capabilities.list"]
     language: Literal["pl", "en"]
     query: Annotated[str, Field(max_length=256)] = ""
     application: Annotated[str, Field(max_length=256)] = ""
+    lookback_minutes: int | None = Field(default=None, strict=True, ge=1, le=10080)
     percent: int | None = Field(default=None, strict=True, ge=0, le=100)
     selection: int | None = Field(default=None, ge=1, le=30)
     question: Annotated[str, Field(max_length=512)] = ""
@@ -80,10 +81,12 @@ class LocalIntentRecognizer:
         self, turn: ConversationTurn, cancellation: CancellationToken,
     ) -> Result[ActionIntent, str]:
         instruction = (
-            "Understand the user's current intent, in their own language; do not require command keywords. "
+            "Understand the user's current intent, in their own language; do not require command keywords. "  # noqa: S608 - prompt, not SQL
             "Use recent_dialogue to understand follow-ups, user clarifications, and references (such as paths, selections, or 'that directory') in context. "
             "Do not treat past turns as new requests to execute again. "
-            "Available actions: file.access (describe configured allowed file paths, access scope, and editing support), "
+            "For general questions about your abilities, including follow-ups asking whether that is all you can do, return capabilities.list. "
+            "Use application.list only for questions specifically about installed or launchable applications. "
+            "Available actions: capabilities.list (describe the registered capabilities), file.access (describe configured allowed file paths, access scope, and editing support), "
             "application.list (list, discover, or ask what applications are installed or can be launched), "
             "application.launch (start an installed application by query or previous 1-based selection), file.search (find a document by name), "
             "file.list (list direct children of an allowed directory; query is its absolute path), "
@@ -98,6 +101,10 @@ class LocalIntentRecognizer:
             "(select a previously listed web result by 1-based selection), system.volume.get, "
             "system.volume.set (absolute integer percent 0–100), process.inspect (query by name or PID), "
             "activity.query (inspect recent system and desktop activity episodes, events, or applications used; query is optional). "
+            "For activity.query, set lookback_minutes to the requested duration (last 2 hours = 120); "
+            "query must contain only an application/project/resource filter, never the whole question or a time expression. "
+            "Leave query empty when no specific application/project/resource is requested. "
+            "Current open windows are not an implemented action; distinguish them from historical activity. "
             "When the user asks what was happening in the system or on the desktop, asks about activity history, recent events, "
             "or what was worked on (e.g. 'co ostatnio działo się w systemie', 'historia aktywności', 'show recent activity', 'what was I doing'), "
             "return activity.query (optional query string to filter, or empty for recent). "
