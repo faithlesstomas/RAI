@@ -187,3 +187,28 @@ Each sidecar writes one bounded `SourceEvent` JSON object per stdout line.
 Unexpected source identities, oversized or invalid records and non-zero exits
 are isolated by the supervisor and reflected only as typed health state; raw
 stderr and untrusted event content never enter daemon logs.
+
+## Background processing cost
+
+New observations are appended atomically. Only the affected suffix of episodes
+is reconstructed; closed historical sources are not decrypted and re-encrypted
+for every desktop event. Late events extend the replay suffix backwards through
+overlapping fusion groups, preserving deterministic full-replay semantics.
+SQLite/crypto ingest runs outside the event loop. Mutations are serialized, and
+cancellation waits for an in-flight transaction before deletion can proceed.
+Retention does not rebuild episodes when no source observations expired.
+
+The filesystem watcher takes an initial metadata baseline without reporting all
+existing files as newly created. Subsequent polls report actual changes.
+Explicit `--once` retains its diagnostic snapshot behavior. Polling still walks
+the configured roots, so keep them narrow. The default interval is now five
+seconds; `--interval 1` restores one-second polling when lower latency is worth
+the extra I/O. An unusually long active episode or
+very late event can still require a larger replay; this is not a constant-time
+storage contract.
+
+The daemon backs off empty event-journal polling from 100 ms to at most one
+second, resetting to 50 ms when it consumes an event. This bounds idle wakeups
+without confusing a consumed non-action observation with an empty queue. A new
+event after an idle period can therefore wait up to one second for dispatch;
+collector ingestion is independent of that polling loop.

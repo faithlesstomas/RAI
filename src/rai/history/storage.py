@@ -9,6 +9,7 @@ import secrets
 import shutil
 import sqlite3
 import subprocess
+from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -229,6 +230,78 @@ class EncryptedHistoryStore:
                     "INSERT INTO episode_observations VALUES(?,?)",
                     ((episode.record_id, observation_id) for observation_id in episode.observation_ids),
                 )
+
+    def append_observation(
+        self,
+        observation: Observation,
+        rebuild: Callable[[tuple[Observation, ...]], tuple[Episode, ...]],
+        fusion_window: timedelta,
+    ) -> None:
+        """Persist one source and rebuild only the affected episode suffix atomically.
+
+        Start at the episode containing the fusion lookback, retaining its full
+        first fusion group. Late events rebuild the entire affected suffix so
+        boundary changes propagate exactly as in a full replay.
+        """
+        connection = self._connect()
+        try:
+            with connection:
+                connection.execute("BEGIN IMMEDIATE")
+                if connection.execute(
+                    "SELECT 1 FROM observations WHERE record_id = ?", (observation.record_id,),
+                ).fetchone():
+                    return
+                lookback = observation.timestamp - fusion_window
+                boundary = connection.execute(
+                    "SELECT started_at FROM episodes WHERE started_at <= ? "
+                    "ORDER BY started_at DESC LIMIT 1", (lookback.isoformat(),),
+                ).fetchone()
+                cutoff = boundary[0] if boundary else ""
+                # Episode boundaries can share a timestamp (e.g. an idle fact).
+                # Include every earlier episode touching the replay boundary.
+                while cutoff:
+                    overlap = connection.execute(
+                        "SELECT min(e.started_at) FROM episodes e "
+                        "JOIN episode_observations links ON links.episode_id = e.record_id "
+                        "JOIN observations o ON o.record_id = links.observation_id "
+                        "WHERE e.started_at < ? AND o.timestamp >= ?",
+                        (cutoff, (datetime.fromisoformat(cutoff) - fusion_window).isoformat()),
+                    ).fetchone()[0]
+                    if overlap is None:
+                        break
+                    cutoff = overlap
+                rows = connection.execute(
+                    "SELECT record_id, encrypted_record FROM observations "
+                    "WHERE timestamp >= ? ORDER BY timestamp, record_id", (cutoff,),
+                ).fetchall()
+                retained = tuple(
+                    Observation.model_validate(self._decrypt(row["encrypted_record"], row["record_id"]))
+                    for row in rows
+                )
+                episodes = rebuild((*retained, observation))
+                payload = observation.payload
+                connection.execute(
+                    "INSERT INTO observations VALUES(?,?,?,?,?,?,?)",
+                    (observation.record_id, observation.timestamp.isoformat(),
+                     payload.get("application_id"), payload.get("project"),
+                     payload.get("resource_id"), observation.kind,
+                     self._encrypt(observation.model_dump(mode="json"), observation.record_id)),
+                )
+                connection.execute("DELETE FROM episodes WHERE started_at >= ?", (cutoff,))
+                for episode in episodes:
+                    connection.execute(
+                        "INSERT INTO episodes VALUES(?,?,?,?,?,?,?,?)",
+                        (episode.record_id, episode.started_at.isoformat(), episode.ended_at.isoformat(),
+                         json.dumps(episode.applications), json.dumps(episode.projects), json.dumps(episode.resources),
+                         json.dumps(episode.activity_types),
+                         self._encrypt(episode.model_dump(mode="json"), episode.record_id)),
+                    )
+                    connection.executemany(
+                        "INSERT INTO episode_observations VALUES(?,?)",
+                        ((episode.record_id, source_id) for source_id in episode.observation_ids),
+                    )
+        finally:
+            connection.close()
 
     def observations(self) -> tuple[Observation, ...]:
         with self._connect() as connection:

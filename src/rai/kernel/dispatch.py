@@ -34,10 +34,12 @@ class DeterministicEventDispatcher:
         self.journal = journal
         self.capabilities = capabilities
         self.consumer_id = consumer_id
+        self.last_batch_empty = False
 
     async def process_next(  # noqa: PLR0911
         self, cancellation: CancellationToken | None = None
     ) -> Result[ActionResult | ActionFailure | None, JournalFailure]:
+        self.last_batch_empty = False
         token = cancellation or CancellationToken()
         position = await self.journal.position(self.consumer_id)
         if isinstance(position, Failure):
@@ -47,6 +49,7 @@ class DeterministicEventDispatcher:
             return Failure(batch_result.failure())
         batch = batch_result.unwrap()
         if not batch.events:
+            self.last_batch_empty = True
             return Success(None)
         envelope = batch.events[0]
         record = envelope.record

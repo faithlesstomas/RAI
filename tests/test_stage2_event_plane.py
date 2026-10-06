@@ -491,3 +491,15 @@ async def test_runtime_lifecycle_starts_and_stops_local_event_plane(
 def test_published_event_schema_matches_runtime_contract() -> None:
     published = Path("schemas/rai.events.v1.schema.json")
     assert json.loads(published.read_text(encoding="utf-8")) == event_json_schema()
+
+
+@pytest.mark.asyncio
+async def test_dispatcher_distinguishes_empty_queue_from_non_action_event(tmp_path: Path) -> None:
+    journal = SQLiteEventJournal(tmp_path / "idle.sqlite3")
+    service = CapabilityService(create_default_capability_registry(), PolicyEngine(), InMemoryAuditLedger())
+    dispatcher = DeterministicEventDispatcher(journal, service)
+    assert (await dispatcher.process_next()).unwrap() is None
+    assert dispatcher.last_batch_empty is True
+    await journal.append(observation().model_copy(update={"kind": "focus"}))
+    assert (await dispatcher.process_next()).unwrap() is None
+    assert dispatcher.last_batch_empty is False

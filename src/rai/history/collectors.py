@@ -14,6 +14,7 @@ from typing import Any, Protocol
 
 from returns.result import Failure, Result, Success
 
+from rai.diagnostics import trace
 from rai.kernel.ports import CancellationToken, LifecycleState
 from rai.kernel.records import ActionFailure, Observation, ProducerIdentity
 
@@ -123,6 +124,14 @@ class QueueEventSource:
             yield event
 
 
+class SidecarExitedError(RuntimeError):
+    """Content-free process failure suitable for status and operational traces."""
+
+    def __init__(self, returncode: int) -> None:
+        self.code = f"SIDECAR_EXIT_{returncode}"
+        super().__init__(self.code)
+
+
 class JsonLinesSidecarSource:
     """Run an unprivileged platform bridge and validate its bounded JSON lines."""
 
@@ -167,9 +176,10 @@ class JsonLinesSidecarSource:
             while not cancellation.cancelled:
                 line = await process.stdout.readline()
                 if not line:
-                    if process.returncode not in (None, 0):
+                    returncode = await asyncio.wait_for(process.wait(), timeout=2)
+                    if returncode != 0:
                         self.permission = "UNAVAILABLE"
-                        raise RuntimeError("collector sidecar failed")
+                        raise SidecarExitedError(returncode)
                     return
                 if len(line) > MAX_SIDECAR_EVENT_BYTES:
                     raise ValueError("collector event exceeds size limit")
@@ -431,7 +441,9 @@ class CollectorSupervisor:
     def status(self) -> tuple[CollectorHealth, ...]:
         return tuple(
             CollectorHealth(
-                name=name, state=runtime.collector.state, enabled=self._may_collect(),
+                name=name, state=(LifecycleState.FAILED if runtime.last_error
+                                  and runtime.collector.state != LifecycleState.STOPPED
+                                  else runtime.collector.state), enabled=self._may_collect(),
                 permission=runtime.collector.permission, last_event_at=runtime.last_event_at,
                 last_error=runtime.last_error, restart_count=runtime.restart_count,
             )
@@ -460,12 +472,15 @@ class CollectorSupervisor:
                         raise RuntimeError(delivered.failure().code)
                     runtime.last_event_at = event.timestamp
                     runtime.last_error = None
+                await runtime.collector.stop()
                 return
             except asyncio.CancelledError:
                 return
             except Exception as exc:  # collector isolation boundary
-                runtime.last_error = type(exc).__name__
+                runtime.last_error = exc.code if isinstance(exc, SidecarExitedError) else type(exc).__name__
                 runtime.restart_count += 1
+                trace("collector.failure", collector=runtime.collector.name,
+                      code=runtime.last_error, restart_count=runtime.restart_count)
                 await asyncio.sleep(min(self._base_backoff * (2 ** (runtime.restart_count - 1)), self._max_backoff))
 
     def _may_run(self, collector_name: str) -> bool:

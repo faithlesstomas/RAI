@@ -8,6 +8,8 @@ from pathlib import Path
 import tempfile
 from typing import TYPE_CHECKING, Any
 
+from returns.result import Failure
+
 if TYPE_CHECKING:
     import rai.inference.supervisor
     from .assistant.ports import MemoryGraphStore
@@ -166,9 +168,12 @@ class ApplicationContainer:
                 self._rich_history_error = "KEY_UNAVAILABLE"
 
     async def _dispatch_events(self) -> None:
+        delay = 0.05
         while True:
-            await self.event_dispatcher.process_next()
-            await asyncio.sleep(0.05)
+            dispatched = await self.event_dispatcher.process_next()
+            idle = self.event_dispatcher.last_batch_empty or isinstance(dispatched, Failure)
+            delay = min(1.0, delay * 2) if idle else 0.05
+            await asyncio.sleep(delay)
 
     @property
     def history_service(self) -> HistoryService:

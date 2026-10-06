@@ -1206,3 +1206,22 @@ def test_authenticated_review_api_uses_same_local_service(tmp_path: Path) -> Non
     )
     assert deleted.status_code == OK
     assert deleted.json()["verified"] is True
+
+
+@pytest.mark.asyncio
+async def test_sidecar_failure_reports_exit_status_without_stderr() -> None:
+    source = JsonLinesSidecarSource((sys.executable, "-c", "import sys; sys.exit(7)"), "gnome")
+    supervisor = CollectorSupervisor(lambda event: None, base_backoff=10)
+    supervisor.register(GnomeSessionCollector(source))
+    await supervisor.set_controls(enabled=True)
+    try:
+        for _ in range(100):
+            await asyncio.sleep(0.01)
+            if supervisor.status()[0].last_error:
+                break
+        health = supervisor.status()[0]
+        assert health.state == "FAILED"
+        assert health.permission == "UNAVAILABLE"
+        assert health.last_error == "SIDECAR_EXIT_7"
+    finally:
+        await supervisor.stop()

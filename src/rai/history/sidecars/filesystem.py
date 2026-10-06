@@ -12,6 +12,7 @@ from .common import emit
 
 IGNORED_DIRECTORIES = frozenset({".git", ".hg", ".svn", "__pycache__", ".venv", "node_modules"})
 MIN_INTERVAL_SECONDS = 0.1
+DEFAULT_INTERVAL_SECONDS = 5.0
 
 
 def approved_roots(values: list[str]) -> tuple[Path, ...]:
@@ -65,21 +66,25 @@ def _emit(kind: str, path: Path) -> None:
 
 
 async def watch(roots: tuple[Path, ...], interval: float, *, once: bool = False) -> None:
-    previous: dict[Path, int] = {}
+    # Existing files are a baseline, not thousands of newly created files.
+    previous = metadata_snapshot(roots)
+    if once:
+        for kind, path in changed_paths({}, previous):
+            _emit(kind, path)
+        return
     while True:
+        await asyncio.sleep(interval)
         current = metadata_snapshot(roots)
         for kind, path in changed_paths(previous, current):
             _emit(kind, path)
-        if once:
-            return
         previous = current
-        await asyncio.sleep(interval)
 
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("roots", nargs="+")
-    parser.add_argument("--interval", type=float, default=1.0)
+    parser.add_argument("--interval", type=float, default=DEFAULT_INTERVAL_SECONDS,
+                        help="Metadata scan interval in seconds (default: 5).")
     parser.add_argument("--once", action="store_true")
     arguments = parser.parse_args()
     if arguments.interval < MIN_INTERVAL_SECONDS:

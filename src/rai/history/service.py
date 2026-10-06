@@ -52,6 +52,7 @@ class RichHistoryService:
         filesystem_roots: tuple[Path, ...] = (),
         retention_interval_seconds: float | None = None,
     ) -> None:
+        self._storage_lock = asyncio.Lock()
         self.journal = journal
         self.store = store
         self.firewall = firewall or PrivacyFirewall()
@@ -99,7 +100,12 @@ class RichHistoryService:
             return Success(None)
         return await self.ingest(event)
 
-    async def ingest(  # noqa: PLR0911
+    async def ingest(self, event: SourceEvent) -> Result[Observation | None, ActionFailure]:
+        """Serialize mutations while encrypted storage work runs off the event loop."""
+        async with self._storage_lock:
+            return await self._ingest(event)
+
+    async def _ingest(  # noqa: PLR0911
         self, event: SourceEvent
     ) -> Result[Observation | None, ActionFailure]:
         if (
@@ -191,10 +197,17 @@ class RichHistoryService:
             failure = appended.failure()
             return Failure(self._failure("JOURNAL_REJECTED", failure.code, retryable=failure.retryable))
         try:
-            observations = (*self.store.observations(), observation)
-            observations = tuple({item.record_id: item for item in observations}.values())
-            episodes = self.episode_builder.build(self.fusion.fuse(observations))
-            self.store.replace(observations, episodes)
+            write = asyncio.create_task(asyncio.to_thread(
+                self.store.append_observation, observation,
+                lambda observations: self.episode_builder.build(self.fusion.fuse(observations)),
+                timedelta(milliseconds=self.fusion.config.fusion_window_ms),
+            ))
+            try:
+                await asyncio.shield(write)
+            except asyncio.CancelledError:
+                # Keep the mutation lock until the atomic write has really finished.
+                await write
+                raise
             self._remember(signature, safe.timestamp)
             return Success(observation)
         except Exception as exc:  # storage/crypto isolation boundary
@@ -256,6 +269,10 @@ class RichHistoryService:
         await self.supervisor.stop()
 
     async def delete_range(self, since: datetime, until: datetime) -> dict[str, Any]:
+        async with self._storage_lock:
+            return await self._delete_range(since, until)
+
+    async def _delete_range(self, since: datetime, until: datetime) -> dict[str, Any]:
         self._validate_interval(since, until)
         ids = self.store.observation_ids_between(since, until)
         journal_deleted = await self.journal.delete_observations(ids)
@@ -308,6 +325,12 @@ class RichHistoryService:
     async def enforce_retention(
         self, now: datetime | None = None
     ) -> Result[dict[str, Any], ActionFailure]:
+        async with self._storage_lock:
+            return await self._enforce_retention(now)
+
+    async def _enforce_retention(
+        self, now: datetime | None = None
+    ) -> Result[dict[str, Any], ActionFailure]:
         """Apply every TTL across the raw buffer, journal and encrypted store."""
         now = now or datetime.now(timezone.utc)
         if now.tzinfo is None or now.utcoffset() is None:
@@ -333,11 +356,12 @@ class RichHistoryService:
             )
         try:
             deleted = self.store.delete_observation_ids(ids)
-            remaining = self.store.observations()
-            self.store.replace(
-                remaining,
-                self.episode_builder.build(self.fusion.fuse(remaining)),
-            )
+            if ids:
+                remaining = self.store.observations()
+                self.store.replace(
+                    remaining,
+                    self.episode_builder.build(self.fusion.fuse(remaining)),
+                )
             derived = self.store.delete_expired_derived(now)
             self.store.secure_checkpoint()
             deleted["episodes"] += derived["episodes"]
