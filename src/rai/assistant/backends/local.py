@@ -167,6 +167,18 @@ class LocalAssistantBackend:
                     content = item.get("content", {})
                     evidence_lines.append(f"- [{source_type}; {timestamp}] {content}")
 
+        tool_observations = request.context.content.get("tool_observations", [])
+        if isinstance(tool_observations, (list, tuple)) and tool_observations:
+            evidence_lines.append(
+                "Wyniki wykonanych narzędzi i akcji w systemie (obserwacje z bieżącej sesji):"
+            )
+            for item in tool_observations:
+                if isinstance(item, dict):
+                    capability = str(item.get("capability", "tool"))
+                    summary = str(item.get("summary", ""))
+                    content_val = item.get("content", {})
+                    evidence_lines.append(f"- [{capability}] {summary}: {json.dumps(content_val, ensure_ascii=False)}")
+
         system_parts = [
             system_text,
             (

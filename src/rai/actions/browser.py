@@ -4,7 +4,7 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import json
-from typing import Protocol
+from typing import Any, Protocol
 from urllib.parse import urlsplit
 
 import httpx
@@ -91,9 +91,15 @@ class CdpBrowserBackend:
 
             def fetch() -> tuple[dict, ...]:
                 with DDGS(timeout=5) as search:
-                    return tuple({"name": str(item.get("title", ""))[:256], "url": item["href"]}
-                                 for item in search.text(query, max_results=MAX_SEARCH_RESULTS)
-                                 if web_url(item.get("href", "")))[:MAX_SEARCH_RESULTS]
+                    return tuple(
+                        {
+                            "name": str(item.get("title", ""))[:256],
+                            "url": item["href"],
+                            "snippet": str(item.get("body", ""))[:250],
+                        }
+                        for item in search.text(query, max_results=MAX_SEARCH_RESULTS)
+                        if web_url(item.get("href", ""))
+                    )[:MAX_SEARCH_RESULTS]
             return Success(await asyncio.to_thread(fetch))
         except Exception:  # pylint: disable=broad-exception-caught
             return Failure("BROWSER_SEARCH_UNAVAILABLE")
@@ -175,7 +181,10 @@ class BrowserCapability:
                 issued = self.handles.issue(handle)
                 if isinstance(issued, Failure):
                     return Failure(failure(request, issued.failure()))
-                entries.append({"name": item["name"], "url": item["url"], "handle": issued.unwrap()})
+                entry: dict[str, Any] = {"name": item["name"], "url": item["url"], "handle": issued.unwrap()}
+                if "snippet" in item and item["snippet"]:
+                    entry["snippet"] = str(item["snippet"])[:250]
+                entries.append(entry)
             return Success(result(request, {"results": entries, "untrusted_content": True}, {"search_response_received": True}))
         resolved = self.handles.resolve(request.arguments["handle"], actor_id=request.actor.producer_id,
                                         task_id=request.arguments["task_id"], operation=self.name)

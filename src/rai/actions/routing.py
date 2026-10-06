@@ -125,7 +125,10 @@ async def route_action(  # noqa: PLR0913, PLR0912, PLR0915
                         index=i,
                         handle=entry["handle"],
                         label=entry["name"],
-                        metadata={"url": entry["url"]} if "url" in entry else {},
+                        metadata={
+                            **({"url": entry["url"]} if "url" in entry else {}),
+                            **({"snippet": entry["snippet"]} if "snippet" in entry else {}),
+                        },
                     )
                     for i, entry in enumerate(entries, 1)
                     if "handle" in entry

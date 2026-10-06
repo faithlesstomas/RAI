@@ -42,11 +42,11 @@ class MockBrowserBackend(BrowserBackend):
     async def search(self, query: str, token: CancellationToken) -> Result[tuple[dict[str, Any], ...], str]:
         self.searches.append(query)
         results = (
-            {"name": "1. Introducing Gemini 4 Argon", "url": "https://example.com/gemini-4"},
-            {"name": "2. Gemini 4 Details", "url": "https://example.com/gemini-4-details"},
-            {"name": "3. Benchmarks Argon", "url": "https://example.com/benchmarks"},
-            {"name": "4. Architecture Overview", "url": "https://example.com/arch"},
-            {"name": "5. Gemini 4 Argon: Release and Impact", "url": "https://example.com/impact"},
+            {"name": "1. Introducing Gemini 4 Argon", "url": "https://example.com/gemini-4", "snippet": "Gemini 4 Argon overview."},
+            {"name": "2. Gemini 4 Details", "url": "https://example.com/gemini-4-details", "snippet": "Technical specs of Gemini 4."},
+            {"name": "3. Benchmarks Argon", "url": "https://example.com/benchmarks", "snippet": "Argon benchmark results."},
+            {"name": "4. Architecture Overview", "url": "https://example.com/arch", "snippet": "Architecture diagram and notes."},
+            {"name": "5. Gemini 4 Argon: Release and Impact", "url": "https://example.com/impact", "snippet": "In-depth analysis of Argon release."},
         )
         return Success(results)
 
@@ -140,6 +140,25 @@ async def test_regression_search_intermediate_conversation_and_numeric_selection
         )
         resp2 = await service.accept_turn(turn2)
         assert isinstance(resp2, Success)
+
+        # Verify context package built for Turn 2 projected tool observations with search snippets!
+        manifest2_res = await store.get_manifest(resp2.unwrap().manifest_id)
+        assert isinstance(manifest2_res, Success)
+        manifest2 = manifest2_res.unwrap()
+        assert manifest2 is not None
+        assert len(manifest2.tool_observation_ids) >= 1
+
+        pkg2_res = await store.get_context_package(manifest2.record_id)
+        assert isinstance(pkg2_res, Success)
+        pkg2 = pkg2_res.unwrap()
+        assert pkg2 is not None
+        assert "tool_observations" in pkg2.content
+        obs_list = pkg2.content["tool_observations"]
+        assert len(obs_list) >= 1
+        assert obs_list[0]["capability"] == "browser.search"
+        results_in_obs = obs_list[0]["content"]["results"]
+        assert len(results_in_obs) == 5
+        assert results_in_obs[4]["snippet"] == "In-depth analysis of Argon release."
 
         # Verify ActiveChoiceFrame is STILL active despite intermediate conversation turn!
         recent2 = (await store.get_recent_reply_chain(session_id, limit=5)).unwrap()

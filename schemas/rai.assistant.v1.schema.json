@@ -86,6 +86,14 @@
           "title": "Durable Memory Ids",
           "type": "array"
         },
+        "tool_observation_ids": {
+          "default": [],
+          "items": {
+            "type": "string"
+          },
+          "title": "Tool Observation Ids",
+          "type": "array"
+        },
         "ranking_reasons": {
           "additionalProperties": {
             "type": "string"

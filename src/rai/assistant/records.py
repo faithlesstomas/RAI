@@ -270,6 +270,20 @@ class MemoryOperation(KernelRecord):
         return self
 
 
+class ToolObservation(BaseModel):
+    """Structured projection of capability execution results for model reasoning context."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    source_id: str = Field(min_length=1)
+    source_turn_id: str = Field(min_length=1)
+    capability: str = Field(min_length=1)
+    status: Literal["SUCCESS", "FAILED"] = "SUCCESS"
+    summary: str = Field(min_length=1)
+    untrusted_content: bool = True
+    content: dict[str, Any] = Field(default_factory=dict)
+
+
 class AssistantContextManifestItem(BaseModel):
     """Item recorded in the assistant context manifest."""
 
@@ -297,6 +311,7 @@ class AssistantContextManifest(KernelRecord):
     episodic_turn_ids: tuple[str, ...] = ()
     external_evidence_ids: tuple[str, ...] = ()
     durable_memory_ids: tuple[str, ...] = ()
+    tool_observation_ids: tuple[str, ...] = ()
     ranking_reasons: dict[str, str] = Field(default_factory=dict)
     exclusions: tuple[str, ...] = ()
     redactions: tuple[str, ...] = ()

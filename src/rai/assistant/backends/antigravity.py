@@ -119,6 +119,7 @@ class AntigravityAssistantModelBackend:
                 "grounded_summaries",
                 "external_evidence",
                 "durable_memories",
+                "tool_observations",
             )
             if content.get(key)
         }
@@ -151,6 +152,7 @@ class AntigravityAssistantModelBackend:
             "grounded_summaries",
             "external_evidence",
             "durable_memories",
+            "tool_observations",
         ):
             values = content.get(layer, ())
             if not isinstance(values, (list, tuple)):
