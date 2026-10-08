@@ -888,11 +888,15 @@ class AssistantService:
         action_candidate = (
             await self.actions.handle(turn, token) if self.actions is not None else None
         )
-        if (
+        requires_synthesis = (
             action_candidate is not None
-            and action_candidate.metadata.get("untrusted_content") is True
+            and (
+                action_candidate.metadata.get("untrusted_content") is True
+                or action_candidate.metadata.get("requires_synthesis") is True
+            )
             and not action_candidate.metadata.get("active_choice_frame")
-        ):
+        )
+        if requires_synthesis:
             action_result = action_candidate.metadata.get("action_result") or {}
             action_proposal = action_candidate.metadata.get("action_proposal") or {}
             output = (
@@ -910,6 +914,9 @@ class AssistantService:
                 or (action_candidate.text.splitlines()[0] if action_candidate.text else "")
                 or str(capability)
             )
+            obs_content = dict(output) if isinstance(output, dict) else {"raw_text": str(output)}
+            if action_candidate.text and "formatted_text" not in obs_content:
+                obs_content["formatted_text"] = action_candidate.text
             obs = ToolObservation(
                 source_id=(
                     (action_result.get("request_id") if isinstance(action_result, dict) else None)
@@ -919,8 +926,8 @@ class AssistantService:
                 capability=str(capability),
                 status="SUCCESS",
                 summary=str(summary),
-                untrusted_content=True,
-                content=output if isinstance(output, dict) else {"raw_text": str(output)},
+                untrusted_content=bool(action_candidate.metadata.get("untrusted_content", False)),
+                content=obs_content,
             )
             existing_obs = list(context_package.content.get("tool_observations", []))
             existing_obs.append(obs.model_dump(mode="json"))

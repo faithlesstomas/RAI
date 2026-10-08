@@ -274,6 +274,7 @@ class AssistantActions:
         if proposal.capability == "browser.read_page":
             text = output.get("title", "") + "\n\n" + output.get("text", "")
             metadata["untrusted_content"] = True
+            metadata["requires_synthesis"] = True
             metadata["selected_resource_handle"] = proposal.resource_handle
         elif proposal.capability == "browser.open_result":
             url = output.get("observed_url", "")

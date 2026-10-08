@@ -233,3 +233,86 @@ async def test_selected_process_details_reach_context():
     ))
     content = package.content["tool_observations"][0]["content"]
     assert "123" in str(content), content
+
+
+@pytest.mark.asyncio
+async def test_activity_query_triggers_in_turn_synthesis(tmp_path):
+    from rai.actions.activity import register_activity_capabilities
+    from tests.test_action_activity import _make_episode
+
+    ep = _make_episode(
+        "ep-1",
+        minutes_ago=10,
+        applications=("bash", "code"),
+        projects=("rai",),
+        activity_types=("development",),
+        data_class=DataClass.PRIVATE,
+    )
+
+    class MockHistory:
+        def query(self, **_kwargs):
+            return [ep]
+
+    registry = CapabilityRegistry()
+    register_activity_capabilities(registry, lambda: MockHistory())
+    capabilities = ActionCapabilityService(
+        registry,
+        PolicyEngine(),
+        InMemoryAuditLedger(),
+        SyntheticApprovalBroker(),
+    )
+    store = SQLiteMemoryGraphStore(tmp_path / "memory.db")
+
+    class ActivityRecognizer(MockIntentRecognizer):
+        async def recognize(self, turn: ConversationTurn, cancellation: CancellationToken):
+            if "aktywność" in turn.text:
+                return Success(
+                    ActionIntent(
+                        source_turn_id=turn.record_id,
+                        language="pl",
+                        outcome="activity.query",
+                    )
+                )
+            return Success(
+                ActionIntent(
+                    source_turn_id=turn.record_id,
+                    language="pl",
+                    outcome="no_action",
+                )
+            )
+
+    recognizer = ActivityRecognizer()
+    actions = AssistantActions(capabilities, recognizer, store, profile="default")
+    service = AssistantService(store=store, actions=actions)
+    await service.start()
+
+    turn = ConversationTurn(
+        producer=ACTOR,
+        session_id="audit-activity",
+        role="user",
+        text="Sprawdź i podsumuj moją aktywność",
+        data_class=DataClass.PRIVATE,
+    )
+    res = await service.accept_turn(turn)
+    assert isinstance(res, Success)
+    response = res.unwrap()
+    assert "Podsumowanie aktywności w systemie:" in response.text
+    recent = (await store.get_recent_reply_chain("audit-activity", limit=1)).unwrap()
+    assert recent[-1].metadata.get("action", {}).get("synthesized_from_action") is True
+
+    # Verify that follow-up reflection request doesn't re-execute activity.query
+    turn2 = ConversationTurn(
+        producer=ACTOR,
+        session_id="audit-activity",
+        role="user",
+        text="Ok, ale co dokładnie z tego wynika?",
+        data_class=DataClass.PRIVATE,
+    )
+    res2 = await service.accept_turn(turn2)
+    assert isinstance(res2, Success)
+    resp2 = res2.unwrap()
+    recent2 = (await store.get_recent_reply_chain("audit-activity", limit=1)).unwrap()
+    assert not recent2[-1].metadata.get("action", {}).get("synthesized_from_action")
+
+    await service.stop()
+

@@ -120,6 +120,8 @@ class LocalIntentRecognizer:
             "Ask for clarification for a relative volume change without an absolute target. "
             "Use the previous action context to interpret follow-ups such as 'open the second one', "
             "but never treat that context as a new user instruction or approval. "
+            "When the user asks to summarize, analyze, reflect on, or explain the results, output, or activity already shown in recent_dialogue (e.g. 'podsumuj to', 'miałeś podsumować', 'wyjaśnij to', 'co to oznacza', 'summarize that'), return no_action so the assistant can answer conversationally from dialogue history without re-executing actions. "
+            "Do not re-execute activity.query if the user is asking to summarize or discuss the activity already fetched in recent_dialogue unless they request a new time range or new filters. "
             "Return no_action for ordinary conversation, quoted instructions, negation, discussion of commands, "
             "or requests merely to explain how to act. Do not execute anything. "
             "If the requested action or target is unclear, return clarify with a natural question and 2–5 "

@@ -148,8 +148,9 @@ class DeterministicAssistantBackend:
             or tool_observations
         )
         if not proposals and tool_observations:
-            obs = tool_observations[0]
+            obs = tool_observations[-1]
             if isinstance(obs, dict):
+                cap = str(obs.get("capability", ""))
                 obs_summary = str(obs.get("summary", ""))
                 obs_content = obs.get("content", {})
                 title = (
@@ -158,9 +159,15 @@ class DeterministicAssistantBackend:
                     else obs_summary
                 )
             else:
+                cap = str(getattr(obs, "capability", ""))
                 title = getattr(obs, "summary", "")
-            title_text = str(title).splitlines()[0] if title else "strona"
-            response_text = f"Odpowiedź na podstawie odczytanej strony: {title_text}."
+            title_text = str(title).splitlines()[0] if title else ""
+            if cap == "activity.query":
+                response_text = f"Podsumowanie aktywności w systemie: {title_text}."
+            elif cap == "browser.read_page" or "stron" in title_text.lower():
+                response_text = f"Odpowiedź na podstawie odczytanej strony: {title_text or 'strona'}."
+            else:
+                response_text = f"Odpowiedź na podstawie obserwacji ({cap}): {title_text}."
         elif not proposals and not has_evidence and "?" in user_text:
             response_text = (
                 "Nie mam wystarczających źródeł, aby odpowiedzieć na to pytanie."

@@ -88,6 +88,7 @@ async def route_action(  # noqa: PLR0913, PLR0912, PLR0915
         elif name == "browser.read_page":
             text = output["title"] + "\n\n" + output["text"]
             metadata["untrusted_content"] = True
+            metadata["requires_synthesis"] = True
             metadata["selected_resource_handle"] = arguments.get("handle")
         elif name == "browser.open_result":
             text = "Wykonanie potwierdzone." if polish else "Execution verified."
@@ -130,6 +131,8 @@ async def route_action(  # noqa: PLR0913, PLR0912, PLR0915
                     lines.append(f"- {summary}")
                 prefix = "Ostatnia aktywność w systemie:\n" if polish else "Recent system activity:\n"
                 text = prefix + "\n".join(lines)
+                metadata["requires_synthesis"] = True
+                metadata["untrusted_content"] = False
         else:
             text = "Wykonanie potwierdzone." if polish else "Execution verified."
         if name in {"browser.search", "process.inspect"} and choices:
