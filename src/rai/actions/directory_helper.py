@@ -1,4 +1,5 @@
 """Read only a match for one requested URI; never emit other desktop locations."""
+# pylint: disable=no-member
 from __future__ import annotations
 
 import json
@@ -7,7 +8,7 @@ import sys
 
 def main() -> int:
     """Query FileManager1 via the system Python's optional GI bindings."""
-    from gi.repository import Gio, GLib  # noqa: PLC0415  # pylint: disable=import-error
+    from gi.repository import Gio, GLib  # noqa: PLC0415  # pylint: disable=import-error,no-member
 
     bus = Gio.bus_get_sync(Gio.BusType.SESSION, None)
     owner = bus.call_sync(

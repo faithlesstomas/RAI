@@ -11,6 +11,7 @@ import re
 from typing import Any
 
 from returns.result import Failure, Result, Success
+from pydantic import ValidationError
 
 from rai.assistant.records import ConversationTurn
 from rai.kernel.records import DataClass, ProducerIdentity, _new_id, _utc_now
@@ -191,7 +192,7 @@ def find_active_choice_frame(  # noqa: PLR0912
         if isinstance(raw_frame, dict):
             try:
                 frame = ActiveChoiceFrame.model_validate(raw_frame)
-            except Exception:
+            except (ValidationError, ValueError, TypeError, KeyError):
                 continue
 
             if frame.record_id in consumed_ids:
@@ -203,3 +204,29 @@ def find_active_choice_frame(  # noqa: PLR0912
             return frame
 
     return None
+
+
+def find_latest_choice_frame(
+    recent_turns: tuple[ConversationTurn, ...],
+    profile: str,
+) -> ActiveChoiceFrame | None:
+    """Find the most recent ActiveChoiceFrame regardless of active/consumed lifecycle state."""
+    for turn in reversed(recent_turns):
+        if turn.role != "assistant":
+            continue
+        turn_profile = turn.metadata.get("profile_scope") or "default"
+        if turn_profile != profile:
+            continue
+
+        raw_frame = turn.metadata.get("active_choice_frame")
+        if not isinstance(raw_frame, dict) and isinstance(turn.metadata.get("action"), dict):
+            raw_frame = turn.metadata["action"].get("active_choice_frame")
+
+        if isinstance(raw_frame, dict):
+            try:
+                return ActiveChoiceFrame.model_validate(raw_frame)
+            except (ValidationError, ValueError, TypeError, KeyError):
+                continue
+
+    return None
+

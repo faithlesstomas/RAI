@@ -60,7 +60,7 @@ class ResearchWorkflowLimits(BaseModel):
 
     max_searches: int = Field(default=1, ge=1, le=5)
     max_page_reads: int = Field(default=2, ge=0, le=10)
-    max_total_steps: int = Field(default=6, ge=1, le=20)
+    max_total_steps: int = Field(default=8, ge=1, le=20)
 
 
 class ResearchWorkflowStep(BaseModel):
@@ -231,6 +231,8 @@ class TaskStepController:
         """Transition from SEARCHING to SELECTING_SOURCES with recorded results."""
         if workflow.state != ResearchWorkflowState.SEARCHING:
             return Failure(f"INVALID_TRANSITION: cannot complete search from {_state_str(workflow.state)}")
+        if len(workflow.steps) >= workflow.limits.max_total_steps:
+            return Failure("STEP_LIMIT_EXCEEDED")
 
         step = ResearchWorkflowStep(
             step_index=len(workflow.steps) + 1,
@@ -300,6 +302,8 @@ class TaskStepController:
         """Record completed page read and advance to SELECTING_SOURCES or SYNTHESIZING."""
         if workflow.state != ResearchWorkflowState.READING_PAGE:
             return Failure(f"INVALID_TRANSITION: cannot complete page read from {_state_str(workflow.state)}")
+        if len(workflow.steps) >= workflow.limits.max_total_steps:
+            return Failure("STEP_LIMIT_EXCEEDED")
 
         reads_now = workflow.page_reads_executed + 1
         can_read_more = reads_now < workflow.limits.max_page_reads and more_sources_needed
@@ -336,6 +340,8 @@ class TaskStepController:
         """Transition from SYNTHESIZING to COMPLETE with final answer."""
         if workflow.state not in {ResearchWorkflowState.SYNTHESIZING, ResearchWorkflowState.SELECTING_SOURCES}:
             return Failure(f"INVALID_TRANSITION: cannot complete from {_state_str(workflow.state)}")
+        if len(workflow.steps) >= workflow.limits.max_total_steps:
+            return Failure("STEP_LIMIT_EXCEEDED")
 
         step = ResearchWorkflowStep(
             step_index=len(workflow.steps) + 1,

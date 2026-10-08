@@ -12,9 +12,12 @@ correction path has also been exercised with a pinned TinyLlama GGUF artifact.
 Users can resume and inspect sessions, history, exact context packages, active
 memory, operation traces and stage-specific diagnostics from CLI or API.
 
-Capability proposals and proactive execution are target behavior, not a
-completed runtime path: current assistant candidates carry response text and
-memory proposals, and the service does not dispatch desktop actions.
+Explicit user actions (browser search and read, process inspection, application
+launch, document access, and volume controls) are mediated through
+`AssistantActions` and `CapabilityService` with policy and approval checks.
+Autonomous multi-step capability proposals and proactive execution remain target
+behavior; current assistant candidates carry response text, memory proposals,
+and verified action results.
 
 The assistant is a local-first interaction surface with explicit,
 reconstructed context. It may conduct ordinary conversation, answer from RAI

@@ -34,12 +34,21 @@ async def route_action(  # noqa: PLR0913, PLR0912, PLR0915
 
     if name in {"browser.open_result", "browser.read_page"}:
         previous = await previous_action(store, turn, profile)
+        frame_dict = previous.get("active_choice_frame")
+        if isinstance(frame_dict, dict) and frame_dict.get("state") in {"CANCELLED", ChoiceState.CANCELLED.value}:
+            return AssistantCandidate(
+                text="Poprzedni wybór został anulowany." if polish else "The previous choice was cancelled.",
+                metadata={"action_failure": "FRAME_CANCELLED"},
+            )
         choices = previous.get("action_choices", {})
         entries = choices.get("entries", ())
-        if choices.get("kind") != "url" or intent.selection is None or intent.selection > len(entries):
+        if name == "browser.read_page" and intent.selection is None and previous.get("selected_resource_handle"):
+            arguments = {"task_id": choices.get("task_id", task_id), "handle": previous["selected_resource_handle"]}
+        elif choices.get("kind") != "url" or intent.selection is None or intent.selection > len(entries):
             return AssistantCandidate(text=("Który wynik wybrać? Wyszukaj strony i podaj numer wyniku."
                                             if polish else "Which result? Search the web and select a result number."))
-        arguments = {"task_id": choices["task_id"], "handle": entries[intent.selection - 1]["handle"]}
+        else:
+            arguments = {"task_id": choices["task_id"], "handle": entries[intent.selection - 1]["handle"]}
     elif name == "system.volume.set":
         initial = await invoke("system.volume.get", arguments)
         if initial is None or isinstance(initial[1], Failure):
@@ -79,6 +88,12 @@ async def route_action(  # noqa: PLR0913, PLR0912, PLR0915
         elif name == "browser.read_page":
             text = output["title"] + "\n\n" + output["text"]
             metadata["untrusted_content"] = True
+            metadata["selected_resource_handle"] = arguments.get("handle")
+        elif name == "browser.open_result":
+            text = "Wykonanie potwierdzone." if polish else "Execution verified."
+            metadata["selected_resource_handle"] = arguments.get("handle")
+            if choices:
+                metadata["action_choices"] = choices
         elif name == "system.volume.get":
             text = ("Głośność: " if polish else "Volume: ") + ", ".join(f"{v}%" for v in output["volumes"])
         elif name == "activity.query":

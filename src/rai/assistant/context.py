@@ -710,9 +710,14 @@ class AssistantContextBuilder:
                     obs_content = {"observed_url": output.get("observed_url", "")}
                     summary = f"Opened URL in browser: {output.get('observed_url', '')}"
                 elif capability == "process.inspect":
-                    procs = output.get("processes", [])
-                    obs_content = {"processes": procs[:10]}
-                    summary = f"Process inspection returned {len(procs)} processes"
+                    if "processes" in output and isinstance(output["processes"], (list, tuple)):
+                        procs = output.get("processes", [])
+                        obs_content = {"processes": procs[:10]}
+                        summary = f"Process inspection returned {len(procs)} processes"
+                    else:
+                        obs_content = output
+                        proc_name = output.get("name") or output.get("pid") or "process"
+                        summary = f"Process inspection details for {proc_name}"
                 else:
                     obs_content = output
 
@@ -791,7 +796,7 @@ class AssistantContextBuilder:
             exclusions.append(f"{removed_id}:character_budget")
             serialized = json.dumps(content, ensure_ascii=False)
         while len(serialized) > self.max_context_characters and tool_observations:
-            removed_obs = tool_observations.pop()
+            removed_obs = tool_observations.pop(0)
             tool_observation_ids.remove(removed_obs.source_id)
             items = [item for item in items if item.source_id != removed_obs.source_id]
             exclusions.append(f"{removed_obs.source_id}:character_budget")

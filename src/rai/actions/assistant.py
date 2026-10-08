@@ -9,7 +9,12 @@ from returns.result import Failure, Success
 from rai.assistant.records import AssistantCandidate, ConversationTurn
 from rai.assistant.ports import MemoryGraphStore
 from rai.diagnostics import trace
-from .choices import find_active_choice_frame, resolve_choice_selection
+from .choices import (
+    extract_selection_index,
+    find_active_choice_frame,
+    find_latest_choice_frame,
+    resolve_choice_selection,
+)
 from .dialogue import previous_action
 from rai.kernel.ports import CancellationToken
 from rai.kernel.service import CapabilityService
@@ -37,16 +42,70 @@ class AssistantActions:
             return None
         if self.store is not None:
             now = _utc_now()
-            recent_res = await self.store.get_recent_reply_chain(session_id=turn.session_id, limit=6)
+            recent_res = await self.store.get_recent_reply_chain(session_id=turn.session_id, limit=20)
             if not isinstance(recent_res, Failure):
-                active_frame = find_active_choice_frame(recent_res.unwrap(), self.profile, now)
+                recent_turns = recent_res.unwrap()
+                active_frame = find_active_choice_frame(recent_turns, self.profile, now)
                 if active_frame is not None:
                     resolved = resolve_choice_selection(
-                        turn.text, active_frame, now,
-                        actor=turn.producer, source_turn_id=turn.record_id, data_class=turn.data_class,
+                        turn.text,
+                        active_frame,
+                        now,
+                        actor=turn.producer,
+                        source_turn_id=turn.record_id,
+                        data_class=turn.data_class,
                     )
                     if isinstance(resolved, Success):
                         return await self._execute_proposal(turn, resolved.unwrap(), active_frame, cancellation)
+                    failure_code = resolved.failure()
+                    if failure_code == "SELECTION_OUT_OF_RANGE":
+                        polish = turn.metadata.get("language") != "en"
+                        return AssistantCandidate(
+                            text=(
+                                f"Wybierz poprawny numer z listy (1–{len(active_frame.entries)})."
+                                if polish
+                                else f"Choose a valid number from the list (1–{len(active_frame.entries)})."
+                            ),
+                            metadata={"choice_rejected": failure_code, "frame_id": active_frame.record_id},
+                        )
+                else:
+                    latest_frame = find_latest_choice_frame(recent_turns, self.profile)
+                    if latest_frame is not None:
+                        extracted = extract_selection_index(turn.text, len(latest_frame.entries))
+                        if extracted is not None:
+                            polish = turn.metadata.get("language") != "en"
+                            state_val = (
+                                latest_frame.state.value
+                                if isinstance(latest_frame.state, ChoiceState)
+                                else str(latest_frame.state)
+                            )
+                            if state_val == ChoiceState.CANCELLED.value:
+                                return AssistantCandidate(
+                                    text=(
+                                        "Wybór został anulowany. Wyszukaj ponownie, aby wybrać nowy element."
+                                        if polish
+                                        else "The selection was cancelled. Search again to select an item."
+                                    ),
+                                    metadata={"choice_rejected": "FRAME_CANCELLED", "frame_id": latest_frame.record_id},
+                                )
+                            if now >= latest_frame.expires_at:
+                                return AssistantCandidate(
+                                    text=(
+                                        "Wybór wygasł. Wyszukaj ponownie, aby wybrać nowy element."
+                                        if polish
+                                        else "The selection has expired. Search again to select an item."
+                                    ),
+                                    metadata={"choice_rejected": "FRAME_EXPIRED", "frame_id": latest_frame.record_id},
+                                )
+                            if extracted[1] is None:
+                                return AssistantCandidate(
+                                    text=(
+                                        "Ten wybór został już dokonany lub nie jest aktywny. Wyszukaj ponownie, aby wybrać nowy element."
+                                        if polish
+                                        else "This selection has already been made or is no longer active. Search again to select an item."
+                                    ),
+                                    metadata={"choice_rejected": "FRAME_INACTIVE", "frame_id": latest_frame.record_id},
+                                )
         trace("assistant.intent.start", turn_id=turn.record_id)
         recognized = await self.recognizer.recognize(turn, cancellation)
         if isinstance(recognized, Failure):
@@ -215,9 +274,19 @@ class AssistantActions:
         if proposal.capability == "browser.read_page":
             text = output.get("title", "") + "\n\n" + output.get("text", "")
             metadata["untrusted_content"] = True
+            metadata["selected_resource_handle"] = proposal.resource_handle
         elif proposal.capability == "browser.open_result":
             url = output.get("observed_url", "")
             text = message(f"Otworzyłem wynik w przeglądarce: {url}.", f"Opened result in browser: {url}.")
+            metadata["action_choices"] = {
+                "kind": "url",
+                "task_id": proposal.task_id,
+                "entries": [
+                    {"name": e.label, "handle": e.handle, **e.metadata}
+                    for e in frame.entries
+                ],
+            }
+            metadata["selected_resource_handle"] = proposal.resource_handle
         elif proposal.capability == "application.launch":
             text = message("Uruchomiłem aplikację. Potwierdziłem proces aplikacji w systemie.", "Launched application. I verified the application process.")
         elif proposal.capability == "document.open":

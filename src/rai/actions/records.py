@@ -49,6 +49,7 @@ class ActiveChoiceFrame(KernelRecord):
         "system.volume.set",
     ]
     entries: tuple[ChoiceEntry, ...] = Field(min_length=1)
+    selected_resource_handle: str | None = Field(default=None, max_length=128)
     state: ChoiceState = ChoiceState.ACTIVE
     expires_at: datetime
     data_class: DataClass = DataClass.LOCAL
