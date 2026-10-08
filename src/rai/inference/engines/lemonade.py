@@ -22,6 +22,7 @@ logger = logging.getLogger(__name__)
 
 DEFAULT_LEMONADE_HOST = "http://127.0.0.1:13305"
 DEFAULT_LEMONADE_URL = f"{DEFAULT_LEMONADE_HOST}/api/v1"
+DEFAULT_LEMONADE_TIMEOUT = 300.0
 
 
 async def resolve_lemonade_model(
@@ -61,15 +62,49 @@ class LemonadeEngine(LocalTextEngine):
         model_name: str,
         host: str = DEFAULT_LEMONADE_HOST,
         api_key: Optional[str] = None,
-        timeout_seconds: float = 60.0,
+        timeout_seconds: float = DEFAULT_LEMONADE_TIMEOUT,
     ) -> None:
         self._model_name = model_name
-        self.host = host.rstrip("/")
-        self.api_key = api_key
-        self.timeout_seconds = timeout_seconds
+        self._host = host.rstrip("/")
+        self._api_key = api_key
+        self._timeout_seconds = timeout_seconds
         self._client: Optional[httpx.AsyncClient] = None
         self._is_loaded = False
         self.model_artifact_version: Optional[str] = None
+
+    @property
+    def host(self) -> str:
+        return self._host
+
+    @host.setter
+    def host(self, value: str) -> None:
+        normalized = value.rstrip("/")
+        if self._host != normalized:
+            self._host = normalized
+            if self._client and not self._client.is_closed:
+                self._client = None
+
+    @property
+    def api_key(self) -> Optional[str]:
+        return self._api_key
+
+    @api_key.setter
+    def api_key(self, value: Optional[str]) -> None:
+        if self._api_key != value:
+            self._api_key = value
+            if self._client and not self._client.is_closed:
+                self._client = None
+
+    @property
+    def timeout_seconds(self) -> float:
+        return self._timeout_seconds
+
+    @timeout_seconds.setter
+    def timeout_seconds(self, value: float) -> None:
+        if self._timeout_seconds != value:
+            self._timeout_seconds = value
+            if self._client and not self._client.is_closed:
+                self._client = None
 
     @property
     def model_name(self) -> str:
@@ -81,16 +116,16 @@ class LemonadeEngine(LocalTextEngine):
 
     def _get_headers(self) -> dict[str, str]:
         headers = {"Content-Type": "application/json"}
-        if self.api_key:
-            headers["Authorization"] = f"Bearer {self.api_key}"
+        if self._api_key:
+            headers["Authorization"] = f"Bearer {self._api_key}"
         return headers
 
     def _get_client(self) -> httpx.AsyncClient:
         if self._client is None or self._client.is_closed:
             self._client = httpx.AsyncClient(
-                base_url=self.host,
+                base_url=self._host,
                 headers=self._get_headers(),
-                timeout=httpx.Timeout(self.timeout_seconds, connect=5.0),
+                timeout=httpx.Timeout(self._timeout_seconds, connect=5.0),
             )
         return self._client
 
@@ -133,9 +168,22 @@ class LemonadeEngine(LocalTextEngine):
             )
             self._is_loaded = True
             return Success(None)
+        except httpx.TimeoutException:
+            self._is_loaded = False
+            return Failure(
+                TimeoutError(
+                    f"Lemonade load request timed out after {self._timeout_seconds:.1f}s for model {self._model_name} on {self._host}"
+                )
+            )
+        except httpx.ConnectError as exc:
+            self._is_loaded = False
+            return Failure(
+                ConnectionError(f"Could not connect to Lemonade server at {self._host}: {exc}")
+            )
         except Exception as exc:  # noqa: BLE001
             self._is_loaded = False
-            return Failure(exc)
+            msg = str(exc).strip() or type(exc).__name__
+            return Failure(RuntimeError(f"Failed to load model {self._model_name}: {msg}"))
 
     @staticmethod
     def _parse_prompt_to_messages(prompt: str) -> list[dict[str, Any]]:
@@ -157,7 +205,7 @@ class LemonadeEngine(LocalTextEngine):
             return messages
         return [{"role": "user", "content": prompt}]
 
-    async def generate(  # noqa: PLR0913
+    async def generate(  # noqa: PLR0912, PLR0913, PLR0915
         self,
         prompt: str = "",
         stop: Optional[List[str]] = None,
@@ -264,10 +312,24 @@ class LemonadeEngine(LocalTextEngine):
                     finish_reason=finish_reason,
                 )
             )
+        except httpx.TimeoutException:
+            return Failure(
+                TimeoutError(
+                    f"Lemonade request timed out after {self._timeout_seconds:.1f}s while waiting for response from {self._host}"
+                )
+            )
+        except httpx.ConnectError as exc:
+            return Failure(
+                ConnectionError(f"Could not connect to Lemonade server at {self._host}: {exc}")
+            )
+        except httpx.HTTPError as exc:
+            msg = str(exc).strip() or type(exc).__name__
+            return Failure(RuntimeError(f"Lemonade HTTP error: {msg}"))
         except Exception as exc:  # noqa: BLE001
-            return Failure(exc)
+            msg = str(exc).strip() or type(exc).__name__
+            return Failure(RuntimeError(f"Lemonade generation failed: {msg}"))
 
-    async def generate_multimodal(
+    async def generate_multimodal(  # noqa: PLR0913
         self,
         prompt: str,
         image_base64: str,
@@ -330,10 +392,24 @@ class LemonadeEngine(LocalTextEngine):
                     finish_reason=finish_reason or "stop",
                 )
             )
+        except httpx.TimeoutException:
+            return Failure(
+                TimeoutError(
+                    f"Lemonade request timed out after {self._timeout_seconds:.1f}s while waiting for multimodal response from {self._host}"
+                )
+            )
+        except httpx.ConnectError as exc:
+            return Failure(
+                ConnectionError(f"Could not connect to Lemonade server at {self._host}: {exc}")
+            )
+        except httpx.HTTPError as exc:
+            msg = str(exc).strip() or type(exc).__name__
+            return Failure(RuntimeError(f"Lemonade multimodal HTTP error: {msg}"))
         except Exception as exc:  # noqa: BLE001
-            return Failure(exc)
+            msg = str(exc).strip() or type(exc).__name__
+            return Failure(RuntimeError(f"Lemonade multimodal generation failed: {msg}"))
 
-    async def generate_image(
+    async def generate_image(  # noqa: PLR0911
         self,
         prompt: str,
         model: Optional[str] = None,
@@ -364,8 +440,22 @@ class LemonadeEngine(LocalTextEngine):
                 image_bytes = base64.b64decode(data[0]["b64_json"])
                 return Success(image_bytes)
             return Failure(RuntimeError("No image data returned from Lemonade"))
+        except httpx.TimeoutException:
+            return Failure(
+                TimeoutError(
+                    f"Lemonade request timed out after {self._timeout_seconds:.1f}s while waiting for image response from {self._host}"
+                )
+            )
+        except httpx.ConnectError as exc:
+            return Failure(
+                ConnectionError(f"Could not connect to Lemonade server at {self._host}: {exc}")
+            )
+        except httpx.HTTPError as exc:
+            msg = str(exc).strip() or type(exc).__name__
+            return Failure(RuntimeError(f"Lemonade image HTTP error: {msg}"))
         except Exception as exc:  # noqa: BLE001
-            return Failure(exc)
+            msg = str(exc).strip() or type(exc).__name__
+            return Failure(RuntimeError(f"Lemonade image generation failed: {msg}"))
 
     async def unload(self) -> Result[None, Exception]:
         """Request Lemonade to unload model from memory."""

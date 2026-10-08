@@ -35,12 +35,13 @@ def effective_model_settings(
         (
             "environment",
             {
-                key: env[name]
+                key: float(env[name]) if key == "lemonade_timeout" else env[name]
                 for key, name in {
                     "backend": "RAI_ASSISTANT_BACKEND",
                     "model": "RAI_ASSISTANT_MODEL",
                     "lemonade_host": "LEMONADE_HOST",
                     "lemonade_api_key": "LEMONADE_API_KEY",
+                    "lemonade_timeout": "LEMONADE_TIMEOUT",
                 }.items()
                 if env.get(name)
             },

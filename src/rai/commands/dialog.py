@@ -3,6 +3,7 @@
 from __future__ import annotations
 import asyncio
 import json
+import sys
 import click
 from rai.kernel.records import DataClass
 from .settings import _assistant_config
@@ -29,6 +30,7 @@ def _run_assistant_ask(  # noqa: PLR0913
     max_output_tokens: int | None = None,
     context_window: int | None = None,
     data_class: DataClass = DataClass.LOCAL,
+    timeout: float | None = None,
 ) -> None:
     from returns.result import Success  # noqa: PLC0415
 
@@ -47,6 +49,7 @@ def _run_assistant_ask(  # noqa: PLR0913
                 thinking_budget=thinking_budget,
                 max_output_tokens=max_output_tokens,
                 context_window=context_window,
+                timeout=timeout,
             )
         )
         service = container.assistant_service
@@ -111,6 +114,7 @@ def _run_assistant_chat(  # noqa: PLR0913, PLR0915
     max_output_tokens: int | None = None,
     context_window: int | None = None,
     data_class: DataClass = DataClass.LOCAL,
+    timeout: float | None = None,
 ) -> None:
     from returns.result import Success  # noqa: PLC0415
 
@@ -129,6 +133,7 @@ def _run_assistant_chat(  # noqa: PLR0913, PLR0915
                 thinking_budget=thinking_budget,
                 max_output_tokens=max_output_tokens,
                 context_window=context_window,
+                timeout=timeout,
             )
         )
         service = container.assistant_service
@@ -153,6 +158,47 @@ def _run_assistant_chat(  # noqa: PLR0913, PLR0915
     )
     current_show_thinking = show_thinking
 
+    prompt_session = None
+    if sys.stdin.isatty():
+        try:
+            from prompt_toolkit import PromptSession  # noqa: PLC0415
+            from prompt_toolkit.completion import WordCompleter  # noqa: PLC0415
+            from prompt_toolkit.history import FileHistory  # noqa: PLC0415
+            from rai.paths import data_dir  # noqa: PLC0415
+
+            slash_commands = [
+                "/help",
+                "/exit",
+                "/quit",
+                "/q",
+                "/memories",
+                "/operations",
+                "/diagnostics",
+                "/history",
+                "/context",
+                "/capabilities",
+                "/status",
+                "/thinking",
+                "/thinking on",
+                "/thinking off",
+                "/thinking show",
+                "/thinking hide",
+                "/remember",
+                "/forget",
+                "/session",
+                "/config",
+                "/config show",
+            ]
+            history_dir = data_dir() / "history"
+            history_dir.mkdir(parents=True, exist_ok=True)
+            history_file = history_dir / "chat_input_history"
+            prompt_session = PromptSession(
+                history=FileHistory(str(history_file)),
+                completer=WordCompleter(slash_commands, sentence=True),
+            )
+        except Exception:  # noqa: BLE001
+            prompt_session = None
+
     async def _run_loop() -> None:  # noqa: PLR0912, PLR0915
         nonlocal current_thinking, current_show_thinking
         reply_to_turn_id: str | None = None
@@ -175,7 +221,10 @@ def _run_assistant_chat(  # noqa: PLR0913, PLR0915
                 last_manifest_id = latest_manifest_res.unwrap().record_id
             while True:
                 try:
-                    user_input = click.prompt("You", prompt_suffix="> ")
+                    if prompt_session is not None:
+                        user_input = await prompt_session.prompt_async("You> ")
+                    else:
+                        user_input = click.prompt("You", prompt_suffix="> ")
                 except (EOFError, KeyboardInterrupt):
                     click.echo("\nExiting session.")
                     break

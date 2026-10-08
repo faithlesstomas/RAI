@@ -391,10 +391,13 @@ class LocalAssistantBackend:
                 thinking_level=thinking_level,
             )
             if isinstance(gen_res, Failure):
+                err = gen_res.failure()
+                err_str = str(err).strip()
+                err_msg = err_str if err_str else type(err).__name__
                 return Failure(
                     make_assistant_failure(
                         code="ENGINE_ERROR",
-                        message=f"local engine failed: {gen_res.failure()}",
+                        message=f"local engine failed: {err_msg}",
                         request_id=request.request_id,
                         retryable=True,
                     )
@@ -402,10 +405,12 @@ class LocalAssistantBackend:
             result_obj = gen_res.unwrap()
             response_text = result_obj.text.strip()
         except Exception as exc:  # noqa: BLE001
+            exc_str = str(exc).strip()
+            exc_msg = exc_str if exc_str else type(exc).__name__
             return Failure(
                 make_assistant_failure(
                     code="ENGINE_ERROR",
-                    message=f"exception during local engine generation: {exc}",
+                    message=f"exception during local engine generation: {exc_msg}",
                     request_id=request.request_id,
                     retryable=True,
                 )
