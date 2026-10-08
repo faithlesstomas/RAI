@@ -82,8 +82,17 @@ async def route_action(  # noqa: PLR0913, PLR0912, PLR0915
         if name in {"browser.search", "process.inspect"}:
             entries = output["results" if name == "browser.search" else "processes"]
             choices = {"kind": "url" if name == "browser.search" else "process", "task_id": task_id, "entries": entries}
-            text = "\n".join(f"{i}. {entry['name']}" + (f" (PID {entry['pid']})" if 'pid' in entry else '')
-                             for i, entry in enumerate(entries, 1))
+            if name == "browser.search":
+                lines = []
+                for i, entry in enumerate(entries, 1):
+                    snippet = f" - {entry['snippet']}" if entry.get("snippet") else ""
+                    lines.append(f"{i}. {entry['name']}{snippet}")
+                text = "\n".join(lines)
+                metadata["requires_synthesis"] = bool(entries)
+                metadata["untrusted_content"] = True
+            else:
+                text = "\n".join(f"{i}. {entry['name']}" + (f" (PID {entry['pid']})" if 'pid' in entry else '')
+                                 for i, entry in enumerate(entries, 1))
             text = text or ("Brak wyników." if polish else "No results.")
         elif name == "browser.read_page":
             text = output["title"] + "\n\n" + output["text"]

@@ -166,6 +166,8 @@ class DeterministicAssistantBackend:
                 response_text = f"Podsumowanie aktywności w systemie: {title_text}."
             elif cap == "browser.read_page" or "stron" in title_text.lower():
                 response_text = f"Odpowiedź na podstawie odczytanej strony: {title_text or 'strona'}."
+            elif cap == "browser.search":
+                response_text = f"Odpowiedź na podstawie wyszukiwania: {title_text}."
             else:
                 response_text = f"Odpowiedź na podstawie obserwacji ({cap}): {title_text}."
         elif not proposals and not has_evidence and "?" in user_text:

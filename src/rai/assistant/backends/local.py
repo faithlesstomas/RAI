@@ -32,6 +32,7 @@ from ..records import (
 )
 
 _MAX_LIST_ITEMS_IN_CONTENT: int = 3
+_MAX_SEARCH_ITEMS_IN_CONTENT: int = 5
 
 
 class LocalAssistantBackend:
@@ -182,7 +183,7 @@ class LocalAssistantBackend:
                     capability = str(item.get("capability", "tool"))
                     summary = str(item.get("summary", ""))
                     content_val = item.get("content", {})
-                    content_str = self._bound_content_repr(content_val, max_len=2000)
+                    content_str = self._bound_content_repr(content_val, max_len=3000)
                     evidence_lines.append(f"- [{capability}] {summary}: {content_str}")
 
         system_parts = [
@@ -261,14 +262,19 @@ class LocalAssistantBackend:
         return "\n".join(rendered)
 
     @staticmethod
-    def _bound_content_repr(content: object, max_len: int = 2000) -> str:
+    def _bound_content_repr(content: object, max_len: int = 3000) -> str:
         """Serialize and bound content to avoid context window explosion."""
         if isinstance(content, dict):
             bounded_dict = {}
             for k, v in content.items():
-                if isinstance(v, (list, tuple)) and len(v) > _MAX_LIST_ITEMS_IN_CONTENT:
-                    bounded_dict[k] = list(v[:_MAX_LIST_ITEMS_IN_CONTENT]) + [
-                        f"... (+{len(v) - _MAX_LIST_ITEMS_IN_CONTENT} more items truncated)"
+                limit = (
+                    _MAX_SEARCH_ITEMS_IN_CONTENT
+                    if k == "results"
+                    else _MAX_LIST_ITEMS_IN_CONTENT
+                )
+                if isinstance(v, (list, tuple)) and len(v) > limit:
+                    bounded_dict[k] = list(v[:limit]) + [
+                        f"... (+{len(v) - limit} more items truncated)"
                     ]
                 else:
                     bounded_dict[k] = v

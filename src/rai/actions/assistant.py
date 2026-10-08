@@ -115,6 +115,14 @@ class AssistantActions:
         intent = recognized.unwrap()
         trace("assistant.intent", turn_id=turn.record_id, outcome=intent.outcome,
               query_present=bool(intent.query), data_class=turn.data_class)
+        return await self.dispatch_intent(turn, intent, cancellation)
+
+    async def dispatch_intent(  # noqa: PLR0911, PLR0912, PLR0915
+        self,
+        turn: ConversationTurn,
+        intent: ActionIntent,
+        cancellation: CancellationToken,
+    ) -> AssistantCandidate | None:
         if intent.outcome == "capabilities.list":
             from rai.assistant.context import format_capabilities_instruction  # noqa: PLC0415
 

@@ -156,7 +156,7 @@ class BrowserCapability:
     def __init__(self, name: str, handles: SQLiteHandleStore, backend: BrowserBackend) -> None:
         self.name, self.handles, self.backend = name, handles, backend
 
-    async def invoke(self, request: CapabilityRequest, cancellation: CancellationToken) -> Result[ActionResult, ActionFailure]:  # noqa: PLR0911
+    async def invoke(self, request: CapabilityRequest, cancellation: CancellationToken) -> Result[ActionResult, ActionFailure]:  # noqa: PLR0911, PLR0912
         if request.data_class != DataClass.PUBLIC and not (
             request.data_class == DataClass.PRIVATE and has_browser_consent(request)
         ):
@@ -195,8 +195,15 @@ class BrowserCapability:
                 or handle.data_class != request.data_class
                 or handle.fingerprint != hashlib.sha256(handle.target.encode()).hexdigest()):
             return Failure(failure(request, "STALE_RESOURCE"))
-        invoked = await (self.backend.open(handle.target, cancellation) if self.name == "browser.open_result"
-                         else self.backend.read(handle.target, cancellation))
+        if self.name == "browser.open_result":
+            invoked = await self.backend.open(handle.target, cancellation)
+        else:
+            invoked = await self.backend.read(handle.target, cancellation)
+            if isinstance(invoked, Failure) and invoked.failure() == "AMBIGUOUS_OR_MISSING_TAB":
+                open_res = await self.backend.open(handle.target, cancellation)
+                if isinstance(open_res, Failure):
+                    return Failure(failure(request, open_res.failure()))
+                invoked = await self.backend.read(handle.target, cancellation)
         if isinstance(invoked, Failure):
             return Failure(failure(request, invoked.failure()))
         evidence = invoked.unwrap()

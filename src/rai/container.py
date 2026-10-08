@@ -41,6 +41,7 @@ from .actions.volume import PactlVolumeBackend, register_volume_capabilities
 from .actions.processes import register_process_capability
 from .actions.execution import SQLiteExecutionStore
 from .actions.handles import SQLiteHandleStore
+from .actions.workflow import TaskStepController
 from .paths import data_dir
 from .services.history import HistoryService
 from .services.model_registry import ModelRegistry
@@ -367,6 +368,7 @@ class ApplicationContainer:
                          else None),
                 store=self.memory_graph_store,
                 backend=backend,
+                step_controller=TaskStepController(),
                 memory_extractor=memory_extractor,
                 context_builder=AssistantContextBuilder(
                     store=self.memory_graph_store,

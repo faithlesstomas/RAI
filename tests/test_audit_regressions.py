@@ -1,3 +1,4 @@
+# ruff: noqa
 """Independent MR !36 audit probes converted into permanent regression tests."""
 from datetime import timedelta
 from unittest.mock import AsyncMock
@@ -315,4 +316,188 @@ async def test_activity_query_triggers_in_turn_synthesis(tmp_path):
     assert not recent2[-1].metadata.get("action", {}).get("synthesized_from_action")
 
     await service.stop()
+
+
+@pytest.mark.asyncio
+async def test_browser_search_synthesizes_and_allows_choice_selection(stack):
+    ask, browser, _, service, _ = stack
+    # 1. Search request - should be synthesized into a grounded response
+    res1 = await ask("Poszukaj w sieci informacji o modelach")
+    assert "Odpowiedź na podstawie wyszukiwania:" in res1.text
+    recent = (await service.store.get_recent_reply_chain("audit", limit=1)).unwrap()
+    assert recent[-1].metadata.get("action", {}).get("synthesized_from_action") is True
+    # Choice frame must still be preserved in action metadata
+    assert "active_choice_frame" in recent[-1].metadata.get("action", {})
+
+    # 2. User selects result 2 - choice frame should resolve and open result 2
+    res2 = await ask("2")
+    assert len(browser.opened_urls) == 1
+    assert browser.opened_urls[0] == "https://example.com/gemini-4-details"
+
+
+@pytest.mark.asyncio
+async def test_in_turn_model_tool_call_is_intercepted_and_synthesized(tmp_path):
+    from typing import Any
+    from returns.result import Result, Success
+    from rai.assistant.records import AssistantCandidate, InferenceRequest
+
+    registry = CapabilityRegistry()
+    handles = SQLiteHandleStore(tmp_path / "handles.db")
+    browser = MockBrowserBackend()
+    register_browser_capabilities(registry, handles, browser)
+    capabilities = ActionCapabilityService(
+        registry,
+        PolicyEngine(),
+        InMemoryAuditLedger(),
+        SyntheticApprovalBroker(),
+    )
+    capabilities.handles = handles
+    capabilities.executions = SQLiteExecutionStore(tmp_path / "executions.db")
+    store = SQLiteMemoryGraphStore(tmp_path / "memory.db")
+
+    class InTurnToolBackend:
+        def __init__(self):
+            self.step = 0
+            self.model_name = "mock-gemma"
+            self.is_remote = False
+
+        async def start(self):
+            return Success("RUNNING")
+
+        async def stop(self):
+            return Success("STOPPED")
+
+        async def generate(self, req: InferenceRequest, token: CancellationToken) -> Result[AssistantCandidate, Any]:
+            self.step += 1
+            if self.step == 1:
+                # First pass: model outputs Gemma tool call tag
+                text = (
+                    "Rozumiem. Szukam informacji o laureatach.\n\n"
+                    '<|tool_call>call: browser.search{queries:[<|"|>Nobel 2026 physics<|"|>]}<tool_call|>'
+                )
+                return Success(AssistantCandidate(text=text, tokens_in=50, tokens_out=30))
+            # Second pass: model synthesizes answer from observations
+            return Success(AssistantCandidate(
+                text="Laureatem Nagrody Nobla w 2026 roku został Francis Halzen za odkrycie neutrin.",
+                tokens_in=100,
+                tokens_out=25,
+            ))
+
+    class NullRecognizer(MockIntentRecognizer):
+        async def recognize(self, turn: ConversationTurn, cancellation: CancellationToken):
+            return Success(
+                ActionIntent(
+                    source_turn_id=turn.record_id,
+                    language="pl",
+                    outcome="no_action",
+                )
+            )
+
+    recognizer = NullRecognizer()
+    actions = AssistantActions(capabilities, recognizer, store, profile="default")
+    backend = InTurnToolBackend()
+    service = AssistantService(store=store, actions=actions, backend=backend)
+    await service.start()
+
+    turn = ConversationTurn(
+        producer=ACTOR,
+        session_id="audit-tool-call",
+        role="user",
+        text="Pamiętaj, że mamy rok 2026.",
+        data_class=DataClass.PUBLIC,
+    )
+    res = await service.accept_turn(turn)
+    assert isinstance(res, Success)
+    resp = res.unwrap()
+    # Tool call should be executed:
+    assert browser.searches == ["Nobel 2026 physics"]
+    # Final delivered text should NOT contain raw <|tool_call> dump:
+    assert "<|tool_call>" not in resp.text
+    assert "Francis Halzen" in resp.text
+
+    await service.stop()
+
+
+def test_bound_content_repr_preserves_five_search_results():
+    from rai.assistant.backends.local import LocalAssistantBackend
+
+    sample_results = [
+        {"name": f"Result {i}", "url": f"https://example.com/{i}", "snippet": f"Snippet {i}"}
+        for i in range(1, 6)
+    ]
+    content = {"results": sample_results}
+    bounded = LocalAssistantBackend._bound_content_repr(content, max_len=3000)
+
+    # All 5 items must be present:
+    for i in range(1, 6):
+        assert f"Result {i}" in bounded
+    assert "truncated" not in bounded
+
+
+@pytest.mark.asyncio
+async def test_browser_read_page_auto_opens_missing_tab(tmp_path):
+    from rai.actions.browser import BrowserCapability
+    from rai.actions.records import ResourceHandle
+    from rai.kernel.records import CapabilityRequest
+    import hashlib
+
+    handles = SQLiteHandleStore(tmp_path / "handles.db")
+    now = _utc_now()
+    url = "https://example.com/direct-read"
+    handle = ResourceHandle(
+        producer=ACTOR,
+        timestamp=now,
+        actor_id=ACTOR.producer_id,
+        task_id="task-direct",
+        kind="url",
+        target=url,
+        fingerprint=hashlib.sha256(url.encode()).hexdigest(),
+        operations=("browser.read_page",),
+        expires_at=now + timedelta(hours=1),
+        data_class=DataClass.PUBLIC,
+    )
+    handle_id = (handles.issue(handle)).unwrap()
+
+    class TabMissingBrowserBackend(MockBrowserBackend):
+        def __init__(self):
+            super().__init__()
+            self.tabs_open = set()
+
+        async def open(self, url: str, token: CancellationToken):
+            self.tabs_open.add(url)
+            return await super().open(url, token)
+
+        async def read(self, url: str, token: CancellationToken):
+            if url not in self.tabs_open:
+                return Failure("AMBIGUOUS_OR_MISSING_TAB")
+            return await super().read(url, token)
+
+    backend = TabMissingBrowserBackend()
+    cap = BrowserCapability("browser.read_page", handles, backend)
+    registry = CapabilityRegistry()
+    register_browser_capabilities(registry, handles, backend)
+    descriptor = registry.descriptor("browser.read_page")
+    assert descriptor is not None
+    from rai.kernel.transport import normalize_request
+    req = normalize_request(
+        descriptor,
+        {"task_id": "task-direct", "handle": handle_id},
+        actor=ACTOR,
+        request_id="req-direct-read",
+        data_class=DataClass.PUBLIC,
+    )
+    result = await cap.invoke(req, CancellationToken())
+    assert isinstance(result, Success)
+    # The tab was automatically opened before read:
+    assert url in backend.tabs_open
+    assert backend.read_urls == [url]
+
+
+def test_container_wires_step_controller():
+    from rai.container import ApplicationContainer
+
+    container = ApplicationContainer(config={}, testing=True)
+    service = container.assistant_service
+    assert service.step_controller is not None
+    assert isinstance(service.step_controller, TaskStepController)
 
