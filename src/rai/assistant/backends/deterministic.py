@@ -138,12 +138,30 @@ class DeterministicAssistantBackend:
             turn_id=request.turn_id,
             durable_memories=grounding_memories,
         )
+        tool_observations = request.context.content.get("tool_observations", [])
+        if not isinstance(tool_observations, (list, tuple)):
+            tool_observations = []
         has_evidence = bool(
             grounding_memories
             or request.context.content.get("episodic_evidence", ())
             or request.context.content.get("external_evidence", ())
+            or tool_observations
         )
-        if not proposals and not has_evidence and "?" in user_text:
+        if not proposals and tool_observations:
+            obs = tool_observations[0]
+            if isinstance(obs, dict):
+                obs_summary = str(obs.get("summary", ""))
+                obs_content = obs.get("content", {})
+                title = (
+                    obs_content.get("title")
+                    if isinstance(obs_content, dict) and obs_content.get("title")
+                    else obs_summary
+                )
+            else:
+                title = getattr(obs, "summary", "")
+            title_text = str(title).splitlines()[0] if title else "strona"
+            response_text = f"Odpowiedź na podstawie odczytanej strony: {title_text}."
+        elif not proposals and not has_evidence and "?" in user_text:
             response_text = (
                 "Nie mam wystarczających źródeł, aby odpowiedzieć na to pytanie."
             )
@@ -154,7 +172,7 @@ class DeterministicAssistantBackend:
             tokens_in=len(user_text.split()),
             tokens_out=len(response_text.split()),
             metadata={
-                "raw_model_output": "Rozumiem.",
+                "raw_model_output": response_text if tool_observations else "Rozumiem.",
                 "grounding_override": response_text != "Rozumiem.",
             },
         )

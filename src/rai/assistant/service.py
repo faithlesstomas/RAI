@@ -8,7 +8,7 @@ from collections.abc import Awaitable, Callable
 from datetime import timedelta
 import json
 import time
-from typing import Any, AsyncIterator
+from typing import TYPE_CHECKING, Any, AsyncIterator
 
 from rai.diagnostics import trace
 
@@ -24,6 +24,10 @@ from rai.kernel.records import (
     _new_id,
     _utc_now,
 )
+
+if TYPE_CHECKING:
+    from rai.actions.workflow import ResearchWorkflow, TaskStepController
+    from rai.kernel.service import CapabilityService
 
 from .audit import (
     AssistantAuditEntry,
@@ -54,6 +58,7 @@ from .records import (
     MemoryRecord,
     MemoryRelation,
     MemoryRelationKind,
+    ToolObservation,
     make_assistant_failure,
 )
 
@@ -104,6 +109,7 @@ class AssistantService:
         producer: ProducerIdentity | None = None,
         profile_scope: str = "default",
         actions: AssistantActionHandler | None = None,
+        step_controller: TaskStepController | None = None,
         context_approver: Callable[
             [AssistantContextPackage, CancellationToken],
             Awaitable[Result[AssistantContextPackage, ActionFailure]],
@@ -112,6 +118,7 @@ class AssistantService:
     ) -> None:
         self.store = store
         self.actions = actions
+        self.step_controller = step_controller
         self.backend = backend or DeterministicAssistantBackend()
         self.context_builder = context_builder or AssistantContextBuilder(
             store=store,
@@ -881,7 +888,84 @@ class AssistantService:
         action_candidate = (
             await self.actions.handle(turn, token) if self.actions is not None else None
         )
-        if action_candidate is not None:
+        if (
+            action_candidate is not None
+            and action_candidate.metadata.get("untrusted_content") is True
+            and not action_candidate.metadata.get("active_choice_frame")
+        ):
+            action_result = action_candidate.metadata.get("action_result") or {}
+            action_proposal = action_candidate.metadata.get("action_proposal") or {}
+            output = (
+                action_result.get("output")
+                if isinstance(action_result, dict)
+                else {}
+            )
+            capability = (
+                (action_proposal.get("capability") if isinstance(action_proposal, dict) else None)
+                or (action_result.get("capability") if isinstance(action_result, dict) else None)
+                or "tool"
+            )
+            summary = (
+                (output.get("title") if isinstance(output, dict) else None)
+                or (action_candidate.text.splitlines()[0] if action_candidate.text else "")
+                or str(capability)
+            )
+            obs = ToolObservation(
+                source_id=(
+                    (action_result.get("request_id") if isinstance(action_result, dict) else None)
+                    or _new_id()
+                ),
+                source_turn_id=turn.record_id,
+                capability=str(capability),
+                status="SUCCESS",
+                summary=str(summary),
+                untrusted_content=True,
+                content=output if isinstance(output, dict) else {"raw_text": str(output)},
+            )
+            existing_obs = list(context_package.content.get("tool_observations", []))
+            existing_obs.append(obs.model_dump(mode="json"))
+            updated_content = dict(context_package.content)
+            updated_content["tool_observations"] = existing_obs
+            updated_manifest = manifest.model_copy(
+                update={"tool_observation_ids": (*manifest.tool_observation_ids, obs.source_id)}
+            )
+            synth_context = context_package.model_copy(
+                update={"content": updated_content, "manifest": updated_manifest}
+            )
+            synth_inference_req = inference_req.model_copy(update={"context": synth_context})
+
+            trace("assistant.model.synthesize_tool_start", turn_id=turn.record_id)
+            start_time = time.perf_counter()
+            backend_res = await self.backend.generate(synth_inference_req, token)
+            latency_ms = (time.perf_counter() - start_time) * 1000
+            trace(
+                "assistant.model.synthesize_tool_end",
+                turn_id=turn.record_id,
+                elapsed_ms=round(latency_ms),
+                status="failure" if isinstance(backend_res, Failure) else "success",
+            )
+            if isinstance(backend_res, Failure):
+                return await self._commit_failure(
+                    turn=turn,
+                    request_id=request_id,
+                    manifest=updated_manifest,
+                    error=backend_res.failure(),
+                    latency_ms=latency_ms,
+                )
+            synth_candidate = backend_res.unwrap()
+            candidate = AssistantCandidate(
+                text=synth_candidate.text,
+                proposals=synth_candidate.proposals,
+                tokens_in=synth_candidate.tokens_in,
+                tokens_out=synth_candidate.tokens_out,
+                metadata={
+                    **action_candidate.metadata,
+                    **synth_candidate.metadata,
+                    "synthesized_from_action": True,
+                },
+            )
+            manifest = updated_manifest
+        elif action_candidate is not None:
             candidate = action_candidate
             latency_ms = 0.0
         elif manifest.evidence_required and manifest.routing_decision == "no_evidence":
@@ -960,7 +1044,7 @@ class AssistantService:
         assistant_turn_id = _new_id()
         assistant_turn_metadata: dict[str, object] = {"profile_scope": self.profile_scope}
         if action_candidate is not None:
-            assistant_turn_metadata["action"] = action_candidate.metadata
+            assistant_turn_metadata["action"] = candidate.metadata
         if reasoning_content := candidate.metadata.get("reasoning_content"):
             assistant_turn_metadata["reasoning_content"] = reasoning_content
 
@@ -1088,3 +1172,88 @@ class AssistantService:
             yield Failure(result.failure())
             return
         yield Success(result.unwrap().text)
+
+    async def run_research_workflow(
+        self,
+        query: str,
+        session_id: str,
+        capabilities: CapabilityService,
+        cancellation: CancellationToken | None = None,
+        task_id: str | None = None,
+    ) -> Result[ResearchWorkflow, ActionFailure]:
+        """Run an end-to-end bounded research task using step_controller and backend synthesis."""
+        if self.step_controller is None:
+            return Failure(
+                ActionFailure(
+                    request_id=f"research:{session_id}",
+                    capability="assistant.research",
+                    code="CONTROLLER_NOT_CONFIGURED",
+                    message="TaskStepController is not configured on AssistantService",
+                    producer=self.producer,
+                )
+            )
+        token = cancellation or CancellationToken()
+        t_id = task_id or f"task:{session_id}:{_new_id()}"
+
+        async def _synthesizer(
+            wf: ResearchWorkflow, ct: CancellationToken
+        ) -> Result[str, ActionFailure]:
+            obs_list = [
+                ToolObservation(
+                    source_id=f"{wf.task_id}:obs:{idx}",
+                    source_turn_id=session_id,
+                    capability="browser.read_page",
+                    status="SUCCESS",
+                    summary=page.get("title", f"Page {idx}"),
+                    untrusted_content=True,
+                    content=page,
+                ).model_dump(mode="json")
+                for idx, page in enumerate(wf.read_pages, 1)
+            ]
+            manifest = AssistantContextManifest(
+                record_id=_new_id(),
+                timestamp=_utc_now(),
+                producer=self.producer,
+                session_id=session_id,
+                turn_id=session_id,
+                tool_observation_ids=tuple(
+                    f"{wf.task_id}:obs:{idx}" for idx in range(1, len(obs_list) + 1)
+                ),
+            )
+            context = AssistantContextPackage(
+                record_id=_new_id(),
+                timestamp=_utc_now(),
+                producer=self.producer,
+                session_id=session_id,
+                turn_id=session_id,
+                manifest=manifest,
+                content={
+                    "current_turn": {"text": query},
+                    "tool_observations": obs_list,
+                },
+            )
+            req = InferenceRequest(
+                record_id=_new_id(),
+                timestamp=_utc_now(),
+                producer=self.producer,
+                session_id=session_id,
+                turn_id=session_id,
+                request_id=f"{t_id}:synthesis",
+                context=context,
+                budget=self._budget(),
+                strategy="DIRECT",
+            )
+            gen_res = await self.backend.generate(req, ct)
+            if isinstance(gen_res, Failure):
+                return Failure(gen_res.failure())
+            return Success(gen_res.unwrap().text)
+
+        return await self.step_controller.run_bounded_research(
+            task_id=t_id,
+            session_id=session_id,
+            query=query,
+            capabilities=capabilities,
+            synthesizer=_synthesizer,
+            cancellation=token,
+            actor=self.producer,
+        )

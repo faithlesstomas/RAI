@@ -132,7 +132,7 @@ async def route_action(  # noqa: PLR0913, PLR0912, PLR0915
                 text = prefix + "\n".join(lines)
         else:
             text = "Wykonanie potwierdzone." if polish else "Execution verified."
-        if choices:
+        if name in {"browser.search", "process.inspect"} and choices:
             metadata["action_choices"] = choices
             if name in {"browser.search", "process.inspect"} and entries:
                 choice_entries = tuple(

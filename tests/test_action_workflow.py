@@ -11,15 +11,18 @@ from rai.actions.execution import SQLiteExecutionStore
 from rai.actions.handles import SQLiteHandleStore
 from rai.actions.service import ActionCapabilityService
 from rai.actions.workflow import (
+    ResearchWorkflow,
     ResearchWorkflowLimits,
     ResearchWorkflowState,
     TaskStepController,
 )
+from rai.assistant.service import AssistantService
+from rai.assistant.store import SQLiteMemoryGraphStore
 from rai.kernel.audit import InMemoryAuditLedger
 from rai.kernel.capabilities import CapabilityRegistry
 from rai.kernel.policy import PolicyEngine
 from rai.kernel.ports import CancellationToken
-from rai.kernel.records import DataClass, ProducerIdentity
+from rai.kernel.records import ActionFailure, DataClass, ProducerIdentity
 from rai.kernel.synthetic import SyntheticApprovalBroker, SyntheticUsageLedger
 
 
@@ -230,3 +233,120 @@ async def test_execute_bounded_search_integration(tmp_path: Path) -> None:
     task_usage = (await ledger.list_for_task("task-exec-1")).unwrap()
     assert len(task_usage) == 1
     assert task_usage[0].tool_calls == 1
+
+
+async def test_execute_bounded_read_integration(tmp_path: Path) -> None:
+    registry = CapabilityRegistry()
+    handles = SQLiteHandleStore(tmp_path / "handles.db")
+    browser = SimpleMockBrowserBackend()
+    register_browser_capabilities(registry, handles, browser)
+
+    audit = InMemoryAuditLedger()
+    capabilities = ActionCapabilityService(registry, PolicyEngine(), audit, SyntheticApprovalBroker())
+    capabilities.handles = handles
+    capabilities.executions = SQLiteExecutionStore(tmp_path / "executions.db")
+
+    ledger = SyntheticUsageLedger()
+    controller = TaskStepController(ledger=ledger)
+    wf = controller.create_workflow(task_id="task-read-1", session_id="sess-1", query="arg search")
+
+    search_res = await controller.execute_bounded_search(
+        wf, capabilities, query="arg search", cancellation=CancellationToken(),
+    )
+    assert isinstance(search_res, Success)
+    wf, _ = search_res.unwrap()
+
+    first_item = wf.found_results[0]
+    read_res = await controller.execute_bounded_read(
+        wf,
+        capabilities,
+        handle=first_item["handle"],
+        target_url=first_item["url"],
+        approval_id="appr-read-1",
+        cancellation=CancellationToken(),
+        more_sources_needed=False,
+    )
+    assert isinstance(read_res, Success)
+    wf, action_res = read_res.unwrap()
+    assert wf.state == ResearchWorkflowState.SYNTHESIZING
+    assert wf.page_reads_executed == 1
+    assert len(wf.read_pages) == 1
+    assert wf.read_pages[0]["title"] == "Page Title"
+
+    task_usage = (await ledger.list_for_task("task-read-1")).unwrap()
+    assert len(task_usage) == 2
+    assert task_usage[0].processor == "browser_search"
+    assert task_usage[1].processor == "browser_read_page"
+
+
+async def test_run_bounded_research_e2e(tmp_path: Path) -> None:
+    registry = CapabilityRegistry()
+    handles = SQLiteHandleStore(tmp_path / "handles.db")
+    browser = SimpleMockBrowserBackend()
+    register_browser_capabilities(registry, handles, browser)
+
+    audit = InMemoryAuditLedger()
+    capabilities = ActionCapabilityService(registry, PolicyEngine(), audit, SyntheticApprovalBroker())
+    capabilities.handles = handles
+    capabilities.executions = SQLiteExecutionStore(tmp_path / "executions.db")
+
+    ledger = SyntheticUsageLedger()
+    controller = TaskStepController(ledger=ledger)
+
+    async def mock_synthesizer(workflow: ResearchWorkflow, token: CancellationToken) -> Result[str, ActionFailure]:
+        return Success(f"Synthesized from {len(workflow.read_pages)} sources for '{workflow.query}'")
+
+    res = await controller.run_bounded_research(
+        task_id="task-e2e-1",
+        session_id="sess-e2e",
+        query="Quantum mechanics",
+        capabilities=capabilities,
+        synthesizer=mock_synthesizer,
+        cancellation=CancellationToken(),
+    )
+    assert isinstance(res, Success)
+    wf = res.unwrap()
+    assert wf.state == ResearchWorkflowState.COMPLETE
+    assert wf.searches_executed == 1
+    assert wf.page_reads_executed == 2
+    assert wf.final_synthesis == "Synthesized from 2 sources for 'Quantum mechanics'"
+
+    # 1 search + 2 reads + 1 synthesis = 4 usage records
+    task_usage = (await ledger.list_for_task("task-e2e-1")).unwrap()
+    assert len(task_usage) == 4
+    processors = [r.processor for r in task_usage]
+    assert processors == ["browser_search", "browser_read_page", "browser_read_page", "assistant_synthesizer"]
+
+
+async def test_assistant_service_research_workflow_e2e(tmp_path: Path) -> None:
+    registry = CapabilityRegistry()
+    handles = SQLiteHandleStore(tmp_path / "handles.db")
+    browser = SimpleMockBrowserBackend()
+    register_browser_capabilities(registry, handles, browser)
+
+    audit = InMemoryAuditLedger()
+    capabilities = ActionCapabilityService(registry, PolicyEngine(), audit, SyntheticApprovalBroker())
+    capabilities.handles = handles
+    capabilities.executions = SQLiteExecutionStore(tmp_path / "executions.db")
+
+    ledger = SyntheticUsageLedger()
+    controller = TaskStepController(ledger=ledger)
+    store = SQLiteMemoryGraphStore(tmp_path / "memory.db")
+    service = AssistantService(store=store, step_controller=controller)
+
+    await service.start()
+    try:
+        res = await service.run_research_workflow(
+            query="AI safety",
+            session_id="sess-research",
+            capabilities=capabilities,
+        )
+        assert isinstance(res, Success)
+        wf = res.unwrap()
+        assert wf.state == ResearchWorkflowState.COMPLETE
+        assert wf.searches_executed == 1
+        assert wf.page_reads_executed == 2
+        assert wf.final_synthesis is not None
+        assert "Odpowiedź na podstawie odczytanej strony" in wf.final_synthesis
+    finally:
+        await service.stop()

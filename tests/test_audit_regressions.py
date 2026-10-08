@@ -82,12 +82,16 @@ async def stack(tmp_path):
 
 @pytest.mark.asyncio
 async def test_open_then_read_keeps_selected_resource(stack):
-    ask, browser, _, _, _ = stack
+    ask, browser, _, service, _ = stack
     await ask("Poszukaj w sieci informacji o modelach")
     await ask("1")
     assert len(browser.opened_urls) == 1
     response = await ask("przeczytaj 1")
     assert browser.read_urls == ["https://example.com/gemini-4"], response.text
+    # Verify in-turn synthesis: text is synthesized by the model, not a raw dump
+    assert "Odpowiedź na podstawie odczytanej strony" in response.text
+    recent = (await service.store.get_recent_reply_chain("audit", limit=1)).unwrap()
+    assert recent[-1].metadata.get("action", {}).get("synthesized_from_action") is True
 
 
 @pytest.mark.asyncio

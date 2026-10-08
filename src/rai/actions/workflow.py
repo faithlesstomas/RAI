@@ -10,6 +10,7 @@ Enforces:
 
 from __future__ import annotations
 
+from collections.abc import Awaitable, Callable
 from datetime import datetime
 from enum import Enum
 from typing import Any, Literal
@@ -444,3 +445,199 @@ class TaskStepController:
             )
 
         return Success((workflow, action_res))
+
+    async def execute_bounded_read(  # noqa: PLR0913
+        self,
+        workflow: ResearchWorkflow,
+        capabilities: CapabilityService,
+        handle: str,
+        target_url: str,
+        approval_id: str,
+        cancellation: CancellationToken,
+        more_sources_needed: bool = False,
+        tokens_in: int = 0,
+        tokens_out: int = 0,
+        latency_ms: float = 0.0,
+    ) -> Result[tuple[ResearchWorkflow, ActionResult], ActionFailure]:
+        """Orchestrate page read transition, capability invocation, and usage ledger entry."""
+        step_num = workflow.page_reads_executed + 1
+        req_id = f"{workflow.task_id}:read_page:{step_num}"
+        tx = self.transition_to_reading_page(workflow, target_url=target_url, approval_id=approval_id)
+        if isinstance(tx, Failure):
+            return Failure(
+                ActionFailure(
+                    request_id=req_id,
+                    capability="browser.read_page",
+                    code="WORKFLOW_TRANSITION_FAILED",
+                    message=tx.failure(),
+                    producer=PRODUCER,
+                )
+            )
+        workflow = tx.unwrap()
+
+        descriptor = capabilities.registry.descriptor("browser.read_page")
+        if descriptor is None:
+            return Failure(
+                ActionFailure(
+                    request_id=req_id,
+                    capability="browser.read_page",
+                    code="CAPABILITY_NOT_FOUND",
+                    message="browser.read_page capability is not registered",
+                    producer=PRODUCER,
+                )
+            )
+
+        request = normalize_request(
+            descriptor,
+            {"task_id": workflow.task_id, "handle": handle},
+            actor=workflow.producer,
+            request_id=req_id,
+            data_class=workflow.data_class,
+        )
+        _, executed = await capabilities.invoke(request, cancellation)
+        if isinstance(executed, Failure):
+            return Failure(executed.failure())
+
+        action_res = executed.unwrap()
+        page_content = action_res.output
+
+        completed = self.record_page_read_completed(
+            workflow,
+            page_content,
+            more_sources_needed=more_sources_needed,
+            tokens_in=tokens_in,
+            tokens_out=tokens_out,
+            latency_ms=latency_ms,
+        )
+        if isinstance(completed, Failure):
+            return Failure(
+                ActionFailure(
+                    request_id=req_id,
+                    capability="browser.read_page",
+                    code="WORKFLOW_TRANSITION_FAILED",
+                    message=completed.failure(),
+                    producer=PRODUCER,
+                )
+            )
+        workflow = completed.unwrap()
+
+        if self.ledger is not None:
+            await self.record_usage(
+                workflow,
+                processor="browser_read_page",
+                backend="browser",
+                model="web_reader",
+                tokens_in=tokens_in,
+                tokens_out=tokens_out,
+                tool_calls=1,
+                latency_ms=latency_ms,
+            )
+
+        return Success((workflow, action_res))
+
+    async def execute_workflow_synthesis(  # noqa: PLR0913
+        self,
+        workflow: ResearchWorkflow,
+        final_synthesis: str,
+        tokens_in: int = 0,
+        tokens_out: int = 0,
+        latency_ms: float = 0.0,
+    ) -> Result[ResearchWorkflow, ActionFailure]:
+        """Transition workflow to COMPLETE and record synthesis usage metrics."""
+        completed = self.transition_to_complete(
+            workflow,
+            final_synthesis=final_synthesis,
+            tokens_in=tokens_in,
+            tokens_out=tokens_out,
+            latency_ms=latency_ms,
+        )
+        if isinstance(completed, Failure):
+            return Failure(
+                ActionFailure(
+                    request_id=f"{workflow.task_id}:synthesis",
+                    capability="assistant.synthesis",
+                    code="WORKFLOW_TRANSITION_FAILED",
+                    message=completed.failure(),
+                    producer=PRODUCER,
+                )
+            )
+        workflow = completed.unwrap()
+
+        if self.ledger is not None:
+            await self.record_usage(
+                workflow,
+                processor="assistant_synthesizer",
+                backend="assistant_model",
+                model="synthesizer",
+                tokens_in=tokens_in,
+                tokens_out=tokens_out,
+                tool_calls=0,
+                latency_ms=latency_ms,
+            )
+
+        return Success(workflow)
+
+    async def run_bounded_research(  # noqa: PLR0913
+        self,
+        task_id: str,
+        session_id: str,
+        query: str,
+        capabilities: CapabilityService,
+        synthesizer: Callable[[ResearchWorkflow, CancellationToken], Awaitable[Result[str, ActionFailure]]],
+        cancellation: CancellationToken,
+        search_approval_id: str | None = None,
+        read_approval_factory: Callable[[int, str], str] | None = None,
+        limits: ResearchWorkflowLimits | None = None,
+        actor: ProducerIdentity | None = None,
+    ) -> Result[ResearchWorkflow, ActionFailure]:
+        """Run an end-to-end bounded research task: search -> read -> synthesize -> complete."""
+        workflow = self.create_workflow(
+            task_id=task_id,
+            session_id=session_id,
+            query=query,
+            limits=limits,
+            actor=actor,
+        )
+
+        # 1. Bounded search
+        search_res = await self.execute_bounded_search(
+            workflow, capabilities, query, cancellation, approval_id=search_approval_id
+        )
+        if isinstance(search_res, Failure):
+            return Failure(search_res.failure())
+        workflow, _ = search_res.unwrap()
+
+        # 2. Bounded page reads (up to max_page_reads)
+        results = workflow.found_results
+        max_reads = min(len(results), workflow.limits.max_page_reads)
+        for i in range(max_reads):
+            item = results[i]
+            target_url = item.get("url", "")
+            handle = item.get("handle", "")
+            approval_id = (
+                read_approval_factory(i + 1, target_url)
+                if read_approval_factory
+                else f"{task_id}:read:{i + 1}"
+            )
+            more_needed = (i + 1) < max_reads
+            read_res = await self.execute_bounded_read(
+                workflow,
+                capabilities,
+                handle=handle,
+                target_url=target_url,
+                approval_id=approval_id,
+                cancellation=cancellation,
+                more_sources_needed=more_needed,
+            )
+            if isinstance(read_res, Failure):
+                return Failure(read_res.failure())
+            workflow, _ = read_res.unwrap()
+
+        # 3. Model synthesis
+        synth_res = await synthesizer(workflow, cancellation)
+        if isinstance(synth_res, Failure):
+            return Failure(synth_res.failure())
+        final_text = synth_res.unwrap()
+
+        # 4. Complete and record usage
+        return await self.execute_workflow_synthesis(workflow, final_synthesis=final_text)
