@@ -16,13 +16,29 @@ logger = logging.getLogger(__name__)
 class ApprovalRequest:
     """Represents a pending or resolved system tool execution authorization request."""
 
-    def __init__(self, request_id: str, command: str, tool_name: str) -> None:
+    def __init__(
+        self,
+        request_id: str,
+        command: str,
+        tool_name: str,
+        details: Optional[Dict[str, Any]] = None,
+    ) -> None:
         self.id = request_id
         self.command = command
         self.tool_name = tool_name
+        self.details = details or {}
         self.status = "pending"  # 'pending', 'approved', 'rejected'
         self.event = asyncio.Event()
         self.zenity_process: Optional[Process] = None
+
+    def to_dict(self) -> Dict[str, Any]:
+        return {
+            "id": self.id,
+            "command": self.command,
+            "tool_name": self.tool_name,
+            "status": self.status,
+            "details": self.details,
+        }
 
 
 class ApprovalManager:
@@ -39,10 +55,15 @@ class ApprovalManager:
             cls._instance._pending = {}
         return cls._instance
 
-    def register_request(self, command: str, tool_name: str) -> ApprovalRequest:
+    def register_request(
+        self,
+        command: str,
+        tool_name: str,
+        details: Optional[Dict[str, Any]] = None,
+    ) -> ApprovalRequest:
         """Registers a new approval request."""
         request_id = f"appr-{uuid.uuid4().hex[:8]}"
-        req = ApprovalRequest(request_id, command, tool_name)
+        req = ApprovalRequest(request_id, command, tool_name, details=details)
         self._pending[request_id] = req
         logger.info("Registered approval request %s for tool: %s", request_id, tool_name)
         return req
@@ -54,12 +75,7 @@ class ApprovalManager:
     def list_pending(self) -> Dict[str, Dict[str, Any]]:
         """Lists all pending approval requests."""
         return {
-            req_id: {
-                "id": req.id,
-                "command": req.command,
-                "tool_name": req.tool_name,
-                "status": req.status,
-            }
+            req_id: req.to_dict()
             for req_id, req in self._pending.items()
             if req.status == "pending"
         }

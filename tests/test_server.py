@@ -30,9 +30,53 @@ def test_health_check(client: ASGITestClient) -> None:
 
 def test_list_approvals_endpoint(client: ASGITestClient) -> None:
     """Tests the GET /api/v1/approvals endpoint."""
-    response = client.get("/api/v1/approvals")
-    assert response.status_code == 200
-    assert "approvals" in response.json()
+    from rai.tools.security.hitl import get_approval_manager
+
+    manager = get_approval_manager()
+    req = manager.register_request(
+        command="test-cmd",
+        tool_name="browser.search",
+        details={"query": "test search", "target": "https://example.com"},
+    )
+    try:
+        response = client.get("/api/v1/approvals")
+        assert response.status_code == 200
+        data = response.json()
+        assert "approvals" in data
+        assert req.id in data["approvals"]
+        assert data["approvals"][req.id]["details"] == {
+            "query": "test search",
+            "target": "https://example.com",
+        }
+    finally:
+        manager._pending.pop(req.id, None)
+
+
+def test_get_approval_endpoint(client: ASGITestClient) -> None:
+    """Tests the GET /api/v1/approvals/{approval_id} endpoint."""
+    from rai.tools.security.hitl import get_approval_manager
+
+    manager = get_approval_manager()
+    req = manager.register_request(
+        command="test-cmd",
+        tool_name="file.access",
+        details={"path": "/tmp/secret.txt"},
+    )
+    try:
+        response = client.get(f"/api/v1/approvals/{req.id}")
+        assert response.status_code == 200
+        data = response.json()
+        assert data["id"] == req.id
+        assert data["tool_name"] == "file.access"
+        assert data["details"] == {"path": "/tmp/secret.txt"}
+    finally:
+        manager._pending.pop(req.id, None)
+
+
+def test_get_approval_not_found(client: ASGITestClient) -> None:
+    """Tests GET /api/v1/approvals/{approval_id} with unknown ID returns 404."""
+    response = client.get("/api/v1/approvals/non-existent-id")
+    assert response.status_code == 404
 
 
 def test_resolve_approval_not_found(client: ASGITestClient) -> None:

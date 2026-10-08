@@ -289,6 +289,68 @@ async def test_terminal_approval_broker_interactive_remember(tmp_path: Path) -> 
 
 
 @pytest.mark.asyncio
+async def test_terminal_approval_broker_show_details_then_approve(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    config_file = tmp_path / "config.yaml"
+    save_settings({"schema_version": 1, "agents": {"test": {}}}, str(config_file))
+
+    broker = TerminalApprovalBroker(profile="test", path=config_file)
+    decision = PolicyDecision(
+        producer=TEST_PRODUCER,
+        request_id="req-details-1",
+        outcome=PolicyOutcome.ESCALATE,
+        risk_class=RiskClass.HIGH,
+        policy_version="1.0.0",
+        reason_codes=("PRIVATE_DATA_EGRESS",),
+        actor=TEST_PRODUCER,
+        data_class=DataClass.PRIVATE,
+        target_resource="https://duckduckgo.com",
+        requested_side_effects=("network",),
+        isolation="host-api",
+        verification_plan=("observed",),
+    )
+    req = _make_browser_request(query="detailed query")
+
+    # Interactive: first "s" (show details), then "y" (approve)
+    responses = ["s", "y"]
+    with patch("rai.commands.approval.choose", side_effect=lambda *args, **kwargs: responses.pop(0)):
+        res = await broker.request_action(decision, req, CancellationToken())
+    assert isinstance(res, Success)
+    captured = capsys.readouterr()
+    assert "[Action Details]" in captured.out
+    assert "browser.search" in captured.out
+    assert "detailed query" in captured.out
+    assert "PRIVATE_DATA_EGRESS" in captured.out
+
+
+@pytest.mark.asyncio
+async def test_terminal_approval_broker_request_show_details(capsys: pytest.CaptureFixture[str]) -> None:
+    broker = TerminalApprovalBroker()
+    decision = PolicyDecision(
+        producer=TEST_PRODUCER,
+        request_id="req-details-2",
+        outcome=PolicyOutcome.ASK,
+        risk_class=RiskClass.MODERATE,
+        policy_version="1.0.0",
+        reason_codes=("RISK_GATE",),
+        actor=TEST_PRODUCER,
+        data_class=DataClass.PRIVATE,
+        target_resource="system://volume",
+        requested_side_effects=("hardware",),
+        isolation="host-api",
+        verification_plan=("observed",),
+    )
+
+    responses = ["s", "y"]
+    with patch("rai.commands.approval.choose", side_effect=lambda *args, **kwargs: responses.pop(0)):
+        res = await broker.request(decision, CancellationToken())
+    assert isinstance(res, Success)
+    captured = capsys.readouterr()
+    assert "[Decision Details]" in captured.out
+    assert "system://volume" in captured.out
+    assert "hardware" in captured.out
+
+
+@pytest.mark.asyncio
 async def test_action_service_browser_private_escalation_flow(tmp_path: Path) -> None:
     class MockBackend:
         searches: list[str] = []

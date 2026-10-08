@@ -25,7 +25,41 @@ from rai.diagnostics import trace
 from rai.assistant.records import AssistantContextPackage, make_assistant_failure
 
 
-async def choose(prompt: str, token: CancellationToken) -> str:
+def format_request_details(request: CapabilityRequest, decision: PolicyDecision) -> str:
+    import json  # noqa: PLC0415
+
+    arguments_json = json.dumps(request.arguments, indent=2, ensure_ascii=False)
+    side_effects = ", ".join(decision.requested_side_effects) if decision.requested_side_effects else "none"
+    reasons = ", ".join(decision.reason_codes) if decision.reason_codes else "none"
+    return (
+        f"\n--- [Action Details] ---\n"
+        f"Capability:      {request.capability}\n"
+        f"Target Resource: {request.target_resource}\n"
+        f"Data Class:      {request.data_class}\n"
+        f"Risk Class:      {decision.risk_class}\n"
+        f"Side Effects:    {side_effects}\n"
+        f"Policy Reasons:  {reasons}\n"
+        f"Arguments:\n{arguments_json}\n"
+        f"------------------------\n"
+    )
+
+
+def format_decision_details(decision: PolicyDecision) -> str:
+    side_effects = ", ".join(decision.requested_side_effects) if decision.requested_side_effects else "none"
+    reasons = ", ".join(decision.reason_codes) if decision.reason_codes else "none"
+    return (
+        f"\n--- [Decision Details] ---\n"
+        f"Target Resource: {decision.target_resource}\n"
+        f"Data Class:      {decision.data_class}\n"
+        f"Risk Class:      {decision.risk_class}\n"
+        f"Side Effects:    {side_effects}\n"
+        f"Policy Reasons:  {reasons}\n"
+        f"Request ID:      {decision.request_id}\n"
+        f"--------------------------\n"
+    )
+
+
+async def choose(prompt: str, token: CancellationToken, timeout: float | None = None) -> str:
     """No approval on redirected stdin; cancellation cancels and reaps the prompt."""
     if token.cancelled or not sys.stdin.isatty():
         return ""
@@ -36,7 +70,7 @@ async def choose(prompt: str, token: CancellationToken) -> str:
     cancelled = asyncio.create_task(token.wait())
     try:
         done, _ = await asyncio.wait(
-            (task, cancelled), timeout=60, return_when=asyncio.FIRST_COMPLETED
+            (task, cancelled), timeout=timeout, return_when=asyncio.FIRST_COMPLETED
         )
         return task.result().strip().lower() if task in done and not token.cancelled else ""
     except (EOFError, KeyboardInterrupt):
@@ -60,30 +94,44 @@ class TerminalApprovalBroker:
     async def request_action(
         self, decision: PolicyDecision, request: CapabilityRequest, cancellation: CancellationToken,
     ) -> Result[str, ActionFailure]:
-        if request.capability not in BROWSER_ACTIONS:
-            return await self.request(decision, cancellation)
         if cancellation.cancelled:
             return Failure(HitlApprovalBroker._failure(decision, "CANCELLED", "Approval cancelled"))
         rule = matching_rule(self.profile, request, self.path) if self.profile else None
         if rule and rule.decision != "ask":
             trace("approval.rule", request_id=request.record_id, rule_id=rule.id, outcome=rule.decision)
-            typer.echo(f"Approval rule {rule.id}: {rule.decision} ({self.profile})", err=True)
+            typer.echo(f"Approval rule {rule.id}: {rule.decision} ({self.profile})")
             if rule.decision == "allow":
                 return Success(f"rule:{self.profile}:{rule.id}")
             return Failure(HitlApprovalBroker._failure(decision, "DENIED", "Profile rule denied action"))
-        typer.echo(review_text(request), err=True)
+
+        if request.capability in BROWSER_ACTIONS:
+            typer.echo(review_text(request))
+        else:
+            effects_text = ", ".join(decision.requested_side_effects) or "none"
+            typer.echo(
+                f"Action: {request.capability}\nTarget: {decision.target_resource}\nEffects: {effects_text}"
+            )
+
         remember = bool(self.profile and request.capability == "browser.search")
-        prompt = ("Approve? [y=once / N=deny / a=remember exact query / d=remember denial] "
-                  if remember else "Approve this outbound request? [y/N] ")
-        answer = await choose(prompt, cancellation)
-        if cancellation.cancelled:
-            answer = ""
+        prompt = ("Approve? [y=once / N=deny / a=remember exact query / d=remember denial / s=show details] "
+                  if remember else "Approve this action? [y=once / N=deny / s=show details] ")
+
+        while True:
+            answer = await choose(prompt, cancellation)
+            if cancellation.cancelled:
+                answer = ""
+                break
+            if answer in {"s", "show", "details"}:
+                typer.echo(format_request_details(request, decision))
+                continue
+            break
+
         if remember and answer in {"a", "d"}:
             data_class_name = request.data_class.value if hasattr(request.data_class, "value") else str(request.data_class)
             rule = ApprovalRule(id="search-" + _new_id(), data_class=data_class_name,
                                 decision="allow" if answer == "a" else "deny", query=request.arguments["query"])
             update_rule(self.profile, rule.id, rule, self.path)
-            typer.echo(f"Saved rule: {rule.id} (profile: {self.profile})", err=True)
+            typer.echo(f"Saved rule: {rule.id} (profile: {self.profile})")
         if answer in {"y", "yes"} or (remember and answer == "a"):
             return Success(f"rule:{self.profile}:{rule.id}" if remember and answer == "a" else _new_id())
         return Failure(HitlApprovalBroker._failure(decision, "DENIED", "Approval denied or unavailable"))
@@ -91,11 +139,22 @@ class TerminalApprovalBroker:
     async def request(
         self, decision: PolicyDecision, cancellation: CancellationToken
     ) -> Result[str, ActionFailure]:
+        effects_text = ", ".join(decision.requested_side_effects) or "none"
         typer.echo(
-            f"Target: {decision.target_resource}\nEffects: {', '.join(decision.requested_side_effects)}",
-            err=True,
+            f"Target: {decision.target_resource}\nEffects: {effects_text}"
         )
-        if await confirm("Approve this action?", cancellation):
+        prompt = "Approve this action? [y=once / N=deny / s=show details] "
+        while True:
+            answer = await choose(prompt, cancellation)
+            if cancellation.cancelled:
+                answer = ""
+                break
+            if answer in {"s", "show", "details"}:
+                typer.echo(format_decision_details(decision))
+                continue
+            break
+
+        if answer in {"y", "yes"}:
             return Success(_new_id())
         return Failure(
             HitlApprovalBroker._failure(

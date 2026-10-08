@@ -27,6 +27,9 @@ from .records import (
 CapabilityHandler = Callable[[dict[str, Any]], dict[str, Any] | Awaitable[dict[str, Any]]]
 
 
+DEFAULT_ACTION_TIMEOUT = 30.0
+
+
 class CapabilityDescriptor(BaseModel):
     """Transport-neutral metadata and validation contract for one capability."""
 
@@ -40,6 +43,7 @@ class CapabilityDescriptor(BaseModel):
     isolation: str = Field(min_length=1)
     requires_isolation: bool = False
     verification_plan: tuple[str, ...] = Field(min_length=1)
+    timeout_seconds: float | None = Field(default=None, gt=0)
 
     @field_validator("input_schema")
     @classmethod

@@ -221,4 +221,5 @@ def register_browser_capabilities(registry: CapabilityRegistry, handles: SQLiteH
                           "required": list(fields), "additionalProperties": False},
             risk_class=RiskClass.MODERATE, side_effects=("network", "browser") if name == "browser.open_result" else ("network",),
             isolation="host-api", verification_plan=("browser-url-identity",),
+            timeout_seconds=60.0,
         ), implementation=BrowserCapability(name, handles, backend)))
