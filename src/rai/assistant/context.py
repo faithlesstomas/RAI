@@ -764,10 +764,11 @@ class AssistantContextBuilder:
         }
 
         serialized = json.dumps(content, ensure_ascii=False)
-        while len(serialized) > self.max_context_characters and recent_content:
-            removed = recent_content.pop(0)
-            removed_id = str(removed["record_id"])
-            recent_ids.remove(removed_id)
+        while len(serialized) > self.max_context_characters and external_content:
+            removed = external_content.pop()
+            removed_id = str(removed["source_id"])
+            external_ids.remove(removed_id)
+            ranking_reasons.pop(removed_id, None)
             items = [item for item in items if item.source_id != removed_id]
             exclusions.append(f"{removed_id}:character_budget")
             serialized = json.dumps(content, ensure_ascii=False)
@@ -779,13 +780,12 @@ class AssistantContextBuilder:
             items = [item for item in items if item.source_id != removed_id]
             exclusions.append(f"{removed_id}:character_budget")
             serialized = json.dumps(content, ensure_ascii=False)
-        while len(serialized) > self.max_context_characters and external_content:
-            removed = external_content.pop()
-            removed_id = str(removed["source_id"])
-            external_ids.remove(removed_id)
-            ranking_reasons.pop(removed_id, None)
-            items = [item for item in items if item.source_id != removed_id]
-            exclusions.append(f"{removed_id}:character_budget")
+        while len(serialized) > self.max_context_characters and tool_observations:
+            removed_obs = tool_observations.pop(0)
+            tool_observation_ids.remove(removed_obs.source_id)
+            items = [item for item in items if item.source_id != removed_obs.source_id]
+            exclusions.append(f"{removed_obs.source_id}:character_budget")
+            content["tool_observations"] = [obs.model_dump(mode="json") for obs in tool_observations]
             serialized = json.dumps(content, ensure_ascii=False)
         while len(serialized) > self.max_context_characters and durable_content:
             removed = durable_content.pop()
@@ -795,12 +795,12 @@ class AssistantContextBuilder:
             items = [item for item in items if item.source_id != removed_id]
             exclusions.append(f"{removed_id}:character_budget")
             serialized = json.dumps(content, ensure_ascii=False)
-        while len(serialized) > self.max_context_characters and tool_observations:
-            removed_obs = tool_observations.pop(0)
-            tool_observation_ids.remove(removed_obs.source_id)
-            items = [item for item in items if item.source_id != removed_obs.source_id]
-            exclusions.append(f"{removed_obs.source_id}:character_budget")
-            content["tool_observations"] = [obs.model_dump(mode="json") for obs in tool_observations]
+        while len(serialized) > self.max_context_characters and recent_content:
+            removed = recent_content.pop(0)
+            removed_id = str(removed["record_id"])
+            recent_ids.remove(removed_id)
+            items = [item for item in items if item.source_id != removed_id]
+            exclusions.append(f"{removed_id}:character_budget")
             serialized = json.dumps(content, ensure_ascii=False)
         if len(serialized) > self.max_context_characters:
             return Failure(

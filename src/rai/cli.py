@@ -49,7 +49,13 @@ def main(
     config: Optional[Path] = typer.Option(
         None, "--config", help="Select one YAML or JSON settings file."
     ),
-    trace: bool = typer.Option(False, "--trace", help="Log runtime stages and action outcomes to stderr (no content)."),
+    trace: int = typer.Option(
+        0,
+        "--trace",
+        "-t",
+        count=True,
+        help="Log runtime stages (-t: metadata only; -tt: full payloads, prompts, and token counts).",
+    ),
     version: bool = typer.Option(
         False, "--version", callback=version_callback, is_eager=True
     ),

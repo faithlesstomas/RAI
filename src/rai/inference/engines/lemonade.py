@@ -15,14 +15,16 @@ from typing import Any, Dict, List, Optional
 import httpx
 from returns.result import Failure, Result, Success
 
-from ..cot_utils import extract_reasoning_and_content
-from ..protocols import GenerationStats, InferenceResult, LocalTextEngine
+from rai.diagnostics import trace, trace_payload
+from rai.inference.cot_utils import extract_reasoning_and_content
+from rai.inference.protocols import GenerationStats, InferenceResult, LocalTextEngine
 
 logger = logging.getLogger(__name__)
 
 DEFAULT_LEMONADE_HOST = "http://127.0.0.1:13305"
 DEFAULT_LEMONADE_URL = f"{DEFAULT_LEMONADE_HOST}/api/v1"
 DEFAULT_LEMONADE_TIMEOUT = 300.0
+_HTTP_OK: int = 200
 
 
 async def resolve_lemonade_model(
@@ -153,7 +155,7 @@ class LemonadeEngine(LocalTextEngine):
             version_source = f"{self._model_name}:{self.host}"
             try:
                 models_resp = await client.get("/api/v1/models?show_all=true")
-                if models_resp.status_code == 200:
+                if models_resp.status_code == _HTTP_OK:
                     models_data = models_resp.json().get("data", [])
                     for m in models_data:
                         if m.get("id") == self._model_name or m.get("checkpoint") == self._model_name:
@@ -249,9 +251,16 @@ class LemonadeEngine(LocalTextEngine):
             if stop:
                 chat_payload["stop"] = stop
 
+            trace_payload(
+                "lemonade.chat.request",
+                chat_payload,
+                model=self._model_name,
+                messages_count=len(chat_messages),
+            )
             response = await client.post("/api/v1/chat/completions", json=chat_payload)
-            if response.status_code == 200:
+            if response.status_code == _HTTP_OK:
                 data = response.json()
+                trace_payload("lemonade.chat.response", data, model=self._model_name)
                 choices = data.get("choices", [])
                 first_choice = choices[0] if choices else {}
                 msg = first_choice.get("message", {})
@@ -259,6 +268,11 @@ class LemonadeEngine(LocalTextEngine):
                 explicit_reasoning = msg.get("reasoning_content")
                 finish_reason = first_choice.get("finish_reason", "stop")
             else:
+                trace_payload(
+                    "lemonade.chat.error",
+                    {"status_code": response.status_code, "body": response.text},
+                    model=self._model_name,
+                )
                 # Fallback to plain text completions endpoint
                 payload: dict[str, Any] = {
                     "model": self._model_name,
@@ -268,14 +282,21 @@ class LemonadeEngine(LocalTextEngine):
                 }
                 if stop:
                     payload["stop"] = stop
+                trace_payload("lemonade.completions.request", payload, model=self._model_name)
                 response = await client.post("/api/v1/completions", json=payload)
-                if response.status_code != 200:
+                if response.status_code != _HTTP_OK:
+                    trace_payload(
+                        "lemonade.completions.error",
+                        {"status_code": response.status_code, "body": response.text},
+                        model=self._model_name,
+                    )
                     return Failure(
                         RuntimeError(
                             f"Lemonade completion error {response.status_code}: {response.text}"
                         )
                     )
                 data = response.json()
+                trace_payload("lemonade.completions.response", data, model=self._model_name)
                 choices = data.get("choices", [])
                 first_choice = choices[0] if choices else {}
                 raw_text = first_choice.get("text", "")
@@ -298,6 +319,14 @@ class LemonadeEngine(LocalTextEngine):
             completion_tokens = usage.get("completion_tokens", len(clean_text.split()))
             tps = completion_tokens / duration if duration > 0 else 0.0
 
+            trace(
+                "lemonade.generation.stats",
+                model=self._model_name,
+                tokens_in=prompt_tokens,
+                tokens_out=completion_tokens,
+                duration_sec=round(duration, 3),
+                tps=round(tps, 1),
+            )
             stats = GenerationStats(
                 input_tokens=prompt_tokens,
                 output_tokens=completion_tokens,
@@ -359,7 +388,7 @@ class LemonadeEngine(LocalTextEngine):
                 payload["stop"] = stop
 
             response = await client.post("/api/v1/chat/completions", json=payload)
-            if response.status_code != 200:
+            if response.status_code != _HTTP_OK:
                 return Failure(
                     RuntimeError(
                         f"Lemonade multimodal completion error {response.status_code}: {response.text}"
@@ -431,7 +460,7 @@ class LemonadeEngine(LocalTextEngine):
                 "response_format": "b64_json",
             }
             resp = await client.post("/v1/images/generations", json=payload)
-            if resp.status_code != 200:
+            if resp.status_code != _HTTP_OK:
                 return Failure(
                     RuntimeError(f"Lemonade image generation error {resp.status_code}: {resp.text}")
                 )

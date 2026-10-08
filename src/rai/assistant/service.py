@@ -10,7 +10,7 @@ import json
 import time
 from typing import TYPE_CHECKING, Any, AsyncIterator
 
-from rai.diagnostics import trace
+from rai.diagnostics import trace, trace_payload
 
 from returns.result import Failure, Result, Success
 
@@ -71,6 +71,7 @@ _AUTO_ADMISSION_CONFIDENCE = 0.75
 _MEMORY_ABSTENTION_TEXT = (
     "Nie mam wystarczających, dopuszczonych dowodów w pamięci, aby odpowiedzieć."
 )
+_MAX_SYNTHESIS_TOOL_OBSERVATIONS: int = 3
 
 
 def _data_class_value(value: DataClass | str) -> str:
@@ -867,9 +868,28 @@ class AssistantService:
                 )
             context_package = approved.unwrap()
         manifest = context_package.manifest
+        total_ctx_chars = len(json.dumps(context_package.content, ensure_ascii=False))
         trace("assistant.context.end", turn_id=turn.record_id,
               external_evidence=len(context_package.content.get("external_evidence", ())),
-              routing=manifest.routing_decision)
+              routing=manifest.routing_decision,
+              total_characters=total_ctx_chars,
+              estimated_tokens=int(total_ctx_chars / 3.5))
+        trace_payload(
+            "assistant.context.package",
+            {
+                "manifest": manifest.model_dump(mode="json"),
+                "summary": {
+                    "total_characters": total_ctx_chars,
+                    "estimated_tokens": int(total_ctx_chars / 3.5),
+                    "recent_turns_count": len(context_package.content.get("recent_turns", ())),
+                    "external_evidence_count": len(context_package.content.get("external_evidence", ())),
+                    "tool_observations_count": len(context_package.content.get("tool_observations", ())),
+                    "durable_memories_count": len(context_package.content.get("durable_memories", ())),
+                },
+                "content": context_package.content,
+            },
+            turn_id=turn.record_id,
+        )
 
         inference_req = InferenceRequest(
             record_id=_new_id(),
@@ -931,8 +951,24 @@ class AssistantService:
             )
             existing_obs = list(context_package.content.get("tool_observations", []))
             existing_obs.append(obs.model_dump(mode="json"))
+            if len(existing_obs) > _MAX_SYNTHESIS_TOOL_OBSERVATIONS:
+                existing_obs = existing_obs[-_MAX_SYNTHESIS_TOOL_OBSERVATIONS:]
             updated_content = dict(context_package.content)
             updated_content["tool_observations"] = existing_obs
+
+            max_chars = getattr(self.context_builder, "max_context_characters", 8_000)
+            synth_serialized = json.dumps(updated_content, ensure_ascii=False)
+            if len(synth_serialized) > max_chars:
+                synth_ext = list(updated_content.get("external_evidence", []))
+                while len(synth_serialized) > max_chars and synth_ext:
+                    synth_ext.pop()
+                    updated_content["external_evidence"] = synth_ext
+                    synth_serialized = json.dumps(updated_content, ensure_ascii=False)
+                while len(synth_serialized) > max_chars and len(existing_obs) > 1:
+                    existing_obs.pop(0)
+                    updated_content["tool_observations"] = existing_obs
+                    synth_serialized = json.dumps(updated_content, ensure_ascii=False)
+
             updated_manifest = manifest.model_copy(
                 update={"tool_observation_ids": (*manifest.tool_observation_ids, obs.source_id)}
             )
@@ -940,6 +976,19 @@ class AssistantService:
                 update={"content": updated_content, "manifest": updated_manifest}
             )
             synth_inference_req = inference_req.model_copy(update={"context": synth_context})
+            synth_total_chars = len(json.dumps(updated_content, ensure_ascii=False))
+            trace(
+                "assistant.model.synthesize_budget",
+                turn_id=turn.record_id,
+                total_characters=synth_total_chars,
+                estimated_tokens=int(synth_total_chars / 3.5),
+            )
+            trace_payload(
+                "assistant.model.synthesize_context",
+                updated_content,
+                turn_id=turn.record_id,
+                capability=str(capability),
+            )
 
             trace("assistant.model.synthesize_tool_start", turn_id=turn.record_id)
             start_time = time.perf_counter()

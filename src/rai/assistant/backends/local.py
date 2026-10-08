@@ -13,6 +13,7 @@ from typing import AsyncIterator
 
 from returns.result import Failure, Result, Success
 
+from rai.diagnostics import trace, trace_payload
 from rai.kernel.ports import CancellationToken, LifecycleState
 from rai.kernel.records import ActionFailure, ProducerIdentity
 
@@ -29,6 +30,8 @@ from ..records import (
     MemoryProposal,
     make_assistant_failure,
 )
+
+_MAX_LIST_ITEMS_IN_CONTENT: int = 3
 
 
 class LocalAssistantBackend:
@@ -161,24 +164,26 @@ class LocalAssistantBackend:
             evidence_lines.append(
                 "Zatwierdzone lokalne źródła zewnętrzne (obserwacje, nie twierdzenia użytkownika):"
             )
-            for item in external_evidence:
+            for item in external_evidence[-5:]:
                 if isinstance(item, dict):
                     source_type = str(item.get("source_type", "local_source"))
                     timestamp = str(item.get("timestamp", "unknown time"))
                     content = item.get("content", {})
-                    evidence_lines.append(f"- [{source_type}; {timestamp}] {content}")
+                    content_str = self._bound_content_repr(content, max_len=1000)
+                    evidence_lines.append(f"- [{source_type}; {timestamp}] {content_str}")
 
         tool_observations = request.context.content.get("tool_observations", [])
         if isinstance(tool_observations, (list, tuple)) and tool_observations:
             evidence_lines.append(
                 "Wyniki wykonanych narzędzi i akcji w systemie (obserwacje z bieżącej sesji):"
             )
-            for item in tool_observations:
+            for item in tool_observations[-3:]:
                 if isinstance(item, dict):
                     capability = str(item.get("capability", "tool"))
                     summary = str(item.get("summary", ""))
                     content_val = item.get("content", {})
-                    evidence_lines.append(f"- [{capability}] {summary}: {json.dumps(content_val, ensure_ascii=False)}")
+                    content_str = self._bound_content_repr(content_val, max_len=2000)
+                    evidence_lines.append(f"- [{capability}] {summary}: {content_str}")
 
         system_parts = [
             system_text,
@@ -256,6 +261,30 @@ class LocalAssistantBackend:
         return "\n".join(rendered)
 
     @staticmethod
+    def _bound_content_repr(content: object, max_len: int = 2000) -> str:
+        """Serialize and bound content to avoid context window explosion."""
+        if isinstance(content, dict):
+            bounded_dict = {}
+            for k, v in content.items():
+                if isinstance(v, (list, tuple)) and len(v) > _MAX_LIST_ITEMS_IN_CONTENT:
+                    bounded_dict[k] = list(v[:_MAX_LIST_ITEMS_IN_CONTENT]) + [
+                        f"... (+{len(v) - _MAX_LIST_ITEMS_IN_CONTENT} more items truncated)"
+                    ]
+                else:
+                    bounded_dict[k] = v
+            dumped = json.dumps(bounded_dict, ensure_ascii=False)
+        elif isinstance(content, str):
+            dumped = content
+        else:
+            try:
+                dumped = json.dumps(content, ensure_ascii=False)
+            except Exception:  # noqa: BLE001
+                dumped = str(content)
+        if len(dumped) > max_len:
+            dumped = dumped[:max_len] + f"... [truncated {len(dumped) - max_len} chars]"
+        return dumped
+
+    @staticmethod
     def _format_memory(memory: dict[object, object]) -> str:
         """Render structured memory as a natural-language evidence statement."""
         topic = str(memory.get("topic", "memory"))
@@ -325,6 +354,23 @@ class LocalAssistantBackend:
 
         messages = self._format_messages(request)
         prompt = self._format_prompt(request)
+        prompt_chars = len(prompt)
+        estimated_prompt_tokens = int(prompt_chars / 3.5)
+        trace(
+            "assistant.inference.budget",
+            turn_id=request.turn_id,
+            model=self.model_name,
+            backend=self.backend_name,
+            prompt_chars=prompt_chars,
+            estimated_tokens=estimated_prompt_tokens,
+            messages_count=len(messages),
+        )
+        trace_payload(
+            "assistant.inference.messages",
+            {"messages": messages, "prompt": prompt},
+            turn_id=request.turn_id,
+            model=self.model_name,
+        )
         current_turn = request.context.content.get("current_turn", {})
         user_text = (
             str(current_turn.get("text", "")) if isinstance(current_turn, dict) else ""
@@ -432,6 +478,28 @@ class LocalAssistantBackend:
         proposals = self._extract_proposals(user_text, request.turn_id)
         grounded_text, grounding_override = self._ground_memory_response(
             user_text, grounding_memories, proposals, response_text
+        )
+        trace_payload(
+            "assistant.inference.response",
+            {
+                "response_text": response_text,
+                "reasoning_content": getattr(result_obj, "reasoning_content", None),
+                "grounded_text": grounded_text,
+                "grounding_override": grounding_override,
+                "repetition_truncated": repetition_truncated,
+                "tokens_in": (
+                    result_obj.stats.input_tokens
+                    if result_obj.stats
+                    else len(prompt.split())
+                ),
+                "tokens_out": (
+                    result_obj.stats.output_tokens
+                    if result_obj.stats
+                    else len(response_text.split())
+                ),
+            },
+            turn_id=request.turn_id,
+            model=self.model_name,
         )
         candidate = AssistantCandidate(
             text=grounded_text,
