@@ -329,6 +329,9 @@ def _run_assistant_chat(  # noqa: PLR0913, PLR0915
                         "/remember TEXT explicitly save a fact\n"
                         "/forget TEXT remove matching memory; use 'all' for everything\n"
                         "/session   current profile and session ID\n"
+                        "/repl      view active variables in persistent REPL\n"
+                        "/repl reset clear REPL session state\n"
+                        "/export [file.ipynb] export conversation as Jupyter Notebook\n"
                         "/exit      leave the chat"
                     )
                     continue
@@ -419,6 +422,46 @@ def _run_assistant_chat(  # noqa: PLR0913, PLR0915
                     continue
                 if stripped == "/session":
                     click.echo(f"Profile: {service.profile_scope} | Session ID: {sid}")
+                    continue
+                if stripped == "/repl":
+                    from rai.tools.security.monty import get_monty_runner  # noqa: PLC0415
+
+                    saved_res = await service.store.get_repl_session(sid)
+                    if isinstance(saved_res, Success) and saved_res.unwrap():
+                        blob, vars_dict = saved_res.unwrap()
+                        if not vars_dict and blob:
+                            runner = get_monty_runner()
+                            inspected = runner.inspect_state(blob)
+                            if isinstance(inspected, Success):
+                                vars_dict = inspected.unwrap()
+                        if vars_dict:
+                            click.echo("Active REPL variables:")
+                            for k, v in sorted(vars_dict.items()):
+                                click.secho(f"  {k}: {v}", fg="cyan")
+                        else:
+                            click.echo("REPL session has no active variables.")
+                    else:
+                        click.echo("REPL session has no active variables.")
+                    continue
+                if stripped == "/repl reset":
+                    await service.store.clear_repl_session(sid)
+                    click.secho("REPL session reset.", fg="green")
+                    continue
+                if stripped.startswith("/export"):
+                    parts = stripped.split(maxsplit=1)
+                    target_file = parts[1] if len(parts) > 1 else f"session_{sid}.ipynb"
+                    if not target_file.endswith(".ipynb"):
+                        target_file += ".ipynb"
+                    from pathlib import Path  # noqa: PLC0415
+                    from rai.assistant.notebook import export_turns_to_notebook  # noqa: PLC0415
+
+                    turns_res = await service.get_recent_turns(sid, limit=200)
+                    if isinstance(turns_res, Success):
+                        nb = export_turns_to_notebook(sid, list(turns_res.unwrap()), service.profile_scope)
+                        Path(target_file).write_text(json.dumps(nb, indent=2), encoding="utf-8")
+                        click.secho(f"Session exported to {target_file}", fg="green")
+                    else:
+                        click.echo("Failed to fetch session history for export.", err=True)
                     continue
                 if not stripped:
                     continue

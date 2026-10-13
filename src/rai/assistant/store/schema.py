@@ -140,6 +140,16 @@ class SchemaStoreMixin:
             )
             conn.execute(
                 """
+                CREATE TABLE IF NOT EXISTS assistant_repl_sessions (
+                    session_id TEXT PRIMARY KEY,
+                    updated_at TEXT NOT NULL,
+                    snapshot_blob BLOB NOT NULL,
+                    variables_json TEXT NOT NULL
+                );
+                """
+            )
+            conn.execute(
+                """
                 CREATE TABLE IF NOT EXISTS relations (
                     relation_id TEXT PRIMARY KEY,
                     source_id TEXT NOT NULL REFERENCES nodes(node_id) ON DELETE CASCADE,

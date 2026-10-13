@@ -1,5 +1,6 @@
 """Public Typer contracts replacing removed compatibility CLI tests."""
 
+from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -319,3 +320,70 @@ def test_dialog_preserves_classification_for_remote_backend(
                     )
     turn = mock_service.accept_turn.call_args[0][0]
     assert turn.data_class == data_class
+
+
+def test_notebook_command_dispatch() -> None:
+    with patch("rai.commands.assistant._run_assistant_notebook") as mock_run:
+        result = CliRunner().invoke(
+            cli,
+            [
+                "assistant",
+                "notebook",
+                "--session-id",
+                "sess-123",
+                "--data-class",
+                "PUBLIC",
+            ],
+        )
+    assert result.exit_code == 0, result.output
+    assert mock_run.call_args.args[0] == "sess-123"
+    assert mock_run.call_args.kwargs["data_class"] == DataClass.PUBLIC
+
+
+def test_notebook_interactive_loop(tmp_path: Path) -> None:
+    from rai.commands.notebook import _run_assistant_notebook
+
+    mock_container = MagicMock()
+    mock_service = MagicMock()
+    mock_service.profile_scope = "default"
+    mock_candidate = MagicMock(
+        text="Assistant reply",
+        reasoning_content=None,
+        turn_id="turn-ai-1",
+    )
+    mock_service.accept_turn = AsyncMock(return_value=Success(mock_candidate))
+    mock_service.start = AsyncMock(return_value=Success(None))
+    mock_service.get_recent_turns = AsyncMock(return_value=Success(()))
+    mock_service.store.get_repl_session = AsyncMock(return_value=Success(None))
+    mock_service.store.save_repl_session = AsyncMock(return_value=Success(None))
+    mock_service.store.accept_turn = AsyncMock(return_value=Success(None))
+    mock_service.store.clear_repl_session = AsyncMock(return_value=Success(None))
+    mock_container.assistant_service = mock_service
+    mock_container.close = AsyncMock()
+
+    export_file = tmp_path / "test_out.ipynb"
+
+    with patch("rai.commands.notebook.ApplicationContainer", return_value=mock_container):
+        with patch("rai.commands.approval.configure_approvals"):
+            with patch(
+                "rai.commands.notebook.click.prompt",
+                side_effect=[
+                    "x = 10",
+                    "? Jak się masz?",
+                    "/repl",
+                    f"/export {export_file}",
+                    "/repl reset",
+                    "/exit",
+                ],
+            ):
+                _run_assistant_notebook(
+                    session_id="test-nb-session",
+                    backend="deterministic",
+                    model=None,
+                )
+
+    assert mock_service.accept_turn.called
+    assert mock_service.store.save_repl_session.called
+    assert mock_service.store.clear_repl_session.called
+    assert export_file.exists()
+

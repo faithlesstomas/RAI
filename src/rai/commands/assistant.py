@@ -17,6 +17,7 @@ from .memory import (
     _run_assistant_read,
 )
 from .dialog import _run_assistant_ask, _run_assistant_chat
+from .notebook import _run_assistant_notebook
 from .benchmarks import (
     _run_assistant_benchmark,
     _run_assistant_dialog_benchmark,
@@ -255,6 +256,81 @@ def chat_command(  # noqa: PLR0913
         max_iterations=max_iterations,
         max_full_observations=max_full_observations,
         max_context_characters=max_context_characters,
+    )
+
+
+@assistant.command(name="notebook")
+def notebook_command(  # noqa: PLR0913
+    session_id: str | None = typer.Option(
+        None, "--session-id", help="Session ID for the conversation turn."
+    ),
+    backend: str = typer.Option(
+        "auto",
+        "--backend",
+        autocompletion=completion.backends,
+        show_default=True,
+        help="Local inference backend. Deterministic is only for conformance tests.",
+    ),
+    model: str | None = typer.Option(
+        None,
+        "--model",
+        autocompletion=completion.models,
+        help="GGUF path or local Ollama/Lemonade model name.",
+    ),
+    profile: str | None = typer.Option(
+        None,
+        "--profile",
+        autocompletion=completion.profiles,
+        help="Assistant profile and memory scope.",
+    ),
+    system: str | None = typer.Option(
+        None, "--system", help="Override the profile system instruction."
+    ),
+    thinking: bool | None = typer.Option(
+        None,
+        "--thinking/--no-thinking",
+        help="Enable or disable model chain-of-thought thinking.",
+    ),
+    show_thinking: bool = typer.Option(
+        False, "--show-thinking", help="Print model reasoning content in the output."
+    ),
+    thinking_budget: int | None = typer.Option(
+        None,
+        "--thinking-budget",
+        min=0,
+        help="Token budget for model thinking (llama.cpp engine).",
+    ),
+    max_output_tokens: int | None = typer.Option(
+        None,
+        "--max-output-tokens",
+        min=1,
+        help="Maximum generated token limit for model responses.",
+    ),
+    context_window: int | None = typer.Option(
+        None,
+        "--context-window",
+        min=1,
+        help="Context window size in tokens.",
+    ),
+    data_class: DataClass = typer.Option(
+        DataClass.LOCAL,
+        "--data-class",
+        help="Classification of new turns; does not reclassify stored context.",
+    ),
+) -> None:
+    """Start an interactive notebook session with persistent Python REPL and assistant."""
+    _run_assistant_notebook(
+        session_id,
+        backend,
+        model,
+        profile,
+        system,
+        thinking=thinking,
+        show_thinking=show_thinking,
+        thinking_budget=thinking_budget,
+        max_output_tokens=max_output_tokens,
+        context_window=context_window,
+        data_class=data_class,
     )
 
 

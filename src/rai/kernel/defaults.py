@@ -83,7 +83,10 @@ async def _shell(arguments: dict[str, Any]) -> dict[str, Any]:
 
 async def _python(arguments: dict[str, Any]) -> dict[str, Any]:
     output = await run_secure_python_code(
-        arguments["code"], allow_network=arguments.get("allow_network", False)
+        arguments["code"],
+        allow_network=arguments.get("allow_network", False),
+        session_id=arguments.get("session_id"),
+        force_os_sandbox=arguments.get("force_os_sandbox", False),
     )
     if output.startswith(("Execution Error", "Execution Failure")):
         raise RuntimeError(output)
@@ -308,9 +311,14 @@ def create_default_capability_registry() -> CapabilityRegistry:
         (
             _descriptor(
                 "run_python_code",
-                "Execute Python code inside an isolated Linux workspace.",
+                "Execute Python code with persistent session memory. Pure computation and algorithms execute seamlessly via safe nano-sandbox (Monty REPL), while system and OS commands escalate to isolated container with HITL.",
                 _object_schema(
-                    {"code": {"type": "string"}, "allow_network": {"type": "boolean"}},
+                    {
+                        "code": {"type": "string"},
+                        "allow_network": {"type": "boolean"},
+                        "session_id": {"type": "string"},
+                        "force_os_sandbox": {"type": "boolean"},
+                    },
                     ("code",),
                 ),
                 RiskClass.HIGH,
@@ -388,7 +396,7 @@ def create_default_capability_registry() -> CapabilityRegistry:
         (
             _descriptor(
                 "calculate",
-                "Evaluate a bounded mathematical expression.",
+                "Evaluate a bounded mathematical expression (for complex calculations or persistent state, prefer run_python_code).",
                 _object_schema({"expression": {"type": "string"}}, ("expression",)),
                 RiskClass.LOW,
                 (),

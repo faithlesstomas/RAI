@@ -541,3 +541,48 @@ async def test_exactly_once_idempotency_for_responses(
     assert isinstance(fetch, Success)
     assert fetch.unwrap() is not None
     assert fetch.unwrap().text == "Answer 1"
+
+
+@pytest.mark.asyncio
+async def test_repl_session_persistence(store: SQLiteMemoryGraphStore) -> None:
+    await store.start()
+    session_id = "sess-test-repl-123"
+    dummy_blob = b"MONTY_SNAPSHOT_BYTES"
+    variables = {"x": "int", "total": "float"}
+
+    # Initially empty
+    empty_res = await store.get_repl_session(session_id)
+    assert isinstance(empty_res, Success)
+    assert empty_res.unwrap() is None
+
+    # Save REPL session
+    save_res = await store.save_repl_session(session_id, dummy_blob, variables)
+    assert isinstance(save_res, Success)
+
+    # Retrieve saved session
+    fetch_res = await store.get_repl_session(session_id)
+    assert isinstance(fetch_res, Success)
+    assert fetch_res.unwrap() is not None
+    ret_blob, ret_vars = fetch_res.unwrap()
+    assert ret_blob == dummy_blob
+    assert ret_vars == variables
+
+    # Overwrite / update session
+    new_blob = b"MONTY_SNAPSHOT_UPDATED"
+    new_vars = {"x": "int", "total": "float", "avg": "function"}
+    update_res = await store.save_repl_session(session_id, new_blob, new_vars)
+    assert isinstance(update_res, Success)
+
+    fetch_res2 = await store.get_repl_session(session_id)
+    assert isinstance(fetch_res2, Success)
+    assert fetch_res2.unwrap() is not None
+    assert fetch_res2.unwrap()[0] == new_blob
+    assert fetch_res2.unwrap()[1]["avg"] == "function"
+
+    # Clear session
+    clear_res = await store.clear_repl_session(session_id)
+    assert isinstance(clear_res, Success)
+
+    fetch_res3 = await store.get_repl_session(session_id)
+    assert isinstance(fetch_res3, Success)
+    assert fetch_res3.unwrap() is None

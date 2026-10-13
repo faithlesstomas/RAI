@@ -81,7 +81,7 @@ async def test_run_secure_shell_command_hitl_denied() -> None:
 
 @pytest.mark.asyncio
 async def test_run_secure_python_code_success() -> None:
-    """Test that simple python code executes successfully."""
+    """Test that python code executed via OS sandbox uses bubblewrap."""
     mock_result = SandboxResult(returncode=0, stdout="4\n", stderr="", sandbox_type="bubblewrap")
     
     with patch("rai.tools.python.get_sandbox_runner") as mock_get_runner:
@@ -89,13 +89,23 @@ async def test_run_secure_python_code_success() -> None:
         mock_runner.run.return_value = mock_result
         mock_get_runner.return_value = mock_runner
         
-        output = await run_secure_python_code("print(2+2)")
+        output = await run_secure_python_code("print(2+2)", force_os_sandbox=True)
         
         assert "4" in output
         mock_runner.run.assert_called_once()
         # The script is run via python3 from /output/script.py
         cmd_args = mock_runner.run.call_args[0][0]
         assert cmd_args == ["python3", "/output/script.py"]
+
+
+@pytest.mark.asyncio
+async def test_run_secure_python_code_monty_fast_path() -> None:
+    """Test that pure python code executes automatically via Tier-1 Monty without HITL."""
+    output = await run_secure_python_code("x = 10; y = 20; x + y")
+    assert "30" in output
+    assert "[Active REPL session state:" in output
+    assert "x (int)" in output
+    assert "y (int)" in output
 
 
 @pytest.mark.asyncio
