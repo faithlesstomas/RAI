@@ -347,7 +347,7 @@ def test_notebook_interactive_loop(tmp_path: Path) -> None:
     mock_service = MagicMock()
     mock_service.profile_scope = "default"
     mock_candidate = MagicMock(
-        text="Assistant reply",
+        text="Oto funkcja:\n```python\na = 123\n```",
         reasoning_content=None,
         turn_id="turn-ai-1",
     )
@@ -369,7 +369,9 @@ def test_notebook_interactive_loop(tmp_path: Path) -> None:
                 "rai.commands.notebook.click.prompt",
                 side_effect=[
                     "x = 10",
-                    "? Jak się masz?",
+                    "? Napisz kod przypisujący a = 123",
+                    "/session",
+                    "/invalid_cmd",
                     "/repl",
                     f"/export {export_file}",
                     "/repl reset",
@@ -386,4 +388,5 @@ def test_notebook_interactive_loop(tmp_path: Path) -> None:
     assert mock_service.store.save_repl_session.called
     assert mock_service.store.clear_repl_session.called
     assert export_file.exists()
+
 

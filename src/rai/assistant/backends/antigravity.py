@@ -120,6 +120,7 @@ class AntigravityAssistantModelBackend:
                 "external_evidence",
                 "durable_memories",
                 "tool_observations",
+                "repl_variables",
             )
             if content.get(key)
         }

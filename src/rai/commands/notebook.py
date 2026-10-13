@@ -8,7 +8,7 @@ from pathlib import Path
 import click
 from returns.result import Success
 
-from rai.assistant.notebook import export_turns_to_notebook
+from rai.assistant.notebook import _extract_code_blocks, export_turns_to_notebook
 from rai.assistant.records import ConversationTurn
 from rai.container import ApplicationContainer
 from rai.kernel.records import DataClass, ProducerIdentity, _new_id
@@ -29,13 +29,26 @@ def _run_assistant_notebook(  # noqa: PLR0913, PLR0915
     context_window: int | None = None,
     data_class: DataClass = DataClass.LOCAL,
 ) -> None:
+    notebook_system = (
+        (system or "") + "\n\n"
+        "Jesteś interaktywnym asystentem w środowisku notebooka programistycznego Rich AI (RAI). "
+        "Dzielisz z użytkownikiem współdzielone, persistentne środowisko sesji Python REPL (nano-sandbox Monty). "
+        "Gdy użytkownik prosi o napisanie kodu, algorytmu, funkcji lub wykonanie obliczeń, "
+        "zawsze podawaj czysty, gotowy do wykonania kod w blokach ```python ... ```. "
+        "Wszystkie generowane przez Ciebie bloki kodu Python są automatycznie i natychmiastowo wykonywane w sesji REPL, "
+        "a zdefiniowane zmienne i funkcje pozostają trwale aktywne w pamięci sesji dla kolejnych komórek i obliczeń. "
+        "Możesz swobodnie odwoływać się i korzystać ze zmiennych oraz funkcji zdefiniowanych wcześniej w REPL. "
+        "Nigdy nie twórz fikcyjnych deklaracji, że coś uruchomiłeś lub sprawdziłeś, bez podania kodu. "
+        "Nie proponuj otwierania plików w aplikacjach desktopowych (np. Nautilus), chyba że użytkownik wyraźnie o to zapyta."
+    ).strip()
+
     try:
         container = ApplicationContainer(
             config=_assistant_config(
                 backend,
                 model,
                 profile,
-                system,
+                notebook_system,
                 thinking=thinking,
                 thinking_budget=thinking_budget,
                 max_output_tokens=max_output_tokens,
@@ -67,6 +80,7 @@ def _run_assistant_notebook(  # noqa: PLR0913, PLR0915
         "  ? [N]: <prompt>    - Ask AI Assistant (or prefix with '?' or 'AI:')\n"
         "  /repl              - Inspect active REPL variables\n"
         "  /repl reset        - Clear REPL session\n"
+        "  /session           - Show current session and profile\n"
         "  /export [file]     - Export session as Jupyter notebook (.ipynb)\n"
         "  /exit or /q        - Quit\n"
     )
@@ -105,10 +119,15 @@ def _run_assistant_notebook(  # noqa: PLR0913, PLR0915
                     click.echo(
                         "/repl              view active variables in persistent REPL\n"
                         "/repl reset        clear REPL session\n"
+                        "/session           show current profile and session ID\n"
                         "/export [file]     export session as Jupyter notebook (.ipynb)\n"
                         "/history [N]       recent session turns\n"
                         "/exit              quit\n"
                     )
+                    continue
+
+                if stripped == "/session":
+                    click.echo(f"Profile: {service.profile_scope} | Session ID: {sid}")
                     continue
 
                 if stripped == "/repl":
@@ -134,6 +153,18 @@ def _run_assistant_notebook(  # noqa: PLR0913, PLR0915
                     click.secho("REPL session reset.", fg="yellow")
                     continue
 
+                if stripped.startswith("/history"):
+                    parts = stripped.split()
+                    try:
+                        limit = int(parts[1]) if len(parts) > 1 else 20
+                    except ValueError:
+                        click.echo("Usage: /history [number-of-turns]", err=True)
+                        continue
+                    from .memory import _echo_history  # noqa: PLC0415
+
+                    await _echo_history(service, sid, max(1, min(limit, 200)))
+                    continue
+
                 if stripped.startswith("/export"):
                     parts = stripped.split(maxsplit=1)
                     target_file = parts[1] if len(parts) > 1 else f"notebook_{sid}.ipynb"
@@ -146,6 +177,10 @@ def _run_assistant_notebook(  # noqa: PLR0913, PLR0915
                         click.secho(f"Notebook exported to {target_file}", fg="bright_green")
                     else:
                         click.echo("Failed to fetch session turns for export.", err=True)
+                    continue
+
+                if stripped.startswith("/"):
+                    click.secho(f"Unknown command: '{stripped}'. Type /help for available commands.", fg="yellow")
                     continue
 
                 # Check if this cell is an AI query
@@ -169,6 +204,37 @@ def _run_assistant_notebook(  # noqa: PLR0913, PLR0915
                             click.secho(f"\n[Thinking]\n{response.reasoning_content}\n[/Thinking]", fg="cyan")
                         click.secho(f"AI [{cell_index}]:", fg="bright_magenta", bold=True)
                         click.echo(response.text)
+
+                        # Auto-execute AI generated Python code in REPL session
+                        code_blocks = _extract_code_blocks(response.text)
+                        py_blocks = [code for lang, code in code_blocks if lang in ("python", "py", "")]
+                        if py_blocks:
+                            saved_s = await service.store.get_repl_session(sid)
+                            current_blob = (
+                                saved_s.unwrap()[0]
+                                if isinstance(saved_s, Success) and saved_s.unwrap()
+                                else None
+                            )
+                            for block in py_blocks:
+                                eval_b = monty_runner.run(block, session_blob=current_blob)
+                                if isinstance(eval_b, Success):
+                                    b_res = eval_b.unwrap()
+                                    current_blob = b_res.session_blob
+                                    if b_res.session_blob:
+                                        await service.store.save_repl_session(
+                                            sid, b_res.session_blob, b_res.variables
+                                        )
+                                    if b_res.output:
+                                        click.secho(f"Out [{cell_index}]: ", fg="bright_red", bold=True, nl=False)
+                                        click.echo(b_res.output)
+                                    if b_res.variables:
+                                        var_s = ", ".join(f"{k}: {v}" for k, v in sorted(b_res.variables.items()))
+                                        click.secho(f"      [REPL state updated: {var_s}]", fg="bright_cyan")
+                                else:
+                                    click.secho(
+                                        f"Out [{cell_index}] REPL Warning: {eval_b.failure()}",
+                                        fg="yellow",
+                                    )
                     else:
                         err = res.failure()
                         click.secho(f"AI [{cell_index}] Error: [{err.code}] {err.message}", fg="red")
@@ -176,7 +242,6 @@ def _run_assistant_notebook(  # noqa: PLR0913, PLR0915
                     continue
 
                 # Python code execution in persistent Monty REPL
-                # Support multi-line entry if statement ends with ':' or contains multi-line keywords
                 code_lines = [line]
                 if line.endswith(":") or line.startswith(("def ", "for ", "if ", "while ", "class ", "with ", "try:")):
                     while True:
@@ -206,7 +271,6 @@ def _run_assistant_notebook(  # noqa: PLR0913, PLR0915
                     if monty_res.session_blob:
                         await service.store.save_repl_session(sid, monty_res.session_blob, monty_res.variables)
 
-                    # Persist as conversation turn so export_turns_to_notebook can build code cells
                     cell_markdown = f"```python\n{full_code}\n```"
                     if monty_res.output:
                         cell_markdown += f"\n\nOutput:\n```\n{monty_res.output}\n```"

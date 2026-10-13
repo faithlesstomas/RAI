@@ -200,6 +200,16 @@ class LocalAssistantBackend:
                     )
                     evidence_lines.append(f"- [{capability}] {summary}: {content_str}")
 
+        repl_variables = request.context.content.get("repl_variables", {})
+        if isinstance(repl_variables, dict) and repl_variables:
+            var_summary = ", ".join(
+                f"{k} ({v})" for k, v in sorted(repl_variables.items())
+            )
+            evidence_lines.append(
+                "Aktywny stan sesji Python REPL (zmienne i funkcje gotowe do natychmiastowego użycia w kodzie):\n"
+                f"- {var_summary}"
+            )
+
         system_parts = [
             system_text,
             (
@@ -221,7 +231,9 @@ class LocalAssistantBackend:
                 "Uważnie śledź role i treść widocznych wcześniejszych tur; pytania o przebieg "
                 "rozmowy rozstrzygaj na podstawie tej historii. "
                 "Jeśli w kontekście znajdują się preferencje lub fakty podane przez użytkownika, "
-                "uwzględniaj je w odpowiedzi."
+                "uwzględniaj je w odpowiedzi. "
+                "Gdy użytkownik pyta o obliczenia, kod lub działanie funkcji, podawaj gotowy, poprawny kod w blokach ```python ... ```. "
+                "W sesji masz do dyspozycji środowisko Python REPL, w którym zdefiniowane zmienne i funkcje pozostają aktywne."
             )
 
         messages: list[dict[str, str]] = [
