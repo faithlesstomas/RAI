@@ -311,7 +311,7 @@ def create_default_capability_registry() -> CapabilityRegistry:
         (
             _descriptor(
                 "run_python_code",
-                "Execute Python code with persistent session memory. Pure computation and algorithms execute seamlessly via safe nano-sandbox (Monty REPL), while system and OS commands escalate to isolated container with HITL.",
+                "Execute Python code with persistent session memory. Pure computation and algorithms execute seamlessly via safe nano-sandbox (Python REPL), while system and OS commands escalate to isolated container with HITL.",
                 _object_schema(
                     {
                         "code": {"type": "string"},

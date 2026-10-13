@@ -62,7 +62,7 @@ def format_capabilities_instruction(
         "browser.open_result": "Open a selected result in a configured browser",
         "browser.read_page": "Read a selected public page in a configured browser",
         "activity.query": "Inspect recent system and desktop activity episodes (applications used, projects, activity types, and resources)",
-        "run_python_code": "Execute Python code with persistent session memory (nano-sandbox Monty REPL for pure computation, algorithms, data analysis, and scripts; escalates to container with approval for system/network operations)",
+        "run_python_code": "Execute Python code with persistent session memory (isolated Python REPL nano-sandbox for pure computation, algorithms, data analysis, and scripts; escalates to container with approval for system/network operations)",
     }
     names = {descriptor.name for descriptor in registry.descriptors()} if registry else set()
     available = [f"- {name}: {description}." for name, description in descriptions.items() if name in names]
