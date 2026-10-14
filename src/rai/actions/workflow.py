@@ -1,10 +1,11 @@
-"""Bounded research workflow and deterministic task step controller.
+"""Bounded agentic workflows and deterministic step controller.
 
 Enforces:
 1. Strict finite state transitions:
-   PLANNING -> SEARCHING -> SELECTING_SOURCES -> READING_PAGE -> SYNTHESIZING -> COMPLETE
-2. Hard limits: max searches (default 1), max page reads (default 2), max total steps.
-3. Multi-stage approval: search approval is distinct from external page read approval.
+   PLANNING -> EVALUATING -> EXECUTING -> OBSERVING -> SYNTHESIZING -> COMPLETE
+   (alongside backwards-compatible ResearchWorkflow lifecycle).
+2. Hard limits: max tool calls, max total steps, timeouts.
+3. Multi-stage approval isolation: approval tokens are scoped and single-use per action.
 4. Unified token, latency, and tool-call accounting recorded into UsageLedger.
 """
 
@@ -34,9 +35,111 @@ from rai.kernel.records import (
 from rai.kernel.service import CapabilityService
 from rai.kernel.transport import normalize_request
 
-PRODUCER = ProducerIdentity(producer_id="task-step-controller", kind="service", version="1.0.0")
+PRODUCER = ProducerIdentity(producer_id="bounded-step-controller", kind="service", version="1.0.0")
 
 
+class AgentWorkflowState(str, Enum):
+    """Generic finite state machine states for universal agentic workflows."""
+
+    PLANNING = "PLANNING"
+    EVALUATING = "EVALUATING"
+    EXECUTING = "EXECUTING"
+    OBSERVING = "OBSERVING"
+    SYNTHESIZING = "SYNTHESIZING"
+    COMPLETE = "COMPLETE"
+    FAILED = "FAILED"
+    CANCELLED = "CANCELLED"
+
+
+ALLOWED_GENERIC_TRANSITIONS: dict[AgentWorkflowState, set[AgentWorkflowState]] = {
+    AgentWorkflowState.PLANNING: {
+        AgentWorkflowState.EVALUATING,
+        AgentWorkflowState.SYNTHESIZING,
+        AgentWorkflowState.COMPLETE,
+        AgentWorkflowState.FAILED,
+        AgentWorkflowState.CANCELLED,
+    },
+    AgentWorkflowState.EVALUATING: {
+        AgentWorkflowState.EXECUTING,
+        AgentWorkflowState.PLANNING,
+        AgentWorkflowState.FAILED,
+        AgentWorkflowState.CANCELLED,
+    },
+    AgentWorkflowState.EXECUTING: {
+        AgentWorkflowState.OBSERVING,
+        AgentWorkflowState.FAILED,
+        AgentWorkflowState.CANCELLED,
+    },
+    AgentWorkflowState.OBSERVING: {
+        AgentWorkflowState.SYNTHESIZING,
+        AgentWorkflowState.PLANNING,
+        AgentWorkflowState.FAILED,
+        AgentWorkflowState.CANCELLED,
+    },
+    AgentWorkflowState.SYNTHESIZING: {
+        AgentWorkflowState.COMPLETE,
+        AgentWorkflowState.PLANNING,
+        AgentWorkflowState.FAILED,
+        AgentWorkflowState.CANCELLED,
+    },
+    AgentWorkflowState.COMPLETE: set(),
+    AgentWorkflowState.FAILED: set(),
+    AgentWorkflowState.CANCELLED: set(),
+}
+
+
+def _state_str(state: Any) -> str:
+    return state.value if isinstance(state, Enum) else str(state)
+
+
+class BoundedWorkflowLimits(BaseModel):
+    """Upper bounds preventing unbounded agent loops across any capability."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    max_steps: int = Field(default=8, ge=1, le=50)
+    max_tool_calls: int = Field(default=5, ge=0, le=50)
+    max_tokens_budget: int = Field(default=16384, ge=256)
+    max_wall_time_seconds: float = Field(default=120.0, ge=1.0)
+
+
+class BoundedWorkflowStep(BaseModel):
+    """Audited step in a generic bounded workflow."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    step_index: int = Field(ge=1)
+    timestamp: datetime = Field(default_factory=_utc_now)
+    state_before: AgentWorkflowState
+    state_after: AgentWorkflowState
+    action_taken: str = Field(min_length=1)
+    capability: str | None = None
+    arguments: dict[str, Any] = Field(default_factory=dict)
+    observation: dict[str, Any] | None = None
+    approval_id: str | None = None
+    tokens_in: int = Field(default=0, ge=0)
+    tokens_out: int = Field(default=0, ge=0)
+    latency_ms: float = Field(default=0.0, ge=0.0)
+
+
+class BoundedWorkflow(KernelRecord):
+    """Durable record of a generic bounded agentic workflow."""
+
+    record_type: Literal["bounded_workflow"] = "bounded_workflow"
+    task_id: str = Field(min_length=1)
+    session_id: str = Field(min_length=1)
+    goal: str = Field(min_length=1)
+    state: AgentWorkflowState = AgentWorkflowState.PLANNING
+    limits: BoundedWorkflowLimits = Field(default_factory=BoundedWorkflowLimits)
+    tool_calls_executed: int = Field(default=0, ge=0)
+    steps: tuple[BoundedWorkflowStep, ...] = ()
+    observations: tuple[dict[str, Any], ...] = ()
+    approvals_used: tuple[str, ...] = ()
+    final_synthesis: str | None = None
+    data_class: DataClass = DataClass.PUBLIC
+
+
+# Backwards-compatible specialized research workflow records
 class ResearchWorkflowState(str, Enum):
     """Explicit lifecycle states for bounded research flows."""
 
@@ -50,12 +153,8 @@ class ResearchWorkflowState(str, Enum):
     CANCELLED = "CANCELLED"
 
 
-def _state_str(state: ResearchWorkflowState | str) -> str:
-    return state.value if isinstance(state, Enum) else str(state)
-
-
 class ResearchWorkflowLimits(BaseModel):
-    """Hard upper bounds preventing unbounded agent loops."""
+    """Hard upper bounds preventing unbounded agent loops in research workflows."""
 
     model_config = ConfigDict(frozen=True, extra="forbid")
 
@@ -102,11 +201,462 @@ class ResearchWorkflow(KernelRecord):
     data_class: DataClass = DataClass.PUBLIC
 
 
-class TaskStepController:
-    """Deterministic, finite state machine controller for research workflows."""
+class BoundedStepController:
+    """Universal controller governing bounded agentic workflows across any capabilities."""
 
     def __init__(self, ledger: UsageLedger | None = None) -> None:
         self.ledger = ledger
+
+    # -------------------------------------------------------------------------
+    # Generic Bounded Workflow Orchestration
+    # -------------------------------------------------------------------------
+
+    def create_generic_workflow(  # noqa: PLR0913
+        self,
+        task_id: str,
+        session_id: str,
+        goal: str,
+        limits: BoundedWorkflowLimits | None = None,
+        data_class: DataClass = DataClass.PUBLIC,
+        actor: ProducerIdentity | None = None,
+    ) -> BoundedWorkflow:
+        """Initialize a new bounded workflow in the PLANNING state."""
+        return BoundedWorkflow(
+            record_id=_new_id(),
+            timestamp=_utc_now(),
+            producer=actor or PRODUCER,
+            task_id=task_id,
+            session_id=session_id,
+            goal=goal,
+            state=AgentWorkflowState.PLANNING,
+            limits=limits or BoundedWorkflowLimits(),
+            data_class=data_class,
+        )
+
+    def transition_generic(  # noqa: PLR0913
+        self,
+        workflow: BoundedWorkflow,
+        target_state: AgentWorkflowState,
+        action_taken: str,
+        capability: str | None = None,
+        arguments: dict[str, Any] | None = None,
+        observation: dict[str, Any] | None = None,
+        approval_id: str | None = None,
+        tokens_in: int = 0,
+        tokens_out: int = 0,
+        latency_ms: float = 0.0,
+    ) -> Result[BoundedWorkflow, str]:
+        """Transition generic workflow to a target state, validating against transition rules and limits."""
+        allowed = ALLOWED_GENERIC_TRANSITIONS.get(workflow.state, set())
+        if target_state not in allowed:
+            return Failure(
+                f"INVALID_TRANSITION: cannot transition from {_state_str(workflow.state)} to {_state_str(target_state)}"
+            )
+        if len(workflow.steps) >= workflow.limits.max_steps:
+            return Failure("STEP_LIMIT_EXCEEDED")
+
+        step = BoundedWorkflowStep(
+            step_index=len(workflow.steps) + 1,
+            state_before=workflow.state,
+            state_after=target_state,
+            action_taken=action_taken,
+            capability=capability,
+            arguments=arguments or {},
+            observation=observation,
+            approval_id=approval_id,
+            tokens_in=tokens_in,
+            tokens_out=tokens_out,
+            latency_ms=latency_ms,
+        )
+        updated = workflow.model_copy(
+            update={
+                "state": target_state,
+                "steps": (*workflow.steps, step),
+            }
+        )
+        return Success(updated)
+
+    async def execute_generic_step(  # noqa: PLR0913
+        self,
+        workflow: BoundedWorkflow,
+        capabilities: CapabilityService,
+        capability_name: str,
+        arguments: dict[str, Any],
+        cancellation: CancellationToken,
+        approval_id: str | None = None,
+        tokens_in: int = 0,
+        tokens_out: int = 0,
+        latency_ms: float = 0.0,
+    ) -> Result[tuple[BoundedWorkflow, ActionResult], ActionFailure]:
+        """Invoke a capability under generic state machine supervision: EVALUATING -> EXECUTING -> OBSERVING."""
+        step_index = len(workflow.steps) + 1
+        req_id = f"{workflow.task_id}:step:{step_index}"
+
+        if workflow.tool_calls_executed >= workflow.limits.max_tool_calls:
+            return Failure(
+                ActionFailure(
+                    request_id=req_id,
+                    capability=capability_name,
+                    code="TOOL_CALL_LIMIT_EXCEEDED",
+                    message="Maximum allowed tool calls limit reached",
+                    producer=PRODUCER,
+                )
+            )
+
+        if len(workflow.steps) >= workflow.limits.max_steps:
+            return Failure(
+                ActionFailure(
+                    request_id=req_id,
+                    capability=capability_name,
+                    code="STEP_LIMIT_EXCEEDED",
+                    message="Maximum allowed steps limit reached",
+                    producer=PRODUCER,
+                )
+            )
+
+        if approval_id is not None and approval_id in workflow.approvals_used:
+            return Failure(
+                ActionFailure(
+                    request_id=req_id,
+                    capability=capability_name,
+                    code="APPROVAL_ALREADY_USED",
+                    message=f"Approval token '{approval_id}' has already been consumed",
+                    producer=PRODUCER,
+                )
+            )
+
+        # 1. PLANNING -> EVALUATING
+        eval_tx = self.transition_generic(
+            workflow,
+            AgentWorkflowState.EVALUATING,
+            action_taken=f"evaluate:{capability_name}",
+            capability=capability_name,
+            arguments=arguments,
+            approval_id=approval_id,
+        )
+        if isinstance(eval_tx, Failure):
+            return Failure(
+                ActionFailure(
+                    request_id=req_id,
+                    capability=capability_name,
+                    code="WORKFLOW_TRANSITION_FAILED",
+                    message=eval_tx.failure(),
+                    producer=PRODUCER,
+                )
+            )
+        workflow = eval_tx.unwrap()
+
+        # 2. EVALUATING -> EXECUTING
+        exec_tx = self.transition_generic(
+            workflow,
+            AgentWorkflowState.EXECUTING,
+            action_taken=f"execute:{capability_name}",
+            capability=capability_name,
+            arguments=arguments,
+            approval_id=approval_id,
+        )
+        if isinstance(exec_tx, Failure):
+            return Failure(
+                ActionFailure(
+                    request_id=req_id,
+                    capability=capability_name,
+                    code="WORKFLOW_TRANSITION_FAILED",
+                    message=exec_tx.failure(),
+                    producer=PRODUCER,
+                )
+            )
+        workflow = exec_tx.unwrap()
+
+        descriptor = capabilities.registry.descriptor(capability_name)
+        if descriptor is None:
+            return Failure(
+                ActionFailure(
+                    request_id=req_id,
+                    capability=capability_name,
+                    code="CAPABILITY_NOT_FOUND",
+                    message=f"Capability '{capability_name}' is not registered",
+                    producer=PRODUCER,
+                )
+            )
+
+        request = normalize_request(
+            descriptor,
+            arguments,
+            actor=workflow.producer,
+            request_id=req_id,
+            data_class=workflow.data_class,
+        )
+        _, executed = await capabilities.invoke(request, cancellation)
+        if isinstance(executed, Failure):
+            _ = self.transition_generic(
+                workflow,
+                AgentWorkflowState.FAILED,
+                action_taken=f"execution_failed:{executed.failure().message}",
+                capability=capability_name,
+            )
+            return Failure(executed.failure())
+
+        action_res = executed.unwrap()
+
+        # 3. EXECUTING -> OBSERVING
+        obs_tx = self.transition_generic(
+            workflow,
+            AgentWorkflowState.OBSERVING,
+            action_taken=f"observed:{capability_name}",
+            capability=capability_name,
+            observation=action_res.output,
+            tokens_in=tokens_in,
+            tokens_out=tokens_out,
+            latency_ms=latency_ms,
+        )
+        if isinstance(obs_tx, Failure):
+            return Failure(
+                ActionFailure(
+                    request_id=req_id,
+                    capability=capability_name,
+                    code="WORKFLOW_TRANSITION_FAILED",
+                    message=obs_tx.failure(),
+                    producer=PRODUCER,
+                )
+            )
+        workflow = obs_tx.unwrap()
+
+        approvals_now = (*workflow.approvals_used, approval_id) if approval_id else workflow.approvals_used
+        updated_wf = workflow.model_copy(
+            update={
+                "tool_calls_executed": workflow.tool_calls_executed + 1,
+                "observations": (*workflow.observations, action_res.output),
+                "approvals_used": approvals_now,
+            }
+        )
+
+        if self.ledger is not None:
+            await self.record_usage(
+                updated_wf,
+                processor=f"step_{capability_name}",
+                backend="capability",
+                model=capability_name,
+                tokens_in=tokens_in,
+                tokens_out=tokens_out,
+                tool_calls=1,
+                latency_ms=latency_ms,
+            )
+
+        return Success((updated_wf, action_res))
+
+    async def execute_generic_synthesis(  # noqa: PLR0913
+        self,
+        workflow: BoundedWorkflow,
+        final_synthesis: str,
+        tokens_in: int = 0,
+        tokens_out: int = 0,
+        latency_ms: float = 0.0,
+    ) -> Result[BoundedWorkflow, ActionFailure]:
+        """Advance workflow to SYNTHESIZING (if needed) and COMPLETE with final text."""
+        req_id = f"{workflow.task_id}:synthesis"
+        if workflow.state in {AgentWorkflowState.OBSERVING, AgentWorkflowState.PLANNING}:
+            synth_tx = self.transition_generic(
+                workflow,
+                AgentWorkflowState.SYNTHESIZING,
+                action_taken="begin_synthesis",
+            )
+            if isinstance(synth_tx, Failure):
+                return Failure(
+                    ActionFailure(
+                        request_id=req_id,
+                        capability="assistant.synthesis",
+                        code="WORKFLOW_TRANSITION_FAILED",
+                        message=synth_tx.failure(),
+                        producer=PRODUCER,
+                    )
+                )
+            workflow = synth_tx.unwrap()
+
+        complete_tx = self.transition_generic(
+            workflow,
+            AgentWorkflowState.COMPLETE,
+            action_taken="synthesis_completed",
+            tokens_in=tokens_in,
+            tokens_out=tokens_out,
+            latency_ms=latency_ms,
+        )
+        if isinstance(complete_tx, Failure):
+            return Failure(
+                ActionFailure(
+                    request_id=req_id,
+                    capability="assistant.synthesis",
+                    code="WORKFLOW_TRANSITION_FAILED",
+                    message=complete_tx.failure(),
+                    producer=PRODUCER,
+                )
+            )
+        workflow = complete_tx.unwrap()
+
+        updated = workflow.model_copy(update={"final_synthesis": final_synthesis})
+
+        if self.ledger is not None:
+            await self.record_usage(
+                updated,
+                processor="assistant_synthesizer",
+                backend="assistant_model",
+                model="synthesizer",
+                tokens_in=tokens_in,
+                tokens_out=tokens_out,
+                tool_calls=0,
+                latency_ms=latency_ms,
+            )
+
+        return Success(updated)
+
+    async def run_agentic_loop(  # noqa: PLR0913
+        self,
+        task_id: str,
+        session_id: str,
+        goal: str,
+        capabilities: CapabilityService,
+        step_decider: Callable[
+            [BoundedWorkflow, CancellationToken],
+            Awaitable[Result[dict[str, Any], ActionFailure]],
+        ],
+        cancellation: CancellationToken,
+        limits: BoundedWorkflowLimits | None = None,
+        actor: ProducerIdentity | None = None,
+    ) -> Result[BoundedWorkflow, ActionFailure]:
+        """Run an end-to-end universal agentic loop governed by BoundedWorkflow state machine."""
+        workflow = self.create_generic_workflow(
+            task_id=task_id,
+            session_id=session_id,
+            goal=goal,
+            limits=limits,
+            actor=actor,
+        )
+
+        while workflow.state not in {
+            AgentWorkflowState.COMPLETE,
+            AgentWorkflowState.FAILED,
+            AgentWorkflowState.CANCELLED,
+        }:
+            if cancellation.cancelled:
+                cancel_tx = self.transition_generic(
+                    workflow,
+                    AgentWorkflowState.CANCELLED,
+                    action_taken="cancelled_by_token",
+                )
+                if isinstance(cancel_tx, Success):
+                    workflow = cancel_tx.unwrap()
+                return Failure(
+                    ActionFailure(
+                        request_id=f"{workflow.task_id}:cancel",
+                        capability="agent_loop",
+                        code="TASK_CANCELLED",
+                        message="Workflow cancelled by token",
+                        producer=PRODUCER,
+                    )
+                )
+
+            if len(workflow.steps) >= workflow.limits.max_steps:
+                fail_tx = self.transition_generic(
+                    workflow,
+                    AgentWorkflowState.FAILED,
+                    action_taken="step_limit_exceeded",
+                )
+                if isinstance(fail_tx, Success):
+                    workflow = fail_tx.unwrap()
+                return Failure(
+                    ActionFailure(
+                        request_id=f"{workflow.task_id}:limit",
+                        capability="agent_loop",
+                        code="STEP_LIMIT_EXCEEDED",
+                        message=f"Step limit {workflow.limits.max_steps} exceeded",
+                        producer=PRODUCER,
+                    )
+                )
+
+            decision_res = await step_decider(workflow, cancellation)
+            if isinstance(decision_res, Failure):
+                fail_tx = self.transition_generic(
+                    workflow,
+                    AgentWorkflowState.FAILED,
+                    action_taken=f"decision_failed:{decision_res.failure().message}",
+                )
+                if isinstance(fail_tx, Success):
+                    workflow = fail_tx.unwrap()
+                return Failure(decision_res.failure())
+
+            decision = decision_res.unwrap()
+            action_type = decision.get("action_type")
+
+            if action_type == "finish":
+                final_text = decision.get("text", "")
+                return await self.execute_generic_synthesis(
+                    workflow,
+                    final_synthesis=final_text,
+                    tokens_in=decision.get("tokens_in", 0),
+                    tokens_out=decision.get("tokens_out", 0),
+                    latency_ms=decision.get("latency_ms", 0.0),
+                )
+
+            if action_type == "tool":
+                cap_name = decision.get("capability")
+                if not cap_name:
+                    return Failure(
+                        ActionFailure(
+                            request_id=f"{workflow.task_id}:step",
+                            capability="agent_loop",
+                            code="MISSING_CAPABILITY",
+                            message="Decision specified 'tool' without capability name",
+                            producer=PRODUCER,
+                        )
+                    )
+                step_res = await self.execute_generic_step(
+                    workflow=workflow,
+                    capabilities=capabilities,
+                    capability_name=cap_name,
+                    arguments=decision.get("arguments", {}),
+                    cancellation=cancellation,
+                    approval_id=decision.get("approval_id"),
+                    tokens_in=decision.get("tokens_in", 0),
+                    tokens_out=decision.get("tokens_out", 0),
+                    latency_ms=decision.get("latency_ms", 0.0),
+                )
+                if isinstance(step_res, Failure):
+                    return Failure(step_res.failure())
+
+                workflow, _ = step_res.unwrap()
+
+                # Deliberate next step: OBSERVING -> PLANNING
+                plan_tx = self.transition_generic(
+                    workflow,
+                    AgentWorkflowState.PLANNING,
+                    action_taken=f"deliberate_after:{cap_name}",
+                )
+                if isinstance(plan_tx, Failure):
+                    return Failure(
+                        ActionFailure(
+                            request_id=f"{workflow.task_id}:loop",
+                            capability="agent_loop",
+                            code="WORKFLOW_TRANSITION_FAILED",
+                            message=plan_tx.failure(),
+                            producer=PRODUCER,
+                        )
+                    )
+                workflow = plan_tx.unwrap()
+            else:
+                return Failure(
+                    ActionFailure(
+                        request_id=f"{workflow.task_id}:decision",
+                        capability="agent_loop",
+                        code="INVALID_DECISION_TYPE",
+                        message=f"Unknown decision action_type: {action_type}",
+                        producer=PRODUCER,
+                    )
+                )
+
+        return Success(workflow)
+
+    # -------------------------------------------------------------------------
+    # Specialized Research Workflow Orchestration (Backwards Compatibility)
+    # -------------------------------------------------------------------------
 
     def create_workflow(  # noqa: PLR0913
         self,
@@ -118,10 +668,9 @@ class TaskStepController:
         actor: ProducerIdentity | None = None,
     ) -> ResearchWorkflow:
         """Initialize a new bounded research workflow in the PLANNING state."""
-        now = _utc_now()
         return ResearchWorkflow(
             record_id=_new_id(),
-            timestamp=now,
+            timestamp=_utc_now(),
             producer=actor or PRODUCER,
             task_id=task_id,
             session_id=session_id,
@@ -133,7 +682,7 @@ class TaskStepController:
 
     async def record_usage(  # noqa: PLR0913
         self,
-        workflow: ResearchWorkflow,
+        workflow: BoundedWorkflow | ResearchWorkflow,
         processor: str,
         backend: str,
         model: str,
@@ -641,3 +1190,27 @@ class TaskStepController:
 
         # 4. Complete and record usage
         return await self.execute_workflow_synthesis(workflow, final_synthesis=final_text)
+
+
+class TaskStepController(BoundedStepController):
+    """Backwards-compatible subclass alias for BoundedStepController."""
+
+
+WorkflowLimits = BoundedWorkflowLimits
+WorkflowStep = BoundedWorkflowStep
+
+__all__ = [
+    "ALLOWED_GENERIC_TRANSITIONS",
+    "AgentWorkflowState",
+    "BoundedStepController",
+    "BoundedWorkflow",
+    "BoundedWorkflowLimits",
+    "BoundedWorkflowStep",
+    "ResearchWorkflow",
+    "ResearchWorkflowLimits",
+    "ResearchWorkflowState",
+    "ResearchWorkflowStep",
+    "TaskStepController",
+    "WorkflowLimits",
+    "WorkflowStep",
+]

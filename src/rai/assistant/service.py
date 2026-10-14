@@ -26,7 +26,13 @@ from rai.kernel.records import (
 )
 
 if TYPE_CHECKING:
-    from rai.actions.workflow import ResearchWorkflow, TaskStepController
+    from rai.actions.workflow import (
+        BoundedStepController,
+        BoundedWorkflow,
+        BoundedWorkflowLimits,
+        ResearchWorkflow,
+        TaskStepController,
+    )
     from rai.kernel.service import CapabilityService
 
 from .audit import (
@@ -111,7 +117,7 @@ class AssistantService:
         producer: ProducerIdentity | None = None,
         profile_scope: str = "default",
         actions: AssistantActionHandler | None = None,
-        step_controller: TaskStepController | None = None,
+        step_controller: BoundedStepController | TaskStepController | None = None,
         context_approver: Callable[
             [AssistantContextPackage, CancellationToken],
             Awaitable[Result[AssistantContextPackage, ActionFailure]],
@@ -1391,5 +1397,113 @@ class AssistantService:
             capabilities=capabilities,
             synthesizer=_synthesizer,
             cancellation=token,
+            actor=self.producer,
+        )
+
+    async def run_bounded_task(  # noqa: PLR0913
+        self,
+        goal: str,
+        session_id: str,
+        capabilities: CapabilityService,
+        task_id: str | None = None,
+        cancellation: CancellationToken | None = None,
+        limits: BoundedWorkflowLimits | None = None,
+    ) -> Result[BoundedWorkflow, ActionFailure]:
+        """Run an end-to-end universal agentic loop for any goal using step_controller."""
+        if self.step_controller is None:
+            return Failure(
+                ActionFailure(
+                    request_id=f"task:{session_id}",
+                    capability="assistant.task",
+                    code="CONTROLLER_NOT_CONFIGURED",
+                    message="BoundedStepController is not configured on AssistantService",
+                    producer=self.producer,
+                )
+            )
+        token = cancellation or CancellationToken()
+        t_id = task_id or f"task:{session_id}:{_new_id()}"
+
+        async def _step_decider(
+            wf: BoundedWorkflow, ct: CancellationToken
+        ) -> Result[dict[str, Any], ActionFailure]:
+            obs_list = [
+                ToolObservation(
+                    source_id=f"{wf.task_id}:obs:{idx}",
+                    source_turn_id=session_id,
+                    capability=step.capability or "unknown",
+                    status="SUCCESS",
+                    summary=step.action_taken,
+                    untrusted_content=True,
+                    content=step.observation or {},
+                ).model_dump(mode="json")
+                for idx, step in enumerate(wf.steps, 1)
+                if step.observation is not None
+            ]
+            manifest = AssistantContextManifest(
+                record_id=_new_id(),
+                timestamp=_utc_now(),
+                producer=self.producer,
+                session_id=session_id,
+                turn_id=session_id,
+                tool_observation_ids=tuple(
+                    f"{wf.task_id}:obs:{idx}" for idx in range(1, len(obs_list) + 1)
+                ),
+            )
+            context = AssistantContextPackage(
+                record_id=_new_id(),
+                timestamp=_utc_now(),
+                producer=self.producer,
+                session_id=session_id,
+                turn_id=session_id,
+                manifest=manifest,
+                content={
+                    "current_turn": {"text": goal},
+                    "tool_observations": obs_list,
+                },
+            )
+            req = InferenceRequest(
+                record_id=_new_id(),
+                timestamp=_utc_now(),
+                producer=self.producer,
+                session_id=session_id,
+                turn_id=session_id,
+                request_id=f"{t_id}:step:{len(wf.steps) + 1}",
+                context=context,
+                budget=self._budget(),
+                strategy="DIRECT",
+            )
+            gen_res = await self.backend.generate(req, ct)
+            if isinstance(gen_res, Failure):
+                return Failure(gen_res.failure())
+
+            resp_text = gen_res.unwrap().text
+            tool_call = extract_model_tool_call(resp_text)
+            if tool_call is not None:
+                _, cap_name, args = tool_call
+                return Success({
+                    "action_type": "tool",
+                    "capability": cap_name,
+                    "arguments": args,
+                    "tokens_in": 0,
+                    "tokens_out": 0,
+                    "latency_ms": 0.0,
+                })
+
+            return Success({
+                "action_type": "finish",
+                "text": resp_text,
+                "tokens_in": 0,
+                "tokens_out": 0,
+                "latency_ms": 0.0,
+            })
+
+        return await self.step_controller.run_agentic_loop(
+            task_id=t_id,
+            session_id=session_id,
+            goal=goal,
+            capabilities=capabilities,
+            step_decider=_step_decider,
+            cancellation=token,
+            limits=limits,
             actor=self.producer,
         )

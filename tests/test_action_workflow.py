@@ -11,6 +11,11 @@ from rai.actions.execution import SQLiteExecutionStore
 from rai.actions.handles import SQLiteHandleStore
 from rai.actions.service import ActionCapabilityService
 from rai.actions.workflow import (
+    AgentWorkflowState,
+    BoundedStepController,
+    BoundedWorkflow,
+    BoundedWorkflowLimits,
+    BoundedWorkflowStep,
     ResearchWorkflow,
     ResearchWorkflowLimits,
     ResearchWorkflowState,
@@ -19,10 +24,10 @@ from rai.actions.workflow import (
 from rai.assistant.service import AssistantService
 from rai.assistant.store import SQLiteMemoryGraphStore
 from rai.kernel.audit import InMemoryAuditLedger
-from rai.kernel.capabilities import CapabilityRegistry
+from rai.kernel.capabilities import CapabilityDescriptor, CapabilityRegistry, RegisteredCapability
 from rai.kernel.policy import PolicyEngine
 from rai.kernel.ports import CancellationToken
-from rai.kernel.records import ActionFailure, DataClass, ProducerIdentity
+from rai.kernel.records import ActionFailure, DataClass, ProducerIdentity, RiskClass
 from rai.kernel.synthetic import SyntheticApprovalBroker, SyntheticUsageLedger
 
 
@@ -350,3 +355,245 @@ async def test_assistant_service_research_workflow_e2e(tmp_path: Path) -> None:
         assert "Odpowiedź na podstawie odczytanej strony" in wf.final_synthesis
     finally:
         await service.stop()
+
+
+def test_generic_workflow_initial_state_and_defaults() -> None:
+    controller = BoundedStepController()
+    wf = controller.create_generic_workflow(task_id="task-gen-1", session_id="sess-1", goal="Run analysis")
+    assert wf.state == AgentWorkflowState.PLANNING
+    assert wf.tool_calls_executed == 0
+    assert len(wf.steps) == 0
+    assert wf.limits.max_steps == 8
+    assert wf.limits.max_tool_calls == 5
+
+
+def test_generic_workflow_valid_transitions() -> None:
+    controller = BoundedStepController()
+    wf = controller.create_generic_workflow(task_id="task-gen-1", session_id="sess-1", goal="Run analysis")
+
+    # PLANNING -> EVALUATING
+    res1 = controller.transition_generic(wf, AgentWorkflowState.EVALUATING, action_taken="evaluate:system.echo")
+    assert isinstance(res1, Success)
+    wf = res1.unwrap()
+    assert wf.state == AgentWorkflowState.EVALUATING
+
+    # EVALUATING -> EXECUTING
+    res2 = controller.transition_generic(wf, AgentWorkflowState.EXECUTING, action_taken="execute:system.echo")
+    assert isinstance(res2, Success)
+    wf = res2.unwrap()
+    assert wf.state == AgentWorkflowState.EXECUTING
+
+    # EXECUTING -> OBSERVING
+    res3 = controller.transition_generic(wf, AgentWorkflowState.OBSERVING, action_taken="observed:system.echo")
+    assert isinstance(res3, Success)
+    wf = res3.unwrap()
+    assert wf.state == AgentWorkflowState.OBSERVING
+
+    # OBSERVING -> SYNTHESIZING
+    res4 = controller.transition_generic(wf, AgentWorkflowState.SYNTHESIZING, action_taken="begin_synthesis")
+    assert isinstance(res4, Success)
+    wf = res4.unwrap()
+    assert wf.state == AgentWorkflowState.SYNTHESIZING
+
+    # SYNTHESIZING -> COMPLETE
+    res5 = controller.transition_generic(wf, AgentWorkflowState.COMPLETE, action_taken="synthesis_completed")
+    assert isinstance(res5, Success)
+    wf = res5.unwrap()
+    assert wf.state == AgentWorkflowState.COMPLETE
+    assert len(wf.steps) == 5
+
+
+def test_generic_workflow_invalid_transitions() -> None:
+    controller = BoundedStepController()
+    wf = controller.create_generic_workflow(task_id="task-gen-1", session_id="sess-1", goal="Run analysis")
+
+    # Cannot jump PLANNING -> OBSERVING
+    bad1 = controller.transition_generic(wf, AgentWorkflowState.OBSERVING, action_taken="illegal")
+    assert isinstance(bad1, Failure)
+    assert "INVALID_TRANSITION" in bad1.failure()
+
+    # Once COMPLETE, cannot transition back to PLANNING
+    complete_wf = wf.model_copy(update={"state": AgentWorkflowState.COMPLETE})
+    bad2 = controller.transition_generic(complete_wf, AgentWorkflowState.PLANNING, action_taken="illegal")
+    assert isinstance(bad2, Failure)
+    assert "INVALID_TRANSITION" in bad2.failure()
+
+
+def test_generic_workflow_step_limits_exceeded() -> None:
+    controller = BoundedStepController()
+    limits = BoundedWorkflowLimits(max_steps=2)
+    wf = controller.create_generic_workflow(task_id="task-gen-1", session_id="sess-1", goal="Run analysis", limits=limits)
+
+    res1 = controller.transition_generic(wf, AgentWorkflowState.EVALUATING, action_taken="step1")
+    assert isinstance(res1, Success)
+    wf = res1.unwrap()
+
+    res2 = controller.transition_generic(wf, AgentWorkflowState.EXECUTING, action_taken="step2")
+    assert isinstance(res2, Success)
+    wf = res2.unwrap()
+
+    # Step 3 exceeds limit of 2
+    res3 = controller.transition_generic(wf, AgentWorkflowState.OBSERVING, action_taken="step3")
+    assert isinstance(res3, Failure)
+    assert "STEP_LIMIT_EXCEEDED" in res3.failure()
+
+
+async def test_generic_workflow_execute_generic_step_and_approvals(tmp_path: Path) -> None:
+    registry = CapabilityRegistry()
+    registry.register(
+        RegisteredCapability(
+            CapabilityDescriptor(
+                name="system.echo",
+                description="Echo input text",
+                input_schema={"type": "object", "properties": {"message": {"type": "string"}}},
+                risk_class=RiskClass.LOW,
+                side_effects=(),
+                isolation="host-api",
+                verification_plan=("observed",),
+            ),
+            handler=lambda args: {"echoed": args.get("message", "")},
+        )
+    )
+    handles = SQLiteHandleStore(tmp_path / "handles.db")
+    audit = InMemoryAuditLedger()
+    capabilities = ActionCapabilityService(registry, PolicyEngine(), audit, SyntheticApprovalBroker())
+    capabilities.handles = handles
+    capabilities.executions = SQLiteExecutionStore(tmp_path / "executions.db")
+
+    ledger = SyntheticUsageLedger()
+    controller = BoundedStepController(ledger=ledger)
+    wf = controller.create_generic_workflow(task_id="task-step-1", session_id="sess-1", goal="Echo hello")
+
+    # Step execution with approval
+    res = await controller.execute_generic_step(
+        workflow=wf,
+        capabilities=capabilities,
+        capability_name="system.echo",
+        arguments={"message": "hello RAI"},
+        cancellation=CancellationToken(),
+        approval_id="appr-echo-1",
+    )
+    assert isinstance(res, Success)
+    updated_wf, action_res = res.unwrap()
+    assert updated_wf.state == AgentWorkflowState.OBSERVING
+    assert updated_wf.tool_calls_executed == 1
+    assert "appr-echo-1" in updated_wf.approvals_used
+    assert action_res.output == {"echoed": "hello RAI"}
+    assert len(updated_wf.observations) == 1
+
+    # Deliberate next step: OBSERVING -> PLANNING
+    plan_tx = controller.transition_generic(updated_wf, AgentWorkflowState.PLANNING, action_taken="deliberate")
+    assert isinstance(plan_tx, Success)
+    updated_wf = plan_tx.unwrap()
+
+    # Re-using the same approval token must fail
+    reuse_res = await controller.execute_generic_step(
+        workflow=updated_wf,
+        capabilities=capabilities,
+        capability_name="system.echo",
+        arguments={"message": "hello again"},
+        cancellation=CancellationToken(),
+        approval_id="appr-echo-1",
+    )
+    assert isinstance(reuse_res, Failure)
+    assert reuse_res.failure().code == "APPROVAL_ALREADY_USED"
+
+
+async def test_generic_workflow_agentic_loop_e2e(tmp_path: Path) -> None:
+    registry = CapabilityRegistry()
+    registry.register(
+        RegisteredCapability(
+            CapabilityDescriptor(
+                name="calc.add",
+                description="Add numbers",
+                input_schema={"type": "object", "properties": {"a": {"type": "integer"}, "b": {"type": "integer"}}},
+                risk_class=RiskClass.LOW,
+                side_effects=(),
+                isolation="host-api",
+                verification_plan=("observed",),
+            ),
+            handler=lambda args: {"sum": args.get("a", 0) + args.get("b", 0)},
+        )
+    )
+    handles = SQLiteHandleStore(tmp_path / "handles.db")
+    audit = InMemoryAuditLedger()
+    capabilities = ActionCapabilityService(registry, PolicyEngine(), audit, SyntheticApprovalBroker())
+    capabilities.handles = handles
+    capabilities.executions = SQLiteExecutionStore(tmp_path / "executions.db")
+
+    ledger = SyntheticUsageLedger()
+    controller = BoundedStepController(ledger=ledger)
+
+    turn = 0
+
+    async def mock_decider(wf: BoundedWorkflow, ct: CancellationToken) -> Result[dict[str, Any], ActionFailure]:
+        nonlocal turn
+        turn += 1
+        if turn == 1:
+            return Success({
+                "action_type": "tool",
+                "capability": "calc.add",
+                "arguments": {"a": 5, "b": 7},
+            })
+        return Success({
+            "action_type": "finish",
+            "text": f"The calculated result is {wf.observations[0]['sum']}",
+        })
+
+    loop_res = await controller.run_agentic_loop(
+        task_id="task-loop-1",
+        session_id="sess-loop",
+        goal="Calculate 5 + 7",
+        capabilities=capabilities,
+        step_decider=mock_decider,
+        cancellation=CancellationToken(),
+    )
+    assert isinstance(loop_res, Success)
+    wf = loop_res.unwrap()
+    assert wf.state == AgentWorkflowState.COMPLETE
+    assert wf.tool_calls_executed == 1
+    assert wf.final_synthesis == "The calculated result is 12"
+    assert len(wf.steps) > 0
+
+
+async def test_assistant_service_bounded_task_e2e(tmp_path: Path) -> None:
+    registry = CapabilityRegistry()
+    registry.register(
+        RegisteredCapability(
+            CapabilityDescriptor(
+                name="system.info",
+                description="Get system info",
+                input_schema={"type": "object", "properties": {}},
+                risk_class=RiskClass.LOW,
+                side_effects=(),
+                isolation="host-api",
+                verification_plan=("observed",),
+            ),
+            handler=lambda req: {"os": "Linux", "hostname": "rai-node"},
+        )
+    )
+    handles = SQLiteHandleStore(tmp_path / "handles.db")
+    audit = InMemoryAuditLedger()
+    capabilities = ActionCapabilityService(registry, PolicyEngine(), audit, SyntheticApprovalBroker())
+    capabilities.handles = handles
+    capabilities.executions = SQLiteExecutionStore(tmp_path / "executions.db")
+
+    ledger = SyntheticUsageLedger()
+    controller = BoundedStepController(ledger=ledger)
+    store = SQLiteMemoryGraphStore(tmp_path / "memory.db")
+    service = AssistantService(store=store, step_controller=controller)
+
+    await service.start()
+    try:
+        res = await service.run_bounded_task(
+            goal="Tell me system information",
+            session_id="sess-task-e2e",
+            capabilities=capabilities,
+        )
+        assert isinstance(res, Success)
+        wf = res.unwrap()
+        assert wf.state == AgentWorkflowState.COMPLETE
+        assert wf.final_synthesis is not None
+    finally:
+        await service.stop()
+
