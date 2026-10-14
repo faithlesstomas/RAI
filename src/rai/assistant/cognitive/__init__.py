@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from .arbiter import SalienceArbiter
 from .models import WorkspaceContribution, WorkspaceContributionKind, WorkspaceState
+from .probe import JLensProbe
 from .specialists import (
     ActionReasonerSpecialist,
     AnswerDraftSpecialist,
@@ -18,6 +19,7 @@ __all__ = [
     "AnswerDraftSpecialist",
     "CognitiveSpecialist",
     "GroundingEvaluationSpecialist",
+    "JLensProbe",
     "RetrieverSpecialist",
     "SalienceArbiter",
     "WorkspaceContribution",

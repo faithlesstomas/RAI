@@ -14,6 +14,7 @@ from rai.assistant.cognitive.models import (
     WorkspaceContributionKind,
     WorkspaceState,
 )
+from rai.assistant.cognitive.probe import JLensProbe
 from rai.assistant.cognitive.specialists import (
     ActionReasonerSpecialist,
     AnswerDraftSpecialist,
@@ -303,4 +304,34 @@ def test_container_wires_workspace_engine() -> None:
     container = ApplicationContainer(config=config, testing=True)
     service = container.assistant_service
     assert isinstance(service.controller, WorkspaceEngine)
+
+
+@pytest.mark.asyncio
+async def test_workspace_engine_jlens_probe_latent_drift_detection() -> None:
+    class MockDriftInspector:
+        def inspect_drift(self, goal: str, content: str) -> float:
+            del goal, content
+            return 0.95  # Exceeds divergence threshold 0.85
+
+    backend = MockModelBackend(responses=["Potentially divergent answer"])
+    probe = JLensProbe(inspector=MockDriftInspector(), divergence_threshold=0.85)
+    engine = WorkspaceEngine(backend=backend, probe=probe)
+
+    producer = ProducerIdentity(producer_id="user", kind="user", version="1.0.0")
+    turn = ConversationTurn(
+        producer=producer,
+        session_id="session-drift",
+        role="user",
+        text="Ambiguous query about unknown topic",
+        data_class=DataClass.PUBLIC,
+    )
+    context = _make_context_package(turn)
+    budget = _make_budget()
+
+    result = await engine.process_turn(turn, context, budget, CancellationToken())
+    assert isinstance(result, Success)
+    candidate = result.unwrap()
+    assert "conceptual drift" in candidate.text
+    assert candidate.metadata.get("latent_drift_detected") is True
+
 

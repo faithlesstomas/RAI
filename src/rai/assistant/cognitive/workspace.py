@@ -24,6 +24,7 @@ from rai.skills.models import SkillRegistry
 
 from .arbiter import SalienceArbiter
 from .models import WorkspaceContribution, WorkspaceContributionKind, WorkspaceState
+from .probe import JLensProbe
 from .specialists import (
     ActionReasonerSpecialist,
     AnswerDraftSpecialist,
@@ -49,11 +50,13 @@ class WorkspaceEngine(InteractionController):
         capabilities: CapabilityService | None = None,
         backend: AssistantModelBackend | None = None,
         skills: SkillRegistry | None = None,
+        probe: JLensProbe | None = None,
         max_cycles: int = _DEFAULT_MAX_CYCLES,
     ) -> None:
         self.capabilities = capabilities
         self.backend = backend
         self.skills = skills
+        self.probe = probe or JLensProbe()
         self.max_cycles = max_cycles
         self.arbiter = arbiter or SalienceArbiter()
 
@@ -67,7 +70,7 @@ class WorkspaceEngine(InteractionController):
                 GroundingEvaluationSpecialist(),
             )
 
-    async def process_turn(
+    async def process_turn(  # noqa: PLR0912
         self,
         turn: ConversationTurn,
         context: AssistantContextPackage,
@@ -139,6 +142,23 @@ class WorkspaceEngine(InteractionController):
             if winner is None:
                 # If no winner, force draft answer if possible
                 break
+
+            if self.probe.is_available:
+                drift_res = await self.probe.evaluate_drift(workspace, winner)
+                if isinstance(drift_res, Success) and self.probe.is_divergent(drift_res.unwrap()):
+                    latency_ms = (time.perf_counter() - start_time) * 1000
+                    return Success(
+                        AssistantCandidate(
+                            text="I detected conceptual drift in evaluating your request. Could you clarify your intent?",
+                            metadata={
+                                "latent_drift_detected": True,
+                                "drift_score": drift_res.unwrap(),
+                                "workspace_cycles": workspace.cycle + 1,
+                                "updated_manifest": manifest,
+                                "latency_ms": latency_ms,
+                            },
+                        )
+                    )
 
             # 3. Update blackboard history and broadcast
             workspace = workspace.model_copy(
