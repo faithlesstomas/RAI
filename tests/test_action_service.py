@@ -1,5 +1,6 @@
 """The durable action boundary preserves approval, cancellation and replay semantics."""
 from pathlib import Path
+from typing import Any
 import asyncio
 
 from returns.result import Failure, Success

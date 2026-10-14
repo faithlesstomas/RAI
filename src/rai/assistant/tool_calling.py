@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import ast
+import contextlib
 import json
 import re
 from typing import Any
@@ -15,28 +16,22 @@ def parse_tool_args(raw_args: str) -> dict[str, Any]:
     """Parse JSON or Python-like tool call argument strings safely."""
     s = raw_args.strip()
     s = s.replace('<|\\\"|>', '"').replace('<|"|>', '"').replace("<|'|>", "'")
-    try:
+    with contextlib.suppress(json.JSONDecodeError, TypeError):
         data = json.loads(s)
         if isinstance(data, dict):
             return data
-    except Exception:  # noqa: BLE001
-        pass
 
     # Normalize unquoted keys: {key: ...} -> {"key": ...}
     s_norm = re.sub(r'([{,]\s*)([a-zA-Z_]\w*)\s*:', r'\1"\2":', s)
-    try:
+    with contextlib.suppress(json.JSONDecodeError, TypeError):
         data = json.loads(s_norm)
         if isinstance(data, dict):
             return data
-    except Exception:  # noqa: BLE001
-        pass
 
-    try:
+    with contextlib.suppress(ValueError, SyntaxError):
         data = ast.literal_eval(s)
         if isinstance(data, dict):
             return data
-    except Exception:  # noqa: BLE001
-        pass
 
     return {}
 

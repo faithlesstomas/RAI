@@ -1058,8 +1058,7 @@ class AssistantService:
                 )
             )
         )
-        if requires_synthesis:
-            assert action_candidate is not None
+        if requires_synthesis and action_candidate is not None:
             synth_res = await self._synthesize_action_candidate(
                 turn=turn,
                 request_id=request_id,
