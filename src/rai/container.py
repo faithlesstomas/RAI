@@ -329,11 +329,19 @@ class ApplicationContainer:
                 if self.testing
                 else JsonlAssistantAuditLedger()
             )
+            asst_cfg = (
+                self.config.get("assistant", {})
+                if isinstance(self.config.get("assistant"), dict)
+                else {}
+            )
             runtime = (
                 AssistantRuntimeConfig(
                     backend="deterministic",
                     model="deterministic-conformance",
                     profile_scope=str(self.config.get("active_agent") or "default"),
+                    interaction_controller=str(
+                        asst_cfg.get("interaction_controller") or "direct"
+                    ),
                 )
                 if self.testing
                 else resolve_assistant_config(self.config)
@@ -406,6 +414,15 @@ class ApplicationContainer:
 
             if runtime.interaction_controller == "bounded_step":
                 active_controller = step_ctrl
+            elif runtime.interaction_controller == "workspace":
+                from .assistant.cognitive.workspace import WorkspaceEngine  # noqa: PLC0415
+                from .skills.defaults import create_default_skill_registry  # noqa: PLC0415
+
+                active_controller = WorkspaceEngine(
+                    capabilities=self.capability_service,
+                    backend=effective_backend,
+                    skills=create_default_skill_registry(),
+                )
             else:
                 active_controller = DirectController(
                     backend=effective_backend,
