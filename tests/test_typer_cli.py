@@ -224,6 +224,23 @@ def test_cli_accepts_token_and_context_limits(command):
 
 
 @pytest.mark.parametrize("command", ["ask", "chat"])
+def test_cli_accepts_timeout_option(command):
+    with patch(f"rai.commands.assistant._run_assistant_{command}") as run:
+        result = CliRunner().invoke(
+            cli,
+            [
+                "assistant",
+                command,
+                *(["hello"] if command == "ask" else []),
+                "--timeout",
+                "180.0",
+            ],
+        )
+    assert result.exit_code == 0, result.output
+    assert run.call_args.kwargs["timeout"] == 180.0
+
+
+@pytest.mark.parametrize("command", ["ask", "chat"])
 @pytest.mark.parametrize("option,value", [
     ("--max-output-tokens", "0"),
     ("--context-window", "-1"),

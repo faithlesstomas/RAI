@@ -30,6 +30,19 @@ async def list_approvals() -> JSONResponse:
     return JSONResponse(content={"approvals": manager.list_pending()})
 
 
+@router.get("/api/v1/approvals/{approval_id}")
+async def get_approval(approval_id: str) -> JSONResponse:
+    """Returns details of a specific HITL approval request."""
+    manager = get_approval_manager()
+    req = manager.get_request(approval_id)
+    if not req:
+        raise HTTPException(
+            status_code=404,
+            detail=f"Approval request '{approval_id}' not found.",
+        )
+    return JSONResponse(content=req.to_dict())
+
+
 @router.post("/api/v1/approvals/{approval_id}/resolve")
 async def resolve_approval(
     approval_id: str,

@@ -1,5 +1,6 @@
 """The durable action boundary preserves approval, cancellation and replay semantics."""
 from pathlib import Path
+from typing import Any
 import asyncio
 
 from returns.result import Failure, Success
@@ -123,6 +124,30 @@ async def test_timeout_after_effect_started_is_unknown_and_not_retried(tmp_path,
     terminal = [entry for entry in audit.entries if entry.stage == 'TERMINAL']
     assert len(terminal) == 1
     assert terminal[0].result.code == 'UNKNOWN'
+
+
+async def test_per_descriptor_timeout_seconds_overrides_action_timeout(tmp_path: Path) -> None:
+    audit = InMemoryAuditLedger()
+    runtime = service(tmp_path, audit)
+    calls = []
+
+    class HangingEffect:
+        name = 'application.launch'
+
+        async def invoke(self, request: Any, cancellation: Any) -> Any:
+            calls.append(request.record_id)
+            await asyncio.Event().wait()
+
+    descriptor = runtime.registry.descriptor('application.launch').model_copy(
+        update={"timeout_seconds": 0.02}
+    )
+    runtime.registry = CapabilityRegistry()
+    runtime.registry.register(RegisteredCapability(descriptor, implementation=HangingEffect()))
+    request = normalize_request(descriptor, {})
+
+    _, outcome = await runtime.invoke(request)
+    assert outcome.failure().code == 'UNKNOWN'
+    assert calls == [request.record_id]
 
 
 async def test_cancellation_after_effect_started_is_unknown_and_not_retried(tmp_path):

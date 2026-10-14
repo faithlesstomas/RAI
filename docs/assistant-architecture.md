@@ -12,9 +12,12 @@ correction path has also been exercised with a pinned TinyLlama GGUF artifact.
 Users can resume and inspect sessions, history, exact context packages, active
 memory, operation traces and stage-specific diagnostics from CLI or API.
 
-Capability proposals and proactive execution are target behavior, not a
-completed runtime path: current assistant candidates carry response text and
-memory proposals, and the service does not dispatch desktop actions.
+Explicit user actions (browser search and read, process inspection, application
+launch, document access, and volume controls) are mediated through
+`AssistantActions` and `CapabilityService` with policy and approval checks.
+Autonomous multi-step capability proposals and proactive execution remain target
+behavior; current assistant candidates carry response text, memory proposals,
+and verified action results.
 
 The assistant is a local-first interaction surface with explicit,
 reconstructed context. It may conduct ordinary conversation, answer from RAI
@@ -274,3 +277,22 @@ epistemically neutral retrieval, invalidation and supersession. RAI should reuse
 those acceptance ideas, not import GAIA's `Goal`, Global Workspace or Cognitive
 Object lifecycle into ordinary conversation. A future GCAS adapter maps RAI
 records at the boundary while RAI retains memory, privacy and context ownership.
+
+## AssistantActions, Active Choice Frames, and Bounded Workflows
+
+The assistant runtime coordinates typed operating system capabilities without exposing ambient tool authority to LLMs:
+
+```text
+user turn
+  -> AssistantActions intent recognition & active choice frame resolution
+  -> CapabilityService invocation (with policy check, handle validation, approval)
+  -> ActionResult or ActionFailure
+  -> ToolObservation context packaging (untrusted content isolation)
+  -> AssistantModelBackend in-turn synthesis
+  -> synthesized response delivered to user with provenance
+```
+
+1. **ActiveChoiceFrame Lifecycle:** When an action generates selectable options (such as web search results or process lists), an `ActiveChoiceFrame` is persisted with expiration and distinct resource handles. User selections ("1", "first") resolve deterministically via `resolve_choice_selection` against the frame, transitioning the frame to `CONSUMED`. Expired or cancelled frames reject execution without invoking model generation.
+2. **In-Turn Tool Observation Synthesis:** When an executed action produces untrusted external data (such as `browser.read_page`), `AssistantService` packages the output into a structured `ToolObservation`, injects it into the turn's `AssistantContextPackage`, and invokes `AssistantModelBackend.generate` in the same turn under the remaining budget. The assistant answers grounded in the observation rather than dumping raw untrusted text.
+3. **TaskStepController & Bounded Research:** For multi-step information gathering, `TaskStepController` enforces an explicit FSM: `PLANNING` -> `SEARCHING` -> `SELECTING_SOURCES` -> `READING_PAGE` -> `SYNTHESIZING` -> `COMPLETE`. Hard limits (`max_searches`, `max_page_reads`, `max_total_steps`) prevent unbounded agent loops. Each stage records fine-grained token, tool call, and latency metrics in `UsageLedger`.
+

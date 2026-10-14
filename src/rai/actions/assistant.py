@@ -2,17 +2,26 @@
 from __future__ import annotations
 
 from collections.abc import Callable
-from returns.result import Failure
+from datetime import timedelta
+from typing import Any
+from returns.result import Failure, Success
 
 from rai.assistant.records import AssistantCandidate, ConversationTurn
 from rai.assistant.ports import MemoryGraphStore
 from rai.diagnostics import trace
+from .choices import (
+    extract_selection_index,
+    find_active_choice_frame,
+    find_latest_choice_frame,
+    resolve_choice_selection,
+)
 from .dialogue import previous_action
 from rai.kernel.ports import CancellationToken
 from rai.kernel.service import CapabilityService
+from rai.kernel.records import _new_id, _utc_now
 from rai.kernel.transport import normalize_request
 
-from .records import ActionProposal
+from .records import ActionProposal, ActiveChoiceFrame, ChoiceEntry, ChoiceState
 from .intent import IntentRecognizer, ActionIntent
 
 MAX_DISPLAYED_APPLICATIONS = 15
@@ -26,11 +35,77 @@ class AssistantActions:
         self.recognizer = recognizer
         self.store, self.profile = store, profile
 
-    async def handle(  # noqa: PLR0911, PLR0912
+    async def handle(  # noqa: PLR0911, PLR0912, PLR0915
         self, turn: ConversationTurn, cancellation: CancellationToken,
     ) -> AssistantCandidate | None:
         if turn.role != "user":
             return None
+        if self.store is not None:
+            now = _utc_now()
+            recent_res = await self.store.get_recent_reply_chain(session_id=turn.session_id, limit=20)
+            if not isinstance(recent_res, Failure):
+                recent_turns = recent_res.unwrap()
+                active_frame = find_active_choice_frame(recent_turns, self.profile, now)
+                if active_frame is not None:
+                    resolved = resolve_choice_selection(
+                        turn.text,
+                        active_frame,
+                        now,
+                        actor=turn.producer,
+                        source_turn_id=turn.record_id,
+                        data_class=turn.data_class,
+                    )
+                    if isinstance(resolved, Success):
+                        return await self._execute_proposal(turn, resolved.unwrap(), active_frame, cancellation)
+                    failure_code = resolved.failure()
+                    if failure_code == "SELECTION_OUT_OF_RANGE":
+                        polish = turn.metadata.get("language") != "en"
+                        return AssistantCandidate(
+                            text=(
+                                f"Wybierz poprawny numer z listy (1–{len(active_frame.entries)})."
+                                if polish
+                                else f"Choose a valid number from the list (1–{len(active_frame.entries)})."
+                            ),
+                            metadata={"choice_rejected": failure_code, "frame_id": active_frame.record_id},
+                        )
+                else:
+                    latest_frame = find_latest_choice_frame(recent_turns, self.profile)
+                    if latest_frame is not None:
+                        extracted = extract_selection_index(turn.text, len(latest_frame.entries))
+                        if extracted is not None:
+                            polish = turn.metadata.get("language") != "en"
+                            state_val = (
+                                latest_frame.state.value
+                                if isinstance(latest_frame.state, ChoiceState)
+                                else str(latest_frame.state)
+                            )
+                            if state_val == ChoiceState.CANCELLED.value:
+                                return AssistantCandidate(
+                                    text=(
+                                        "Wybór został anulowany. Wyszukaj ponownie, aby wybrać nowy element."
+                                        if polish
+                                        else "The selection was cancelled. Search again to select an item."
+                                    ),
+                                    metadata={"choice_rejected": "FRAME_CANCELLED", "frame_id": latest_frame.record_id},
+                                )
+                            if now >= latest_frame.expires_at:
+                                return AssistantCandidate(
+                                    text=(
+                                        "Wybór wygasł. Wyszukaj ponownie, aby wybrać nowy element."
+                                        if polish
+                                        else "The selection has expired. Search again to select an item."
+                                    ),
+                                    metadata={"choice_rejected": "FRAME_EXPIRED", "frame_id": latest_frame.record_id},
+                                )
+                            if extracted[1] is None:
+                                return AssistantCandidate(
+                                    text=(
+                                        "Ten wybór został już dokonany lub nie jest aktywny. Wyszukaj ponownie, aby wybrać nowy element."
+                                        if polish
+                                        else "This selection has already been made or is no longer active. Search again to select an item."
+                                    ),
+                                    metadata={"choice_rejected": "FRAME_INACTIVE", "frame_id": latest_frame.record_id},
+                                )
         trace("assistant.intent.start", turn_id=turn.record_id)
         recognized = await self.recognizer.recognize(turn, cancellation)
         if isinstance(recognized, Failure):
@@ -40,6 +115,14 @@ class AssistantActions:
         intent = recognized.unwrap()
         trace("assistant.intent", turn_id=turn.record_id, outcome=intent.outcome,
               query_present=bool(intent.query), data_class=turn.data_class)
+        return await self.dispatch_intent(turn, intent, cancellation)
+
+    async def dispatch_intent(  # noqa: PLR0911, PLR0912, PLR0915
+        self,
+        turn: ConversationTurn,
+        intent: ActionIntent,
+        cancellation: CancellationToken,
+    ) -> AssistantCandidate | None:
         if intent.outcome == "capabilities.list":
             from rai.assistant.context import format_capabilities_instruction  # noqa: PLC0415
 
@@ -89,12 +172,41 @@ class AssistantActions:
             matches = exact or applications
         if len(matches) != 1:
             names = "\n".join(f"{i}. {app['name']} ({app['desktop_id']})" for i, app in enumerate(matches, 1))
+            metadata: dict[str, Any] = {"action_choices": {"kind": "application", "task_id": task_id, "entries": matches}}
+            if matches:
+                choice_entries = tuple(
+                    ChoiceEntry(
+                        index=i,
+                        handle=app["handle"],
+                        label=f"{app['name']} ({app['desktop_id']})",
+                        metadata={"desktop_id": app["desktop_id"], "name": app["name"]},
+                    )
+                    for i, app in enumerate(matches, 1)
+                    if "handle" in app
+                )
+                if choice_entries:
+                    now = _utc_now()
+                    frame = ActiveChoiceFrame(
+                        record_id=_new_id(),
+                        timestamp=now,
+                        producer=turn.producer,
+                        session_id=turn.session_id,
+                        profile_scope=self.profile,
+                        task_id=task_id,
+                        source_turn_id=turn.record_id,
+                        intended_capability="application.launch",
+                        entries=choice_entries,
+                        state=ChoiceState.ACTIVE,
+                        expires_at=now + timedelta(minutes=15),
+                        data_class=turn.data_class,
+                    )
+                    metadata["active_choice_frame"] = frame.model_dump(mode="json")
             return AssistantCandidate(
                 text=(message(f"Którą aplikację chcesz uruchomić? Dostępne opcje: {names}.",
                               f"Which application would you like to launch? Available options: {names}.")
                       if matches else message("Nie znalazłem takiej zainstalowanej aplikacji.",
                                               "I could not find that installed application.")),
-                metadata={"action_choices": {"kind": "application", "task_id": task_id, "entries": matches}},
+                metadata=metadata,
             )
         application = matches[0]
         proposal = ActionProposal(
@@ -128,6 +240,70 @@ class AssistantActions:
                          f"Launched {application['name']}. I verified the application process."),
             metadata=metadata,
         )
+
+    async def _execute_proposal(
+        self,
+        turn: ConversationTurn,
+        proposal: ActionProposal,
+        frame: ActiveChoiceFrame,
+        cancellation: CancellationToken,
+    ) -> AssistantCandidate:
+        descriptor = self.capabilities.registry.descriptor(proposal.capability)
+        polish = turn.metadata.get("language") != "en"
+
+        def message(pl: str, en: str) -> str:
+            return pl if polish else en
+
+        if descriptor is None:
+            return AssistantCandidate(text=message("Funkcja jest niedostępna.", "Capability unavailable."))
+
+        request = normalize_request(
+            descriptor,
+            {"task_id": proposal.task_id, "handle": proposal.resource_handle},
+            actor=turn.producer,
+            request_id=f"{turn.record_id}:{proposal.capability}",
+            data_class=turn.data_class,
+        )
+        decision, executed = await self.capabilities.invoke(request, cancellation)
+        terminal = executed.failure() if isinstance(executed, Failure) else executed.unwrap()
+        metadata = {
+            "action_proposal": proposal.model_dump(mode="json"),
+            "action_result": terminal.model_dump(mode="json"),
+            "policy_decision_id": decision.record_id if decision else None,
+            "consumed_choice_frame_id": frame.record_id,
+            "remote_tokens": 0,
+        }
+        if isinstance(executed, Failure):
+            return AssistantCandidate(
+                text=message(f"Nie potwierdzam wykonania: {terminal.code}.", f"Execution not verified: {terminal.code}."),
+                metadata=metadata,
+            )
+        output = executed.unwrap().output
+        if proposal.capability == "browser.read_page":
+            text = output.get("title", "") + "\n\n" + output.get("text", "")
+            metadata["untrusted_content"] = True
+            metadata["requires_synthesis"] = True
+            metadata["selected_resource_handle"] = proposal.resource_handle
+        elif proposal.capability == "browser.open_result":
+            url = output.get("observed_url", "")
+            text = message(f"Otworzyłem wynik w przeglądarce: {url}.", f"Opened result in browser: {url}.")
+            metadata["action_choices"] = {
+                "kind": "url",
+                "task_id": proposal.task_id,
+                "entries": [
+                    {"name": e.label, "handle": e.handle, **e.metadata}
+                    for e in frame.entries
+                ],
+            }
+            metadata["selected_resource_handle"] = proposal.resource_handle
+        elif proposal.capability == "application.launch":
+            text = message("Uruchomiłem aplikację. Potwierdziłem proces aplikacji w systemie.", "Launched application. I verified the application process.")
+        elif proposal.capability == "document.open":
+            target = output.get("path") or output.get("observed_url") or ""
+            text = message(f"Otworzyłem dokument: {target}.", f"Opened document: {target}.")
+        else:
+            text = message("Wykonanie potwierdzone.", "Execution verified.")
+        return AssistantCandidate(text=text, metadata=metadata)
 
     async def _document_intent(self, turn: ConversationTurn, intent: ActionIntent,  # noqa: PLR0911, PLR0912, PLR0915
                                cancellation: CancellationToken) -> AssistantCandidate:
@@ -184,8 +360,37 @@ class AssistantActions:
                                                 f"Document search failed: {fetched.failure().code}."))
             entries = fetched.unwrap().output["documents"]
             text = "\n".join(f"{i}. {item['name']}" for i, item in enumerate(entries, 1))
+            metadata: dict[str, Any] = {"action_choices": {"kind": "file", "task_id": task_id, "entries": entries}}
+            if entries:
+                choice_entries = tuple(
+                    ChoiceEntry(
+                        index=i,
+                        handle=item["handle"],
+                        label=item["name"],
+                        metadata={"path": item.get("path", "")},
+                    )
+                    for i, item in enumerate(entries, 1)
+                    if "handle" in item
+                )
+                if choice_entries:
+                    now = _utc_now()
+                    frame = ActiveChoiceFrame(
+                        record_id=_new_id(),
+                        timestamp=now,
+                        producer=turn.producer,
+                        session_id=turn.session_id,
+                        profile_scope=self.profile,
+                        task_id=task_id,
+                        source_turn_id=turn.record_id,
+                        intended_capability="document.open",
+                        entries=choice_entries,
+                        state=ChoiceState.ACTIVE,
+                        expires_at=now + timedelta(minutes=15),
+                        data_class=turn.data_class,
+                    )
+                    metadata["active_choice_frame"] = frame.model_dump(mode="json")
             return AssistantCandidate(text=text or ("Nie znaleziono dokumentów." if intent.language == "pl" else "No documents found."),
-                                      metadata={"action_choices": {"kind": "file", "task_id": task_id, "entries": entries}})
+                                      metadata=metadata)
         if intent.query and intent.selection is None:
             searched = await self._document_intent(turn, intent.model_copy(update={"outcome": "file.search"}), cancellation)
             choices = searched.metadata.get("action_choices", {})

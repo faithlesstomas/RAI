@@ -41,6 +41,7 @@ class AssistantRuntimeConfig:
     ollama_host: str = "http://127.0.0.1:11434"
     lemonade_host: str = "http://127.0.0.1:13305"
     lemonade_api_key: str | None = None
+    lemonade_timeout: float = 300.0
     profile_scope: str = "default"
     system_instruction: str = DEFAULT_SYSTEM_INSTRUCTION
     max_context_characters: int = DEFAULT_MAX_CONTEXT_CHARACTERS
@@ -208,6 +209,13 @@ def resolve_assistant_config(  # noqa: PLR0913
             )
             else None
         ),
+        lemonade_timeout=float(
+            assistant.get("lemonade_timeout")
+            or local_ai.get("lemonade_timeout")
+            or profile.get("lemonade_timeout")
+            or os.environ.get("LEMONADE_TIMEOUT")
+            or 300.0
+        ),
         profile_scope=profile_name,
         system_instruction=str(
             assistant.get("system")
@@ -267,6 +275,7 @@ def build_assistant_backend(runtime: AssistantRuntimeConfig) -> AssistantModelBa
         engine.host = runtime.ollama_host
     elif runtime.backend == "lemonade":
         engine.host = runtime.lemonade_host
+        engine.timeout_seconds = runtime.lemonade_timeout
         if runtime.lemonade_api_key:
             engine.api_key = runtime.lemonade_api_key
 

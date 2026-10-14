@@ -120,6 +120,9 @@ See [docs/architecture.md](docs/architecture.md) for component boundaries and
   the default capability registry and MCP when a local voice is provisioned.
 - a usable Rich Assistant MVP with interactive and one-shot CLI, resumable chat
   sessions, RAI-owned SQLite graph memory, exact inspectable context windows,
+  policy-controlled capability actions (`application.*`, `browser.*`, `file.*`,
+  `system.volume.*`, `process.*`), multi-turn active choice frames, in-turn model
+  synthesis over tool observations, bounded research workflows (`TaskStepController`),
   authenticated REST/WebSocket clients and llama.cpp/Ollama backends.
 
 This list is deliberately narrower than the target architecture. The memory MVP

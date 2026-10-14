@@ -662,7 +662,15 @@ class HitlApprovalBroker:
         if cancellation.cancelled:
             return Failure(self._failure(decision, "CANCELLED", "approval was cancelled"))
         manager = get_approval_manager()
-        pending = manager.register_request(review_text(request), "BrowserEgress")
+        details = {
+            "capability": request.capability,
+            "arguments": request.arguments,
+            "target_resource": request.target_resource,
+            "data_class": str(request.data_class),
+            "side_effects": list(decision.requested_side_effects),
+            "reason_codes": list(decision.reason_codes),
+        }
+        pending = manager.register_request(review_text(request), request.capability, details=details)
         try:
             approved = await manager.wait_for_approval(pending)
             if approved and not cancellation.cancelled:
@@ -679,9 +687,15 @@ class HitlApprovalBroker:
         if cancellation.cancelled:
             return Failure(self._failure(decision, "CANCELLED", "approval was cancelled"))
         manager = get_approval_manager()
+        details = {
+            "target_resource": decision.target_resource,
+            "side_effects": list(decision.requested_side_effects),
+            "reason_codes": list(decision.reason_codes),
+        }
         pending = manager.register_request(
             f"{decision.target_resource}: {','.join(decision.requested_side_effects)}",
             "CapabilityPolicy",
+            details=details,
         )
         approved = await manager.wait_for_approval(pending)
         if cancellation.cancelled:

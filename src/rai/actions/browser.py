@@ -4,7 +4,7 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import json
-from typing import Protocol
+from typing import Any, Protocol
 from urllib.parse import urlsplit
 
 import httpx
@@ -91,9 +91,15 @@ class CdpBrowserBackend:
 
             def fetch() -> tuple[dict, ...]:
                 with DDGS(timeout=5) as search:
-                    return tuple({"name": str(item.get("title", ""))[:256], "url": item["href"]}
-                                 for item in search.text(query, max_results=MAX_SEARCH_RESULTS)
-                                 if web_url(item.get("href", "")))[:MAX_SEARCH_RESULTS]
+                    return tuple(
+                        {
+                            "name": str(item.get("title", ""))[:256],
+                            "url": item["href"],
+                            "snippet": str(item.get("body", ""))[:250],
+                        }
+                        for item in search.text(query, max_results=MAX_SEARCH_RESULTS)
+                        if web_url(item.get("href", ""))
+                    )[:MAX_SEARCH_RESULTS]
             return Success(await asyncio.to_thread(fetch))
         except Exception:  # pylint: disable=broad-exception-caught
             return Failure("BROWSER_SEARCH_UNAVAILABLE")
@@ -150,7 +156,7 @@ class BrowserCapability:
     def __init__(self, name: str, handles: SQLiteHandleStore, backend: BrowserBackend) -> None:
         self.name, self.handles, self.backend = name, handles, backend
 
-    async def invoke(self, request: CapabilityRequest, cancellation: CancellationToken) -> Result[ActionResult, ActionFailure]:  # noqa: PLR0911
+    async def invoke(self, request: CapabilityRequest, cancellation: CancellationToken) -> Result[ActionResult, ActionFailure]:  # noqa: PLR0911, PLR0912
         if request.data_class != DataClass.PUBLIC and not (
             request.data_class == DataClass.PRIVATE and has_browser_consent(request)
         ):
@@ -175,7 +181,10 @@ class BrowserCapability:
                 issued = self.handles.issue(handle)
                 if isinstance(issued, Failure):
                     return Failure(failure(request, issued.failure()))
-                entries.append({"name": item["name"], "url": item["url"], "handle": issued.unwrap()})
+                entry: dict[str, Any] = {"name": item["name"], "url": item["url"], "handle": issued.unwrap()}
+                if "snippet" in item and item["snippet"]:
+                    entry["snippet"] = str(item["snippet"])[:250]
+                entries.append(entry)
             return Success(result(request, {"results": entries, "untrusted_content": True}, {"search_response_received": True}))
         resolved = self.handles.resolve(request.arguments["handle"], actor_id=request.actor.producer_id,
                                         task_id=request.arguments["task_id"], operation=self.name)
@@ -186,8 +195,15 @@ class BrowserCapability:
                 or handle.data_class != request.data_class
                 or handle.fingerprint != hashlib.sha256(handle.target.encode()).hexdigest()):
             return Failure(failure(request, "STALE_RESOURCE"))
-        invoked = await (self.backend.open(handle.target, cancellation) if self.name == "browser.open_result"
-                         else self.backend.read(handle.target, cancellation))
+        if self.name == "browser.open_result":
+            invoked = await self.backend.open(handle.target, cancellation)
+        else:
+            invoked = await self.backend.read(handle.target, cancellation)
+            if isinstance(invoked, Failure) and invoked.failure() == "AMBIGUOUS_OR_MISSING_TAB":
+                open_res = await self.backend.open(handle.target, cancellation)
+                if isinstance(open_res, Failure):
+                    return Failure(failure(request, open_res.failure()))
+                invoked = await self.backend.read(handle.target, cancellation)
         if isinstance(invoked, Failure):
             return Failure(failure(request, invoked.failure()))
         evidence = invoked.unwrap()
@@ -205,4 +221,5 @@ def register_browser_capabilities(registry: CapabilityRegistry, handles: SQLiteH
                           "required": list(fields), "additionalProperties": False},
             risk_class=RiskClass.MODERATE, side_effects=("network", "browser") if name == "browser.open_result" else ("network",),
             isolation="host-api", verification_plan=("browser-url-identity",),
+            timeout_seconds=60.0,
         ), implementation=BrowserCapability(name, handles, backend)))

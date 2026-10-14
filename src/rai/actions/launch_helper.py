@@ -3,6 +3,7 @@
 Executed with Python isolated mode and a sanitized desktop environment. GIO
 interprets desktop-entry syntax, so model output is never a shell command.
 """
+# pylint: disable=no-member
 from __future__ import annotations
 
 import hashlib
@@ -15,7 +16,7 @@ MAX_ENTRY_BYTES = 65536
 
 def main() -> int:
     """Launch exactly the approved desktop entry revision using GIO."""
-    from gi.repository import Gio, GLib  # noqa: PLC0415  # pylint: disable=import-error
+    from gi.repository import Gio, GLib  # noqa: PLC0415  # pylint: disable=import-error,no-member
 
     path, expected = Path(sys.argv[1]), sys.argv[2]
     with path.open("rb") as source:

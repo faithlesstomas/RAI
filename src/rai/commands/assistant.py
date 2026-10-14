@@ -88,6 +88,12 @@ def ask_command(  # noqa: PLR0913
         "--data-class",
         help="Classification of new turns; does not reclassify stored context.",
     ),
+    timeout: float | None = typer.Option(
+        None,
+        "--timeout",
+        min=1.0,
+        help="Inference request timeout in seconds (default: 300s).",
+    ),
 ) -> None:
     """Send a single prompt to the assistant."""
     _run_assistant_ask(
@@ -104,6 +110,7 @@ def ask_command(  # noqa: PLR0913
         max_output_tokens=max_output_tokens,
         context_window=context_window,
         data_class=data_class,
+        timeout=timeout,
     )
 
 
@@ -168,6 +175,12 @@ def chat_command(  # noqa: PLR0913
         "--data-class",
         help="Classification of new turns; does not reclassify stored context.",
     ),
+    timeout: float | None = typer.Option(
+        None,
+        "--timeout",
+        min=1.0,
+        help="Inference request timeout in seconds (default: 300s).",
+    ),
 ) -> None:
     """Start an interactive chat session with the assistant."""
     _run_assistant_chat(
@@ -183,6 +196,7 @@ def chat_command(  # noqa: PLR0913
         max_output_tokens=max_output_tokens,
         context_window=context_window,
         data_class=data_class,
+        timeout=timeout,
     )
 
 

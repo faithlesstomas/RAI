@@ -397,6 +397,7 @@ def test_assistant_runtime_lemonade_config() -> None:
                 "model": "Qwen3.5-4B-GGUF",
                 "lemonade_host": "http://192.168.1.10:13305",
                 "lemonade_api_key": "custom-key",
+                "lemonade_timeout": 450.0,
             }
         }
     )
@@ -404,6 +405,7 @@ def test_assistant_runtime_lemonade_config() -> None:
     assert resolved.model == "Qwen3.5-4B-GGUF"
     assert resolved.lemonade_host == "http://192.168.1.10:13305"
     assert resolved.lemonade_api_key == "custom-key"
+    assert resolved.lemonade_timeout == 450.0
 
     backend = build_assistant_backend(resolved)
     assert backend.backend_name == "lemonade"
@@ -411,3 +413,106 @@ def test_assistant_runtime_lemonade_config() -> None:
     assert isinstance(backend.engine, LemonadeEngine)
     assert backend.engine.host == "http://192.168.1.10:13305"
     assert backend.engine.api_key == "custom-key"
+    assert backend.engine.timeout_seconds == 450.0
+
+
+@pytest.mark.asyncio
+async def test_lemonade_engine_timeout_handling() -> None:
+    engine = LemonadeEngine(model_name="Slow-Model", timeout_seconds=120.0)
+    mock_client = AsyncMock(spec=httpx.AsyncClient)
+    mock_client.post.side_effect = httpx.ReadTimeout("")
+
+    with patch.object(engine, "_get_client", return_value=mock_client):
+        res = await engine.generate(prompt="Hello")
+        assert isinstance(res, Failure)
+        err = res.failure()
+        assert isinstance(err, TimeoutError)
+        assert "timed out after 120.0s" in str(err)
+        assert str(err)  # Non-empty string representation
+
+
+@pytest.mark.asyncio
+async def test_lemonade_engine_timeout_property_resets_client() -> None:
+    engine = LemonadeEngine(model_name="Model-A", timeout_seconds=60.0)
+    client1 = engine._get_client()
+    assert client1 is not None
+
+    engine.timeout_seconds = 180.0
+    assert engine.timeout_seconds == 180.0
+    client2 = engine._get_client()
+    assert client2 is not client1
+
+
+@pytest.mark.asyncio
+async def test_local_assistant_backend_non_empty_error() -> None:
+    from datetime import datetime, timedelta, timezone
+    from rai.assistant.backends.local import LocalAssistantBackend
+    from rai.assistant.records import (
+        AssistantContextManifest,
+        AssistantContextManifestItem,
+        AssistantContextPackage,
+        InferenceRequest,
+    )
+    from rai.kernel.ports import CancellationToken
+    from rai.kernel.records import DataClass, InferenceBudget, ProducerIdentity
+
+    mock_engine = AsyncMock()
+    # Simulate an exception whose str() is empty (like httpx.ReadTimeout(""))
+    mock_engine.generate.return_value = Failure(httpx.ReadTimeout(""))
+
+    backend = LocalAssistantBackend(
+        engine=mock_engine,
+        model_name="test-model",
+        backend_name="lemonade",
+    )
+    producer = ProducerIdentity(producer_id="test", kind="test", version="1.0.0")
+    manifest = AssistantContextManifest(
+        producer=producer,
+        session_id="ses-1",
+        turn_id="turn-1",
+        items=(
+            AssistantContextManifestItem(
+                source_id="turn-1",
+                source_type="conversation_turn",
+                layer="current_turn",
+                data_class=DataClass.PUBLIC,
+            ),
+        ),
+    )
+    context_pkg = AssistantContextPackage(
+        producer=producer,
+        session_id="ses-1",
+        turn_id="turn-1",
+        manifest=manifest,
+        content={"current_turn": {"text": "Hello", "turn_id": "turn-1"}},
+    )
+    budget = InferenceBudget(
+        producer=producer,
+        max_input_tokens=1000,
+        max_output_tokens=100,
+        max_agent_turns=1,
+        max_tool_calls=0,
+        max_images=0,
+        max_audio_seconds=0.0,
+        max_latency_seconds=30.0,
+        max_provider_cost=0.0,
+        max_ram_bytes=1024**3,
+        max_vram_bytes=1024**3,
+        cancellation_deadline=datetime.now(timezone.utc) + timedelta(seconds=60),
+    )
+    req = InferenceRequest(
+        producer=producer,
+        session_id="ses-1",
+        turn_id="turn-1",
+        request_id="req-1",
+        context=context_pkg,
+        budget=budget,
+        model_name="test-model",
+    )
+    res = await backend.generate(req, CancellationToken())
+    assert isinstance(res, Failure)
+    failure_record = res.failure()
+    assert failure_record.code == "ENGINE_ERROR"
+    assert failure_record.message != "local engine failed: "
+    assert "ReadTimeout" in failure_record.message
+

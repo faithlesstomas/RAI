@@ -6,6 +6,7 @@ from dataclasses import dataclass, replace
 from datetime import datetime, timezone
 import json
 import re
+from typing import Any
 import unicodedata
 
 from returns.result import Failure, Result, Success
@@ -32,6 +33,7 @@ from .records import (
     AssistantContextPackage,
     ConversationTurn,
     MemoryRecord,
+    ToolObservation,
     make_assistant_failure,
 )
 
@@ -650,6 +652,99 @@ class AssistantContextBuilder:
                 )
             )
 
+        tool_observations: list[ToolObservation] = []
+        tool_observation_ids: list[str] = []
+        for recent_t in recent_turns:
+            if recent_t.role != "assistant":
+                continue
+            action_data = recent_t.metadata.get("action")
+            if not isinstance(action_data, dict):
+                continue
+            action_result = action_data.get("action_result")
+            action_proposal = action_data.get("action_proposal")
+            if not isinstance(action_result, dict):
+                continue
+
+            capability = str(
+                action_result.get("capability")
+                or (action_proposal.get("capability") if isinstance(action_proposal, dict) else "")
+                or "unknown"
+            )
+            is_failure = action_result.get("record_type") == "action_failure" or "code" in action_result
+            obs_id = f"{recent_t.record_id}:{capability}"
+
+            if is_failure:
+                obs = ToolObservation(
+                    source_id=obs_id,
+                    source_turn_id=recent_t.record_id,
+                    capability=capability,
+                    status="FAILED",
+                    summary=f"Action {capability} failed: {action_result.get('code') or action_result.get('message')}",
+                    untrusted_content=False,
+                    content={"code": action_result.get("code"), "message": action_result.get("message")},
+                )
+            else:
+                output = action_result.get("output", {})
+                obs_content: dict[str, Any] = {}
+                summary = f"Executed {capability}"
+                if capability == "browser.search":
+                    results = output.get("results", [])
+                    results_summary = [
+                        {
+                            "name": r.get("name", ""),
+                            "url": r.get("url", ""),
+                            **({"snippet": r["snippet"]} if "snippet" in r else {}),
+                        }
+                        for r in results
+                    ]
+                    obs_content = {"results": results_summary}
+                    summary = f"Search returned {len(results_summary)} results"
+                elif capability == "browser.read_page":
+                    obs_content = {
+                        "title": output.get("title", ""),
+                        "observed_url": output.get("observed_url", ""),
+                        "text": str(output.get("text", ""))[:4000],
+                    }
+                    summary = f"Read web page: {output.get('title', '')}"
+                elif capability == "browser.open_result":
+                    obs_content = {"observed_url": output.get("observed_url", "")}
+                    summary = f"Opened URL in browser: {output.get('observed_url', '')}"
+                elif capability == "process.inspect":
+                    if "processes" in output and isinstance(output["processes"], (list, tuple)):
+                        procs = output.get("processes", [])
+                        obs_content = {"processes": procs[:10]}
+                        summary = f"Process inspection returned {len(procs)} processes"
+                    else:
+                        obs_content = output
+                        proc_name = output.get("name") or output.get("pid") or "process"
+                        summary = f"Process inspection details for {proc_name}"
+                else:
+                    obs_content = output
+
+                obs = ToolObservation(
+                    source_id=obs_id,
+                    source_turn_id=recent_t.record_id,
+                    capability=capability,
+                    status="SUCCESS",
+                    summary=summary,
+                    untrusted_content=bool(output.get("untrusted_content", True)),
+                    content=obs_content,
+                )
+            tool_observations.append(obs)
+            tool_observation_ids.append(obs.source_id)
+            items.append(
+                AssistantContextManifestItem(
+                    source_id=obs.source_id,
+                    source_type="tool_observation",
+                    layer="tool_observation",
+                    data_class=recent_t.data_class,
+                    domain_scope=recent_t.domain_scope,
+                    purpose=recent_t.purpose,
+                    ranking_reason=f"recent_action:{capability}",
+                    fields=("capability", "summary", "content"),
+                )
+            )
+
         recent_content = [
             {"record_id": t.record_id, "role": t.role, "text": t.text}
             for t in recent_turns
@@ -665,13 +760,15 @@ class AssistantContextBuilder:
             "episodic_evidence": episodic_content,
             "external_evidence": external_content,
             "durable_memories": durable_content,
+            "tool_observations": [obs.model_dump(mode="json") for obs in tool_observations],
         }
 
         serialized = json.dumps(content, ensure_ascii=False)
-        while len(serialized) > self.max_context_characters and recent_content:
-            removed = recent_content.pop(0)
-            removed_id = str(removed["record_id"])
-            recent_ids.remove(removed_id)
+        while len(serialized) > self.max_context_characters and external_content:
+            removed = external_content.pop()
+            removed_id = str(removed["source_id"])
+            external_ids.remove(removed_id)
+            ranking_reasons.pop(removed_id, None)
             items = [item for item in items if item.source_id != removed_id]
             exclusions.append(f"{removed_id}:character_budget")
             serialized = json.dumps(content, ensure_ascii=False)
@@ -683,19 +780,25 @@ class AssistantContextBuilder:
             items = [item for item in items if item.source_id != removed_id]
             exclusions.append(f"{removed_id}:character_budget")
             serialized = json.dumps(content, ensure_ascii=False)
-        while len(serialized) > self.max_context_characters and external_content:
-            removed = external_content.pop()
-            removed_id = str(removed["source_id"])
-            external_ids.remove(removed_id)
-            ranking_reasons.pop(removed_id, None)
-            items = [item for item in items if item.source_id != removed_id]
-            exclusions.append(f"{removed_id}:character_budget")
+        while len(serialized) > self.max_context_characters and tool_observations:
+            removed_obs = tool_observations.pop(0)
+            tool_observation_ids.remove(removed_obs.source_id)
+            items = [item for item in items if item.source_id != removed_obs.source_id]
+            exclusions.append(f"{removed_obs.source_id}:character_budget")
+            content["tool_observations"] = [obs.model_dump(mode="json") for obs in tool_observations]
             serialized = json.dumps(content, ensure_ascii=False)
         while len(serialized) > self.max_context_characters and durable_content:
             removed = durable_content.pop()
             removed_id = str(removed["record_id"])
             durable_ids.remove(removed_id)
             ranking_reasons.pop(removed_id, None)
+            items = [item for item in items if item.source_id != removed_id]
+            exclusions.append(f"{removed_id}:character_budget")
+            serialized = json.dumps(content, ensure_ascii=False)
+        while len(serialized) > self.max_context_characters and recent_content:
+            removed = recent_content.pop(0)
+            removed_id = str(removed["record_id"])
+            recent_ids.remove(removed_id)
             items = [item for item in items if item.source_id != removed_id]
             exclusions.append(f"{removed_id}:character_budget")
             serialized = json.dumps(content, ensure_ascii=False)
@@ -739,7 +842,7 @@ class AssistantContextBuilder:
             else "compact_memory"
             if final_compact_sufficient
             else "raw_evidence_fallback"
-            if episodic_ids or external_ids or final_recent_evidence_sufficient
+            if episodic_ids or external_ids or final_recent_evidence_sufficient or tool_observation_ids
             else "no_evidence"
         )
         route_sufficiency = (
@@ -770,6 +873,7 @@ class AssistantContextBuilder:
             episodic_turn_ids=tuple(episodic_ids),
             external_evidence_ids=tuple(external_ids),
             durable_memory_ids=tuple(durable_ids),
+            tool_observation_ids=tuple(tool_observation_ids),
             ranking_reasons=ranking_reasons,
             exclusions=tuple(exclusions),
             redactions=(),

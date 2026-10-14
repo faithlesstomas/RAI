@@ -54,6 +54,8 @@ _ACTIVITY_STEMS = (
     "working",
 )
 
+_MIN_EXACT_TERM_LENGTH: int = 4
+
 
 class RichHistoryEvidenceProvider:
     """Retrieve bounded episode evidence without promoting it to a user claim."""
@@ -111,7 +113,14 @@ class RichHistoryEvidenceProvider:
                         )
                     )
                 )
-                matched = tuple(term for term in terms if term in searchable)
+                matched = tuple(
+                    term for term in terms
+                    if (
+                        term in searchable.split()
+                        if len(term) < _MIN_EXACT_TERM_LENGTH
+                        else term in searchable
+                    )
+                )
                 if not matched and not activity_intent:
                     continue
                 score = len(matched) / max(1, len(terms)) + episode.confidence * 0.1

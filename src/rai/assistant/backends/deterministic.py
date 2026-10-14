@@ -138,12 +138,39 @@ class DeterministicAssistantBackend:
             turn_id=request.turn_id,
             durable_memories=grounding_memories,
         )
+        tool_observations = request.context.content.get("tool_observations", [])
+        if not isinstance(tool_observations, (list, tuple)):
+            tool_observations = []
         has_evidence = bool(
             grounding_memories
             or request.context.content.get("episodic_evidence", ())
             or request.context.content.get("external_evidence", ())
+            or tool_observations
         )
-        if not proposals and not has_evidence and "?" in user_text:
+        if not proposals and tool_observations:
+            obs = tool_observations[-1]
+            if isinstance(obs, dict):
+                cap = str(obs.get("capability", ""))
+                obs_summary = str(obs.get("summary", ""))
+                obs_content = obs.get("content", {})
+                title = (
+                    obs_content.get("title")
+                    if isinstance(obs_content, dict) and obs_content.get("title")
+                    else obs_summary
+                )
+            else:
+                cap = str(getattr(obs, "capability", ""))
+                title = getattr(obs, "summary", "")
+            title_text = str(title).splitlines()[0] if title else ""
+            if cap == "activity.query":
+                response_text = f"Podsumowanie aktywności w systemie: {title_text}."
+            elif cap == "browser.read_page" or "stron" in title_text.lower():
+                response_text = f"Odpowiedź na podstawie odczytanej strony: {title_text or 'strona'}."
+            elif cap == "browser.search":
+                response_text = f"Odpowiedź na podstawie wyszukiwania: {title_text}."
+            else:
+                response_text = f"Odpowiedź na podstawie obserwacji ({cap}): {title_text}."
+        elif not proposals and not has_evidence and "?" in user_text:
             response_text = (
                 "Nie mam wystarczających źródeł, aby odpowiedzieć na to pytanie."
             )
@@ -154,7 +181,7 @@ class DeterministicAssistantBackend:
             tokens_in=len(user_text.split()),
             tokens_out=len(response_text.split()),
             metadata={
-                "raw_model_output": "Rozumiem.",
+                "raw_model_output": response_text if tool_observations else "Rozumiem.",
                 "grounding_override": response_text != "Rozumiem.",
             },
         )

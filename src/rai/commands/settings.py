@@ -13,6 +13,7 @@ def _assistant_config(  # noqa: PLR0913
     thinking_budget: int | None = None,
     max_output_tokens: int | None = None,
     context_window: int | None = None,
+    timeout: float | None = None,
 ) -> dict[str, object]:
     from rai import config_manager  # noqa: PLC0415
 
@@ -52,6 +53,8 @@ def _assistant_config(  # noqa: PLR0913
         assistant["max_output_tokens"] = max_output_tokens
     if context_window is not None:
         assistant["context_window"] = context_window
+    if timeout is not None:
+        assistant["lemonade_timeout"] = timeout
     config["assistant"] = assistant
     config["_cli_overrides"] = {
         k: v
@@ -63,6 +66,7 @@ def _assistant_config(  # noqa: PLR0913
             "thinking_budget": thinking_budget,
             "max_output_tokens": max_output_tokens,
             "context_window": context_window,
+            "lemonade_timeout": timeout,
         }.items()
         if v is not None
     }

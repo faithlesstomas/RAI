@@ -55,6 +55,7 @@ models/
 # Local audits and scratch research files
 AUDIT-*.md
 *.pdf
+scripts/
 
 # GitLab Wiki clone
 wiki/

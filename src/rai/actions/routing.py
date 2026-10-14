@@ -1,15 +1,15 @@
-"""Resolve structured model choices to runtime-issued authority before invocation."""
+from datetime import timedelta
 from returns.result import Failure, Result
 
 from rai.assistant.ports import MemoryGraphStore
 from rai.assistant.records import AssistantCandidate, ConversationTurn
 from rai.kernel.ports import CancellationToken
 from rai.kernel.service import CapabilityService
-from rai.kernel.records import ActionFailure, ActionResult, PolicyDecision
+from rai.kernel.records import ActionFailure, ActionResult, PolicyDecision, _new_id, _utc_now
 from rai.kernel.transport import normalize_request
 from .dialogue import previous_action
 from .intent import ActionIntent
-from .records import ActionProposal
+from .records import ActionProposal, ActiveChoiceFrame, ChoiceEntry, ChoiceState
 
 
 async def route_action(  # noqa: PLR0913, PLR0912, PLR0915
@@ -34,12 +34,21 @@ async def route_action(  # noqa: PLR0913, PLR0912, PLR0915
 
     if name in {"browser.open_result", "browser.read_page"}:
         previous = await previous_action(store, turn, profile)
+        frame_dict = previous.get("active_choice_frame")
+        if isinstance(frame_dict, dict) and frame_dict.get("state") in {"CANCELLED", ChoiceState.CANCELLED.value}:
+            return AssistantCandidate(
+                text="Poprzedni wybór został anulowany." if polish else "The previous choice was cancelled.",
+                metadata={"action_failure": "FRAME_CANCELLED"},
+            )
         choices = previous.get("action_choices", {})
         entries = choices.get("entries", ())
-        if choices.get("kind") != "url" or intent.selection is None or intent.selection > len(entries):
+        if name == "browser.read_page" and intent.selection is None and previous.get("selected_resource_handle"):
+            arguments = {"task_id": choices.get("task_id", task_id), "handle": previous["selected_resource_handle"]}
+        elif choices.get("kind") != "url" or intent.selection is None or intent.selection > len(entries):
             return AssistantCandidate(text=("Który wynik wybrać? Wyszukaj strony i podaj numer wyniku."
                                             if polish else "Which result? Search the web and select a result number."))
-        arguments = {"task_id": choices["task_id"], "handle": entries[intent.selection - 1]["handle"]}
+        else:
+            arguments = {"task_id": choices["task_id"], "handle": entries[intent.selection - 1]["handle"]}
     elif name == "system.volume.set":
         initial = await invoke("system.volume.get", arguments)
         if initial is None or isinstance(initial[1], Failure):
@@ -73,12 +82,28 @@ async def route_action(  # noqa: PLR0913, PLR0912, PLR0915
         if name in {"browser.search", "process.inspect"}:
             entries = output["results" if name == "browser.search" else "processes"]
             choices = {"kind": "url" if name == "browser.search" else "process", "task_id": task_id, "entries": entries}
-            text = "\n".join(f"{i}. {entry['name']}" + (f" (PID {entry['pid']})" if 'pid' in entry else '')
-                             for i, entry in enumerate(entries, 1))
+            if name == "browser.search":
+                lines = []
+                for i, entry in enumerate(entries, 1):
+                    snippet = f" - {entry['snippet']}" if entry.get("snippet") else ""
+                    lines.append(f"{i}. {entry['name']}{snippet}")
+                text = "\n".join(lines)
+                metadata["requires_synthesis"] = bool(entries)
+                metadata["untrusted_content"] = True
+            else:
+                text = "\n".join(f"{i}. {entry['name']}" + (f" (PID {entry['pid']})" if 'pid' in entry else '')
+                                 for i, entry in enumerate(entries, 1))
             text = text or ("Brak wyników." if polish else "No results.")
         elif name == "browser.read_page":
             text = output["title"] + "\n\n" + output["text"]
             metadata["untrusted_content"] = True
+            metadata["requires_synthesis"] = True
+            metadata["selected_resource_handle"] = arguments.get("handle")
+        elif name == "browser.open_result":
+            text = "Wykonanie potwierdzone." if polish else "Execution verified."
+            metadata["selected_resource_handle"] = arguments.get("handle")
+            if choices:
+                metadata["action_choices"] = choices
         elif name == "system.volume.get":
             text = ("Głośność: " if polish else "Volume: ") + ", ".join(f"{v}%" for v in output["volumes"])
         elif name == "activity.query":
@@ -104,7 +129,7 @@ async def route_action(  # noqa: PLR0913, PLR0912, PLR0915
                     ended = str(ep.get("ended_at", ""))
                     time_range = (
                         f"{started[:16]} - {ended[11:16]}"
-                        if len(started) >= 16 and len(ended) >= 16
+                        if len(started) >= 16 and len(ended) >= 16  # noqa: PLR2004
                         else (started or ended or "")
                     )
                     summary = f"[{time_range}] {apps}" if time_range else f"[{apps}]"
@@ -115,8 +140,41 @@ async def route_action(  # noqa: PLR0913, PLR0912, PLR0915
                     lines.append(f"- {summary}")
                 prefix = "Ostatnia aktywność w systemie:\n" if polish else "Recent system activity:\n"
                 text = prefix + "\n".join(lines)
+                metadata["requires_synthesis"] = True
+                metadata["untrusted_content"] = False
         else:
             text = "Wykonanie potwierdzone." if polish else "Execution verified."
-        if choices:
+        if name in {"browser.search", "process.inspect"} and choices:
             metadata["action_choices"] = choices
+            if name in {"browser.search", "process.inspect"} and entries:
+                choice_entries = tuple(
+                    ChoiceEntry(
+                        index=i,
+                        handle=entry["handle"],
+                        label=entry["name"],
+                        metadata={
+                            **({"url": entry["url"]} if "url" in entry else {}),
+                            **({"snippet": entry["snippet"]} if "snippet" in entry else {}),
+                        },
+                    )
+                    for i, entry in enumerate(entries, 1)
+                    if "handle" in entry
+                )
+                if choice_entries:
+                    now = _utc_now()
+                    frame = ActiveChoiceFrame(
+                        record_id=_new_id(),
+                        timestamp=now,
+                        producer=turn.producer,
+                        session_id=turn.session_id,
+                        profile_scope=profile,
+                        task_id=task_id,
+                        source_turn_id=turn.record_id,
+                        intended_capability="browser.open_result" if name == "browser.search" else "process.inspect",
+                        entries=choice_entries,
+                        state=ChoiceState.ACTIVE,
+                        expires_at=now + timedelta(minutes=15),
+                        data_class=turn.data_class,
+                    )
+                    metadata["active_choice_frame"] = frame.model_dump(mode="json")
     return AssistantCandidate(text=text, metadata=metadata)

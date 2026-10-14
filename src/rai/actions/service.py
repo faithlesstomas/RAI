@@ -25,12 +25,12 @@ ACTION_NAMES = frozenset({
     "system.volume.get", "system.volume.set", "process.inspect",
 })
 MAX_CONCURRENT_ACTIONS = 4
-ACTION_TIMEOUT = 20.0
-APPROVAL_TIMEOUT = 60.0
+ACTION_TIMEOUT = 30.0
+APPROVAL_TIMEOUT: float | None = None
 T = TypeVar("T")
 
 
-async def bounded(awaitable: Awaitable[T], token: CancellationToken, seconds: float) -> T:
+async def bounded(awaitable: Awaitable[T], token: CancellationToken, seconds: float | None = None) -> T:
     """Cancel and reap cooperative I/O when its token or deadline fires."""
     work = asyncio.ensure_future(awaitable)
     cancelled = asyncio.create_task(token.wait())
@@ -165,7 +165,12 @@ class ActionCapabilityService(CapabilityService):
                         # Consent is task-local and bound to the exact immutable request.
                         # Classification and handle labels remain PRIVATE.
                         with browser_consent(request):
-                            invoked = await bounded(capability.invoke(request, token), token, ACTION_TIMEOUT)
+                            action_timeout = (
+                                descriptor.timeout_seconds
+                                if (descriptor and descriptor.timeout_seconds is not None)
+                                else ACTION_TIMEOUT
+                            )
+                            invoked = await bounded(capability.invoke(request, token), token, action_timeout)
                         if isinstance(invoked, Success):
                             terminal = invoked.unwrap()
                         elif invoked.failure().code == "CAPABILITY_FAILED":

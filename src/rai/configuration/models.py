@@ -12,6 +12,7 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 DEFAULT_MAX_OUTPUT_TOKENS = 4096
 DEFAULT_CONTEXT_WINDOW = 8192
 DEFAULT_MAX_CONTEXT_CHARACTERS = 32_000
+DEFAULT_LEMONADE_TIMEOUT = 300.0
 
 
 class SettingsRecord(BaseModel):
@@ -28,6 +29,7 @@ class ModelSettings(SettingsRecord):
     ollama_host: str | None = None
     lemonade_host: str | None = None
     lemonade_api_key: str | None = None
+    lemonade_timeout: float = Field(default=DEFAULT_LEMONADE_TIMEOUT, gt=0)
     max_output_tokens: int = Field(default=DEFAULT_MAX_OUTPUT_TOKENS, gt=0)
     temperature: float = Field(default=0.2, ge=0, le=2)
     context_window: int = Field(default=DEFAULT_CONTEXT_WINDOW, gt=0)
