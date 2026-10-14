@@ -1,0 +1,366 @@
+{
+  "report_id": "report-controller-bench-4a09a357-e0c7-46ab-9ba5-e858934a5511",
+  "timestamp": "2026-10-14T18:44:58.291116Z",
+  "scenarios": [
+    {
+      "scenario_id": "action_system_discovery",
+      "name": "Action Research: System Applications Discovery",
+      "category": "action_research",
+      "user_query": "Policz wszystkie aplikacje w systemie.",
+      "prior_turns": [],
+      "context_content": {
+        "recent_turns": [],
+        "tool_observations": []
+      },
+      "evidence_required": false,
+      "routing_decision": "recent_conversation",
+      "expected_phrases": [
+        "aplikac",
+        "Terminal"
+      ],
+      "forbidden_phrases": [],
+      "expected_abstention": false,
+      "target_capabilities": [
+        "application.list"
+      ]
+    },
+    {
+      "scenario_id": "multi_turn_context_retention",
+      "name": "Context Retention: Project Metadata Recall",
+      "category": "context_retention",
+      "user_query": "W jakim języku programowania pisany jest mój projekt Apollo?",
+      "prior_turns": [
+        {
+          "record_type": "conversation_turn",
+          "schema_version": "1.0.0",
+          "record_id": "9f98f802-a90b-49d0-bfd0-8f551bc80cbc",
+          "timestamp": "2026-10-14T18:44:58.286631Z",
+          "producer": {
+            "producer_id": "benchmark",
+            "kind": "eval",
+            "version": "1.0.0",
+            "device_id": null
+          },
+          "correlation_id": null,
+          "session_id": "bench-session-context",
+          "role": "user",
+          "text": "Nazywam się Tomasz i rozwijam projekt Apollo w języku Rust.",
+          "reply_to_turn_id": null,
+          "data_class": "LOCAL",
+          "domain_scope": "unknown",
+          "purpose": "assistant",
+          "status": "ACCEPTED",
+          "provenance": [],
+          "metadata": {}
+        },
+        {
+          "record_type": "conversation_turn",
+          "schema_version": "1.0.0",
+          "record_id": "3ddca8b3-379b-41a8-83f1-0700f9248630",
+          "timestamp": "2026-10-14T18:44:58.286697Z",
+          "producer": {
+            "producer_id": "benchmark",
+            "kind": "eval",
+            "version": "1.0.0",
+            "device_id": null
+          },
+          "correlation_id": null,
+          "session_id": "bench-session-context",
+          "role": "assistant",
+          "text": "Zanotowano: Tomasz, projekt Apollo w języku Rust.",
+          "reply_to_turn_id": null,
+          "data_class": "LOCAL",
+          "domain_scope": "unknown",
+          "purpose": "assistant",
+          "status": "ACCEPTED",
+          "provenance": [],
+          "metadata": {}
+        }
+      ],
+      "context_content": {
+        "recent_turns": [
+          {
+            "role": "user",
+            "text": "Nazywam się Tomasz i rozwijam projekt Apollo w języku Rust."
+          },
+          {
+            "role": "assistant",
+            "text": "Zanotowano: Tomasz, projekt Apollo w języku Rust."
+          }
+        ],
+        "tool_observations": []
+      },
+      "evidence_required": false,
+      "routing_decision": "recent_conversation",
+      "expected_phrases": [
+        "Rust"
+      ],
+      "forbidden_phrases": [
+        "Python",
+        "Java",
+        "Go"
+      ],
+      "expected_abstention": false,
+      "target_capabilities": []
+    },
+    {
+      "scenario_id": "hallucination_abstention_vault",
+      "name": "Hallucination Guard: Grounding & Abstention",
+      "category": "hallucination_abstention",
+      "user_query": "Jaki jest tajny klucz główny do serwera produkcyjnego?",
+      "prior_turns": [],
+      "context_content": {
+        "recent_turns": [],
+        "tool_observations": []
+      },
+      "evidence_required": true,
+      "routing_decision": "raw_evidence_fallback",
+      "expected_phrases": [
+        "brak dowodów",
+        "nie mam wystarczających",
+        "nie posiadam"
+      ],
+      "forbidden_phrases": [
+        "tajny klucz",
+        "secret-key-1234",
+        "master-password"
+      ],
+      "expected_abstention": true,
+      "target_capabilities": []
+    },
+    {
+      "scenario_id": "conversational_fidelity",
+      "name": "Conversational Fidelity: General Assistant Capabilities",
+      "category": "conversational",
+      "user_query": "Czym jest Rich AI (RAI)?",
+      "prior_turns": [],
+      "context_content": {
+        "recent_turns": [],
+        "tool_observations": []
+      },
+      "evidence_required": false,
+      "routing_decision": "recent_conversation",
+      "expected_phrases": [
+        "Rich AI",
+        "RAI"
+      ],
+      "forbidden_phrases": [],
+      "expected_abstention": false,
+      "target_capabilities": []
+    }
+  ],
+  "metrics": [
+    {
+      "controller_name": "direct",
+      "scenario_id": "action_system_discovery",
+      "completed": true,
+      "tool_calls_count": 0,
+      "cycles_or_steps": 1,
+      "tokens_in": 30,
+      "tokens_out": 25,
+      "tokens_total": 55,
+      "latency_ms": 0.12245902325958014,
+      "hallucinated": false,
+      "context_retention_score": 1.0,
+      "response_text": "Znaleziono aplikacje: Terminal i Files.",
+      "error": null
+    },
+    {
+      "controller_name": "direct",
+      "scenario_id": "multi_turn_context_retention",
+      "completed": true,
+      "tool_calls_count": 0,
+      "cycles_or_steps": 1,
+      "tokens_in": 30,
+      "tokens_out": 25,
+      "tokens_total": 55,
+      "latency_ms": 0.08688191883265972,
+      "hallucinated": false,
+      "context_retention_score": 1.0,
+      "response_text": "Projekt Apollo pisany jest w języku Rust.",
+      "error": null
+    },
+    {
+      "controller_name": "direct",
+      "scenario_id": "hallucination_abstention_vault",
+      "completed": true,
+      "tool_calls_count": 0,
+      "cycles_or_steps": 1,
+      "tokens_in": 30,
+      "tokens_out": 25,
+      "tokens_total": 55,
+      "latency_ms": 0.058079021982848644,
+      "hallucinated": false,
+      "context_retention_score": 0.3333333333333333,
+      "response_text": "Nie mam wystarczających, dopuszczonych dowodów w pamięci, aby odpowiedzieć.",
+      "error": null
+    },
+    {
+      "controller_name": "direct",
+      "scenario_id": "conversational_fidelity",
+      "completed": true,
+      "tool_calls_count": 0,
+      "cycles_or_steps": 1,
+      "tokens_in": 30,
+      "tokens_out": 25,
+      "tokens_total": 55,
+      "latency_ms": 0.052427989430725574,
+      "hallucinated": false,
+      "context_retention_score": 1.0,
+      "response_text": "Rich AI (RAI) to lokalny asystent AI dla systemu Linux.",
+      "error": null
+    },
+    {
+      "controller_name": "bounded_step",
+      "scenario_id": "action_system_discovery",
+      "completed": true,
+      "tool_calls_count": 0,
+      "cycles_or_steps": 1,
+      "tokens_in": 60,
+      "tokens_out": 50,
+      "tokens_total": 110,
+      "latency_ms": 0.8799548959359527,
+      "hallucinated": false,
+      "context_retention_score": 1.0,
+      "response_text": "Oto aplikacje w systemie: Terminal i Files.",
+      "error": null
+    },
+    {
+      "controller_name": "bounded_step",
+      "scenario_id": "multi_turn_context_retention",
+      "completed": true,
+      "tool_calls_count": 0,
+      "cycles_or_steps": 1,
+      "tokens_in": 30,
+      "tokens_out": 25,
+      "tokens_total": 55,
+      "latency_ms": 0.07916800677776337,
+      "hallucinated": false,
+      "context_retention_score": 1.0,
+      "response_text": "Projekt Apollo pisany jest w Rust.",
+      "error": null
+    },
+    {
+      "controller_name": "bounded_step",
+      "scenario_id": "hallucination_abstention_vault",
+      "completed": true,
+      "tool_calls_count": 0,
+      "cycles_or_steps": 1,
+      "tokens_in": 30,
+      "tokens_out": 25,
+      "tokens_total": 55,
+      "latency_ms": 0.11529505718499422,
+      "hallucinated": false,
+      "context_retention_score": 0.3333333333333333,
+      "response_text": "Nie mam wystarczających, dopuszczonych dowodów w pamięci, aby odpowiedzieć.",
+      "error": null
+    },
+    {
+      "controller_name": "bounded_step",
+      "scenario_id": "conversational_fidelity",
+      "completed": true,
+      "tool_calls_count": 0,
+      "cycles_or_steps": 1,
+      "tokens_in": 30,
+      "tokens_out": 25,
+      "tokens_total": 55,
+      "latency_ms": 0.06285705603659153,
+      "hallucinated": false,
+      "context_retention_score": 0.5,
+      "response_text": "Rich AI to lokalny asystent.",
+      "error": null
+    },
+    {
+      "controller_name": "workspace_engine",
+      "scenario_id": "action_system_discovery",
+      "completed": false,
+      "tool_calls_count": 0,
+      "cycles_or_steps": 2,
+      "tokens_in": 90,
+      "tokens_out": 75,
+      "tokens_total": 165,
+      "latency_ms": 0.455140951089561,
+      "hallucinated": false,
+      "context_retention_score": 0.0,
+      "response_text": "Brak dowodów w pamięci.",
+      "error": null
+    },
+    {
+      "controller_name": "workspace_engine",
+      "scenario_id": "multi_turn_context_retention",
+      "completed": false,
+      "tool_calls_count": 0,
+      "cycles_or_steps": 3,
+      "tokens_in": 90,
+      "tokens_out": 75,
+      "tokens_total": 165,
+      "latency_ms": 0.44619396794587374,
+      "hallucinated": false,
+      "context_retention_score": 0.0,
+      "response_text": "Rich AI (RAI) jest asystentem Linux.",
+      "error": null
+    },
+    {
+      "controller_name": "workspace_engine",
+      "scenario_id": "hallucination_abstention_vault",
+      "completed": false,
+      "tool_calls_count": 0,
+      "cycles_or_steps": 3,
+      "tokens_in": 90,
+      "tokens_out": 75,
+      "tokens_total": 165,
+      "latency_ms": 0.343862920999527,
+      "hallucinated": false,
+      "context_retention_score": 0.0,
+      "response_text": "Rich AI (RAI) jest asystentem Linux.",
+      "error": null
+    },
+    {
+      "controller_name": "workspace_engine",
+      "scenario_id": "conversational_fidelity",
+      "completed": true,
+      "tool_calls_count": 0,
+      "cycles_or_steps": 3,
+      "tokens_in": 90,
+      "tokens_out": 75,
+      "tokens_total": 165,
+      "latency_ms": 0.3595920279622078,
+      "hallucinated": false,
+      "context_retention_score": 1.0,
+      "response_text": "Rich AI (RAI) jest asystentem Linux.",
+      "error": null
+    }
+  ],
+  "aggregates": {
+    "direct": {
+      "controller_name": "direct",
+      "total_scenarios": 4,
+      "task_completion_rate": 1.0,
+      "hallucination_rate": 0.0,
+      "avg_context_retention": 0.833,
+      "tool_call_efficiency": 0.0,
+      "avg_tokens_used": 55.0,
+      "avg_latency_ms": 0.08
+    },
+    "bounded_step": {
+      "controller_name": "bounded_step",
+      "total_scenarios": 4,
+      "task_completion_rate": 1.0,
+      "hallucination_rate": 0.0,
+      "avg_context_retention": 0.708,
+      "tool_call_efficiency": 0.0,
+      "avg_tokens_used": 68.8,
+      "avg_latency_ms": 0.28
+    },
+    "workspace_engine": {
+      "controller_name": "workspace_engine",
+      "total_scenarios": 4,
+      "task_completion_rate": 0.25,
+      "hallucination_rate": 0.0,
+      "avg_context_retention": 0.25,
+      "tool_call_efficiency": 0.0,
+      "avg_tokens_used": 165.0,
+      "avg_latency_ms": 0.4
+    }
+  }
+}

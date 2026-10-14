@@ -12,6 +12,17 @@ from .specialists import (
     GroundingEvaluationSpecialist,
     RetrieverSpecialist,
 )
+from .evaluation import (
+    BenchmarkScenario,
+    ControllerAggregateScore,
+    ControllerBenchmarkReport,
+    ControllerScenarioMetric,
+    create_default_benchmark_scenarios,
+    evaluate_controller,
+    format_benchmark_report_markdown,
+    run_controller_comparative_benchmark,
+    save_benchmark_report,
+)
 from .workspace import WorkspaceEngine
 
 __all__ = [
@@ -26,4 +37,13 @@ __all__ = [
     "WorkspaceContributionKind",
     "WorkspaceEngine",
     "WorkspaceState",
+    "BenchmarkScenario",
+    "ControllerAggregateScore",
+    "ControllerBenchmarkReport",
+    "ControllerScenarioMetric",
+    "create_default_benchmark_scenarios",
+    "evaluate_controller",
+    "format_benchmark_report_markdown",
+    "run_controller_comparative_benchmark",
+    "save_benchmark_report",
 ]
