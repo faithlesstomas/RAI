@@ -7,6 +7,7 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
+import os
 import re
 import time
 from typing import Any, Dict, List, Optional
@@ -20,6 +21,33 @@ from ..protocols import GenerationStats, InferenceResult, LocalTextEngine
 logger = logging.getLogger(__name__)
 
 DEFAULT_LEMONADE_HOST = "http://127.0.0.1:13305"
+DEFAULT_LEMONADE_URL = f"{DEFAULT_LEMONADE_HOST}/api/v1"
+
+
+async def resolve_lemonade_model(
+    base_url: str = DEFAULT_LEMONADE_URL,
+    explicit_model: Optional[str] = None,
+) -> str:
+    """Dynamically resolve the active model on Lemonade daemon, never hardcoding."""
+    if explicit_model:
+        return explicit_model
+    env_model = os.environ.get("RAI_LEMONADE_WORKER_MODEL") or os.environ.get("LEMONADE_MODEL")
+    if env_model:
+        return env_model
+    try:
+        host = base_url.replace("/api/v1", "").rstrip("/")
+        async with httpx.AsyncClient(timeout=3.0) as client:
+            resp = await client.get(f"{host}/api/v1/models")
+            if resp.status_code == 200:  # noqa: PLR2004
+                data = resp.json()
+                models = data.get("data", [])
+                if models and isinstance(models, list):
+                    first_model = models[0].get("id") or models[0].get("checkpoint")
+                    if first_model:
+                        return str(first_model)
+    except Exception as exc:  # noqa: BLE001
+        logger.debug("Failed to query Lemonade for active models: %s", exc)
+    return "default"
 
 
 class LemonadeEngine(LocalTextEngine):

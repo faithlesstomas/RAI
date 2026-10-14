@@ -406,7 +406,7 @@ class LocalLemonadeDecisionBackend:
         if budget_failure is not None:
             return Failure(budget_failure)
 
-        from rai.backends.antigravity import resolve_lemonade_model
+        from rai.inference.engines.lemonade import resolve_lemonade_model
 
         model = await resolve_lemonade_model(
             base_url=self.base_url, explicit_model=self.worker_model

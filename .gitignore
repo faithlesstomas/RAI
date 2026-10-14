@@ -8,6 +8,11 @@ __pycache__/
 *~
 *#
 .#*
+\#*#
+
+# Binary and notebooks
+*.so
+*.ipynb
 
 # misc
 .env
