@@ -9,7 +9,7 @@ from typing import Any, AsyncIterator, Protocol, runtime_checkable
 from returns.result import Result
 
 from rai.kernel.ports import CancellationToken, LifecycleState
-from rai.kernel.records import ActionFailure, DataClass
+from rai.kernel.records import ActionFailure, DataClass, InferenceBudget
 
 from .records import (
     AssistantCandidate,
@@ -255,3 +255,17 @@ class AssistantActionHandler(Protocol):
     async def handle(
         self, turn: ConversationTurn, cancellation: CancellationToken,
     ) -> AssistantCandidate | None: ...
+
+
+@runtime_checkable
+class InteractionController(Protocol):
+    """Provider-neutral interaction strategy coordinating turn processing."""
+
+    async def process_turn(
+        self,
+        turn: ConversationTurn,
+        context: AssistantContextPackage,
+        budget: InferenceBudget,
+        token: CancellationToken,
+    ) -> Result[AssistantCandidate, ActionFailure]: ...
+

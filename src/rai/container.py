@@ -15,6 +15,7 @@ if TYPE_CHECKING:
     from .assistant.ports import MemoryGraphStore
     from .assistant.service import AssistantService
 
+from .assistant.backends.deterministic import DeterministicAssistantBackend
 from .assistant.context import format_capabilities_instruction
 from .kernel.audit import InMemoryAuditLedger, JsonlAuditLedger
 from .kernel.capabilities import CapabilityRegistry
@@ -41,7 +42,7 @@ from .actions.volume import PactlVolumeBackend, register_volume_capabilities
 from .actions.processes import register_process_capability
 from .actions.execution import SQLiteExecutionStore
 from .actions.handles import SQLiteHandleStore
-from .actions.workflow import TaskStepController
+from .actions.workflow import BoundedStepController, TaskStepController
 from .paths import data_dir
 from .services.history import HistoryService
 from .services.model_registry import ModelRegistry
@@ -359,33 +360,67 @@ class ApplicationContainer:
                     )
                 except KeyUnavailableError:
                     self._rich_history_error = "KEY_UNAVAILABLE"
+            actions = (
+                AssistantActions(
+                    self.capability_service,
+                    LocalIntentRecognizer(
+                        backend.engine,
+                        self.memory_graph_store,
+                        runtime.profile_scope,
+                        applications=LinuxApplicationBackend(),
+                    ),
+                    self.memory_graph_store,
+                    runtime.profile_scope,
+                )
+                if isinstance(backend, LocalAssistantBackend) and backend.engine is not None
+                else None
+            )
+            effective_backend = backend or DeterministicAssistantBackend()
+
+            step_ctrl = TaskStepController(
+                capabilities=self.capability_service,
+                backend=effective_backend,
+                actions=actions,
+            )
+            context_builder = AssistantContextBuilder(
+                store=self.memory_graph_store,
+                system_instruction=format_capabilities_instruction(
+                    (
+                        self.capability_registry
+                        if isinstance(backend, LocalAssistantBackend)
+                        and backend.engine is not None
+                        else None
+                    ),
+                    base_instruction=runtime.system_instruction,
+                ),
+                profile_scope=runtime.profile_scope,
+                evidence_providers=evidence_providers,
+                max_context_characters=runtime.max_context_characters,
+                max_recent_turns=runtime.max_recent_turns,
+                max_memories=runtime.max_memories,
+                max_episodic_turns=runtime.max_episodic_turns,
+                max_external_evidence=runtime.max_external_evidence,
+                memory_sufficiency_threshold=(runtime.memory_sufficiency_threshold),
+            )
+            from .assistant.controllers.direct import DirectController  # noqa: PLC0415
+
+            if runtime.interaction_controller == "bounded_step":
+                active_controller = step_ctrl
+            else:
+                active_controller = DirectController(
+                    backend=effective_backend,
+                    actions=actions,
+                    context_builder=context_builder,
+                )
+
             self._assistant_service = AssistantService(
-                actions=(AssistantActions(self.capability_service,
-                                          LocalIntentRecognizer(backend.engine, self.memory_graph_store, runtime.profile_scope,
-                                                                applications=LinuxApplicationBackend()),
-                                          self.memory_graph_store, runtime.profile_scope)
-                         if isinstance(backend, LocalAssistantBackend) and backend.engine is not None
-                         else None),
+                actions=actions,
                 store=self.memory_graph_store,
                 backend=backend,
-                step_controller=TaskStepController(),
+                step_controller=step_ctrl,
+                controller=active_controller,
                 memory_extractor=memory_extractor,
-                context_builder=AssistantContextBuilder(
-                    store=self.memory_graph_store,
-                    system_instruction=format_capabilities_instruction(
-                        (self.capability_registry if isinstance(backend, LocalAssistantBackend)
-                         and backend.engine is not None else None),
-                        base_instruction=runtime.system_instruction,
-                    ),
-                    profile_scope=runtime.profile_scope,
-                    evidence_providers=evidence_providers,
-                    max_context_characters=runtime.max_context_characters,
-                    max_recent_turns=runtime.max_recent_turns,
-                    max_memories=runtime.max_memories,
-                    max_episodic_turns=runtime.max_episodic_turns,
-                    max_external_evidence=runtime.max_external_evidence,
-                    memory_sufficiency_threshold=(runtime.memory_sufficiency_threshold),
-                ),
+                context_builder=context_builder,
                 audit_ledger=audit,
                 profile_scope=runtime.profile_scope,
             )

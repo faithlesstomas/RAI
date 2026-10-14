@@ -11,6 +11,8 @@ Enforces:
 
 from __future__ import annotations
 
+import json
+import time
 from collections.abc import Awaitable, Callable
 from datetime import datetime
 from enum import Enum
@@ -19,12 +21,25 @@ from typing import Any, Literal
 from pydantic import BaseModel, ConfigDict, Field
 from returns.result import Failure, Result, Success
 
+from rai.assistant.ports import (
+    AssistantActionHandler,
+    AssistantModelBackend,
+    InteractionController,
+)
+from rai.assistant.records import (
+    AssistantCandidate,
+    AssistantContextPackage,
+    ConversationTurn,
+    InferenceRequest,
+)
+from rai.assistant.tool_calling import extract_model_tool_call
 from rai.kernel.ports import CancellationToken, UsageLedger
 from rai.kernel.records import (
     ActionFailure,
     ActionResult,
     CapabilityRequest,
     DataClass,
+    InferenceBudget,
     KernelRecord,
     PolicyDecision,
     ProducerIdentity,
@@ -88,7 +103,10 @@ ALLOWED_GENERIC_TRANSITIONS: dict[AgentWorkflowState, set[AgentWorkflowState]] =
 }
 
 
-def _state_str(state: Any) -> str:
+_MAX_OBSERVATION_CHARS: int = 1000
+
+
+def _state_str(state: object) -> str:
     return state.value if isinstance(state, Enum) else str(state)
 
 
@@ -201,11 +219,164 @@ class ResearchWorkflow(KernelRecord):
     data_class: DataClass = DataClass.PUBLIC
 
 
-class BoundedStepController:
+class BoundedStepController(InteractionController):
     """Universal controller governing bounded agentic workflows across any capabilities."""
 
-    def __init__(self, ledger: UsageLedger | None = None) -> None:
+    def __init__(
+        self,
+        ledger: UsageLedger | None = None,
+        capabilities: CapabilityService | None = None,
+        backend: AssistantModelBackend | None = None,
+        actions: AssistantActionHandler | None = None,
+        limits: BoundedWorkflowLimits | None = None,
+    ) -> None:
         self.ledger = ledger
+        self.capabilities = capabilities
+        self.backend = backend
+        self.actions = actions
+        self.limits = limits or BoundedWorkflowLimits()
+
+    async def process_turn(
+        self,
+        turn: ConversationTurn,
+        context: AssistantContextPackage,
+        budget: InferenceBudget,
+        token: CancellationToken,
+    ) -> Result[AssistantCandidate, ActionFailure]:
+        """Execute a turn under the bounded agentic loop state machine."""
+        if self.actions is not None and hasattr(self.actions, "handle"):
+            action_cand = await self.actions.handle(turn, token)
+            if (
+                action_cand is not None
+                and not action_cand.metadata.get("requires_synthesis")
+                and not action_cand.metadata.get("untrusted_content")
+            ):
+                return Success(
+                    action_cand.model_copy(
+                        update={
+                            "metadata": {
+                                **action_cand.metadata,
+                                "updated_manifest": context.manifest,
+                                "latency_ms": 0.0,
+                            }
+                        }
+                    )
+                )
+
+        if self.capabilities is None or self.backend is None:
+            return Failure(
+                ActionFailure(
+                    request_id=f"bounded:{turn.record_id}",
+                    capability="bounded_step_controller",
+                    code="BACKEND_UNAVAILABLE",
+                    message="Capabilities service or backend is not connected to BoundedStepController",
+                    producer=PRODUCER,
+                )
+            )
+
+        task_id = f"task:{turn.record_id}"
+
+        async def step_decider(
+            workflow: BoundedWorkflow,
+            cancellation: CancellationToken,
+        ) -> Result[dict[str, Any], ActionFailure]:
+            descriptors = self.capabilities.registry.descriptors() if self.capabilities else ()
+            actions_desc = "\n".join(f"- {d.name}: {d.description}" for d in descriptors)
+            system_prompt = (
+                "You are an agent executing user tasks step by step.\n"
+                "Available tools:\n"
+                f"{actions_desc}\n\n"
+                "Tool calling format:\n"
+                "To invoke a tool, output:\n"
+                "<tool_call>call: tool_name{\"param\": \"value\"}</tool_call>\n"
+                "Or in JSON format:\n"
+                "<tool_call>{\"name\": \"tool_name\", \"arguments\": {\"param\": \"value\"}}</tool_call>\n\n"
+                "When you have collected all required information to answer the user request, or if no tools are needed, "
+                "provide the final comprehensive answer directly without tool tags."
+            )
+
+            obs_lines = []
+            for i, obs in enumerate(workflow.observations, 1):
+                obs_summary = json.dumps(obs, ensure_ascii=False)
+                if len(obs_summary) > _MAX_OBSERVATION_CHARS:
+                    obs_summary = obs_summary[:_MAX_OBSERVATION_CHARS] + "... (truncated)"
+                obs_lines.append(f"Observation {i}: {obs_summary}")
+            obs_text = "\n".join(obs_lines) if obs_lines else "None yet."
+
+            prompt_content = f"User Goal: {workflow.goal}\n\nTool Observations:\n{obs_text}"
+
+            req = InferenceRequest(
+                record_id=_new_id(),
+                timestamp=_utc_now(),
+                producer=PRODUCER,
+                session_id=turn.session_id,
+                turn_id=turn.record_id,
+                request_id=_new_id(),
+                context=context,
+                budget=budget,
+                strategy="BOUNDED_STEP",
+                system_instruction=system_prompt,
+                model_name=str(getattr(self.backend, "model_name", "deterministic")),
+            )
+
+            start = time.perf_counter()
+            gen_res = await self.backend.generate(req, cancellation)
+            latency = (time.perf_counter() - start) * 1000
+            if isinstance(gen_res, Failure):
+                return Failure(gen_res.failure())
+
+            cand = gen_res.unwrap()
+            tool_call = extract_model_tool_call(cand.text)
+            if tool_call:
+                _, cap_name, tool_args = tool_call
+                return Success({
+                    "action_type": "tool",
+                    "capability": cap_name,
+                    "arguments": tool_args,
+                    "tokens_in": cand.tokens_in,
+                    "tokens_out": cand.tokens_out,
+                    "latency_ms": latency,
+                })
+
+            return Success({
+                "action_type": "finish",
+                "text": cand.text,
+                "tokens_in": cand.tokens_in,
+                "tokens_out": cand.tokens_out,
+                "latency_ms": latency,
+            })
+
+        loop_res = await self.run_agentic_loop(
+            task_id=task_id,
+            session_id=turn.session_id,
+            goal=turn.text,
+            capabilities=self.capabilities,
+            step_decider=step_decider,
+            cancellation=token,
+            limits=self.limits,
+            actor=turn.producer,
+        )
+        if isinstance(loop_res, Failure):
+            return Failure(loop_res.failure())
+
+        workflow = loop_res.unwrap()
+        total_latency = sum(step.latency_ms for step in workflow.steps)
+        total_tokens_in = sum(step.tokens_in for step in workflow.steps)
+        total_tokens_out = sum(step.tokens_out for step in workflow.steps)
+
+        candidate = AssistantCandidate(
+            text=workflow.final_synthesis or "",
+            tokens_in=total_tokens_in,
+            tokens_out=total_tokens_out,
+            metadata={
+                "bounded_workflow_id": workflow.task_id,
+                "steps_count": len(workflow.steps),
+                "tool_calls_executed": workflow.tool_calls_executed,
+                "updated_manifest": context.manifest,
+                "latency_ms": total_latency,
+            },
+        )
+        return Success(candidate)
 
     # -------------------------------------------------------------------------
     # Generic Bounded Workflow Orchestration
@@ -276,7 +447,7 @@ class BoundedStepController:
         )
         return Success(updated)
 
-    async def execute_generic_step(  # noqa: PLR0913
+    async def execute_generic_step(  # noqa: PLR0911, PLR0913
         self,
         workflow: BoundedWorkflow,
         capabilities: CapabilityService,
@@ -508,7 +679,7 @@ class BoundedStepController:
 
         return Success(updated)
 
-    async def run_agentic_loop(  # noqa: PLR0913
+    async def run_agentic_loop(  # noqa: PLR0911, PLR0912, PLR0913
         self,
         task_id: str,
         session_id: str,

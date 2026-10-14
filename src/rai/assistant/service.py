@@ -42,9 +42,11 @@ from .audit import (
 )
 from .backends.deterministic import DeterministicAssistantBackend
 from .context import AssistantContextBuilder
+from .controllers.direct import DirectController
 from .ports import (
-    AssistantModelBackend,
     AssistantActionHandler,
+    AssistantModelBackend,
+    InteractionController,
     MemoryGraphStore,
     MemoryProposalExtractor,
     MemoryQuery,
@@ -123,6 +125,7 @@ class AssistantService:
             Awaitable[Result[AssistantContextPackage, ActionFailure]],
         ]
         | None = None,
+        controller: InteractionController | None = None,
     ) -> None:
         self.store = store
         self.actions = actions
@@ -139,6 +142,12 @@ class AssistantService:
         )
         self.profile_scope = profile_scope
         self.context_approver = context_approver
+        self.controller = controller or DirectController(
+            backend=self.backend,
+            actions=self.actions,
+            context_builder=self.context_builder,
+            producer=self.producer,
+        )
         self._state = LifecycleState.CREATED
         self._turn_locks: dict[str, asyncio.Lock] = {}
         self._turn_lock_references: dict[str, int] = {}
@@ -740,132 +749,35 @@ class AssistantService:
         preamble: str | None = None,
         depth: int = 0,
     ) -> Result[tuple[AssistantCandidate, AssistantContextManifest, float], ActionFailure]:
-        action_result = action_candidate.metadata.get("action_result") or {}
-        action_proposal = action_candidate.metadata.get("action_proposal") or {}
-        output = (
-            action_result.get("output")
-            if isinstance(action_result, dict)
-            else {}
+        if isinstance(self.controller, DirectController):
+            return await self.controller._synthesize_action_candidate(
+                turn=turn,
+                request_id=request_id,
+                context_package=context_package,
+                manifest=manifest,
+                inference_req=inference_req,
+                action_candidate=action_candidate,
+                token=token,
+                preamble=preamble,
+                depth=depth,
+            )
+        direct = DirectController(
+            backend=self.backend,
+            actions=self.actions,
+            context_builder=self.context_builder,
+            producer=self.producer,
         )
-        capability = (
-            (action_proposal.get("capability") if isinstance(action_proposal, dict) else None)
-            or (action_result.get("capability") if isinstance(action_result, dict) else None)
-            or "tool"
+        return await direct._synthesize_action_candidate(
+            turn=turn,
+            request_id=request_id,
+            context_package=context_package,
+            manifest=manifest,
+            inference_req=inference_req,
+            action_candidate=action_candidate,
+            token=token,
+            preamble=preamble,
+            depth=depth,
         )
-        summary = (
-            (output.get("title") if isinstance(output, dict) else None)
-            or (action_candidate.text.splitlines()[0] if action_candidate.text else "")
-            or str(capability)
-        )
-        obs_content = dict(output) if isinstance(output, dict) else {"raw_text": str(output)}
-        if action_candidate.text and "formatted_text" not in obs_content:
-            obs_content["formatted_text"] = action_candidate.text
-        obs = ToolObservation(
-            source_id=(
-                (action_result.get("request_id") if isinstance(action_result, dict) else None)
-                or _new_id()
-            ),
-            source_turn_id=turn.record_id,
-            capability=str(capability),
-            status="SUCCESS",
-            summary=str(summary),
-            untrusted_content=bool(action_candidate.metadata.get("untrusted_content", False)),
-            content=obs_content,
-        )
-        existing_obs = list(context_package.content.get("tool_observations", []))
-        existing_obs.append(obs.model_dump(mode="json"))
-        if len(existing_obs) > _MAX_SYNTHESIS_TOOL_OBSERVATIONS:
-            existing_obs = existing_obs[-_MAX_SYNTHESIS_TOOL_OBSERVATIONS:]
-        updated_content = dict(context_package.content)
-        updated_content["tool_observations"] = existing_obs
-
-        max_chars = getattr(self.context_builder, "max_context_characters", 8_000)
-        synth_serialized = json.dumps(updated_content, ensure_ascii=False)
-        if len(synth_serialized) > max_chars:
-            synth_ext = list(updated_content.get("external_evidence", []))
-            while len(synth_serialized) > max_chars and synth_ext:
-                synth_ext.pop()
-                updated_content["external_evidence"] = synth_ext
-                synth_serialized = json.dumps(updated_content, ensure_ascii=False)
-            while len(synth_serialized) > max_chars and len(existing_obs) > 1:
-                existing_obs.pop(0)
-                updated_content["tool_observations"] = existing_obs
-                synth_serialized = json.dumps(updated_content, ensure_ascii=False)
-
-        updated_manifest = manifest.model_copy(
-            update={"tool_observation_ids": (*manifest.tool_observation_ids, obs.source_id)}
-        )
-        synth_context = context_package.model_copy(
-            update={"content": updated_content, "manifest": updated_manifest}
-        )
-        synth_inference_req = inference_req.model_copy(update={"context": synth_context})
-        synth_total_chars = len(json.dumps(updated_content, ensure_ascii=False))
-        trace(
-            "assistant.model.synthesize_budget",
-            turn_id=turn.record_id,
-            total_characters=synth_total_chars,
-            estimated_tokens=int(synth_total_chars / 3.5),
-        )
-        trace_payload(
-            "assistant.model.synthesize_context",
-            updated_content,
-            turn_id=turn.record_id,
-            capability=str(capability),
-        )
-
-        trace("assistant.model.synthesize_tool_start", turn_id=turn.record_id)
-        start_time = time.perf_counter()
-        backend_res = await self.backend.generate(synth_inference_req, token)
-        latency_ms = (time.perf_counter() - start_time) * 1000
-        trace(
-            "assistant.model.synthesize_tool_end",
-            turn_id=turn.record_id,
-            elapsed_ms=round(latency_ms),
-            status="failure" if isinstance(backend_res, Failure) else "success",
-        )
-        if isinstance(backend_res, Failure):
-            return Failure(backend_res.failure())
-
-        synth_candidate = backend_res.unwrap()
-
-        if (
-            depth < 1
-            and self.actions is not None
-            and (next_tool := extract_model_tool_call(synth_candidate.text))
-        ):
-            _, next_cap, next_args = next_tool
-            next_intent = intent_from_tool_call(turn, next_cap, next_args)
-            if next_intent is not None:
-                next_action_cand = await self.actions.dispatch_intent(turn, next_intent, token)
-                if next_action_cand is not None:
-                    return await self._synthesize_action_candidate(
-                        turn=turn,
-                        request_id=request_id,
-                        context_package=synth_context,
-                        manifest=updated_manifest,
-                        inference_req=synth_inference_req,
-                        action_candidate=next_action_cand,
-                        token=token,
-                        preamble=preamble,
-                        depth=depth + 1,
-                    )
-
-        delivered_text = synth_candidate.text
-        if preamble and not delivered_text.startswith(preamble[:30]):
-            delivered_text = f"{preamble}\n\n{delivered_text}"
-
-        candidate = AssistantCandidate(
-            text=delivered_text,
-            proposals=synth_candidate.proposals,
-            tokens_in=synth_candidate.tokens_in,
-            tokens_out=synth_candidate.tokens_out,
-            metadata={
-                **action_candidate.metadata,
-                **synth_candidate.metadata,
-                "synthesized_from_action": True,
-            },
-        )
-        return Success((candidate, updated_manifest, latency_ms))
 
     async def _accept_turn_locked(  # noqa: PLR0911, PLR0912, PLR0915
         self,
@@ -1037,104 +949,23 @@ class AssistantService:
             turn_id=turn.record_id,
         )
 
-        inference_req = InferenceRequest(
-            record_id=_new_id(),
-            timestamp=_utc_now(),
-            producer=self.producer,
-            session_id=turn.session_id,
-            turn_id=turn.record_id,
-            request_id=request_id,
+        turn_start = time.perf_counter()
+        controller_res = await self.controller.process_turn(
+            turn=turn,
             context=context_package,
             budget=self._budget(),
-            strategy="DIRECT",
-            system_instruction=self.context_builder.system_instruction,
-            model_name=str(getattr(self.backend, "model_name", "deterministic")),
+            token=token,
         )
-
-        action_candidate = (
-            await self.actions.handle(turn, token) if self.actions is not None else None
-        )
-        requires_synthesis = (
-            action_candidate is not None
-            and (
-                action_candidate.metadata.get("requires_synthesis") is True
-                or (
-                    action_candidate.metadata.get("untrusted_content") is True
-                    and not action_candidate.metadata.get("active_choice_frame")
-                )
-            )
-        )
-        if requires_synthesis and action_candidate is not None:
-            synth_res = await self._synthesize_action_candidate(
+        latency_ms = (time.perf_counter() - turn_start) * 1000
+        if isinstance(controller_res, Failure):
+            return await self._commit_failure(
                 turn=turn,
                 request_id=request_id,
-                context_package=context_package,
                 manifest=manifest,
-                inference_req=inference_req,
-                action_candidate=action_candidate,
-                token=token,
+                error=controller_res.failure(),
+                latency_ms=latency_ms,
             )
-            if isinstance(synth_res, Failure):
-                return await self._commit_failure(
-                    turn=turn,
-                    request_id=request_id,
-                    manifest=manifest,
-                    error=synth_res.failure(),
-                    latency_ms=0.0,
-                )
-            candidate, manifest, latency_ms = synth_res.unwrap()
-        elif action_candidate is not None:
-            candidate = action_candidate
-            latency_ms = 0.0
-        elif manifest.evidence_required and manifest.routing_decision == "no_evidence":
-            candidate = AssistantCandidate(
-                text=_MEMORY_ABSTENTION_TEXT,
-                metadata={
-                    "deterministic_abstention": True,
-                    "reason": "memory_evidence_required_but_unavailable",
-                },
-            )
-            latency_ms = 0.0
-        else:
-            trace("assistant.model.start", turn_id=turn.record_id)
-            start_time = time.perf_counter()
-            backend_res = await self.backend.generate(inference_req, token)
-            latency_ms = (time.perf_counter() - start_time) * 1000
-            trace(
-                "assistant.model.end",
-                turn_id=turn.record_id,
-                elapsed_ms=round(latency_ms),
-                status="failure" if isinstance(backend_res, Failure) else "success",
-            )
-            if isinstance(backend_res, Failure):
-                return await self._commit_failure(
-                    turn=turn,
-                    request_id=request_id,
-                    manifest=manifest,
-                    error=backend_res.failure(),
-                    latency_ms=latency_ms,
-                )
-            candidate = backend_res.unwrap()
-            if self.actions is not None and (tool_call := extract_model_tool_call(candidate.text)):
-                preamble, cap_name, tool_args = tool_call
-                tool_intent = intent_from_tool_call(turn, cap_name, tool_args)
-                if tool_intent is not None:
-                    tool_cand = await self.actions.dispatch_intent(turn, tool_intent, token)
-                    if tool_cand is not None:
-                        synth_res = await self._synthesize_action_candidate(
-                            turn=turn,
-                            request_id=request_id,
-                            context_package=context_package,
-                            manifest=manifest,
-                            inference_req=inference_req,
-                            action_candidate=tool_cand,
-                            token=token,
-                            preamble=preamble,
-                        )
-                        if isinstance(synth_res, Success):
-                            candidate, manifest, synth_lat = synth_res.unwrap()
-                            latency_ms += synth_lat
-                            action_candidate = tool_cand
+        candidate = controller_res.unwrap()
         if not isinstance(candidate, AssistantCandidate):
             error = make_assistant_failure(
                 code="INVALID_OUTPUT",
@@ -1148,6 +979,11 @@ class AssistantService:
                 error=error,
                 latency_ms=latency_ms,
             )
+        if updated_manifest := candidate.metadata.get("updated_manifest"):
+            if isinstance(updated_manifest, AssistantContextManifest):
+                manifest = updated_manifest
+        if candidate_lat := candidate.metadata.get("latency_ms"):
+            latency_ms = float(candidate_lat)
         proposals, extraction_operations = await self._extract_proposals(
             turn, candidate.proposals, token
         )
@@ -1185,8 +1021,24 @@ class AssistantService:
 
         assistant_turn_id = _new_id()
         assistant_turn_metadata: dict[str, object] = {"profile_scope": self.profile_scope}
-        if action_candidate is not None:
-            assistant_turn_metadata["action"] = candidate.metadata
+        clean_action_metadata = {
+            k: v for k, v in candidate.metadata.items()
+            if k not in ("updated_manifest", "raw_model_output")
+        }
+        has_action = any(
+            k in clean_action_metadata
+            for k in (
+                "action_result",
+                "action_proposal",
+                "synthesized_from_action",
+                "choice_rejected",
+                "action_clarification",
+                "active_choice_frame",
+                "bounded_workflow_id",
+            )
+        )
+        if has_action:
+            assistant_turn_metadata["action"] = clean_action_metadata
         if reasoning_content := candidate.metadata.get("reasoning_content"):
             assistant_turn_metadata["reasoning_content"] = reasoning_content
 
@@ -1266,7 +1118,7 @@ class AssistantService:
                 generation_metadata={
                     key: value
                     for key, value in candidate.metadata.items()
-                    if key != "raw_model_output"
+                    if key not in ("raw_model_output", "updated_manifest")
                 },
                 admitted_memories=tuple(admitted_ids),
                 memory_operations=response.memory_operation_ids,

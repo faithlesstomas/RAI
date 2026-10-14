@@ -53,6 +53,7 @@ class AssistantRuntimeConfig:
     enable_thinking: bool = False
     thinking_budget: int | None = None
     thinking_level: str | None = None
+    interaction_controller: str = "direct"
 
 
 def _discover_gguf(search_root: Path) -> Path | None:
@@ -247,6 +248,12 @@ def resolve_assistant_config(  # noqa: PLR0913
             if thinking_level is not None
             else (assistant.get("thinking_level") or local_ai.get("thinking_level"))
         ),
+        interaction_controller=str(
+            assistant.get("interaction_controller")
+            or local_ai.get("interaction_controller")
+            or os.environ.get("RAI_INTERACTION_CONTROLLER")
+            or "direct"
+        ),
     )
 
 
@@ -256,7 +263,7 @@ def build_assistant_backend(runtime: AssistantRuntimeConfig) -> AssistantModelBa
         return DeterministicAssistantBackend()
 
     if runtime.backend == "antigravity":
-        from .backends.antigravity import AntigravityAssistantModelBackend
+        from .backends.antigravity import AntigravityAssistantModelBackend  # noqa: PLC0415
 
         return AntigravityAssistantModelBackend(
             model_name=runtime.model,
