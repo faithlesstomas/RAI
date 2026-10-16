@@ -8,7 +8,6 @@ from typing import Any
 from pydantic import BaseModel, ConfigDict, Field
 
 from rai.assistant.records import AssistantCandidate
-from rai.kernel.records import _utc_now
 
 
 class WorkspaceContributionKind(str, Enum):

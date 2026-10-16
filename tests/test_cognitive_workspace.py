@@ -6,7 +6,7 @@ from datetime import timedelta
 from typing import Any, NoReturn
 
 import pytest
-from returns.result import Result, Success
+from returns.result import Failure, Result, Success
 
 from rai.assistant.cognitive.arbiter import SalienceArbiter
 from rai.assistant.cognitive.models import (
@@ -15,12 +15,6 @@ from rai.assistant.cognitive.models import (
     WorkspaceState,
 )
 from rai.assistant.cognitive.probe import JLensProbe
-from rai.assistant.cognitive.specialists import (
-    ActionReasonerSpecialist,
-    AnswerDraftSpecialist,
-    CognitiveSpecialist,
-    RetrieverSpecialist,
-)
 from rai.assistant.cognitive.workspace import WorkspaceEngine
 from rai.assistant.ports import AssistantModelBackend, InteractionController
 from rai.container import ApplicationContainer
@@ -335,3 +329,64 @@ async def test_workspace_engine_jlens_probe_latent_drift_detection() -> None:
     assert candidate.metadata.get("latent_drift_detected") is True
 
 
+@pytest.mark.asyncio
+async def test_workspace_engine_grounding_critique_on_empty_draft() -> None:
+    backend = MockModelBackend(responses=["   ", "Grounded non-empty response."])
+    engine = WorkspaceEngine(backend=backend, max_cycles=3)
+
+    producer = ProducerIdentity(producer_id="user", kind="user", version="1.0.0")
+    turn = ConversationTurn(
+        producer=producer,
+        session_id="session-grounding",
+        role="user",
+        text="Explain grounding evaluation",
+        data_class=DataClass.PUBLIC,
+    )
+    context = _make_context_package(turn)
+    budget = _make_budget()
+
+    result = await engine.process_turn(turn, context, budget, CancellationToken())
+    assert isinstance(result, Success)
+    candidate = result.unwrap()
+    assert candidate.text == "Grounded non-empty response."
+
+
+@pytest.mark.asyncio
+async def test_workspace_engine_fails_closed_on_backend_failure() -> None:
+    class FailingBackend(MockModelBackend):
+        async def generate(
+            self, request: InferenceRequest, cancellation: CancellationToken
+        ) -> Result[AssistantCandidate, ActionFailure]:
+            del request, cancellation
+            return Failure(
+                ActionFailure(
+                    request_id="req-fail",
+                    capability="model",
+                    code="MODEL_ERROR",
+                    message="Backend crashed",
+                    producer=ProducerIdentity(
+                        producer_id="test", kind="test", version="1.0.0"
+                    ),
+                )
+            )
+
+    engine = WorkspaceEngine(
+        backend=FailingBackend(),
+        specialists=(
+            WorkspaceEngine(backend=FailingBackend()).specialists[2],
+        ),
+    )
+    producer = ProducerIdentity(producer_id="user", kind="user", version="1.0.0")
+    turn = ConversationTurn(
+        producer=producer,
+        session_id="session-fail",
+        role="user",
+        text="Trigger backend failure",
+        data_class=DataClass.PUBLIC,
+    )
+    context = _make_context_package(turn)
+    budget = _make_budget()
+
+    result = await engine.process_turn(turn, context, budget, CancellationToken())
+    assert isinstance(result, Failure)
+    assert result.failure().code == "MODEL_ERROR"

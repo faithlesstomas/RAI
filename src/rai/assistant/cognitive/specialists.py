@@ -4,12 +4,17 @@ from __future__ import annotations
 
 from datetime import timedelta
 import json
-from typing import Any, Protocol, runtime_checkable
+from typing import Protocol, runtime_checkable
 
 from returns.result import Failure, Result, Success
 
 from rai.assistant.ports import AssistantModelBackend
-from rai.assistant.records import AssistantCandidate, InferenceRequest
+from rai.assistant.records import (
+    AssistantCandidate,
+    AssistantContextPackage,
+    InferenceRequest,
+    ToolObservation,
+)
 from rai.assistant.tool_calling import extract_model_tool_call
 from rai.kernel.ports import CancellationToken
 from rai.kernel.records import ActionFailure, InferenceBudget, ProducerIdentity, _new_id, _utc_now
@@ -224,6 +229,30 @@ class AnswerDraftSpecialist:
         if workspace.context is None:
             return Success(None)
 
+        req_context = workspace.context
+        if isinstance(req_context, AssistantContextPackage) and workspace.observations:
+            existing_obs = list(req_context.content.get("tool_observations", []))
+            for idx, obs in enumerate(workspace.observations, 1):
+                existing_obs.append(
+                    ToolObservation(
+                        source_id=f"{workspace.turn_id}:ws_obs:{idx}",
+                        source_turn_id=workspace.turn_id,
+                        capability="workspace_tool",
+                        status="SUCCESS",
+                        summary=json.dumps(obs, ensure_ascii=False)[:120],
+                        untrusted_content=True,
+                        content=obs if isinstance(obs, dict) else {"value": obs},
+                    ).model_dump(mode="json")
+                )
+            req_context = req_context.model_copy(
+                update={
+                    "content": {
+                        **req_context.content,
+                        "tool_observations": existing_obs,
+                    }
+                }
+            )
+
         budget = _make_specialist_budget(1500, 512)
         inference_req = InferenceRequest(
             record_id=_new_id(),
@@ -232,7 +261,7 @@ class AnswerDraftSpecialist:
             session_id=workspace.session_id,
             turn_id=workspace.turn_id,
             request_id=_new_id(),
-            context=workspace.context,
+            context=req_context,
             budget=budget,
             system_instruction=prompt,
         )
@@ -295,6 +324,7 @@ class GroundingEvaluationSpecialist:
                     specialist_name=self.name,
                     kind=WorkspaceContributionKind.CRITIQUE,
                     content="Draft answer is empty.",
+                    payload={"target_specialist": workspace.broadcast.specialist_name},
                     salience=0.8,
                 )
             )

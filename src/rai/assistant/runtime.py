@@ -141,6 +141,12 @@ def resolve_assistant_config(  # noqa: PLR0913
             memory_sufficiency_threshold=float(
                 assistant.get("memory_sufficiency_threshold", 0.75)
             ),
+            interaction_controller=str(
+                assistant.get("interaction_controller")
+                or local_ai.get("interaction_controller")
+                or os.environ.get("RAI_INTERACTION_CONTROLLER")
+                or "direct"
+            ),
         )
 
     if backend == "antigravity":

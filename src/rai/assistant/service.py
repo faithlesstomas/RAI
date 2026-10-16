@@ -69,7 +69,7 @@ from .records import (
     ToolObservation,
     make_assistant_failure,
 )
-from .tool_calling import extract_model_tool_call, intent_from_tool_call
+from .tool_calling import extract_model_tool_call
 
 _DATA_CLASS_RANK = {
     DataClass.PUBLIC.value: 0,

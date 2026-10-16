@@ -31,17 +31,16 @@ from rai.assistant.records import (
     AssistantContextPackage,
     ConversationTurn,
     InferenceRequest,
+    ToolObservation,
 )
 from rai.assistant.tool_calling import extract_model_tool_call
 from rai.kernel.ports import CancellationToken, UsageLedger
 from rai.kernel.records import (
     ActionFailure,
     ActionResult,
-    CapabilityRequest,
     DataClass,
     InferenceBudget,
     KernelRecord,
-    PolicyDecision,
     ProducerIdentity,
     UsageRecord,
     _new_id,
@@ -49,8 +48,12 @@ from rai.kernel.records import (
 )
 from rai.kernel.service import CapabilityService
 from rai.kernel.transport import normalize_request
+from rai.skills.models import SkillRegistry
 
 PRODUCER = ProducerIdentity(producer_id="bounded-step-controller", kind="service", version="1.0.0")
+_MEMORY_ABSTENTION_TEXT: str = (
+    "Nie mam wystarczających, dopuszczonych dowodów w pamięci, aby odpowiedzieć."
+)
 
 
 class AgentWorkflowState(str, Enum):
@@ -222,21 +225,23 @@ class ResearchWorkflow(KernelRecord):
 class BoundedStepController(InteractionController):
     """Universal controller governing bounded agentic workflows across any capabilities."""
 
-    def __init__(
+    def __init__(  # noqa: PLR0913
         self,
         ledger: UsageLedger | None = None,
         capabilities: CapabilityService | None = None,
         backend: AssistantModelBackend | None = None,
         actions: AssistantActionHandler | None = None,
         limits: BoundedWorkflowLimits | None = None,
+        skills: SkillRegistry | None = None,
     ) -> None:
         self.ledger = ledger
         self.capabilities = capabilities
         self.backend = backend
         self.actions = actions
         self.limits = limits or BoundedWorkflowLimits()
+        self.skills = skills
 
-    async def process_turn(
+    async def process_turn(  # noqa: PLR0915
         self,
         turn: ConversationTurn,
         context: AssistantContextPackage,
@@ -244,24 +249,44 @@ class BoundedStepController(InteractionController):
         token: CancellationToken,
     ) -> Result[AssistantCandidate, ActionFailure]:
         """Execute a turn under the bounded agentic loop state machine."""
+        manifest = context.manifest
+        initial_observations: list[dict[str, Any]] = []
         if self.actions is not None and hasattr(self.actions, "handle"):
             action_cand = await self.actions.handle(turn, token)
-            if (
-                action_cand is not None
-                and not action_cand.metadata.get("requires_synthesis")
-                and not action_cand.metadata.get("untrusted_content")
-            ):
-                return Success(
-                    action_cand.model_copy(
-                        update={
-                            "metadata": {
-                                **action_cand.metadata,
-                                "updated_manifest": context.manifest,
-                                "latency_ms": 0.0,
+            if action_cand is not None:
+                if (
+                    not action_cand.metadata.get("requires_synthesis")
+                    and not action_cand.metadata.get("untrusted_content")
+                ):
+                    return Success(
+                        action_cand.model_copy(
+                            update={
+                                "metadata": {
+                                    **action_cand.metadata,
+                                    "updated_manifest": manifest,
+                                    "latency_ms": 0.0,
+                                }
                             }
-                        }
+                        )
                     )
+                act_res = action_cand.metadata.get("action_result")
+                if isinstance(act_res, dict) and isinstance(act_res.get("output"), dict):
+                    initial_observations.append(dict(act_res["output"]))
+                elif action_cand.text:
+                    initial_observations.append({"formatted_text": action_cand.text})
+
+        if manifest.evidence_required and manifest.routing_decision == "no_evidence":
+            return Success(
+                AssistantCandidate(
+                    text=_MEMORY_ABSTENTION_TEXT,
+                    metadata={
+                        "deterministic_abstention": True,
+                        "reason": "memory_evidence_required_but_unavailable",
+                        "updated_manifest": manifest,
+                        "latency_ms": 0.0,
+                    },
                 )
+            )
 
         if self.capabilities is None or self.backend is None:
             return Failure(
@@ -282,28 +307,64 @@ class BoundedStepController(InteractionController):
         ) -> Result[dict[str, Any], ActionFailure]:
             descriptors = self.capabilities.registry.descriptors() if self.capabilities else ()
             actions_desc = "\n".join(f"- {d.name}: {d.description}" for d in descriptors)
+            skills_section = ""
+            if self.skills is not None:
+                avail_caps = tuple(d.name for d in descriptors)
+                skills_section = self.skills.format_skills_instruction(avail_caps)
+
+            all_obs = (*initial_observations, *workflow.observations)
+            obs_lines = []
+            tool_obs_records = list(context.content.get("tool_observations", []))
+            obs_ids = list(manifest.tool_observation_ids)
+            for i, obs in enumerate(all_obs, 1):
+                obs_summary = json.dumps(obs, ensure_ascii=False)
+                if len(obs_summary) > _MAX_OBSERVATION_CHARS:
+                    obs_summary = obs_summary[:_MAX_OBSERVATION_CHARS] + "... (truncated)"
+                obs_lines.append(f"Observation {i}: {obs_summary}")
+                obs_id = f"{workflow.task_id}:obs:{i}"
+                obs_ids.append(obs_id)
+                tool_obs_records.append(
+                    ToolObservation(
+                        source_id=obs_id,
+                        source_turn_id=turn.record_id,
+                        capability="workflow_step",
+                        status="SUCCESS",
+                        summary=obs_summary[:120],
+                        untrusted_content=True,
+                        content=obs if isinstance(obs, dict) else {"value": obs},
+                    ).model_dump(mode="json")
+                )
+            obs_text = "\n".join(obs_lines) if obs_lines else "None yet."
+            prompt_content = f"User Goal: {workflow.goal}\n\nTool Observations:\n{obs_text}"
+
             system_prompt = (
                 "You are an agent executing user tasks step by step.\n"
                 "Available tools:\n"
-                f"{actions_desc}\n\n"
+                f"{actions_desc}"
+                f"{skills_section}\n\n"
                 "Tool calling format:\n"
                 "To invoke a tool, output:\n"
                 "<tool_call>call: tool_name{\"param\": \"value\"}</tool_call>\n"
                 "Or in JSON format:\n"
                 "<tool_call>{\"name\": \"tool_name\", \"arguments\": {\"param\": \"value\"}}</tool_call>\n\n"
-                "When you have collected all required information to answer the user request, or if no tools are needed, "
-                "provide the final comprehensive answer directly without tool tags."
+                f"{prompt_content}\n\n"
+                "When you have collected all required information to answer the user request, "
+                "or if no tools are needed, provide the final comprehensive answer directly "
+                "without tool tags."
             )
 
-            obs_lines = []
-            for i, obs in enumerate(workflow.observations, 1):
-                obs_summary = json.dumps(obs, ensure_ascii=False)
-                if len(obs_summary) > _MAX_OBSERVATION_CHARS:
-                    obs_summary = obs_summary[:_MAX_OBSERVATION_CHARS] + "... (truncated)"
-                obs_lines.append(f"Observation {i}: {obs_summary}")
-            obs_text = "\n".join(obs_lines) if obs_lines else "None yet."
-
-            prompt_content = f"User Goal: {workflow.goal}\n\nTool Observations:\n{obs_text}"
+            step_manifest = manifest.model_copy(
+                update={"tool_observation_ids": tuple(obs_ids)}
+            )
+            step_context = context.model_copy(
+                update={
+                    "manifest": step_manifest,
+                    "content": {
+                        **context.content,
+                        "tool_observations": tool_obs_records,
+                    },
+                }
+            )
 
             req = InferenceRequest(
                 record_id=_new_id(),
@@ -312,7 +373,7 @@ class BoundedStepController(InteractionController):
                 session_id=turn.session_id,
                 turn_id=turn.record_id,
                 request_id=_new_id(),
-                context=context,
+                context=step_context,
                 budget=budget,
                 strategy="BOUNDED_STEP",
                 system_instruction=system_prompt,

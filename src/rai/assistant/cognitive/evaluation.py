@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime, timedelta
 import json
 from pathlib import Path
 import time
@@ -17,7 +17,6 @@ from rai.assistant.records import (
     AssistantContextManifest,
     AssistantContextPackage,
     ConversationTurn,
-    make_assistant_failure,
 )
 from rai.kernel.ports import CancellationToken
 from rai.kernel.records import (
@@ -207,7 +206,7 @@ def _make_benchmark_budget() -> InferenceBudget:
         max_provider_cost=0,
         max_ram_bytes=2 * 1024 * 1024 * 1024,
         max_vram_bytes=0,
-        cancellation_deadline=now,
+        cancellation_deadline=now + timedelta(seconds=30),
     )
 
 
@@ -267,16 +266,19 @@ async def evaluate_controller(
     # Calculate steps / cycles
     cycles_or_steps = int(
         meta.get("workspace_cycles")
+        or meta.get("steps_count")
         or meta.get("steps_taken")
         or (len(meta.get("tool_observations", [])) + 1)
         or 1
     )
 
     # Tool calls count
-    tool_calls_count = len(meta.get("tool_calls", []))
-    if "tool_observations" in meta:
+    tool_calls_count = int(meta.get("tool_calls_executed", 0))
+    if "tool_calls" in meta and isinstance(meta["tool_calls"], (list, tuple)):
+        tool_calls_count = max(tool_calls_count, len(meta["tool_calls"]))
+    if "tool_observations" in meta and isinstance(meta["tool_observations"], (list, tuple)):
         tool_calls_count = max(tool_calls_count, len(meta["tool_observations"]))
-    if "workflow_steps" in meta:
+    if "workflow_steps" in meta and isinstance(meta["workflow_steps"], (list, tuple)):
         tool_calls_count = max(tool_calls_count, len(meta["workflow_steps"]))
 
     # Hallucination check

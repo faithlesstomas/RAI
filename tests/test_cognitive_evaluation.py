@@ -12,7 +12,6 @@ from returns.result import Result, Success
 
 from rai.actions.workflow import BoundedStepController, BoundedWorkflowLimits
 from rai.assistant.cognitive.evaluation import (
-    BenchmarkScenario,
     ControllerBenchmarkReport,
     create_default_benchmark_scenarios,
     evaluate_controller,
@@ -45,9 +44,12 @@ _EXPECTED_DIRECT_TOKENS: int = 55
 
 
 class MockBenchmarkBackend(AssistantModelBackend):
-    def __init__(self, responses: list[str] | None = None) -> None:
-        self.responses = list(responses or ["Rich AI (RAI) is the secure local-first integration layer."])
+    def __init__(self, responses: list[str] | None = None, scenario_aware: bool = False) -> None:
+        self.responses = list(
+            responses or ["Rich AI (RAI) is the secure local-first integration layer."]
+        )
         self.call_count = 0
+        self.scenario_aware = scenario_aware
         self.model_name = "mock-benchmark-backend"
 
     @property
@@ -68,7 +70,37 @@ class MockBenchmarkBackend(AssistantModelBackend):
         self, request: InferenceRequest, cancellation: CancellationToken
     ) -> Result[AssistantCandidate, ActionFailure]:
         del cancellation
-        text = self.responses[min(self.call_count, len(self.responses) - 1)]
+        if self.scenario_aware:
+            sys_inst = request.system_instruction or ""
+            obs = request.context.content.get("tool_observations", [])
+            sid = request.session_id
+            if "action_system_discovery" in sid:
+                if "Action Reasoning Specialist" in sys_inst and not obs:
+                    text = "<tool_call>call: application.list{}</tool_call>"
+                elif "Action Reasoning Specialist" in sys_inst:
+                    text = "NO_ACTION"
+                else:
+                    text = "Zainstalowane aplikacje: Terminal oraz Files."
+            elif "multi_turn_context_retention" in sid:
+                text = (
+                    "NO_ACTION"
+                    if "Action Reasoning Specialist" in sys_inst
+                    else "Projekt Apollo rozwijany jest w Rust."
+                )
+            elif "hallucination_abstention_vault" in sid:
+                text = (
+                    "NO_ACTION"
+                    if "Action Reasoning Specialist" in sys_inst
+                    else "Brak dowodów w pamięci."
+                )
+            else:
+                text = (
+                    "NO_ACTION"
+                    if "Action Reasoning Specialist" in sys_inst
+                    else "Rich AI (RAI) jest asystentem Linux."
+                )
+        else:
+            text = self.responses[min(self.call_count, len(self.responses) - 1)]
         self.call_count += 1
         return Success(
             AssistantCandidate(
@@ -177,15 +209,7 @@ async def test_run_controller_comparative_benchmark_suite() -> None:
         limits=BoundedWorkflowLimits(max_steps=8),
     )
 
-    workspace_backend = MockBenchmarkBackend(
-        responses=[
-            "<tool_call>call: application.list{}</tool_call>",
-            "Zainstalowane aplikacje: Terminal oraz Files.",
-            "Projekt Apollo rozwijany jest w Rust.",
-            "Brak dowodów w pamięci.",
-            "Rich AI (RAI) jest asystentem Linux.",
-        ]
-    )
+    workspace_backend = MockBenchmarkBackend(scenario_aware=True)
     workspace_engine = WorkspaceEngine(
         backend=workspace_backend,
         capabilities=capabilities,
@@ -209,6 +233,9 @@ async def test_run_controller_comparative_benchmark_suite() -> None:
     assert "direct" in report.aggregates
     assert "bounded_step" in report.aggregates
     assert "workspace_engine" in report.aggregates
+    assert report.aggregates["bounded_step"].tool_call_efficiency > 0.0
+    assert report.aggregates["workspace_engine"].tool_call_efficiency > 0.0
+    assert report.aggregates["workspace_engine"].task_completion_rate == 1.0
 
     # Verify report formatting
     md = format_benchmark_report_markdown(report)

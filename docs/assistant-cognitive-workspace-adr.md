@@ -139,9 +139,9 @@ The comparative benchmark (`rai.assistant.cognitive.evaluation`, saved at `docs/
 
 | Controller | Role | Task Completion Rate | Token Overhead (Avg) | Latency Overhead (ms) | Grounding & Abstention | Architectural Complexity |
 |---|---|---|---|---|---|---|
-| **`DirectController`** | Core Default | **100%** (Single-turn / Factual) | **55.0 tokens** (1.0x baseline) | **0.08 ms** (1.0x baseline) | Deterministic Fail-Closed | Low (Single pass) |
-| **`BoundedStepController`** | Core Agentic | **100%** (Multi-step Action) | **68.8 tokens** (1.25x baseline) | **0.28 ms** (3.5x baseline) | Verified Action Results | Medium (FSM loop) |
-| **`WorkspaceEngine`** | Optional Research | **Specialist Deliberation** | **165.0+ tokens** (3.0x–4.0x baseline) | **0.40+ ms** (5.0x baseline) | Multi-specialist Critique & Latent Probing | High (Blackboard + Arbiter) |
+| **`DirectController`** | Core Default | **100%** (Single-turn / Factual) | **55.0 tokens** (1.0x baseline) | **0.04 ms** (1.0x baseline) | Deterministic Fail-Closed | Low (Single pass) |
+| **`BoundedStepController`** | Core Agentic | **100%** (Multi-step Action) | **68.8 tokens** (1.25x baseline) | **0.23 ms** (5.8x baseline) | Verified Action Results | Medium (FSM loop) |
+| **`WorkspaceEngine`** | Optional Research | **100%** (Specialist Deliberation) | **178.8 tokens** (3.25x baseline) | **0.36 ms** (9.0x baseline) | Multi-specialist Critique & Latent Probing | High (Blackboard + Arbiter) |
 
 ### Key Empirical Takeaways:
 - **`DirectController`** is optimal for everyday Linux desktop assistance, chat, and single-turn commands. It delivers answers with lowest latency and minimal token consumption.
@@ -169,5 +169,5 @@ The comparative benchmark (`rai.assistant.cognitive.evaluation`, saved at `docs/
 
 - [docs/assistant-architecture.md](assistant-architecture.md) — Core Rich Assistant architecture.
 - [docs/assistant-memory-gcas-crosscheck.md](assistant-memory-gcas-crosscheck.md) — Cross-check with GCAS 0.3 specification.
-- [ROADMAP.md:1520–1528](../ROADMAP.md#L1520-L1528) — Cognitive experiments milestone.
+- `ROADMAP.md` (lines 1520–1528) — Cognitive experiments milestone.
 - [docs/evaluation/assistant-interaction-controllers-benchmark.json](evaluation/assistant-interaction-controllers-benchmark.json) — Frozen comparative benchmark data.

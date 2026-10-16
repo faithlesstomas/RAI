@@ -2,13 +2,12 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timedelta
-import json
+from datetime import timedelta
 from pathlib import Path
 from typing import Any, NoReturn
 
 import pytest
-from returns.result import Failure, Result, Success
+from returns.result import Result, Success
 
 from rai.actions.workflow import (
     BoundedStepController,
@@ -26,11 +25,9 @@ from rai.assistant.records import (
     AssistantContextPackage,
     ConversationTurn,
     InferenceRequest,
-    make_assistant_failure,
 )
 from rai.assistant.service import AssistantService
 from rai.assistant.store import SQLiteMemoryGraphStore
-from rai.inference.protocols import GenerationStats, InferenceResult
 from rai.kernel.capabilities import CapabilityDescriptor
 from rai.kernel.ports import CancellationToken, LifecycleState
 from rai.kernel.records import (
@@ -257,6 +254,8 @@ async def test_bounded_step_controller_process_turn_agentic_loop() -> None:
                     )
                 )
             # Synthesis: observe results and synthesize answer
+            assert request.context.content.get("tool_observations")
+            assert "Files.desktop" in (request.system_instruction or "")
             return Success(
                 AssistantCandidate(
                     text="Znaleziono 2 aplikacje w systemie: Files oraz Calculator.",

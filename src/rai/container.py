@@ -42,7 +42,7 @@ from .actions.volume import PactlVolumeBackend, register_volume_capabilities
 from .actions.processes import register_process_capability
 from .actions.execution import SQLiteExecutionStore
 from .actions.handles import SQLiteHandleStore
-from .actions.workflow import BoundedStepController, TaskStepController
+from .actions.workflow import TaskStepController
 from .paths import data_dir
 from .services.history import HistoryService
 from .services.model_registry import ModelRegistry
@@ -385,10 +385,14 @@ class ApplicationContainer:
             )
             effective_backend = backend or DeterministicAssistantBackend()
 
+            from .skills.defaults import create_default_skill_registry  # noqa: PLC0415
+
+            skills_registry = create_default_skill_registry()
             step_ctrl = TaskStepController(
                 capabilities=self.capability_service,
                 backend=effective_backend,
                 actions=actions,
+                skills=skills_registry,
             )
             context_builder = AssistantContextBuilder(
                 store=self.memory_graph_store,
@@ -416,12 +420,11 @@ class ApplicationContainer:
                 active_controller = step_ctrl
             elif runtime.interaction_controller == "workspace":
                 from .assistant.cognitive.workspace import WorkspaceEngine  # noqa: PLC0415
-                from .skills.defaults import create_default_skill_registry  # noqa: PLC0415
 
                 active_controller = WorkspaceEngine(
                     capabilities=self.capability_service,
                     backend=effective_backend,
-                    skills=create_default_skill_registry(),
+                    skills=skills_registry,
                 )
             else:
                 active_controller = DirectController(

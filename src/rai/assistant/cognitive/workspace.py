@@ -4,12 +4,16 @@ from __future__ import annotations
 
 import asyncio
 import time
-from typing import Any
 
 from returns.result import Failure, Result, Success
 
 from rai.assistant.ports import AssistantModelBackend, InteractionController
-from rai.assistant.records import AssistantCandidate, AssistantContextPackage, ConversationTurn
+from rai.assistant.records import (
+    AssistantCandidate,
+    AssistantContextPackage,
+    ConversationTurn,
+    MemoryProposal,
+)
 from rai.kernel.ports import CancellationToken
 from rai.kernel.records import (
     ActionFailure,
@@ -70,7 +74,7 @@ class WorkspaceEngine(InteractionController):
                 GroundingEvaluationSpecialist(),
             )
 
-    async def process_turn(  # noqa: PLR0912
+    async def process_turn(  # noqa: PLR0911, PLR0912, PLR0915
         self,
         turn: ConversationTurn,
         context: AssistantContextPackage,
@@ -109,6 +113,7 @@ class WorkspaceEngine(InteractionController):
 
         total_tokens_in = 0
         total_tokens_out = 0
+        last_failure: ActionFailure | None = None
 
         while not workspace.converged and workspace.cycle < workspace.max_cycles:
             if token.cancelled:
@@ -130,9 +135,11 @@ class WorkspaceEngine(InteractionController):
 
             proposals: list[WorkspaceContribution] = []
             for res in eval_results:
-                if isinstance(res, Success) and res.unwrap() is not None:
-                    contrib = res.unwrap()
-                    assert contrib is not None
+                if isinstance(res, Failure):
+                    last_failure = res.failure()
+                    continue
+                contrib = res.unwrap()
+                if contrib is not None:
                     proposals.append(contrib)
                     total_tokens_in += contrib.tokens_in
                     total_tokens_out += contrib.tokens_out
@@ -140,7 +147,8 @@ class WorkspaceEngine(InteractionController):
             # 2. Select winner via salience arbiter
             winner = self.arbiter.select_winner(proposals, workspace)
             if winner is None:
-                # If no winner, force draft answer if possible
+                if last_failure is not None and not workspace.history:
+                    return Failure(last_failure)
                 break
 
             if self.probe.is_available:
@@ -149,7 +157,10 @@ class WorkspaceEngine(InteractionController):
                     latency_ms = (time.perf_counter() - start_time) * 1000
                     return Success(
                         AssistantCandidate(
-                            text="I detected conceptual drift in evaluating your request. Could you clarify your intent?",
+                            text=(
+                                "I detected conceptual drift in evaluating your request. "
+                                "Could you clarify your intent?"
+                            ),
                             metadata={
                                 "latent_drift_detected": True,
                                 "drift_score": drift_res.unwrap(),
@@ -169,7 +180,10 @@ class WorkspaceEngine(InteractionController):
             )
 
             # 4. Handle winning action
-            if winner.kind == WorkspaceContributionKind.TOOL_CALL and self.capabilities is not None:
+            if (
+                winner.kind == WorkspaceContributionKind.TOOL_CALL
+                and self.capabilities is not None
+            ):
                 cap_name = str(winner.payload.get("capability", ""))
                 args = dict(winner.payload.get("arguments", {}))
                 descriptor = self.capabilities.registry.descriptor(cap_name)
@@ -191,37 +205,86 @@ class WorkspaceEngine(InteractionController):
                                 "tool_calls_count": workspace.tool_calls_count + 1,
                             }
                         )
+                    else:
+                        err = executed.failure()
+                        workspace = workspace.model_copy(
+                            update={
+                                "observations": (
+                                    *workspace.observations,
+                                    {
+                                        "error": err.message,
+                                        "code": err.code,
+                                        "capability": cap_name,
+                                    },
+                                ),
+                                "tool_calls_count": workspace.tool_calls_count + 1,
+                            }
+                        )
 
             elif winner.kind == WorkspaceContributionKind.ANSWER_DRAFT:
-                # If salience meets convergence threshold or on final cycle, converge
-                is_last_cycle = workspace.cycle >= workspace.max_cycles - 1
-                if winner.salience >= self.arbiter.convergence_threshold or is_last_cycle:
-                    latency_ms = (time.perf_counter() - start_time) * 1000
-                    final_candidate = AssistantCandidate(
-                        text=winner.content,
-                        tokens_in=total_tokens_in,
-                        tokens_out=total_tokens_out,
-                        metadata={
-                            "workspace_cycles": workspace.cycle + 1,
-                            "workspace_converged": True,
-                            "winning_specialist": winner.specialist_name,
-                            "tool_calls_executed": workspace.tool_calls_count,
-                            "observations_count": len(workspace.observations),
-                            "updated_manifest": manifest,
-                            "latency_ms": latency_ms,
-                        },
+                # Allow grounding specialists to inspect the broadcast draft before converging
+                grounding_critique: WorkspaceContribution | None = None
+                for spec in self.specialists:
+                    if isinstance(spec, GroundingEvaluationSpecialist):
+                        g_res = await spec.evaluate(workspace, token)
+                        if isinstance(g_res, Success) and g_res.unwrap() is not None:
+                            grounding_critique = g_res.unwrap()
+                            break
+
+                if grounding_critique is not None:
+                    workspace = workspace.model_copy(
+                        update={
+                            "broadcast": grounding_critique,
+                            "history": (*workspace.history, grounding_critique),
+                        }
                     )
-                    return Success(final_candidate)
+                else:
+                    is_last_cycle = workspace.cycle >= workspace.max_cycles - 1
+                    if winner.salience >= self.arbiter.convergence_threshold or is_last_cycle:
+                        latency_ms = (time.perf_counter() - start_time) * 1000
+                        raw_cand = winner.payload.get("candidate")
+                        cand_proposals: tuple[MemoryProposal, ...] = ()
+                        if isinstance(raw_cand, dict) and raw_cand.get("proposals"):
+                            cand_proposals = tuple(
+                                MemoryProposal.model_validate(p) for p in raw_cand["proposals"]
+                            )
+                        final_candidate = AssistantCandidate(
+                            text=winner.content,
+                            proposals=cand_proposals,
+                            tokens_in=total_tokens_in,
+                            tokens_out=total_tokens_out,
+                            metadata={
+                                "workspace_cycles": workspace.cycle + 1,
+                                "workspace_converged": True,
+                                "winning_specialist": winner.specialist_name,
+                                "tool_calls_executed": workspace.tool_calls_count,
+                                "observations_count": len(workspace.observations),
+                                "updated_manifest": manifest,
+                                "latency_ms": latency_ms,
+                            },
+                        )
+                        return Success(final_candidate)
 
             workspace = workspace.model_copy(update={"cycle": workspace.cycle + 1})
 
         # Fallback if loop exited without explicit answer draft convergence
+        if last_failure is not None and not workspace.history:
+            return Failure(last_failure)
+
         latency_ms = (time.perf_counter() - start_time) * 1000
         draft_candidate = next(
-            (c for c in reversed(workspace.history) if c.kind == WorkspaceContributionKind.ANSWER_DRAFT),
+            (
+                c
+                for c in reversed(workspace.history)
+                if c.kind == WorkspaceContributionKind.ANSWER_DRAFT
+            ),
             None,
         )
-        final_text = draft_candidate.content if draft_candidate else f"I have processed your request: {turn.text}"
+        final_text = (
+            draft_candidate.content
+            if draft_candidate
+            else f"I have processed your request: {turn.text}"
+        )
 
         return Success(
             AssistantCandidate(

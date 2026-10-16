@@ -36,7 +36,8 @@ class SalienceArbiter:
 
             # If there's a critique against this specialist, discount it
             for crit in critiques:
-                if crit.specialist_name == c.specialist_name:
+                target_spec = crit.payload.get("target_specialist", crit.specialist_name)
+                if c.specialist_name in (target_spec, crit.specialist_name):
                     effective *= 0.5
 
             # If tool call was already repeated with identical arguments, penalize heavily
