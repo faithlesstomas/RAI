@@ -388,12 +388,6 @@ class ApplicationContainer:
             from .skills.defaults import create_default_skill_registry  # noqa: PLC0415
 
             skills_registry = create_default_skill_registry()
-            step_ctrl = TaskStepController(
-                capabilities=self.capability_service,
-                backend=effective_backend,
-                actions=actions,
-                skills=skills_registry,
-            )
             context_builder = AssistantContextBuilder(
                 store=self.memory_graph_store,
                 system_instruction=format_capabilities_instruction(
@@ -414,6 +408,13 @@ class ApplicationContainer:
                 max_external_evidence=runtime.max_external_evidence,
                 memory_sufficiency_threshold=(runtime.memory_sufficiency_threshold),
             )
+            step_ctrl = TaskStepController(
+                capabilities=self.capability_service,
+                backend=effective_backend,
+                actions=actions,
+                skills=skills_registry,
+                context_builder=context_builder,
+            )
             from .assistant.controllers.direct import DirectController  # noqa: PLC0415
 
             if runtime.interaction_controller == "bounded_step":
@@ -423,8 +424,10 @@ class ApplicationContainer:
 
                 active_controller = WorkspaceEngine(
                     capabilities=self.capability_service,
+                    actions=actions,
                     backend=effective_backend,
                     skills=skills_registry,
+                    context_builder=context_builder,
                 )
             else:
                 active_controller = DirectController(

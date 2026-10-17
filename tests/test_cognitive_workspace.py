@@ -150,6 +150,8 @@ async def test_workspace_engine_direct_answer_convergence() -> None:
     assert candidate.text == "Here is the direct answer to your question."
     assert candidate.metadata.get("workspace_converged") is True
     assert candidate.metadata.get("winning_specialist") == "answer_draft"
+    assert candidate.metadata.get("workspace_cycles") == 1
+    assert backend.call_count == 1
 
 
 @pytest.mark.asyncio
@@ -214,7 +216,7 @@ async def test_workspace_engine_action_deliberation_and_observation() -> None:
         producer=producer,
         session_id="session-workspace-action",
         role="user",
-        text="Policz aplikacje w systemie",
+        text="Count applications in the system",
         data_class=DataClass.PUBLIC,
     )
     context = _make_context_package(turn)
@@ -227,6 +229,58 @@ async def test_workspace_engine_action_deliberation_and_observation() -> None:
     assert candidate.metadata.get("tool_calls_executed") == 1
     assert candidate.metadata.get("observations_count") == 1
     assert candidate.metadata.get("workspace_converged") is True
+    expected_llm_calls = 2
+    assert backend.call_count == expected_llm_calls
+
+
+@pytest.mark.asyncio
+async def test_workspace_engine_emits_unexecuted_action_proposal_without_capabilities() -> None:
+    from rai.assistant.cognitive.specialists import (  # noqa: PLC0415
+        ActionReasonerSpecialist,
+        AnswerDraftSpecialist,
+        GroundingEvaluationSpecialist,
+        RetrieverSpecialist,
+    )
+
+    backend = MockModelBackend(
+        responses=[
+            "<tool_call>call: application.list{}</tool_call>",
+            "Proposed application discovery action.",
+        ]
+    )
+    engine = WorkspaceEngine(
+        backend=backend,
+        capabilities=None,
+        specialists=(
+            RetrieverSpecialist(),
+            ActionReasonerSpecialist(
+                backend=backend,
+                capability_names=("application.list",),
+            ),
+            AnswerDraftSpecialist(backend=backend),
+            GroundingEvaluationSpecialist(),
+        ),
+        max_cycles=3,
+    )
+
+    producer = ProducerIdentity(producer_id="user", kind="user", version="1.0.0")
+    turn = ConversationTurn(
+        producer=producer,
+        session_id="session-workspace-proposal",
+        role="user",
+        text="List installed applications",
+        data_class=DataClass.PUBLIC,
+    )
+    context = _make_context_package(turn)
+    budget = _make_budget()
+
+    result = await engine.process_turn(turn, context, budget, CancellationToken())
+    assert isinstance(result, Success)
+    candidate = result.unwrap()
+    proposals = candidate.metadata.get("action_proposals")
+    assert isinstance(proposals, list)
+    assert len(proposals) == 1
+    assert proposals[0]["capability"] == "application.list"
 
 
 @pytest.mark.asyncio
@@ -248,8 +302,8 @@ async def test_workspace_engine_deterministic_abstention() -> None:
     result = await engine.process_turn(turn, context, budget, CancellationToken())
     assert isinstance(result, Success)
     candidate = result.unwrap()
-    assert "Nie mam wystarczających" in candidate.text
     assert candidate.metadata.get("deterministic_abstention") is True
+    assert candidate.metadata.get("reason") == "memory_evidence_required_but_unavailable"
 
 
 def test_salience_arbiter_selection_and_critique_penalty() -> None:

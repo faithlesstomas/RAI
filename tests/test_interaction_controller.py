@@ -164,7 +164,8 @@ async def test_direct_controller_action_passthrough_and_synthesis() -> None:
         async def handle(
             self, turn: ConversationTurn, cancellation: CancellationToken
         ) -> AssistantCandidate | None:
-            if "aplikacje" in turn.text:
+            del cancellation
+            if "applications" in turn.text.lower():
                 return AssistantCandidate(
                     text="Files\nTerminal\nCalculator",
                     metadata={
@@ -183,7 +184,7 @@ async def test_direct_controller_action_passthrough_and_synthesis() -> None:
         producer=producer,
         session_id="session-1",
         role="user",
-        text="Wypisz aplikacje",
+        text="List installed applications",
         data_class=DataClass.PUBLIC,
     )
     context = _make_context_package(turn)
@@ -215,8 +216,8 @@ async def test_direct_controller_evidence_abstention() -> None:
     result = await controller.process_turn(turn, context, budget, CancellationToken())
     assert isinstance(result, Success)
     candidate = result.unwrap()
-    assert "Nie mam wystarczających" in candidate.text
     assert candidate.metadata.get("deterministic_abstention") is True
+    assert candidate.metadata.get("reason") == "memory_evidence_required_but_unavailable"
 
 
 @pytest.mark.asyncio
@@ -243,6 +244,7 @@ async def test_bounded_step_controller_process_turn_agentic_loop() -> None:
         async def generate(
             self, request: InferenceRequest, cancellation: CancellationToken
         ) -> Result[AssistantCandidate, ActionFailure]:
+            del cancellation
             self.turn_count += 1
             if self.turn_count == 1:
                 # Deliberate: emit tool call to discover applications
@@ -258,13 +260,14 @@ async def test_bounded_step_controller_process_turn_agentic_loop() -> None:
             assert "Files.desktop" in (request.system_instruction or "")
             return Success(
                 AssistantCandidate(
-                    text="Znaleziono 2 aplikacje w systemie: Files oraz Calculator.",
+                    text="Found 2 applications in the system: Files and Calculator.",
                     tokens_in=30,
                     tokens_out=15,
                 )
             )
 
         def stream(self, request: InferenceRequest, cancellation: CancellationToken) -> NoReturn:
+            del request, cancellation
             raise NotImplementedError
 
     class MockCapabilities(CapabilityService):
@@ -292,6 +295,7 @@ async def test_bounded_step_controller_process_turn_agentic_loop() -> None:
         async def invoke(
             self, request: CapabilityRequest, cancellation: CancellationToken
         ) -> tuple[Any, Result[ActionResult, ActionFailure]]:
+            del cancellation
             return None, Success(
                 ActionResult(
                     record_id=_new_id(),
@@ -317,7 +321,7 @@ async def test_bounded_step_controller_process_turn_agentic_loop() -> None:
         producer=producer,
         session_id="session-agentic",
         role="user",
-        text="Policz wszystkie aplikacje w systemie.",
+        text="Count all applications in the system.",
         data_class=DataClass.PUBLIC,
     )
     context = _make_context_package(turn)
@@ -326,7 +330,7 @@ async def test_bounded_step_controller_process_turn_agentic_loop() -> None:
     result = await controller.process_turn(turn, context, budget, CancellationToken())
     assert isinstance(result, Success)
     candidate = result.unwrap()
-    assert "Znaleziono 2 aplikacje w systemie" in candidate.text
+    assert "Found 2 applications in the system" in candidate.text
     assert candidate.metadata.get("tool_calls_executed") == 1
     min_expected_steps = 2
     assert candidate.metadata.get("steps_count") >= min_expected_steps
@@ -344,6 +348,7 @@ async def test_assistant_service_with_custom_controller(tmp_path: Path) -> None:
             budget: InferenceBudget,
             token: CancellationToken,
         ) -> Result[AssistantCandidate, ActionFailure]:
+            del context, budget, token
             return Success(
                 AssistantCandidate(
                     text=f"Custom response to: {turn.text}",
@@ -369,3 +374,24 @@ async def test_assistant_service_with_custom_controller(tmp_path: Path) -> None:
         assert response.text == "Custom response to: Testing custom controller injection"
     finally:
         await service.stop()
+
+
+def test_cli_controller_option_wires_bounded_step_by_default() -> None:
+    import inspect  # noqa: PLC0415
+
+    from rai.commands.assistant import ask_command, chat_command  # noqa: PLC0415
+    from rai.commands.settings import _assistant_config  # noqa: PLC0415
+    from rai.container import ApplicationContainer  # noqa: PLC0415
+
+    ask_sig = inspect.signature(ask_command)
+    chat_sig = inspect.signature(chat_command)
+    assert ask_sig.parameters["controller"].default.default == "bounded_step"
+    assert chat_sig.parameters["controller"].default.default == "bounded_step"
+
+    cfg = _assistant_config(backend=None, model=None, controller="bounded_step")
+    assistant_cfg = cfg.get("assistant")
+    assert isinstance(assistant_cfg, dict)
+    assert assistant_cfg.get("interaction_controller") == "bounded_step"
+
+    container = ApplicationContainer(config=cfg, testing=True)
+    assert isinstance(container.assistant_service.controller, BoundedStepController)

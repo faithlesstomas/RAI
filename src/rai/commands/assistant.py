@@ -94,6 +94,13 @@ def ask_command(  # noqa: PLR0913
         min=1.0,
         help="Inference request timeout in seconds (default: 300s).",
     ),
+    controller: str = typer.Option(
+        "bounded_step",
+        "--controller",
+        autocompletion=completion.controllers,
+        show_default=True,
+        help="Interaction controller strategy (bounded_step, direct, workspace).",
+    ),
 ) -> None:
     """Send a single prompt to the assistant."""
     _run_assistant_ask(
@@ -111,6 +118,7 @@ def ask_command(  # noqa: PLR0913
         context_window=context_window,
         data_class=data_class,
         timeout=timeout,
+        controller=controller,
     )
 
 
@@ -181,6 +189,13 @@ def chat_command(  # noqa: PLR0913
         min=1.0,
         help="Inference request timeout in seconds (default: 300s).",
     ),
+    controller: str = typer.Option(
+        "bounded_step",
+        "--controller",
+        autocompletion=completion.controllers,
+        show_default=True,
+        help="Interaction controller strategy (bounded_step, direct, workspace).",
+    ),
 ) -> None:
     """Start an interactive chat session with the assistant."""
     _run_assistant_chat(
@@ -197,6 +212,7 @@ def chat_command(  # noqa: PLR0913
         context_window=context_window,
         data_class=data_class,
         timeout=timeout,
+        controller=controller,
     )
 
 

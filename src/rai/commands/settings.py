@@ -4,7 +4,7 @@ from __future__ import annotations
 import click
 
 
-def _assistant_config(  # noqa: PLR0913
+def _assistant_config(  # noqa: PLR0912, PLR0913
     backend: str | None,
     model: str | None,
     profile: str | None = None,
@@ -14,8 +14,15 @@ def _assistant_config(  # noqa: PLR0913
     max_output_tokens: int | None = None,
     context_window: int | None = None,
     timeout: float | None = None,
+    controller: str | None = None,
 ) -> dict[str, object]:
     from rai import config_manager  # noqa: PLC0415
+    from rai.configuration.resolution import SUPPORTED_CONTROLLERS  # noqa: PLC0415
+
+    if controller is not None and controller not in SUPPORTED_CONTROLLERS:
+        raise click.ClickException(
+            f"Unsupported interaction controller {controller!r}; choose {', '.join(SUPPORTED_CONTROLLERS)}."
+        )
 
     config = config_manager.load_config()
     if profile:
@@ -55,6 +62,11 @@ def _assistant_config(  # noqa: PLR0913
         assistant["context_window"] = context_window
     if timeout is not None:
         assistant["lemonade_timeout"] = timeout
+    had_config_controller = bool(assistant.get("interaction_controller"))
+    if controller is not None and (
+        controller != "bounded_step" or not had_config_controller
+    ):
+        assistant["interaction_controller"] = controller
     config["assistant"] = assistant
     config["_cli_overrides"] = {
         k: v
@@ -67,6 +79,12 @@ def _assistant_config(  # noqa: PLR0913
             "max_output_tokens": max_output_tokens,
             "context_window": context_window,
             "lemonade_timeout": timeout,
+            "interaction_controller": (
+                controller
+                if controller is not None
+                and (controller != "bounded_step" or not had_config_controller)
+                else None
+            ),
         }.items()
         if v is not None
     }

@@ -278,21 +278,48 @@ those acceptance ideas, not import GAIA's `Goal`, Global Workspace or Cognitive
 Object lifecycle into ordinary conversation. A future GCAS adapter maps RAI
 records at the boundary while RAI retains memory, privacy and context ownership.
 
-## AssistantActions, Active Choice Frames, and Bounded Workflows
+## Interaction Controllers, Active Choice Frames, and Bounded Workflows
 
-The assistant runtime coordinates typed operating system capabilities without exposing ambient tool authority to LLMs:
+The assistant runtime delegates turn execution inside `AssistantService` to a pluggable `InteractionController` (`rai.assistant.ports.InteractionController`) while keeping turn locking, context building, memory proposal validation, and audit commits inside `AssistantService`:
 
 ```text
 user turn
-  -> AssistantActions intent recognition & active choice frame resolution
-  -> CapabilityService invocation (with policy check, handle validation, approval)
-  -> ActionResult or ActionFailure
-  -> ToolObservation context packaging (untrusted content isolation)
-  -> AssistantModelBackend in-turn synthesis
-  -> synthesized response delivered to user with provenance
+  -> AssistantService (session lock, context package & manifest construction)
+  -> InteractionController.process_turn(turn, context, budget, token)
+       -> AssistantActions intent recognition & ActiveChoiceFrame resolution
+       -> Controller deliberation / model generation / tool execution loop
+       -> AssistantCandidate with updated ContextManifest and provenance
+  -> AssistantService (grounding check, memory admission, audit commit)
 ```
 
-1. **ActiveChoiceFrame Lifecycle:** When an action generates selectable options (such as web search results or process lists), an `ActiveChoiceFrame` is persisted with expiration and distinct resource handles. User selections ("1", "first") resolve deterministically via `resolve_choice_selection` against the frame, transitioning the frame to `CONSUMED`. Expired or cancelled frames reject execution without invoking model generation.
-2. **In-Turn Tool Observation Synthesis:** When an executed action produces untrusted external data (such as `browser.read_page`), `AssistantService` packages the output into a structured `ToolObservation`, injects it into the turn's `AssistantContextPackage`, and invokes `AssistantModelBackend.generate` in the same turn under the remaining budget. The assistant answers grounded in the observation rather than dumping raw untrusted text.
-3. **TaskStepController & Bounded Research:** For multi-step information gathering, `TaskStepController` enforces an explicit FSM: `PLANNING` -> `SEARCHING` -> `SELECTING_SOURCES` -> `READING_PAGE` -> `SYNTHESIZING` -> `COMPLETE`. Hard limits (`max_searches`, `max_page_reads`, `max_total_steps`) prevent unbounded agent loops. Each stage records fine-grained token, tool call, and latency metrics in `UsageLedger`.
+### Pluggable `InteractionController` Implementations
 
+1. **`BoundedStepController` (`rai.actions.workflow`, CLI default `--controller bounded_step`):**
+   - Executes a finite-state-machine-supervised multi-step loop:
+     `PLANNING` $\rightarrow$ `EVALUATING` $\rightarrow$ `EXECUTING` $\rightarrow$ `OBSERVING` $\rightarrow$ `SYNTHESIZING` $\rightarrow$ `COMPLETE`.
+   - Enforces hard limits (`max_steps`, `max_tool_calls`, `timeout_seconds`) and records step-level token and latency usage in `UsageLedger`.
+   - Injects declarative procedural skills from `SkillRegistry` (`SKILLS.md` format) filtered by currently registered capabilities.
+   - Routes recognized desktop intents through `AssistantActionHandler.dispatch_intent` (preserving `ActiveChoiceFrame` handles) and generic capabilities through `CapabilityService.invoke`.
+2. **`DirectController` (`rai.assistant.controllers.direct`, `--controller direct`):**
+   - Executes a single-turn conversational pass with deterministic action passthrough, in-turn `ToolObservation` synthesis (up to 1 follow-up tool hop), and fail-closed memory abstention.
+3. **`WorkspaceEngine` (`rai.assistant.cognitive.workspace`, `--controller workspace`):**
+   - Optional research module implementing Global Workspace Theory (GWT) blackboard deliberation.
+   - Evaluates competing `CognitiveSpecialist` modules (`RetrieverSpecialist`, `ActionReasonerSpecialist`, `AnswerDraftSpecialist`, `GroundingEvaluationSpecialist`) arbitrated by `SalienceArbiter` and monitored for latent semantic drift via `JLensProbe` (`rai.latent.v1`).
+   - Evaluates non-draft specialists first in each cycle so `AnswerDraftSpecialist` is skipped when a high-salience `TOOL_CALL` is proposed, and converges in a single cycle on conversational turns.
+
+### CLI and Configuration Selection
+
+`rai assistant ask` and `rai assistant chat` expose `--controller` (defaulting to `bounded_step`):
+
+```bash
+uv run rai assistant ask "List installed applications" --controller bounded_step
+uv run rai assistant chat --controller direct
+uv run rai assistant ask "Analyze project architecture" --controller workspace
+```
+
+The active controller can also be set via `RAI_INTERACTION_CONTROLLER` or `assistant.interaction_controller` in configuration (`"bounded_step" | "direct" | "workspace"`).
+
+### ActiveChoiceFrame and In-Turn Observation Synthesis
+
+1. **ActiveChoiceFrame Lifecycle:** When an action generates selectable options (such as web search results or process lists), an `ActiveChoiceFrame` is persisted with expiration and distinct resource handles. User selections (`"1"`, `"first"`) resolve deterministically via `resolve_choice_selection` against the frame, transitioning the frame to `CONSUMED`. Expired or cancelled frames reject execution without invoking model generation.
+2. **In-Turn Tool Observation Synthesis:** When an executed action produces untrusted external data (such as `browser.read_page`), the controller packages the output into a structured `ToolObservation`, injects it into the turn's `AssistantContextPackage`, and synthesizes a grounded natural-language answer under the remaining turn budget.

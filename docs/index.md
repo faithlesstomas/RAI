@@ -42,7 +42,6 @@ assistant-memory-roadmap
 assistant-m4-m6-evaluation
 assistant-context-rot-evaluation
 assistant-memory-gcas-crosscheck
-assistant-cognitive-workspace-adr
 emacs-client
 local-voice
 linux-actions

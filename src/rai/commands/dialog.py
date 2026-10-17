@@ -31,6 +31,7 @@ def _run_assistant_ask(  # noqa: PLR0913
     context_window: int | None = None,
     data_class: DataClass = DataClass.LOCAL,
     timeout: float | None = None,
+    controller: str | None = None,
 ) -> None:
     from returns.result import Success  # noqa: PLC0415
 
@@ -50,6 +51,7 @@ def _run_assistant_ask(  # noqa: PLR0913
                 max_output_tokens=max_output_tokens,
                 context_window=context_window,
                 timeout=timeout,
+                controller=controller,
             )
         )
         service = container.assistant_service
@@ -115,6 +117,7 @@ def _run_assistant_chat(  # noqa: PLR0913, PLR0915
     context_window: int | None = None,
     data_class: DataClass = DataClass.LOCAL,
     timeout: float | None = None,
+    controller: str | None = None,
 ) -> None:
     from returns.result import Success  # noqa: PLC0415
 
@@ -134,6 +137,7 @@ def _run_assistant_chat(  # noqa: PLR0913, PLR0915
                 max_output_tokens=max_output_tokens,
                 context_window=context_window,
                 timeout=timeout,
+                controller=controller,
             )
         )
         service = container.assistant_service
@@ -147,7 +151,8 @@ def _run_assistant_chat(  # noqa: PLR0913, PLR0915
     click.echo(f"Session ID: {sid}")
     click.echo(
         f"Backend: {getattr(service.backend, 'backend_name', 'unknown')} | "
-        f"Model: {getattr(service.backend, 'model_name', 'unknown')}"
+        f"Model: {getattr(service.backend, 'model_name', 'unknown')} | "
+        f"Controller: {type(service.controller).__name__}"
     )
     click.echo("Type /help for commands, /exit or /q to quit.\n")
 

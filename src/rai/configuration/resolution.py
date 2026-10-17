@@ -14,6 +14,11 @@ SUPPORTED_BACKENDS = (
     "antigravity",
     "deterministic",
 )
+SUPPORTED_CONTROLLERS = (
+    "bounded_step",
+    "direct",
+    "workspace",
+)
 
 
 def effective_model_settings(
@@ -42,6 +47,7 @@ def effective_model_settings(
                     "lemonade_host": "LEMONADE_HOST",
                     "lemonade_api_key": "LEMONADE_API_KEY",
                     "lemonade_timeout": "LEMONADE_TIMEOUT",
+                    "interaction_controller": "RAI_INTERACTION_CONTROLLER",
                 }.items()
                 if env.get(name)
             },

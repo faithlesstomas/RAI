@@ -65,7 +65,7 @@ class CognitiveSpecialist(Protocol):
 
 
 class RetrieverSpecialist:
-    """Specialist evaluating context sufficiency and proposing memory/knowledge retrieval."""
+    """Specialist evaluating context sufficiency and summarizing available memory/knowledge evidence."""
 
     def __init__(self, name: str = "retriever") -> None:
         self._name = name
@@ -80,7 +80,7 @@ class RetrieverSpecialist:
         cancellation: CancellationToken,
     ) -> Result[WorkspaceContribution | None, ActionFailure]:
         del cancellation
-        # If memory evidence was already broadcast or observations exist, retrieval urgency is low
+        # If memory evidence was already evaluated in history or tool observations exist, skip
         has_retrieval = any(
             c.kind == WorkspaceContributionKind.RETRIEVAL for c in workspace.history
         )
@@ -88,14 +88,46 @@ class RetrieverSpecialist:
             return Success(None)
 
         evidence_req = bool(workspace.metadata.get("evidence_required", False))
-        salience = 0.85 if evidence_req else 0.25
+        durable_count = 0
+        episodic_count = 0
+        summary_count = 0
+        external_count = 0
+        if isinstance(workspace.context, AssistantContextPackage):
+            content = workspace.context.content
+            durable_count = len(content.get("durable_memories", ()))
+            episodic_count = len(content.get("episodic_evidence", ()))
+            summary_count = len(content.get("grounded_summaries", ()))
+            external_count = len(content.get("external_evidence", ()))
+
+        total_evidence = durable_count + episodic_count + summary_count + external_count
+        if evidence_req and total_evidence == 0:
+            salience = 0.75
+            summary_text = (
+                f"Evidence is required for goal '{workspace.goal}', "
+                "but no admitted memory or external evidence is present in context."
+            )
+        else:
+            salience = 0.35
+            summary_text = (
+                f"Context evidence summary for goal '{workspace.goal}': "
+                f"{durable_count} durable memories, {episodic_count} episodic turns, "
+                f"{summary_count} summaries, {external_count} external items."
+            )
+
         return Success(
             WorkspaceContribution(
                 cycle=workspace.cycle,
                 specialist_name=self.name,
                 kind=WorkspaceContributionKind.RETRIEVAL,
-                content=f"Evaluated retrieval needs for goal: {workspace.goal}",
-                payload={"evidence_required": evidence_req},
+                content=summary_text,
+                payload={
+                    "evidence_required": evidence_req,
+                    "durable_memories_count": durable_count,
+                    "episodic_evidence_count": episodic_count,
+                    "grounded_summaries_count": summary_count,
+                    "external_evidence_count": external_count,
+                    "total_evidence_count": total_evidence,
+                },
                 salience=salience,
             )
         )
@@ -104,44 +136,70 @@ class RetrieverSpecialist:
 class ActionReasonerSpecialist:
     """Specialist reasoning about required capabilities/skills and proposing tool executions."""
 
-    def __init__(
+    def __init__(  # noqa: PLR0913
         self,
         backend: AssistantModelBackend | None = None,
         capabilities: CapabilityService | None = None,
         skills: SkillRegistry | None = None,
         name: str = "action_reasoner",
+        max_tool_calls: int = 1,
+        capability_names: tuple[str, ...] | None = None,
     ) -> None:
         self._name = name
         self.backend = backend
         self.capabilities = capabilities
         self.skills = skills
+        self.max_tool_calls = max_tool_calls
+        self.capability_names = capability_names
 
     @property
     def name(self) -> str:
         return self._name
+
+    def _available_capability_names(self) -> tuple[str, ...]:
+        if self.capability_names is not None:
+            return self.capability_names
+        if self.capabilities is not None:
+            return tuple(d.name for d in self.capabilities.registry.descriptors())
+        return ()
 
     async def evaluate(  # noqa: PLR0911
         self,
         workspace: WorkspaceState,
         cancellation: CancellationToken,
     ) -> Result[WorkspaceContribution | None, ActionFailure]:
-        # If we already have observations or tool calls executed, or if no backend/capabilities
-        if not self.capabilities or not self.backend:
+        avail_caps = self._available_capability_names()
+        if not avail_caps or not self.backend:
             return Success(None)
 
-        max_allowed_observations = 2
-        max_allowed_tool_calls = 2
-        if len(workspace.observations) >= max_allowed_observations or workspace.tool_calls_count >= max_allowed_tool_calls:
+        if (
+            len(workspace.observations) >= self.max_tool_calls
+            or workspace.tool_calls_count >= self.max_tool_calls
+        ):
             return Success(None)
 
         skills_prompt = ""
         if self.skills is not None:
-            avail_caps = tuple(d.name for d in self.capabilities.registry.descriptors())
             skills_prompt = self.skills.format_skills_instruction(avail_caps)
+
+        caps_list = ", ".join(avail_caps)
+        broadcast_note = ""
+        if workspace.broadcast is not None:
+            broadcast_note = (
+                f"\nPrevious Blackboard Broadcast ({workspace.broadcast.specialist_name} / "
+                f"{workspace.broadcast.kind}): {workspace.broadcast.content}\n"
+            )
+        obs_note = ""
+        if workspace.observations:
+            obs_lines = [json.dumps(obs, ensure_ascii=False) for obs in workspace.observations]
+            obs_note = "\nCollected Observations:\n" + "\n".join(obs_lines) + "\n"
 
         prompt = (
             f"You are the Action Reasoning Specialist in Rich AI.\n"
             f"User Goal: {workspace.goal}\n"
+            f"Available Capabilities: {caps_list}\n"
+            f"{broadcast_note}"
+            f"{obs_note}"
             f"{skills_prompt}\n\n"
             f"If an action is needed, emit exactly `<tool_call>call: capability_name{{...}}</tool_call>`.\n"
             f"If no action is needed, reply with 'NO_ACTION'."
@@ -173,15 +231,19 @@ class ActionReasonerSpecialist:
 
         tool_call = extract_model_tool_call(candidate.text)
         if tool_call:
-            _, cap_name, tool_args = tool_call
-            salience = 0.9 if not workspace.observations else 0.4
+            preamble, cap_name, tool_args = tool_call
+            salience = 0.90 if not workspace.observations else 0.40
             return Success(
                 WorkspaceContribution(
                     cycle=workspace.cycle,
                     specialist_name=self.name,
                     kind=WorkspaceContributionKind.TOOL_CALL,
                     content=f"Proposed tool execution: {cap_name}",
-                    payload={"capability": cap_name, "arguments": tool_args},
+                    payload={
+                        "capability": cap_name,
+                        "arguments": tool_args,
+                        "preamble": preamble,
+                    },
                     salience=salience,
                     tokens_in=candidate.tokens_in,
                     tokens_out=candidate.tokens_out,
@@ -192,21 +254,23 @@ class ActionReasonerSpecialist:
 
 
 class AnswerDraftSpecialist:
-    """Specialist generating answer drafts from memory and observations."""
+    """Specialist generating answer drafts from blackboard state, memory, and observations."""
 
     def __init__(
         self,
         backend: AssistantModelBackend | None = None,
         name: str = "answer_draft",
+        system_instruction: str | None = None,
     ) -> None:
         self._name = name
         self.backend = backend
+        self.system_instruction = system_instruction
 
     @property
     def name(self) -> str:
         return self._name
 
-    async def evaluate(
+    async def evaluate(  # noqa: PLR0912
         self,
         workspace: WorkspaceState,
         cancellation: CancellationToken,
@@ -214,16 +278,38 @@ class AnswerDraftSpecialist:
         if not self.backend:
             return Success(None)
 
-        # Build prompt synthesizing goal and accumulated observations
         obs_text = "None."
         if workspace.observations:
             obs_lines = [json.dumps(obs, ensure_ascii=False) for obs in workspace.observations]
             obs_text = "\n".join(obs_lines)
 
+        blackboard_notes: list[str] = []
+        if workspace.broadcast is not None:
+            blackboard_notes.append(
+                f"Active Broadcast ({workspace.broadcast.specialist_name} / "
+                f"{workspace.broadcast.kind}): {workspace.broadcast.content}"
+            )
+        for item in workspace.history:
+            if item.kind in {
+                WorkspaceContributionKind.RETRIEVAL,
+                WorkspaceContributionKind.CRITIQUE,
+            }:
+                note = f"[{item.specialist_name}:{item.kind}] {item.content}"
+                if note not in blackboard_notes:
+                    blackboard_notes.append(note)
+
+        notes_section = (
+            "Blackboard Notes:\n" + "\n".join(blackboard_notes) + "\n\n"
+            if blackboard_notes
+            else ""
+        )
+        base_prefix = f"{self.system_instruction}\n\n" if self.system_instruction else ""
         prompt = (
+            f"{base_prefix}"
             f"Goal: {workspace.goal}\n"
+            f"{notes_section}"
             f"Observations:\n{obs_text}\n\n"
-            f"Provide a helpful, concise answer to the user based strictly on the observations."
+            f"Provide a helpful, concise answer to the user grounded in the context and observations."
         )
 
         if workspace.context is None:
@@ -274,12 +360,13 @@ class AnswerDraftSpecialist:
         if not isinstance(candidate, AssistantCandidate):
             return Success(None)
 
-        # If observations exist or this is the final cycle, answer salience is high
+        # If observations exist or this is the final cycle, answer salience is 0.95;
+        # otherwise 0.85 (>= 0.80 convergence threshold so conversational turns converge
+        # in 1 cycle, while still < 0.90 of ActionReasonerSpecialist's TOOL_CALL).
         if workspace.observations or workspace.cycle >= workspace.max_cycles - 1:
             salience = 0.95
         else:
-            # Baseline conversational salience
-            salience = 0.60
+            salience = 0.85
 
         return Success(
             WorkspaceContribution(
@@ -325,7 +412,7 @@ class GroundingEvaluationSpecialist:
                     kind=WorkspaceContributionKind.CRITIQUE,
                     content="Draft answer is empty.",
                     payload={"target_specialist": workspace.broadcast.specialist_name},
-                    salience=0.8,
+                    salience=0.85,
                 )
             )
 

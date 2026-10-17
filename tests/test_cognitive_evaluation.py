@@ -80,24 +80,24 @@ class MockBenchmarkBackend(AssistantModelBackend):
                 elif "Action Reasoning Specialist" in sys_inst:
                     text = "NO_ACTION"
                 else:
-                    text = "Zainstalowane aplikacje: Terminal oraz Files."
+                    text = "Installed applications: Terminal and Files."
             elif "multi_turn_context_retention" in sid:
                 text = (
                     "NO_ACTION"
                     if "Action Reasoning Specialist" in sys_inst
-                    else "Projekt Apollo rozwijany jest w Rust."
+                    else "The Apollo project is developed in Rust."
                 )
             elif "hallucination_abstention_vault" in sid:
                 text = (
                     "NO_ACTION"
                     if "Action Reasoning Specialist" in sys_inst
-                    else "Brak dowodów w pamięci."
+                    else "No evidence available in memory."
                 )
             else:
                 text = (
                     "NO_ACTION"
                     if "Action Reasoning Specialist" in sys_inst
-                    else "Rich AI (RAI) jest asystentem Linux."
+                    else "Rich AI (RAI) is a local-first Linux assistant."
                 )
         else:
             text = self.responses[min(self.call_count, len(self.responses) - 1)]
@@ -186,10 +186,10 @@ async def test_run_controller_comparative_benchmark_suite() -> None:
 
     direct_backend = MockBenchmarkBackend(
         responses=[
-            "Znaleziono aplikacje: Terminal i Files.",
-            "Projekt Apollo pisany jest w języku Rust.",
-            "Nie mam wystarczających, dopuszczonych dowodów w pamięci, aby odpowiedzieć.",
-            "Rich AI (RAI) to lokalny asystent AI dla systemu Linux.",
+            "Found applications: Terminal and Files.",
+            "The Apollo project is written in Rust.",
+            "Insufficient admitted evidence in memory to answer.",
+            "Rich AI (RAI) is a local AI assistant for Linux.",
         ]
     )
     direct_ctrl = DirectController(backend=direct_backend)
@@ -197,10 +197,10 @@ async def test_run_controller_comparative_benchmark_suite() -> None:
     bounded_backend = MockBenchmarkBackend(
         responses=[
             "<tool_call>call: application.list{}</tool_call>",
-            "Oto aplikacje w systemie: Terminal i Files.",
-            "Projekt Apollo pisany jest w Rust.",
-            "Nie mam wystarczających, dopuszczonych dowodów w pamięci, aby odpowiedzieć.",
-            "Rich AI to lokalny asystent.",
+            "Here are the applications in the system: Terminal and Files.",
+            "The Apollo project is written in Rust.",
+            "Insufficient admitted evidence in memory to answer.",
+            "Rich AI (RAI) is a local assistant.",
         ]
     )
     bounded_ctrl = BoundedStepController(

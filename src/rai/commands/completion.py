@@ -1,11 +1,15 @@
 """Completion from runtime-supported backends and configured profiles/models."""
 
-from rai.configuration.resolution import SUPPORTED_BACKENDS
+from rai.configuration.resolution import SUPPORTED_BACKENDS, SUPPORTED_CONTROLLERS
 from rai.configuration.storage import ConfigurationError, load_settings
 
 
 def backends(incomplete: str) -> list[str]:
     return [name for name in SUPPORTED_BACKENDS if name.startswith(incomplete)]
+
+
+def controllers(incomplete: str) -> list[str]:
+    return [name for name in SUPPORTED_CONTROLLERS if name.startswith(incomplete)]
 
 
 def profiles(incomplete: str) -> list[str]:

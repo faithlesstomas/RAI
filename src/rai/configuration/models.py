@@ -42,6 +42,7 @@ class ModelSettings(SettingsRecord):
     enable_thinking: bool = False
     thinking_budget: int | None = Field(default=None, ge=0)
     thinking_level: str | None = None
+    interaction_controller: Literal["direct", "bounded_step", "workspace"] | None = None
 
 
 class TtsSettings(SettingsRecord):

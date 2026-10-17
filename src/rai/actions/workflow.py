@@ -21,6 +21,7 @@ from typing import Any, Literal
 from pydantic import BaseModel, ConfigDict, Field
 from returns.result import Failure, Result, Success
 
+from rai.assistant.backends.deterministic import DeterministicAssistantBackend
 from rai.assistant.ports import (
     AssistantActionHandler,
     AssistantModelBackend,
@@ -28,12 +29,13 @@ from rai.assistant.ports import (
 )
 from rai.assistant.records import (
     AssistantCandidate,
+    AssistantContextManifest,
     AssistantContextPackage,
     ConversationTurn,
     InferenceRequest,
     ToolObservation,
 )
-from rai.assistant.tool_calling import extract_model_tool_call
+from rai.assistant.tool_calling import extract_model_tool_call, intent_from_tool_call
 from rai.kernel.ports import CancellationToken, UsageLedger
 from rai.kernel.records import (
     ActionFailure,
@@ -233,6 +235,7 @@ class BoundedStepController(InteractionController):
         actions: AssistantActionHandler | None = None,
         limits: BoundedWorkflowLimits | None = None,
         skills: SkillRegistry | None = None,
+        context_builder: object = None,
     ) -> None:
         self.ledger = ledger
         self.capabilities = capabilities
@@ -240,8 +243,9 @@ class BoundedStepController(InteractionController):
         self.actions = actions
         self.limits = limits or BoundedWorkflowLimits()
         self.skills = skills
+        self.context_builder = context_builder
 
-    async def process_turn(  # noqa: PLR0915
+    async def process_turn(  # noqa: PLR0912, PLR0915
         self,
         turn: ConversationTurn,
         context: AssistantContextPackage,
@@ -251,29 +255,76 @@ class BoundedStepController(InteractionController):
         """Execute a turn under the bounded agentic loop state machine."""
         manifest = context.manifest
         initial_observations: list[dict[str, Any]] = []
+        initial_obs_records: list[dict[str, Any]] = list(
+            context.content.get("tool_observations", [])
+        )
+        initial_obs_ids: list[str] = list(manifest.tool_observation_ids)
+        initial_action_metadata: dict[str, Any] = {}
+
         if self.actions is not None and hasattr(self.actions, "handle"):
             action_cand = await self.actions.handle(turn, token)
-            if action_cand is not None:
-                if (
-                    not action_cand.metadata.get("requires_synthesis")
-                    and not action_cand.metadata.get("untrusted_content")
-                ):
-                    return Success(
-                        action_cand.model_copy(
-                            update={
-                                "metadata": {
-                                    **action_cand.metadata,
-                                    "updated_manifest": manifest,
-                                    "latency_ms": 0.0,
-                                }
-                            }
-                        )
+            requires_synthesis = (
+                action_cand is not None
+                and (
+                    action_cand.metadata.get("requires_synthesis") is True
+                    or (
+                        action_cand.metadata.get("untrusted_content") is True
+                        and not action_cand.metadata.get("active_choice_frame")
                     )
-                act_res = action_cand.metadata.get("action_result")
-                if isinstance(act_res, dict) and isinstance(act_res.get("output"), dict):
-                    initial_observations.append(dict(act_res["output"]))
-                elif action_cand.text:
-                    initial_observations.append({"formatted_text": action_cand.text})
+                )
+            )
+            if action_cand is not None and not requires_synthesis:
+                return Success(
+                    action_cand.model_copy(
+                        update={
+                            "metadata": {
+                                **action_cand.metadata,
+                                "updated_manifest": manifest,
+                                "latency_ms": 0.0,
+                            }
+                        }
+                    )
+                )
+            if action_cand is not None and requires_synthesis:
+                act_res = action_cand.metadata.get("action_result") or {}
+                act_prop = action_cand.metadata.get("action_proposal") or {}
+                output = act_res.get("output") if isinstance(act_res, dict) else {}
+                capability = (
+                    (act_prop.get("capability") if isinstance(act_prop, dict) else None)
+                    or (act_res.get("capability") if isinstance(act_res, dict) else None)
+                    or "tool"
+                )
+                summary = (
+                    (output.get("title") if isinstance(output, dict) else None)
+                    or (action_cand.text.splitlines()[0] if action_cand.text else "")
+                    or str(capability)
+                )
+                obs_content = (
+                    dict(output) if isinstance(output, dict) else {"raw_text": str(output)}
+                )
+                if action_cand.text and "formatted_text" not in obs_content:
+                    obs_content["formatted_text"] = action_cand.text
+                obs = ToolObservation(
+                    source_id=(
+                        (act_res.get("request_id") if isinstance(act_res, dict) else None)
+                        or _new_id()
+                    ),
+                    source_turn_id=turn.record_id,
+                    capability=str(capability),
+                    status="SUCCESS",
+                    summary=str(summary),
+                    untrusted_content=bool(
+                        action_cand.metadata.get("untrusted_content", False)
+                    ),
+                    content=obs_content,
+                )
+                initial_observations.append(obs_content)
+                initial_obs_records.append(obs.model_dump(mode="json"))
+                initial_obs_ids.append(obs.source_id)
+                initial_action_metadata = {
+                    **action_cand.metadata,
+                    "synthesized_from_action": True,
+                }
 
         if manifest.evidence_required and manifest.routing_decision == "no_evidence":
             return Success(
@@ -300,11 +351,17 @@ class BoundedStepController(InteractionController):
             )
 
         task_id = f"task:{turn.record_id}"
+        last_candidate: AssistantCandidate | None = None
+        preamble_box: list[str] = []
+        last_manifest: AssistantContextManifest = manifest.model_copy(
+            update={"tool_observation_ids": tuple(initial_obs_ids)}
+        )
 
-        async def step_decider(
+        async def step_decider(  # noqa: PLR0912, PLR0915
             workflow: BoundedWorkflow,
             cancellation: CancellationToken,
         ) -> Result[dict[str, Any], ActionFailure]:
+            nonlocal last_candidate, last_manifest
             descriptors = self.capabilities.registry.descriptors() if self.capabilities else ()
             actions_desc = "\n".join(f"- {d.name}: {d.description}" for d in descriptors)
             skills_section = ""
@@ -314,30 +371,32 @@ class BoundedStepController(InteractionController):
 
             all_obs = (*initial_observations, *workflow.observations)
             obs_lines = []
-            tool_obs_records = list(context.content.get("tool_observations", []))
-            obs_ids = list(manifest.tool_observation_ids)
+            tool_obs_records = list(initial_obs_records)
+            obs_ids = list(initial_obs_ids)
             for i, obs in enumerate(all_obs, 1):
                 obs_summary = json.dumps(obs, ensure_ascii=False)
                 if len(obs_summary) > _MAX_OBSERVATION_CHARS:
                     obs_summary = obs_summary[:_MAX_OBSERVATION_CHARS] + "... (truncated)"
                 obs_lines.append(f"Observation {i}: {obs_summary}")
-                obs_id = f"{workflow.task_id}:obs:{i}"
-                obs_ids.append(obs_id)
-                tool_obs_records.append(
-                    ToolObservation(
-                        source_id=obs_id,
-                        source_turn_id=turn.record_id,
-                        capability="workflow_step",
-                        status="SUCCESS",
-                        summary=obs_summary[:120],
-                        untrusted_content=True,
-                        content=obs if isinstance(obs, dict) else {"value": obs},
-                    ).model_dump(mode="json")
-                )
+                if i > len(initial_observations):
+                    step_obs_idx = i - len(initial_observations)
+                    obs_id = f"{workflow.task_id}:obs:{step_obs_idx}"
+                    obs_ids.append(obs_id)
+                    tool_obs_records.append(
+                        ToolObservation(
+                            source_id=obs_id,
+                            source_turn_id=turn.record_id,
+                            capability="workflow_step",
+                            status="SUCCESS",
+                            summary=obs_summary[:120],
+                            untrusted_content=True,
+                            content=obs if isinstance(obs, dict) else {"value": obs},
+                        ).model_dump(mode="json")
+                    )
             obs_text = "\n".join(obs_lines) if obs_lines else "None yet."
             prompt_content = f"User Goal: {workflow.goal}\n\nTool Observations:\n{obs_text}"
 
-            system_prompt = (
+            workflow_instruction = (
                 "You are an agent executing user tasks step by step.\n"
                 "Available tools:\n"
                 f"{actions_desc}"
@@ -352,10 +411,31 @@ class BoundedStepController(InteractionController):
                 "or if no tools are needed, provide the final comprehensive answer directly "
                 "without tool tags."
             )
+            raw_base_inst = getattr(self.context_builder, "system_instruction", None)
+            base_instruction = str(raw_base_inst) if isinstance(raw_base_inst, str) else ""
+            if (
+                base_instruction
+                and isinstance(self.backend, DeterministicAssistantBackend)
+                and not all_obs
+            ):
+                system_prompt = base_instruction
+            elif base_instruction and "<tool_call>" in base_instruction:
+                system_prompt = (
+                    f"{base_instruction}{skills_section}\n\n"
+                    f"{prompt_content}\n\n"
+                    "When you have collected all required information to answer the user request, "
+                    "or if no tools are needed, provide the final comprehensive answer directly "
+                    "without tool tags."
+                )
+            elif base_instruction:
+                system_prompt = f"{base_instruction}\n\n{workflow_instruction}"
+            else:
+                system_prompt = workflow_instruction
 
             step_manifest = manifest.model_copy(
                 update={"tool_observation_ids": tuple(obs_ids)}
             )
+            last_manifest = step_manifest
             step_context = context.model_copy(
                 update={
                     "manifest": step_manifest,
@@ -387,13 +467,35 @@ class BoundedStepController(InteractionController):
                 return Failure(gen_res.failure())
 
             cand = gen_res.unwrap()
+            last_candidate = cand
             tool_call = extract_model_tool_call(cand.text)
             if tool_call:
-                _, cap_name, tool_args = tool_call
+                preamble, cap_name, tool_args = tool_call
+                if preamble and not preamble_box:
+                    preamble_box.append(preamble)
+                pre_executed_observation: Any = None
+                if self.actions is not None and hasattr(self.actions, "dispatch_intent"):
+                    tool_intent = intent_from_tool_call(turn, cap_name, tool_args)
+                    if tool_intent is not None:
+                        tool_cand = await self.actions.dispatch_intent(
+                            turn, tool_intent, cancellation
+                        )
+                        if tool_cand is not None:
+                            initial_action_metadata.update(tool_cand.metadata)
+                            act_res_dict = tool_cand.metadata.get("action_result") or {}
+                            obs_out = (
+                                dict(act_res_dict.get("output") or {})
+                                if isinstance(act_res_dict, dict)
+                                else {"raw_text": tool_cand.text}
+                            )
+                            if tool_cand.text and "formatted_text" not in obs_out:
+                                obs_out["formatted_text"] = tool_cand.text
+                            pre_executed_observation = obs_out
                 return Success({
                     "action_type": "tool",
                     "capability": cap_name,
                     "arguments": tool_args,
+                    "pre_executed_observation": pre_executed_observation,
                     "tokens_in": cand.tokens_in,
                     "tokens_out": cand.tokens_out,
                     "latency_ms": latency,
@@ -425,15 +527,29 @@ class BoundedStepController(InteractionController):
         total_tokens_in = sum(step.tokens_in for step in workflow.steps)
         total_tokens_out = sum(step.tokens_out for step in workflow.steps)
 
+        proposals = last_candidate.proposals if last_candidate is not None else ()
+        cand_meta = last_candidate.metadata if last_candidate is not None else {}
+        delivered_text = workflow.final_synthesis or ""
+        if preamble_box and not delivered_text.startswith(preamble_box[0][:30]):
+            delivered_text = f"{preamble_box[0]}\n\n{delivered_text}"
+
+        synthesized_meta: dict[str, Any] = {}
+        if initial_observations or workflow.tool_calls_executed > 0:
+            synthesized_meta["synthesized_from_action"] = True
+
         candidate = AssistantCandidate(
-            text=workflow.final_synthesis or "",
+            text=delivered_text,
+            proposals=proposals,
             tokens_in=total_tokens_in,
             tokens_out=total_tokens_out,
             metadata={
+                **initial_action_metadata,
+                **cand_meta,
+                **synthesized_meta,
                 "bounded_workflow_id": workflow.task_id,
                 "steps_count": len(workflow.steps),
                 "tool_calls_executed": workflow.tool_calls_executed,
-                "updated_manifest": context.manifest,
+                "updated_manifest": last_manifest,
                 "latency_ms": total_latency,
             },
         )
@@ -519,6 +635,7 @@ class BoundedStepController(InteractionController):
         tokens_in: int = 0,
         tokens_out: int = 0,
         latency_ms: float = 0.0,
+        pre_executed_observation: object = None,
     ) -> Result[tuple[BoundedWorkflow, ActionResult], ActionFailure]:
         """Invoke a capability under generic state machine supervision: EVALUATING -> EXECUTING -> OBSERVING."""
         step_index = len(workflow.steps) + 1
@@ -599,36 +716,52 @@ class BoundedStepController(InteractionController):
             )
         workflow = exec_tx.unwrap()
 
-        descriptor = capabilities.registry.descriptor(capability_name)
-        if descriptor is None:
-            return Failure(
-                ActionFailure(
-                    request_id=req_id,
-                    capability=capability_name,
-                    code="CAPABILITY_NOT_FOUND",
-                    message=f"Capability '{capability_name}' is not registered",
-                    producer=PRODUCER,
-                )
+        if pre_executed_observation is not None:
+            out_dict = (
+                pre_executed_observation
+                if isinstance(pre_executed_observation, dict)
+                else {"value": pre_executed_observation}
             )
-
-        request = normalize_request(
-            descriptor,
-            arguments,
-            actor=workflow.producer,
-            request_id=req_id,
-            data_class=workflow.data_class,
-        )
-        _, executed = await capabilities.invoke(request, cancellation)
-        if isinstance(executed, Failure):
-            _ = self.transition_generic(
-                workflow,
-                AgentWorkflowState.FAILED,
-                action_taken=f"execution_failed:{executed.failure().message}",
+            action_res = ActionResult(
+                record_id=_new_id(),
+                timestamp=_utc_now(),
+                producer=PRODUCER,
+                request_id=req_id,
                 capability=capability_name,
+                output=out_dict,
+                verification={"status": "dispatched"},
             )
-            return Failure(executed.failure())
+        else:
+            descriptor = capabilities.registry.descriptor(capability_name)
+            if descriptor is None:
+                return Failure(
+                    ActionFailure(
+                        request_id=req_id,
+                        capability=capability_name,
+                        code="CAPABILITY_NOT_FOUND",
+                        message=f"Capability '{capability_name}' is not registered",
+                        producer=PRODUCER,
+                    )
+                )
 
-        action_res = executed.unwrap()
+            request = normalize_request(
+                descriptor,
+                arguments,
+                actor=workflow.producer,
+                request_id=req_id,
+                data_class=workflow.data_class,
+            )
+            _, executed = await capabilities.invoke(request, cancellation)
+            if isinstance(executed, Failure):
+                _ = self.transition_generic(
+                    workflow,
+                    AgentWorkflowState.FAILED,
+                    action_taken=f"execution_failed:{executed.failure().message}",
+                    capability=capability_name,
+                )
+                return Failure(executed.failure())
+
+            action_res = executed.unwrap()
 
         # 3. EXECUTING -> OBSERVING
         obs_tx = self.transition_generic(
@@ -850,6 +983,7 @@ class BoundedStepController(InteractionController):
                     tokens_in=decision.get("tokens_in", 0),
                     tokens_out=decision.get("tokens_out", 0),
                     latency_ms=decision.get("latency_ms", 0.0),
+                    pre_executed_observation=decision.get("pre_executed_observation"),
                 )
                 if isinstance(step_res, Failure):
                     return Failure(step_res.failure())
