@@ -12,6 +12,9 @@ PRIVACY_RANK = {DataClass.PUBLIC: 0, DataClass.LOCAL: 1, DataClass.PRIVATE: 2}
 
 async def previous_action(store: MemoryGraphStore | None, turn: ConversationTurn, profile: str) -> dict:
     """Read only the last eligible assistant reply from this session/profile."""
+    in_turn = turn.metadata.get("in_turn_action")
+    if isinstance(in_turn, dict) and in_turn:
+        return dict(in_turn)
     if store is None:
         return {}
     fetched = await store.get_recent_reply_chain(session_id=turn.session_id, limit=3)
@@ -20,9 +23,10 @@ async def previous_action(store: MemoryGraphStore | None, turn: ConversationTurn
     for item in reversed(fetched.unwrap()):
         if item.record_id == turn.record_id or item.role != "assistant":
             continue
-        if item.metadata.get("profile_scope") != profile:
-            return {}
-        if PRIVACY_RANK.get(item.data_class, 99) > PRIVACY_RANK.get(turn.data_class, -1):
+        if (
+            item.metadata.get("profile_scope") != profile
+            or PRIVACY_RANK.get(item.data_class, 99) > PRIVACY_RANK.get(turn.data_class, -1)
+        ):
             return {}
         metadata = item.metadata.get("action", {})
         return dict(metadata) if isinstance(metadata, dict) else {}

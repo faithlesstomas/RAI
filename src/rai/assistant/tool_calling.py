@@ -75,6 +75,39 @@ def extract_model_tool_call(text: str) -> tuple[str, str, dict[str, Any]] | None
     return None
 
 
+_TOOL_PARAM_HINTS: dict[str, str] = {
+    "application.list": '{"query": "<optional literal app name filter, or empty string>"}',
+    "application.launch": '{"query": "<app name or desktop_id>", "selection": "<optional 1-based index>"}',
+    "file.access": "{}",
+    "file.list": '{"query": "<absolute directory path>"}',
+    "file.search": '{"query": "<filename or substring>"}',
+    "document.open": '{"query": "<file/dir path or name>", "selection": "<optional 1-based index>", "application": "<optional app>"}',
+    "system.volume.get": "{}",
+    "system.volume.set": '{"percent": <integer 0-100>}',
+    "process.inspect": '{"query": "<process name or PID>"}',
+    "browser.search": '{"query": "<search query>"}',
+    "browser.open_result": '{"selection": <1-based result index>}',
+    "browser.read_page": '{"selection": <1-based result index>}',
+    "activity.query": '{"query": "<optional app/project filter>", "lookback_minutes": <optional int>}',
+    "capabilities.list": "{}",
+}
+
+
+def format_tool_signature(name: str, description: str) -> str:
+    """Format a capability descriptor with its expected tool-call argument schema."""
+    params = _TOOL_PARAM_HINTS.get(name, "{}")
+    return f"- {name} (args: {params}): {description}"
+
+
+def _parse_int_arg(value: object) -> int | None:
+    if value is None or isinstance(value, bool):
+        return None
+    try:
+        return int(str(value).strip())
+    except (ValueError, TypeError):
+        return None
+
+
 def intent_from_tool_call(  # noqa: PLR0911, PLR0912
     turn: ConversationTurn,
     capability: str,
@@ -86,7 +119,7 @@ def intent_from_tool_call(  # noqa: PLR0911, PLR0912
 
     try:
         if capability == "browser.search":
-            query = args.get("query")
+            query = args.get("query") or args.get("q")
             if not query and isinstance(args.get("queries"), (list, tuple)) and args["queries"]:
                 query = args["queries"][0]
             query_str = str(query or "").strip()
@@ -100,13 +133,9 @@ def intent_from_tool_call(  # noqa: PLR0911, PLR0912
             )
 
         if capability in {"browser.read_page", "browser.open_result"}:
-            sel = args.get("selection") or args.get("index")
-            selection_int = None
-            if sel is not None:
-                try:
-                    selection_int = int(sel)
-                except (ValueError, TypeError):
-                    pass
+            selection_int = _parse_int_arg(
+                args.get("selection") or args.get("index") or args.get("result")
+            )
             return ActionIntent(
                 source_turn_id=source_turn_id,
                 outcome=capability,
@@ -115,7 +144,9 @@ def intent_from_tool_call(  # noqa: PLR0911, PLR0912
             )
 
         if capability == "process.inspect":
-            query_str = str(args.get("query") or "").strip()
+            query_str = str(
+                args.get("query") or args.get("name") or args.get("pid") or ""
+            ).strip()
             if not query_str:
                 return None
             return ActionIntent(
@@ -126,14 +157,10 @@ def intent_from_tool_call(  # noqa: PLR0911, PLR0912
             )
 
         if capability == "activity.query":
-            lookback = args.get("lookback_minutes")
-            lookback_int = None
-            if lookback is not None:
-                try:
-                    lookback_int = int(lookback)
-                except (ValueError, TypeError):
-                    pass
-            query_str = str(args.get("query") or "").strip()
+            lookback_int = _parse_int_arg(
+                args.get("lookback_minutes") or args.get("minutes")
+            )
+            query_str = str(args.get("query") or args.get("filter") or "").strip()
             return ActionIntent(
                 source_turn_id=source_turn_id,
                 outcome="activity.query",
@@ -150,18 +177,22 @@ def intent_from_tool_call(  # noqa: PLR0911, PLR0912
             )
 
         if capability == "system.volume.set":
-            pct = args.get("percent")
+            pct = _parse_int_arg(
+                args.get("percent")
+                if "percent" in args
+                else (args.get("volume") if "volume" in args else args.get("level"))
+            )
             if pct is None:
                 return None
             return ActionIntent(
                 source_turn_id=source_turn_id,
                 outcome="system.volume.set",
                 language=lang,
-                percent=int(pct),
+                percent=pct,
             )
 
         if capability == "application.list":
-            query_str = str(args.get("query") or "").strip()
+            query_str = str(args.get("query") or args.get("name") or "").strip()
             return ActionIntent(
                 source_turn_id=source_turn_id,
                 outcome="application.list",
@@ -169,8 +200,35 @@ def intent_from_tool_call(  # noqa: PLR0911, PLR0912
                 query=query_str[:256],
             )
 
+        if capability == "application.launch":
+            query_str = str(
+                args.get("query")
+                or args.get("name")
+                or args.get("application")
+                or args.get("desktop_id")
+                or args.get("app")
+                or ""
+            ).strip()
+            selection_int = _parse_int_arg(args.get("selection") or args.get("index"))
+            if not query_str and selection_int is None:
+                return None
+            return ActionIntent(
+                source_turn_id=source_turn_id,
+                outcome="application.launch",
+                language=lang,
+                query=query_str[:256],
+                selection=selection_int,
+            )
+
         if capability in {"file.search", "file.list"}:
-            query_str = str(args.get("query") or "").strip()
+            query_str = str(
+                args.get("query")
+                or args.get("path")
+                or args.get("directory")
+                or args.get("name")
+                or args.get("filename")
+                or ""
+            ).strip()
             if not query_str:
                 return None
             return ActionIntent(
@@ -178,6 +236,30 @@ def intent_from_tool_call(  # noqa: PLR0911, PLR0912
                 outcome=capability,
                 language=lang,
                 query=query_str[:256],
+            )
+
+        if capability == "document.open":
+            query_str = str(
+                args.get("query")
+                or args.get("path")
+                or args.get("file")
+                or args.get("filename")
+                or args.get("name")
+                or ""
+            ).strip()
+            selection_int = _parse_int_arg(args.get("selection") or args.get("index"))
+            app_str = str(
+                args.get("application") or args.get("app") or args.get("desktop_id") or ""
+            ).strip()
+            if not query_str and selection_int is None:
+                return None
+            return ActionIntent(
+                source_turn_id=source_turn_id,
+                outcome="document.open",
+                language=lang,
+                query=query_str[:256],
+                selection=selection_int,
+                application=app_str[:256],
             )
 
         if capability == "file.access":

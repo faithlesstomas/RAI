@@ -35,7 +35,11 @@ from rai.assistant.records import (
     InferenceRequest,
     ToolObservation,
 )
-from rai.assistant.tool_calling import extract_model_tool_call, intent_from_tool_call
+from rai.assistant.tool_calling import (
+    extract_model_tool_call,
+    format_tool_signature,
+    intent_from_tool_call,
+)
 from rai.diagnostics import trace
 from rai.kernel.ports import CancellationToken, UsageLedger
 from rai.kernel.records import (
@@ -109,9 +113,8 @@ ALLOWED_GENERIC_TRANSITIONS: dict[AgentWorkflowState, set[AgentWorkflowState]] =
 }
 
 
-_MAX_OBSERVATION_CHARS: int = 2500
+_MAX_OBSERVATION_CHARS: int = 4500
 _MAX_COMPACT_APPS_FULL: int = 20
-_MAX_COMPACT_APPS_SAMPLE: int = 15
 
 
 def _state_str(state: object) -> str:
@@ -139,9 +142,11 @@ def _should_synthesize_action_candidate(  # noqa: PLR0911
         )
     ):
         return False
-    if meta.get("active_choice_frame") or meta.get("action_proposal"):
-        return False
     act_res = meta.get("action_result")
+    if meta.get("active_choice_frame") and not isinstance(act_res, dict):
+        return False
+    if meta.get("action_proposal"):
+        return False
     if isinstance(act_res, dict):
         if (
             act_res.get("record_type") == "action_failure"
@@ -167,7 +172,7 @@ def _should_synthesize_action_candidate(  # noqa: PLR0911
     return False
 
 
-def _compact_observation_content(
+def _compact_observation_content(  # noqa: PLR0912
     output: object,
     fallback_text: str = "",
     capability: str = "",
@@ -183,15 +188,24 @@ def _compact_observation_content(
     apps = output.get("applications")
     if isinstance(apps, (list, tuple)):
         compacted["total_count"] = int(output.get("total_count", len(apps)))
-        names = output.get("application_names")
-        if not isinstance(names, (list, tuple)):
+        if "requested_filter" in output:
+            compacted["requested_filter"] = output["requested_filter"]
+        if apps and isinstance(apps[0], dict):
             names = [
-                str(a.get("name") or a.get("desktop_id") or a)
-                if isinstance(a, dict)
-                else str(a)
+                f"{a.get('name', '')} ({a.get('desktop_id', '')})"
+                if a.get("desktop_id")
+                else str(a.get("name", ""))
                 for a in apps
+                if isinstance(a, dict)
             ]
-        compacted["application_names"] = list(names)
+        else:
+            raw_names = output.get("application_names")
+            names = (
+                [str(n) for n in raw_names]
+                if isinstance(raw_names, (list, tuple))
+                else [str(a) for a in apps]
+            )
+        compacted["application_names"] = names[:256]
         if len(apps) <= _MAX_COMPACT_APPS_FULL:
             compacted["applications"] = [
                 {k: v for k, v in a.items() if k not in ("handle", "expires_at")}
@@ -199,21 +213,34 @@ def _compact_observation_content(
                 else a
                 for a in apps
             ]
-        else:
-            compacted["applications_sample"] = [
-                {k: v for k, v in a.items() if k not in ("handle", "expires_at")}
-                if isinstance(a, dict)
-                else a
-                for a in apps[:_MAX_COMPACT_APPS_SAMPLE]
-            ]
         for k, v in output.items():
-            if k not in ("total_count", "application_names", "applications"):
+            if k not in (
+                "total_count",
+                "requested_filter",
+                "application_names",
+                "applications",
+            ):
                 compacted[k] = v
         return compacted
 
-    entries = output.get("entries")
-    if isinstance(entries, (list, tuple)) and "total_count" not in output:
-        compacted["total_count"] = len(entries)
+    for list_key in ("documents", "processes", "entries", "results"):
+        items = output.get(list_key)
+        if isinstance(items, (list, tuple)):
+            compacted["total_count"] = int(output.get("total_count", len(items)))
+            compacted[list_key] = [
+                {
+                    k: v
+                    for k, v in item.items()
+                    if k not in ("handle", "expires_at", "fingerprint")
+                }
+                if isinstance(item, dict)
+                else item
+                for item in items
+            ]
+            for k, v in output.items():
+                if k not in ("total_count", list_key):
+                    compacted[k] = v
+            return compacted
 
     for k, v in output.items():
         compacted[k] = v
@@ -473,7 +500,9 @@ class BoundedStepController(InteractionController):
         ) -> Result[dict[str, Any], ActionFailure]:
             nonlocal last_candidate, last_manifest
             descriptors = self.capabilities.registry.descriptors() if self.capabilities else ()
-            actions_desc = "\n".join(f"- {d.name}: {d.description}" for d in descriptors)
+            actions_desc = "\n".join(
+                format_tool_signature(d.name, d.description) for d in descriptors
+            )
             skills_section = ""
             if self.skills is not None:
                 avail_caps = tuple(d.name for d in descriptors)
@@ -678,8 +707,20 @@ class BoundedStepController(InteractionController):
                 if self.actions is not None and hasattr(self.actions, "dispatch_intent"):
                     tool_intent = intent_from_tool_call(turn, cap_name, tool_args)
                     if tool_intent is not None:
+                        step_turn = (
+                            turn.model_copy(
+                                update={
+                                    "metadata": {
+                                        **turn.metadata,
+                                        "in_turn_action": dict(initial_action_metadata),
+                                    }
+                                }
+                            )
+                            if initial_action_metadata
+                            else turn
+                        )
                         tool_cand = await self.actions.dispatch_intent(
-                            turn, tool_intent, cancellation
+                            step_turn, tool_intent, cancellation
                         )
                         if tool_cand is not None:
                             initial_action_metadata.update(tool_cand.metadata)

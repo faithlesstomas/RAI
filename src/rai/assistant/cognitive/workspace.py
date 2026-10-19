@@ -117,7 +117,21 @@ class WorkspaceEngine(InteractionController):
         if self.actions is not None and hasattr(self.actions, "dispatch_intent"):
             tool_intent = intent_from_tool_call(turn, cap_name, args)
             if tool_intent is not None:
-                tool_cand = await self.actions.dispatch_intent(turn, tool_intent, token)
+                step_turn = (
+                    turn.model_copy(
+                        update={
+                            "metadata": {
+                                **turn.metadata,
+                                "in_turn_action": dict(action_metadata),
+                            }
+                        }
+                    )
+                    if action_metadata
+                    else turn
+                )
+                tool_cand = await self.actions.dispatch_intent(
+                    step_turn, tool_intent, token
+                )
                 if tool_cand is not None:
                     action_metadata.update(tool_cand.metadata)
                     act_res_dict = tool_cand.metadata.get("action_result") or {}

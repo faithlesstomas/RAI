@@ -380,9 +380,17 @@ class AssistantActions:
                 return AssistantCandidate(text=(f"Wyszukiwanie dokumentów nie powiodło się: {fetched.failure().code}."
                                                 if intent.language == "pl" else
                                                 f"Document search failed: {fetched.failure().code}."))
-            entries = fetched.unwrap().output["documents"]
+            fetched_res = fetched.unwrap()
+            entries = fetched_res.output["documents"]
             text = "\n".join(f"{i}. {item['name']}" for i, item in enumerate(entries, 1))
-            metadata: dict[str, Any] = {"action_choices": {"kind": "file", "task_id": task_id, "entries": entries}}
+            act_dump = fetched_res.model_dump(mode="json")
+            if isinstance(act_dump.get("output"), dict):
+                act_dump["output"] = {"total_count": len(entries), **act_dump["output"]}
+            metadata: dict[str, Any] = {
+                "action_choices": {"kind": "file", "task_id": task_id, "entries": entries},
+                "action_result": act_dump,
+                "remote_tokens": 0,
+            }
             if entries:
                 choice_entries = tuple(
                     ChoiceEntry(
@@ -472,8 +480,9 @@ class AssistantActions:
                 text=message("Lista aplikacji jest niedostępna.", "Application listing is unavailable.")
             )
         task_id = f"action:{turn.record_id}"
+        query_str = intent.query.strip()
         listing = normalize_request(
-            descriptor, {"task_id": task_id, "query": intent.query.strip()}, actor=turn.producer,
+            descriptor, {"task_id": task_id, "query": query_str}, actor=turn.producer,
             request_id=f"{turn.record_id}:applications", data_class=turn.data_class,
         )
         _, listed = await self.capabilities.invoke(listing, cancellation)
@@ -483,11 +492,30 @@ class AssistantActions:
                              f"Application discovery failed: {listed.failure().code}.")
             )
         applications = listed.unwrap().output["applications"]
+        if not applications and query_str:
+            fallback_listing = normalize_request(
+                descriptor, {"task_id": task_id, "query": ""}, actor=turn.producer,
+                request_id=f"{turn.record_id}:applications:all", data_class=turn.data_class,
+            )
+            _, fallback_listed = await self.capabilities.invoke(fallback_listing, cancellation)
+            if isinstance(fallback_listed, Success):
+                applications = fallback_listed.unwrap().output["applications"]
         names = [str(app["name"]) for app in applications]
         if not names:
             return AssistantCandidate(
                 text=message("Nie znalazłem zainstalowanych aplikacji w systemie.",
-                             "I could not find installed applications in the system.")
+                             "I could not find installed applications in the system."),
+                metadata={
+                    "action_result": {
+                        "capability": "application.list",
+                        "status": "SUCCEEDED",
+                        "output": {
+                            "total_count": 0,
+                            "application_names": [],
+                            "applications": [],
+                        },
+                    },
+                },
             )
         sample = names[:MAX_DISPLAYED_APPLICATIONS]
         more = (
@@ -507,16 +535,19 @@ class AssistantActions:
                 + "\n".join(f"- {n}" for n in sample)
                 + f"{more}\n\nTo launch an application, simply say e.g. 'Launch {sample[0]}'."
             )
+        output_dict: dict[str, Any] = {
+            "total_count": len(applications),
+            "application_names": names,
+            "applications": applications,
+        }
+        if query_str:
+            output_dict["requested_filter"] = query_str
         metadata = {
             "action_choices": {"kind": "application", "task_id": task_id, "entries": applications},
             "action_result": {
                 "capability": "application.list",
                 "status": "SUCCEEDED",
-                "output": {
-                    "total_count": len(applications),
-                    "application_names": names,
-                    "applications": applications,
-                },
+                "output": output_dict,
             },
         }
         return AssistantCandidate(

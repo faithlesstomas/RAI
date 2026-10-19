@@ -548,3 +548,149 @@ async def test_bounded_step_controller_synthesizes_application_count_and_capabil
     assert cand_caps.text == "I can list and launch Linux desktop applications for you."
     assert cand_caps.metadata.get("synthesized_from_action") is True
 
+
+@pytest.mark.asyncio
+async def test_application_list_semantic_query_fallback_and_in_turn_chaining(
+    tmp_path: Path,
+) -> None:
+    from rai.actions.applications import Application  # noqa: PLC0415
+    from rai.actions.assistant import AssistantActions  # noqa: PLC0415
+    from rai.actions.capabilities import register_application_capabilities  # noqa: PLC0415
+    from rai.actions.handles import SQLiteHandleStore  # noqa: PLC0415
+    from rai.actions.intent import ActionIntent  # noqa: PLC0415
+    from rai.actions.service import ActionCapabilityService  # noqa: PLC0415
+    from rai.kernel.audit import InMemoryAuditLedger  # noqa: PLC0415
+    from rai.kernel.capabilities import CapabilityRegistry  # noqa: PLC0415
+    from rai.kernel.policy import PolicyEngine  # noqa: PLC0415
+    from rai.kernel.synthetic import SyntheticApprovalBroker  # noqa: PLC0415
+
+    class FakeAppBackend:
+        async def discover(self) -> Result[tuple[Application, ...], str]:
+            apps = [
+                Application(
+                    f"app-{i}.desktop",
+                    f"App {i}",
+                    Path(f"/usr/share/applications/app-{i}.desktop"),
+                    f"fp-{i}",
+                    f"/usr/bin/app-{i}",
+                )
+                for i in range(1, 51)
+            ]
+            apps.append(
+                Application(
+                    "org.videolan.VLC.desktop",
+                    "VLC media player",
+                    Path("/usr/share/applications/org.videolan.VLC.desktop"),
+                    "fp-vlc",
+                    "/usr/bin/vlc",
+                )
+            )
+            return Success(tuple(apps))
+
+        async def launch(
+            self, application: Application, cancellation: CancellationToken
+        ) -> Result[Any, str]:
+            del application, cancellation
+            return Success({})
+
+    class SemanticQueryRecognizer:
+        async def recognize(
+            self, turn: ConversationTurn, cancellation: CancellationToken
+        ) -> Result[ActionIntent, str]:
+            del cancellation
+            if "multimedi" in turn.text.lower():
+                # Simulates recognizer emitting a semantic category query with 0 literal matches
+                return Success(
+                    ActionIntent(
+                        source_turn_id=turn.record_id,
+                        outcome="application.list",
+                        language="pl",
+                        query="do odtwarzania filmów lub multimediów",
+                    )
+                )
+            return Success(
+                ActionIntent(
+                    source_turn_id=turn.record_id,
+                    outcome="no_action",
+                    language="pl",
+                )
+            )
+
+    class FilteringModelBackend(AssistantModelBackend):
+        def __init__(self) -> None:
+            self.model_name = "filtering-model"
+
+        @property
+        def state(self) -> LifecycleState:
+            return LifecycleState.RUNNING
+
+        @property
+        def is_remote(self) -> bool:
+            return False
+
+        async def start(self) -> Result[LifecycleState, ActionFailure]:
+            return Success(LifecycleState.RUNNING)
+
+        async def stop(self) -> Result[LifecycleState, ActionFailure]:
+            return Success(LifecycleState.STOPPED)
+
+        async def generate(
+            self, request: InferenceRequest, cancellation: CancellationToken
+        ) -> Result[AssistantCandidate, ActionFailure]:
+            del cancellation
+            sys_inst = request.system_instruction or ""
+            assert "VLC media player (org.videolan.VLC.desktop)" in sys_inst
+            assert '"total_count": 51' in sys_inst
+            return Success(
+                AssistantCandidate(
+                    text="Do odtwarzania multimediów służy aplikacja: VLC media player.",
+                    tokens_in=50,
+                    tokens_out=15,
+                )
+            )
+
+        def stream(
+            self, request: InferenceRequest, cancellation: CancellationToken
+        ) -> NoReturn:
+            del request, cancellation
+            raise NotImplementedError
+
+    from rai.actions.execution import SQLiteExecutionStore  # noqa: PLC0415
+
+    registry = CapabilityRegistry()
+    handles = SQLiteHandleStore(tmp_path / "handles.db")
+    register_application_capabilities(registry, FakeAppBackend(), handles)
+    cap_service = ActionCapabilityService(
+        registry,
+        PolicyEngine(),
+        InMemoryAuditLedger(),
+        SyntheticApprovalBroker(),
+    )
+    cap_service.handles = handles
+    cap_service.executions = SQLiteExecutionStore(tmp_path / "execution.db")
+    actions = AssistantActions(
+        capabilities=cap_service,
+        recognizer=SemanticQueryRecognizer(),
+    )
+    controller = BoundedStepController(
+        capabilities=cap_service,
+        backend=FilteringModelBackend(),
+        actions=actions,
+    )
+
+    producer = ProducerIdentity(producer_id="user", kind="user", version="1.0.0")
+    turn = ConversationTurn(
+        producer=producer,
+        session_id="session-multimedia",
+        role="user",
+        text="Które z nich są aplikacjami do odtwarzania filmów lub innych multimediów?",
+        data_class=DataClass.LOCAL,
+    )
+    res = await controller.process_turn(
+        turn, _make_context_package(turn), _make_budget(), CancellationToken()
+    )
+    assert isinstance(res, Success)
+    cand = res.unwrap()
+    assert "VLC media player" in cand.text
+    assert cand.metadata.get("synthesized_from_action") is True
+
