@@ -126,7 +126,29 @@ class AssistantActions:
         if intent.outcome == "capabilities.list":
             from rai.assistant.context import format_capabilities_instruction  # noqa: PLC0415
 
-            return AssistantCandidate(text=format_capabilities_instruction(self.capabilities.registry, base_instruction=""))
+            descriptors = (
+                self.capabilities.registry.descriptors()
+                if self.capabilities.registry is not None
+                else ()
+            )
+            return AssistantCandidate(
+                text=format_capabilities_instruction(
+                    self.capabilities.registry, base_instruction=""
+                ),
+                metadata={
+                    "action_result": {
+                        "capability": "capabilities.list",
+                        "status": "SUCCEEDED",
+                        "output": {
+                            "total_count": len(descriptors),
+                            "capabilities": [
+                                {"name": d.name, "description": d.description}
+                                for d in descriptors
+                            ],
+                        },
+                    },
+                },
+            )
         if intent.outcome == "no_action":
             return None
         if intent.outcome == "clarify":
@@ -487,7 +509,15 @@ class AssistantActions:
             )
         metadata = {
             "action_choices": {"kind": "application", "task_id": task_id, "entries": applications},
-            "action_result": {"status": "SUCCEEDED", "output": {"applications": applications}},
+            "action_result": {
+                "capability": "application.list",
+                "status": "SUCCEEDED",
+                "output": {
+                    "total_count": len(applications),
+                    "application_names": names,
+                    "applications": applications,
+                },
+            },
         }
         return AssistantCandidate(
             text=reply,

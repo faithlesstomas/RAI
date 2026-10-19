@@ -267,11 +267,14 @@ class LocalAssistantBackend:
         if isinstance(content, dict):
             bounded_dict = {}
             for k, v in content.items():
-                limit = (
-                    _MAX_SEARCH_ITEMS_IN_CONTENT
-                    if k == "results"
-                    else _MAX_LIST_ITEMS_IN_CONTENT
-                )
+                if k == "results":
+                    limit = _MAX_SEARCH_ITEMS_IN_CONTENT
+                elif k == "capabilities":
+                    limit = 20
+                elif k == "application_names":
+                    limit = 30
+                else:
+                    limit = _MAX_LIST_ITEMS_IN_CONTENT
                 if isinstance(v, (list, tuple)) and len(v) > limit:
                     bounded_dict[k] = list(v[:limit]) + [
                         f"... (+{len(v) - limit} more items truncated)"

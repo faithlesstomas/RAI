@@ -80,7 +80,7 @@ class ApplicationList:
                 return Failure(failure(request, issued.failure()))
             output.append({"desktop_id": app.desktop_id, "name": app.name,
                            "handle": issued.unwrap(), "expires_at": handle.expires_at.isoformat()})
-        return Success(result(request, {"applications": output, "truncated": len(matches) > MAX_APPLICATION_RESULTS},
+        return Success(result(request, {"total_count": len(output), "applications": output, "truncated": len(matches) > MAX_APPLICATION_RESULTS},
                               {"source": "installed-desktop-entries"}))
 
 

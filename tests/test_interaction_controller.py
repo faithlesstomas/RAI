@@ -395,3 +395,156 @@ def test_cli_controller_option_wires_bounded_step_by_default() -> None:
 
     container = ApplicationContainer(config=cfg, testing=True)
     assert isinstance(container.assistant_service.controller, BoundedStepController)
+
+
+@pytest.mark.asyncio
+async def test_bounded_step_controller_synthesizes_application_count_and_capabilities() -> None:
+    total_apps = 123
+    apps_list = [
+        {"name": f"App {i}", "desktop_id": f"app-{i}.desktop", "handle": f"h-{i}"}
+        for i in range(1, total_apps + 1)
+    ]
+
+    class PreRoutedActionHandler(AssistantActionHandler):
+        async def handle(
+            self, turn: ConversationTurn, cancellation: CancellationToken
+        ) -> AssistantCandidate | None:
+            del cancellation
+            if "count" in turn.text.lower():
+                return AssistantCandidate(
+                    text="W Twoim systemie mogę uruchomić zainstalowane aplikacje... (oraz 108 innych)",
+                    metadata={
+                        "action_choices": {
+                            "kind": "application",
+                            "task_id": "t-1",
+                            "entries": apps_list,
+                        },
+                        "action_result": {
+                            "capability": "application.list",
+                            "status": "SUCCEEDED",
+                            "output": {
+                                "total_count": total_apps,
+                                "application_names": [a["name"] for a in apps_list],
+                                "applications": apps_list,
+                            },
+                        },
+                    },
+                )
+            if "what can you do" in turn.text.lower():
+                return AssistantCandidate(
+                    text="Registered Linux actions:\n- application.list: Discover installed desktop applications.",
+                    metadata={
+                        "action_result": {
+                            "capability": "capabilities.list",
+                            "status": "SUCCEEDED",
+                            "output": {
+                                "total_count": 1,
+                                "capabilities": [
+                                    {
+                                        "name": "application.list",
+                                        "description": "Discover installed desktop applications.",
+                                    }
+                                ],
+                            },
+                        },
+                    },
+                )
+            return None
+
+    class InspectingBackend(AssistantModelBackend):
+        def __init__(self) -> None:
+            self.model_name = "inspecting-model"
+            self.seen_instructions: list[str] = []
+
+        @property
+        def state(self) -> LifecycleState:
+            return LifecycleState.RUNNING
+
+        @property
+        def is_remote(self) -> bool:
+            return False
+
+        async def start(self) -> Result[LifecycleState, ActionFailure]:
+            return Success(LifecycleState.RUNNING)
+
+        async def stop(self) -> Result[LifecycleState, ActionFailure]:
+            return Success(LifecycleState.STOPPED)
+
+        async def generate(
+            self, request: InferenceRequest, cancellation: CancellationToken
+        ) -> Result[AssistantCandidate, ActionFailure]:
+            del cancellation
+            sys_inst = request.system_instruction or ""
+            self.seen_instructions.append(sys_inst)
+            if '"total_count": 123' in sys_inst:
+                return Success(
+                    AssistantCandidate(
+                        text="There are 123 installed applications in your system.",
+                        tokens_in=40,
+                        tokens_out=12,
+                        metadata={"reasoning_content": "Counted 123 apps from total_count."},
+                    )
+                )
+            return Success(
+                AssistantCandidate(
+                    text="I can list and launch Linux desktop applications for you.",
+                    tokens_in=35,
+                    tokens_out=14,
+                    metadata={"reasoning_content": "Summarized capabilities."},
+                )
+            )
+
+        def stream(self, request: InferenceRequest, cancellation: CancellationToken) -> NoReturn:
+            del request, cancellation
+            raise NotImplementedError
+
+    class DummyCapabilities(CapabilityService):
+        def __init__(self) -> None:
+            class EmptyRegistry:
+                def descriptor(self, name: str) -> None:
+                    del name
+
+                def descriptors(self) -> tuple[CapabilityDescriptor, ...]:
+                    return ()
+
+            self.registry = EmptyRegistry()
+
+    backend = InspectingBackend()
+    controller = BoundedStepController(
+        capabilities=DummyCapabilities(),
+        backend=backend,
+        actions=PreRoutedActionHandler(),
+    )
+    producer = ProducerIdentity(producer_id="user", kind="user", version="1.0.0")
+
+    turn_count = ConversationTurn(
+        producer=producer,
+        session_id="session-synth",
+        role="user",
+        text="Count all applications in the system.",
+        data_class=DataClass.LOCAL,
+    )
+    res_count = await controller.process_turn(
+        turn_count, _make_context_package(turn_count), _make_budget(), CancellationToken()
+    )
+    assert isinstance(res_count, Success)
+    cand_count = res_count.unwrap()
+    assert cand_count.text == "There are 123 installed applications in your system."
+    assert cand_count.metadata.get("synthesized_from_action") is True
+    assert cand_count.metadata.get("reasoning_content") == "Counted 123 apps from total_count."
+
+    turn_caps = ConversationTurn(
+        producer=producer,
+        session_id="session-synth",
+        role="user",
+        text="What can you do for me?",
+        data_class=DataClass.LOCAL,
+    )
+    res_caps = await controller.process_turn(
+        turn_caps, _make_context_package(turn_caps), _make_budget(), CancellationToken()
+    )
+    assert isinstance(res_caps, Success)
+    cand_caps = res_caps.unwrap()
+    assert cand_caps.text == "I can list and launch Linux desktop applications for you."
+    assert cand_caps.metadata.get("synthesized_from_action") is True
+

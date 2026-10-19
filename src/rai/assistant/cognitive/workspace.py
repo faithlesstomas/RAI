@@ -8,6 +8,10 @@ from typing import Any
 
 from returns.result import Failure, Result, Success
 
+from rai.actions.workflow import (
+    _compact_observation_content,
+    _should_synthesize_action_candidate,
+)
 from rai.assistant.ports import (
     AssistantActionHandler,
     AssistantModelBackend,
@@ -21,6 +25,7 @@ from rai.assistant.records import (
     MemoryProposal,
 )
 from rai.assistant.tool_calling import intent_from_tool_call
+from rai.diagnostics import trace
 from rai.kernel.ports import CancellationToken
 from rai.kernel.records import (
     ActionFailure,
@@ -116,13 +121,16 @@ class WorkspaceEngine(InteractionController):
                 if tool_cand is not None:
                     action_metadata.update(tool_cand.metadata)
                     act_res_dict = tool_cand.metadata.get("action_result") or {}
-                    obs_out = (
-                        dict(act_res_dict.get("output") or {})
+                    raw_out = (
+                        act_res_dict.get("output")
                         if isinstance(act_res_dict, dict)
                         else {"raw_text": tool_cand.text}
                     )
-                    if tool_cand.text and "formatted_text" not in obs_out:
-                        obs_out["formatted_text"] = tool_cand.text
+                    obs_out = _compact_observation_content(
+                        raw_out,
+                        fallback_text=tool_cand.text,
+                        capability=cap_name,
+                    )
                     obs_id = (
                         (act_res_dict.get("request_id") if isinstance(act_res_dict, dict) else None)
                         or req_id
@@ -150,9 +158,13 @@ class WorkspaceEngine(InteractionController):
                 obs_ids.append(req_id)
                 if isinstance(executed, Success):
                     act_res = executed.unwrap()
+                    compacted = _compact_observation_content(
+                        act_res.output,
+                        capability=cap_name,
+                    )
                     return workspace.model_copy(
                         update={
-                            "observations": (*workspace.observations, act_res.output),
+                            "observations": (*workspace.observations, compacted),
                             "tool_calls_count": workspace.tool_calls_count + 1,
                         }
                     )
@@ -214,12 +226,7 @@ class WorkspaceEngine(InteractionController):
         if self.actions is not None:
             action_candidate = await self.actions.handle(turn, token)
             if action_candidate is not None:
-                requires_synthesis = action_candidate.metadata.get(
-                    "requires_synthesis"
-                ) is True or (
-                    action_candidate.metadata.get("untrusted_content") is True
-                    and not action_candidate.metadata.get("active_choice_frame")
-                )
+                requires_synthesis = _should_synthesize_action_candidate(action_candidate)
                 if not requires_synthesis:
                     return Success(
                         action_candidate.model_copy(
@@ -234,14 +241,20 @@ class WorkspaceEngine(InteractionController):
                     )
                 action_metadata = dict(action_candidate.metadata)
                 action_result = action_candidate.metadata.get("action_result") or {}
+                act_prop = action_candidate.metadata.get("action_proposal") or {}
                 output = (
                     action_result.get("output") if isinstance(action_result, dict) else {}
                 )
-                obs_content = (
-                    dict(output) if isinstance(output, dict) else {"raw_text": str(output)}
+                capability = (
+                    (act_prop.get("capability") if isinstance(act_prop, dict) else None)
+                    or (action_result.get("capability") if isinstance(action_result, dict) else None)
+                    or "tool"
                 )
-                if action_candidate.text and "formatted_text" not in obs_content:
-                    obs_content["formatted_text"] = action_candidate.text
+                obs_content = _compact_observation_content(
+                    output,
+                    fallback_text=action_candidate.text,
+                    capability=str(capability),
+                )
                 obs_id = (
                     (
                         action_result.get("request_id")
@@ -303,6 +316,13 @@ class WorkspaceEngine(InteractionController):
                         message="Deliberation cancelled by token",
                     )
                 )
+
+            trace(
+                "assistant.workspace.cycle",
+                turn_id=turn.record_id,
+                cycle=workspace.cycle + 1,
+                observations=len(workspace.observations),
+            )
 
             # 1. Evaluate non-draft specialists first so we do not waste an LLM draft call
             # in a cycle where ActionReasonerSpecialist proposes a high-salience TOOL_CALL.

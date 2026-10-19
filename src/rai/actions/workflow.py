@@ -36,6 +36,7 @@ from rai.assistant.records import (
     ToolObservation,
 )
 from rai.assistant.tool_calling import extract_model_tool_call, intent_from_tool_call
+from rai.diagnostics import trace
 from rai.kernel.ports import CancellationToken, UsageLedger
 from rai.kernel.records import (
     ActionFailure,
@@ -108,11 +109,122 @@ ALLOWED_GENERIC_TRANSITIONS: dict[AgentWorkflowState, set[AgentWorkflowState]] =
 }
 
 
-_MAX_OBSERVATION_CHARS: int = 1000
+_MAX_OBSERVATION_CHARS: int = 2500
+_MAX_COMPACT_APPS_FULL: int = 20
+_MAX_COMPACT_APPS_SAMPLE: int = 15
 
 
 def _state_str(state: object) -> str:
     return state.value if isinstance(state, Enum) else str(state)
+
+
+def _should_synthesize_action_candidate(  # noqa: PLR0911
+    action_cand: AssistantCandidate | None,
+) -> bool:
+    """Determine if an action candidate should enter controller deliberation/synthesis."""
+    if action_cand is None:
+        return False
+    meta = action_cand.metadata
+    if meta.get("requires_synthesis") is True:
+        return True
+    if meta.get("untrusted_content") is True and not meta.get("active_choice_frame"):
+        return True
+    if any(
+        k in meta
+        for k in (
+            "choice_rejected",
+            "action_clarification",
+            "intent_failure",
+            "action_failure",
+        )
+    ):
+        return False
+    if meta.get("active_choice_frame") or meta.get("action_proposal"):
+        return False
+    act_res = meta.get("action_result")
+    if isinstance(act_res, dict):
+        if (
+            act_res.get("record_type") == "action_failure"
+            or act_res.get("status") == "FAILED"
+        ):
+            return False
+        cap = str(act_res.get("capability") or "")
+        output = act_res.get("output")
+        if (
+            cap == "activity.query"
+            and isinstance(output, dict)
+            and not output.get("episodes")
+        ):
+            return False
+        if (
+            cap in {"process.inspect", "file.search"}
+            and isinstance(output, dict)
+            and not output.get("processes")
+            and not output.get("documents")
+        ):
+            return False
+        return True
+    return False
+
+
+def _compact_observation_content(
+    output: object,
+    fallback_text: str = "",
+    capability: str = "",
+) -> dict[str, Any]:
+    """Compact tool output so counts and names survive observation length limits."""
+    if not isinstance(output, dict):
+        res: dict[str, Any] = {"raw_text": str(output)}
+        if fallback_text:
+            res["formatted_text"] = fallback_text
+        return res
+
+    compacted: dict[str, Any] = {}
+    apps = output.get("applications")
+    if isinstance(apps, (list, tuple)):
+        compacted["total_count"] = int(output.get("total_count", len(apps)))
+        names = output.get("application_names")
+        if not isinstance(names, (list, tuple)):
+            names = [
+                str(a.get("name") or a.get("desktop_id") or a)
+                if isinstance(a, dict)
+                else str(a)
+                for a in apps
+            ]
+        compacted["application_names"] = list(names)
+        if len(apps) <= _MAX_COMPACT_APPS_FULL:
+            compacted["applications"] = [
+                {k: v for k, v in a.items() if k not in ("handle", "expires_at")}
+                if isinstance(a, dict)
+                else a
+                for a in apps
+            ]
+        else:
+            compacted["applications_sample"] = [
+                {k: v for k, v in a.items() if k not in ("handle", "expires_at")}
+                if isinstance(a, dict)
+                else a
+                for a in apps[:_MAX_COMPACT_APPS_SAMPLE]
+            ]
+        for k, v in output.items():
+            if k not in ("total_count", "application_names", "applications"):
+                compacted[k] = v
+        return compacted
+
+    entries = output.get("entries")
+    if isinstance(entries, (list, tuple)) and "total_count" not in output:
+        compacted["total_count"] = len(entries)
+
+    for k, v in output.items():
+        compacted[k] = v
+
+    if (
+        fallback_text
+        and "formatted_text" not in compacted
+        and capability != "application.list"
+    ):
+        compacted["formatted_text"] = fallback_text
+    return compacted
 
 
 class BoundedWorkflowLimits(BaseModel):
@@ -260,19 +372,11 @@ class BoundedStepController(InteractionController):
         )
         initial_obs_ids: list[str] = list(manifest.tool_observation_ids)
         initial_action_metadata: dict[str, Any] = {}
+        executed_calls: set[tuple[str, str]] = set()
 
         if self.actions is not None and hasattr(self.actions, "handle"):
             action_cand = await self.actions.handle(turn, token)
-            requires_synthesis = (
-                action_cand is not None
-                and (
-                    action_cand.metadata.get("requires_synthesis") is True
-                    or (
-                        action_cand.metadata.get("untrusted_content") is True
-                        and not action_cand.metadata.get("active_choice_frame")
-                    )
-                )
-            )
+            requires_synthesis = _should_synthesize_action_candidate(action_cand)
             if action_cand is not None and not requires_synthesis:
                 return Success(
                     action_cand.model_copy(
@@ -299,11 +403,11 @@ class BoundedStepController(InteractionController):
                     or (action_cand.text.splitlines()[0] if action_cand.text else "")
                     or str(capability)
                 )
-                obs_content = (
-                    dict(output) if isinstance(output, dict) else {"raw_text": str(output)}
+                obs_content = _compact_observation_content(
+                    output,
+                    fallback_text=action_cand.text,
+                    capability=str(capability),
                 )
-                if action_cand.text and "formatted_text" not in obs_content:
-                    obs_content["formatted_text"] = action_cand.text
                 obs = ToolObservation(
                     source_id=(
                         (act_res.get("request_id") if isinstance(act_res, dict) else None)
@@ -321,12 +425,17 @@ class BoundedStepController(InteractionController):
                 initial_observations.append(obs_content)
                 initial_obs_records.append(obs.model_dump(mode="json"))
                 initial_obs_ids.append(obs.source_id)
+                executed_calls.add((str(capability), "{}"))
                 initial_action_metadata = {
                     **action_cand.metadata,
                     "synthesized_from_action": True,
                 }
 
-        if manifest.evidence_required and manifest.routing_decision == "no_evidence":
+        if (
+            not initial_observations
+            and manifest.evidence_required
+            and manifest.routing_decision == "no_evidence"
+        ):
             return Success(
                 AssistantCandidate(
                     text=_MEMORY_ABSTENTION_TEXT,
@@ -353,6 +462,7 @@ class BoundedStepController(InteractionController):
         task_id = f"task:{turn.record_id}"
         last_candidate: AssistantCandidate | None = None
         preamble_box: list[str] = []
+        reasoning_chunks: list[str] = []
         last_manifest: AssistantContextManifest = manifest.model_copy(
             update={"tool_observation_ids": tuple(initial_obs_ids)}
         )
@@ -374,7 +484,10 @@ class BoundedStepController(InteractionController):
             tool_obs_records = list(initial_obs_records)
             obs_ids = list(initial_obs_ids)
             for i, obs in enumerate(all_obs, 1):
-                obs_summary = json.dumps(obs, ensure_ascii=False)
+                compacted_obs = (
+                    _compact_observation_content(obs) if isinstance(obs, dict) else obs
+                )
+                obs_summary = json.dumps(compacted_obs, ensure_ascii=False)
                 if len(obs_summary) > _MAX_OBSERVATION_CHARS:
                     obs_summary = obs_summary[:_MAX_OBSERVATION_CHARS] + "... (truncated)"
                 obs_lines.append(f"Observation {i}: {obs_summary}")
@@ -390,12 +503,29 @@ class BoundedStepController(InteractionController):
                             status="SUCCESS",
                             summary=obs_summary[:120],
                             untrusted_content=True,
-                            content=obs if isinstance(obs, dict) else {"value": obs},
+                            content=(
+                                compacted_obs
+                                if isinstance(compacted_obs, dict)
+                                else {"value": compacted_obs}
+                            ),
                         ).model_dump(mode="json")
                     )
             obs_text = "\n".join(obs_lines) if obs_lines else "None yet."
             prompt_content = f"User Goal: {workflow.goal}\n\nTool Observations:\n{obs_text}"
 
+            closing_guidance = (
+                "IMPORTANT: Review the Tool Observations above first. "
+                "Do NOT re-invoke a tool that has already been executed with the same arguments. "
+                "When the observations contain the required information, answer the user's "
+                "specific request directly in their language without tool tags; do not repeat "
+                "raw tool templates."
+                if all_obs
+                else (
+                    "When you have collected all required information to answer the user request, "
+                    "or if no tools are needed, provide the final comprehensive answer directly "
+                    "without tool tags."
+                )
+            )
             workflow_instruction = (
                 "You are an agent executing user tasks step by step.\n"
                 "Available tools:\n"
@@ -407,9 +537,7 @@ class BoundedStepController(InteractionController):
                 "Or in JSON format:\n"
                 "<tool_call>{\"name\": \"tool_name\", \"arguments\": {\"param\": \"value\"}}</tool_call>\n\n"
                 f"{prompt_content}\n\n"
-                "When you have collected all required information to answer the user request, "
-                "or if no tools are needed, provide the final comprehensive answer directly "
-                "without tool tags."
+                f"{closing_guidance}"
             )
             raw_base_inst = getattr(self.context_builder, "system_instruction", None)
             base_instruction = str(raw_base_inst) if isinstance(raw_base_inst, str) else ""
@@ -423,9 +551,7 @@ class BoundedStepController(InteractionController):
                 system_prompt = (
                     f"{base_instruction}{skills_section}\n\n"
                     f"{prompt_content}\n\n"
-                    "When you have collected all required information to answer the user request, "
-                    "or if no tools are needed, provide the final comprehensive answer directly "
-                    "without tool tags."
+                    f"{closing_guidance}"
                 )
             elif base_instruction:
                 system_prompt = f"{base_instruction}\n\n{workflow_instruction}"
@@ -460,17 +586,92 @@ class BoundedStepController(InteractionController):
                 model_name=str(getattr(self.backend, "model_name", "deterministic")),
             )
 
+            step_num = len(workflow.steps) + 1
+            trace(
+                "assistant.model.start",
+                turn_id=turn.record_id,
+                controller="bounded_step",
+                step=step_num,
+                observations=len(all_obs),
+            )
             start = time.perf_counter()
             gen_res = await self.backend.generate(req, cancellation)
             latency = (time.perf_counter() - start) * 1000
+            trace(
+                "assistant.model.end",
+                turn_id=turn.record_id,
+                controller="bounded_step",
+                step=step_num,
+                elapsed_ms=round(latency),
+                status="failure" if isinstance(gen_res, Failure) else "success",
+            )
             if isinstance(gen_res, Failure):
                 return Failure(gen_res.failure())
 
             cand = gen_res.unwrap()
             last_candidate = cand
+            if rc := cand.metadata.get("reasoning_content"):
+                if isinstance(rc, str) and rc.strip():
+                    reasoning_chunks.append(rc.strip())
             tool_call = extract_model_tool_call(cand.text)
             if tool_call:
                 preamble, cap_name, tool_args = tool_call
+                norm_args = {
+                    k: v
+                    for k, v in (tool_args or {}).items()
+                    if k != "task_id" and v not in ("", None)
+                }
+                call_key = (cap_name, json.dumps(norm_args, sort_keys=True))
+                if call_key in executed_calls and all_obs:
+                    synth_prompt = (
+                        f"{base_instruction}\n\n"
+                        f"{prompt_content}\n\n"
+                        "Provide the final comprehensive answer to the User Goal directly "
+                        "in the user's language based on the Tool Observations above. "
+                        "Do NOT emit any <tool_call> tags."
+                    ).strip()
+                    synth_req = req.model_copy(
+                        update={
+                            "record_id": _new_id(),
+                            "request_id": _new_id(),
+                            "system_instruction": synth_prompt,
+                        }
+                    )
+                    trace(
+                        "assistant.model.start",
+                        turn_id=turn.record_id,
+                        controller="bounded_step",
+                        step=step_num,
+                        observations=len(all_obs),
+                        mode="duplicate_tool_synthesis",
+                    )
+                    synth_start = time.perf_counter()
+                    synth_res = await self.backend.generate(synth_req, cancellation)
+                    synth_lat = (time.perf_counter() - synth_start) * 1000
+                    trace(
+                        "assistant.model.end",
+                        turn_id=turn.record_id,
+                        controller="bounded_step",
+                        step=step_num,
+                        elapsed_ms=round(synth_lat),
+                        status="failure" if isinstance(synth_res, Failure) else "success",
+                    )
+                    if isinstance(synth_res, Failure):
+                        return Failure(synth_res.failure())
+                    synth_cand = synth_res.unwrap()
+                    last_candidate = synth_cand
+                    if synth_rc := synth_cand.metadata.get("reasoning_content"):
+                        if isinstance(synth_rc, str) and synth_rc.strip():
+                            reasoning_chunks.append(synth_rc.strip())
+                    return Success({
+                        "action_type": "finish",
+                        "text": synth_cand.text,
+                        "tokens_in": cand.tokens_in + synth_cand.tokens_in,
+                        "tokens_out": cand.tokens_out + synth_cand.tokens_out,
+                        "latency_ms": latency + synth_lat,
+                    })
+
+                executed_calls.add(call_key)
                 if preamble and not preamble_box:
                     preamble_box.append(preamble)
                 pre_executed_observation: Any = None
@@ -483,14 +684,16 @@ class BoundedStepController(InteractionController):
                         if tool_cand is not None:
                             initial_action_metadata.update(tool_cand.metadata)
                             act_res_dict = tool_cand.metadata.get("action_result") or {}
-                            obs_out = (
-                                dict(act_res_dict.get("output") or {})
+                            raw_out = (
+                                act_res_dict.get("output")
                                 if isinstance(act_res_dict, dict)
                                 else {"raw_text": tool_cand.text}
                             )
-                            if tool_cand.text and "formatted_text" not in obs_out:
-                                obs_out["formatted_text"] = tool_cand.text
-                            pre_executed_observation = obs_out
+                            pre_executed_observation = _compact_observation_content(
+                                raw_out,
+                                fallback_text=tool_cand.text,
+                                capability=cap_name,
+                            )
                 return Success({
                     "action_type": "tool",
                     "capability": cap_name,
@@ -528,7 +731,9 @@ class BoundedStepController(InteractionController):
         total_tokens_out = sum(step.tokens_out for step in workflow.steps)
 
         proposals = last_candidate.proposals if last_candidate is not None else ()
-        cand_meta = last_candidate.metadata if last_candidate is not None else {}
+        cand_meta = dict(last_candidate.metadata) if last_candidate is not None else {}
+        if reasoning_chunks:
+            cand_meta["reasoning_content"] = "\n\n---\n\n".join(reasoning_chunks)
         delivered_text = workflow.final_synthesis or ""
         if preamble_box and not delivered_text.startswith(preamble_box[0][:30]):
             delivered_text = f"{preamble_box[0]}\n\n{delivered_text}"
