@@ -69,7 +69,7 @@ class WorkspaceEngine(InteractionController):
         skills: SkillRegistry | None = None,
         probe: JLensProbe | None = None,
         context_builder: object = None,
-        max_cycles: int = _DEFAULT_MAX_CYCLES,
+        max_cycles: int | None = _DEFAULT_MAX_CYCLES,
     ) -> None:
         self.capabilities = capabilities
         self.actions = actions
@@ -298,7 +298,14 @@ class WorkspaceEngine(InteractionController):
             )
 
         start_time = time.perf_counter()
-        effective_max_cycles = min(self.max_cycles, budget.max_agent_turns or self.max_cycles)
+        if self.max_cycles is not None and budget.max_agent_turns > 0:
+            effective_max_cycles = min(self.max_cycles, budget.max_agent_turns)
+        elif self.max_cycles is not None:
+            effective_max_cycles = self.max_cycles
+        elif budget.max_agent_turns > 0:
+            effective_max_cycles = budget.max_agent_turns
+        else:
+            effective_max_cycles = None
         workspace = WorkspaceState(
             cycle=0,
             max_cycles=effective_max_cycles,
@@ -317,7 +324,7 @@ class WorkspaceEngine(InteractionController):
         total_tokens_out = 0
         last_failure: ActionFailure | None = None
 
-        while not workspace.converged and workspace.cycle < workspace.max_cycles:
+        while not workspace.converged and (workspace.max_cycles is None or workspace.cycle < workspace.max_cycles):
             if token.cancelled:
                 return Failure(
                     ActionFailure(
@@ -455,7 +462,10 @@ class WorkspaceEngine(InteractionController):
                         }
                     )
                 else:
-                    is_last_cycle = workspace.cycle >= workspace.max_cycles - 1
+                    is_last_cycle = (
+                        workspace.max_cycles is not None
+                        and workspace.cycle >= workspace.max_cycles - 1
+                    )
                     if winner.salience >= self.arbiter.convergence_threshold or is_last_cycle:
                         latency_ms = (time.perf_counter() - start_time) * 1000
                         raw_cand = winner.payload.get("candidate")

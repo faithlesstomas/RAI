@@ -35,6 +35,9 @@ def _run_assistant_ask(  # noqa: PLR0913, PLR0915
     data_class: DataClass = DataClass.LOCAL,
     timeout: float | None = None,
     controller: str | None = None,
+    max_iterations: str | int | None = None,
+    max_full_observations: int | None = None,
+    max_context_characters: int | None = None,
 ) -> None:
     from returns.result import Failure, Success  # noqa: PLC0415
 
@@ -55,6 +58,9 @@ def _run_assistant_ask(  # noqa: PLR0913, PLR0915
                 context_window=context_window,
                 timeout=timeout,
                 controller=controller,
+                max_iterations=max_iterations,
+                max_full_observations=max_full_observations,
+                max_context_characters=max_context_characters,
             )
         )
         service = container.assistant_service
@@ -173,6 +179,9 @@ def _run_assistant_chat(  # noqa: PLR0913, PLR0915
     data_class: DataClass = DataClass.LOCAL,
     timeout: float | None = None,
     controller: str | None = None,
+    max_iterations: str | int | None = None,
+    max_full_observations: int | None = None,
+    max_context_characters: int | None = None,
 ) -> None:
     from returns.result import Failure, Success  # noqa: PLC0415
 
@@ -193,6 +202,9 @@ def _run_assistant_chat(  # noqa: PLR0913, PLR0915
                 context_window=context_window,
                 timeout=timeout,
                 controller=controller,
+                max_iterations=max_iterations,
+                max_full_observations=max_full_observations,
+                max_context_characters=max_context_characters,
             )
         )
         service = container.assistant_service

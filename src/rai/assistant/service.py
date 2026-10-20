@@ -127,7 +127,9 @@ class AssistantService:
         ]
         | None = None,
         controller: InteractionController | None = None,
+        max_iterations: int | None = None,
     ) -> None:
+        self.max_iterations = max_iterations
         self.store = store
         self.actions = actions
         self.step_controller = step_controller
@@ -649,7 +651,7 @@ class AssistantService:
             producer=self.producer,
             max_input_tokens=2048,
             max_output_tokens=int(getattr(self.backend, "max_output_tokens", 512)),
-            max_agent_turns=1,
+            max_agent_turns=self.max_iterations or 0,
             max_tool_calls=0,
             max_images=0,
             max_audio_seconds=0,

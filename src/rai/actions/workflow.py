@@ -256,15 +256,58 @@ def _compact_observation_content(  # noqa: PLR0912
     return compacted
 
 
+def _format_older_observation_summary(obs: Any) -> str:
+    """Format an older observation into a concise 1-line summary for context compaction."""
+    if not isinstance(obs, dict):
+        text = str(obs).replace("\n", " ").strip()
+        return text[:120] + "..." if len(text) > 120 else text
+
+    parts: list[str] = []
+    if "status" in obs:
+        parts.append(f"status={obs['status']}")
+    if "code" in obs:
+        parts.append(f"code={obs['code']}")
+    if "total_count" in obs:
+        parts.append(f"total_count={obs['total_count']}")
+    if "capability" in obs:
+        parts.append(f"capability={obs['capability']}")
+    if "title" in obs:
+        parts.append(f"title={obs['title']!r}")
+    if "query" in obs:
+        parts.append(f"query={obs['query']!r}")
+    if "summary" in obs:
+        s = str(obs["summary"]).replace("\n", " ").strip()
+        parts.append(f"summary={s[:80]!r}")
+    elif "message" in obs:
+        m = str(obs["message"]).replace("\n", " ").strip()
+        parts.append(f"message={m[:80]!r}")
+    elif "application_names" in obs and isinstance(obs["application_names"], list):
+        names = obs["application_names"]
+        parts.append(f"apps={names[:3]!r} (total {len(names)})")
+    elif "results" in obs and isinstance(obs["results"], list):
+        parts.append(f"results_count={len(obs['results'])}")
+    elif "raw_text" in obs:
+        r = str(obs["raw_text"]).replace("\n", " ").strip()
+        parts.append(f"text={r[:80]!r}")
+
+    if not parts:
+        dumped = json.dumps(obs, ensure_ascii=False)
+        return dumped[:120] + "..." if len(dumped) > 120 else dumped
+
+    return ", ".join(parts)
+
+
+
 class BoundedWorkflowLimits(BaseModel):
     """Upper bounds preventing unbounded agent loops across any capability."""
 
     model_config = ConfigDict(frozen=True, extra="forbid")
 
-    max_steps: int = Field(default=8, ge=1, le=50)
-    max_tool_calls: int = Field(default=5, ge=0, le=50)
-    max_tokens_budget: int = Field(default=16384, ge=256)
-    max_wall_time_seconds: float = Field(default=120.0, ge=1.0)
+    max_steps: int | None = Field(default=8, ge=1)
+    max_iterations: int | None = Field(default=None, ge=1)
+    max_tool_calls: int | None = Field(default=5, ge=0)
+    max_tokens_budget: int | None = Field(default=16384, ge=256)
+    max_wall_time_seconds: float | None = Field(default=120.0, ge=1.0)
 
 
 class BoundedWorkflowStep(BaseModel):
@@ -377,6 +420,7 @@ class BoundedStepController(InteractionController):
         limits: BoundedWorkflowLimits | None = None,
         skills: SkillRegistry | None = None,
         context_builder: object = None,
+        max_full_observations: int = 3,
     ) -> None:
         self.ledger = ledger
         self.capabilities = capabilities
@@ -385,6 +429,7 @@ class BoundedStepController(InteractionController):
         self.limits = limits or BoundedWorkflowLimits()
         self.skills = skills
         self.context_builder = context_builder
+        self.max_full_observations = max_full_observations
 
     async def process_turn(  # noqa: PLR0911, PLR0912, PLR0915
         self,
@@ -534,36 +579,57 @@ class BoundedStepController(InteractionController):
                 skills_section = self.skills.format_skills_instruction(avail_caps)
 
             all_obs = (*initial_observations, *workflow.observations)
+            cutoff = max(0, len(all_obs) - self.max_full_observations)
             obs_lines = []
             tool_obs_records = list(initial_obs_records)
             obs_ids = list(initial_obs_ids)
-            for i, obs in enumerate(all_obs, 1):
-                compacted_obs = (
-                    _compact_observation_content(obs) if isinstance(obs, dict) else obs
-                )
-                obs_summary = json.dumps(compacted_obs, ensure_ascii=False)
-                if len(obs_summary) > _MAX_OBSERVATION_CHARS:
-                    obs_summary = obs_summary[:_MAX_OBSERVATION_CHARS] + "... (truncated)"
-                obs_lines.append(f"Observation {i}: {obs_summary}")
-                if i > len(initial_observations):
-                    step_obs_idx = i - len(initial_observations)
-                    obs_id = f"{workflow.task_id}:obs:{step_obs_idx}"
-                    obs_ids.append(obs_id)
-                    tool_obs_records.append(
-                        ToolObservation(
-                            source_id=obs_id,
-                            source_turn_id=turn.record_id,
-                            capability="workflow_step",
-                            status="SUCCESS",
-                            summary=obs_summary[:120],
-                            untrusted_content=True,
-                            content=(
-                                compacted_obs
-                                if isinstance(compacted_obs, dict)
-                                else {"value": compacted_obs}
-                            ),
-                        ).model_dump(mode="json")
+            for idx, obs in enumerate(all_obs):
+                i = idx + 1
+                if idx < cutoff:
+                    summary_text = _format_older_observation_summary(obs)
+                    obs_lines.append(f"Observation {i} (summary): {summary_text}")
+                    if i > len(initial_observations):
+                        step_obs_idx = i - len(initial_observations)
+                        obs_id = f"{workflow.task_id}:obs:{step_obs_idx}"
+                        obs_ids.append(obs_id)
+                        tool_obs_records.append(
+                            ToolObservation(
+                                source_id=obs_id,
+                                source_turn_id=turn.record_id,
+                                capability="workflow_step",
+                                status="SUCCESS",
+                                summary=summary_text[:120],
+                                untrusted_content=True,
+                                content={"summary": summary_text},
+                            ).model_dump(mode="json")
+                        )
+                else:
+                    compacted_obs = (
+                        _compact_observation_content(obs) if isinstance(obs, dict) else obs
                     )
+                    obs_summary = json.dumps(compacted_obs, ensure_ascii=False)
+                    if len(obs_summary) > _MAX_OBSERVATION_CHARS:
+                        obs_summary = obs_summary[:_MAX_OBSERVATION_CHARS] + "... (truncated)"
+                    obs_lines.append(f"Observation {i}: {obs_summary}")
+                    if i > len(initial_observations):
+                        step_obs_idx = i - len(initial_observations)
+                        obs_id = f"{workflow.task_id}:obs:{step_obs_idx}"
+                        obs_ids.append(obs_id)
+                        tool_obs_records.append(
+                            ToolObservation(
+                                source_id=obs_id,
+                                source_turn_id=turn.record_id,
+                                capability="workflow_step",
+                                status="SUCCESS",
+                                summary=obs_summary[:120],
+                                untrusted_content=True,
+                                content=(
+                                    compacted_obs
+                                    if isinstance(compacted_obs, dict)
+                                    else {"value": compacted_obs}
+                                ),
+                            ).model_dump(mode="json")
+                        )
             obs_text = "\n".join(obs_lines) if obs_lines else "None yet."
             prompt_content = f"User Goal: {workflow.goal}\n\nTool Observations:\n{obs_text}"
 
@@ -677,7 +743,11 @@ class BoundedStepController(InteractionController):
                     if k != "task_id" and v not in ("", None)
                 }
                 call_key = (cap_name, json.dumps(norm_args, sort_keys=True))
-                if call_key in executed_calls and all_obs:
+                hit_iteration_limit = (
+                    self.limits.max_iterations is not None
+                    and model_step_count >= self.limits.max_iterations
+                )
+                if (call_key in executed_calls and all_obs) or hit_iteration_limit:
                     synth_prompt = (
                         f"{base_instruction}\n\n"
                         f"{prompt_content}\n\n"
@@ -692,13 +762,18 @@ class BoundedStepController(InteractionController):
                             "system_instruction": synth_prompt,
                         }
                     )
+                    synth_mode = (
+                        "iteration_limit_synthesis"
+                        if hit_iteration_limit and call_key not in executed_calls
+                        else "duplicate_tool_synthesis"
+                    )
                     trace(
                         "assistant.model.start",
                         turn_id=turn.record_id,
                         controller="bounded_step",
                         step=step_num,
                         observations=len(all_obs),
-                        mode="duplicate_tool_synthesis",
+                        mode=synth_mode,
                     )
                     synth_start = time.perf_counter()
                     synth_res = await self.backend.generate(synth_req, cancellation)
@@ -898,7 +973,7 @@ class BoundedStepController(InteractionController):
             return Failure(
                 f"INVALID_TRANSITION: cannot transition from {_state_str(workflow.state)} to {_state_str(target_state)}"
             )
-        if len(workflow.steps) >= workflow.limits.max_steps:
+        if workflow.limits.max_steps is not None and len(workflow.steps) >= workflow.limits.max_steps:
             return Failure("STEP_LIMIT_EXCEEDED")
 
         step = BoundedWorkflowStep(
@@ -939,7 +1014,10 @@ class BoundedStepController(InteractionController):
         step_index = len(workflow.steps) + 1
         req_id = f"{workflow.task_id}:step:{step_index}"
 
-        if workflow.tool_calls_executed >= workflow.limits.max_tool_calls:
+        if (
+            workflow.limits.max_tool_calls is not None
+            and workflow.tool_calls_executed >= workflow.limits.max_tool_calls
+        ):
             return Failure(
                 ActionFailure(
                     request_id=req_id,
@@ -950,7 +1028,7 @@ class BoundedStepController(InteractionController):
                 )
             )
 
-        if len(workflow.steps) >= workflow.limits.max_steps:
+        if workflow.limits.max_steps is not None and len(workflow.steps) >= workflow.limits.max_steps:
             return Failure(
                 ActionFailure(
                     request_id=req_id,
@@ -1217,7 +1295,7 @@ class BoundedStepController(InteractionController):
                     )
                 )
 
-            if len(workflow.steps) >= workflow.limits.max_steps:
+            if workflow.limits.max_steps is not None and len(workflow.steps) >= workflow.limits.max_steps:
                 fail_tx = self.transition_generic(
                     workflow,
                     AgentWorkflowState.FAILED,

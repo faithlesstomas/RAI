@@ -363,7 +363,10 @@ class AnswerDraftSpecialist:
         # If observations exist or this is the final cycle, answer salience is 0.95;
         # otherwise 0.85 (>= 0.80 convergence threshold so conversational turns converge
         # in 1 cycle, while still < 0.90 of ActionReasonerSpecialist's TOOL_CALL).
-        if workspace.observations or workspace.cycle >= workspace.max_cycles - 1:
+        if (
+            workspace.observations
+            or (workspace.max_cycles is not None and workspace.cycle >= workspace.max_cycles - 1)
+        ):
             salience = 0.95
         else:
             salience = 0.85

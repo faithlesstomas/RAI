@@ -40,7 +40,25 @@ def effective_model_settings(
         (
             "environment",
             {
-                key: float(env[name]) if key == "lemonade_timeout" else env[name]
+                key: (
+                    float(env[name])
+                    if key == "lemonade_timeout"
+                    else (
+                        int(env[name])
+                        if key in ("max_full_observations", "max_context_characters")
+                        else (
+                            None
+                            if key == "max_iterations"
+                            and str(env[name]).strip().lower()
+                            in ("none", "null", "inf", "infinity", "0", "unlimited")
+                            else (
+                                int(env[name])
+                                if key == "max_iterations"
+                                else env[name]
+                            )
+                        )
+                    )
+                )
                 for key, name in {
                     "backend": "RAI_ASSISTANT_BACKEND",
                     "model": "RAI_ASSISTANT_MODEL",
@@ -48,15 +66,26 @@ def effective_model_settings(
                     "lemonade_api_key": "LEMONADE_API_KEY",
                     "lemonade_timeout": "LEMONADE_TIMEOUT",
                     "interaction_controller": "RAI_INTERACTION_CONTROLLER",
+                    "max_iterations": "RAI_MAX_ITERATIONS",
+                    "max_full_observations": "RAI_MAX_FULL_OBSERVATIONS",
+                    "max_context_characters": "RAI_MAX_CONTEXT_CHARACTERS",
                 }.items()
-                if env.get(name)
+                if env.get(name) is not None
             },
         ),
         ("CLI", overrides or config.get("_cli_overrides", {})),
     ]
     for source, layer in layers:
         for key, value in layer.items():
-            if key in ModelSettings.model_fields and value is not None:  # pylint: disable=unsupported-membership-test
-                values[key] = value
-                sources[key] = source
+            if key in ModelSettings.model_fields:  # pylint: disable=unsupported-membership-test
+                if value is not None:
+                    values[key] = value
+                    sources[key] = source
+                elif key == "max_iterations" and source in (
+                    "CLI",
+                    "environment",
+                    "assistant",
+                ):
+                    values[key] = None
+                    sources[key] = source
     return values, sources

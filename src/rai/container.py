@@ -42,7 +42,7 @@ from .actions.volume import PactlVolumeBackend, register_volume_capabilities
 from .actions.processes import register_process_capability
 from .actions.execution import SQLiteExecutionStore
 from .actions.handles import SQLiteHandleStore
-from .actions.workflow import TaskStepController
+from .actions.workflow import BoundedWorkflowLimits, TaskStepController
 from .paths import data_dir
 from .services.history import HistoryService
 from .services.model_registry import ModelRegistry
@@ -408,12 +408,19 @@ class ApplicationContainer:
                 max_external_evidence=runtime.max_external_evidence,
                 memory_sufficiency_threshold=(runtime.memory_sufficiency_threshold),
             )
+            step_limits = BoundedWorkflowLimits(
+                max_steps=None,
+                max_iterations=runtime.max_iterations,
+                max_tool_calls=None,
+            )
             step_ctrl = TaskStepController(
                 capabilities=self.capability_service,
                 backend=effective_backend,
                 actions=actions,
                 skills=skills_registry,
                 context_builder=context_builder,
+                limits=step_limits,
+                max_full_observations=runtime.max_full_observations,
             )
             from .assistant.controllers.direct import DirectController  # noqa: PLC0415
 
@@ -428,6 +435,7 @@ class ApplicationContainer:
                     backend=effective_backend,
                     skills=skills_registry,
                     context_builder=context_builder,
+                    max_cycles=runtime.max_iterations,
                 )
             else:
                 active_controller = DirectController(
@@ -446,6 +454,7 @@ class ApplicationContainer:
                 context_builder=context_builder,
                 audit_ledger=audit,
                 profile_scope=runtime.profile_scope,
+                max_iterations=runtime.max_iterations,
             )
         return self._assistant_service
 

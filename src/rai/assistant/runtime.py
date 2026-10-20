@@ -54,6 +54,8 @@ class AssistantRuntimeConfig:
     thinking_budget: int | None = None
     thinking_level: str | None = None
     interaction_controller: str = "direct"
+    max_iterations: int | None = None
+    max_full_observations: int = 3
 
 
 def _discover_gguf(search_root: Path) -> Path | None:
@@ -119,6 +121,42 @@ def resolve_assistant_config(  # noqa: PLR0913
     )
     backend = str(backend).lower()
 
+    # Dynamic vs manual context character budget
+    if (
+        _sources.get("max_context_characters") != "default"
+        and assistant.get("max_context_characters") is not None
+    ):
+        resolved_context_chars = int(assistant["max_context_characters"])
+    elif backend == "deterministic":
+        resolved_context_chars = int(
+            assistant.get("max_context_characters", DEFAULT_MAX_CONTEXT_CHARACTERS)
+        )
+    elif (
+        int(assistant.get("context_window", DEFAULT_CONTEXT_WINDOW)) != DEFAULT_CONTEXT_WINDOW
+        or int(assistant.get("max_output_tokens", DEFAULT_MAX_OUTPUT_TOKENS)) != DEFAULT_MAX_OUTPUT_TOKENS
+    ):
+        cw = int(assistant.get("context_window", DEFAULT_CONTEXT_WINDOW))
+        mot = int(assistant.get("max_output_tokens", DEFAULT_MAX_OUTPUT_TOKENS))
+        usable_tokens = max(512, cw - mot - 256)
+        resolved_context_chars = int(usable_tokens * 3.5)
+    else:
+        resolved_context_chars = int(
+            assistant.get("max_context_characters", DEFAULT_MAX_CONTEXT_CHARACTERS)
+        )
+
+    raw_iterations = assistant.get("max_iterations")
+    if raw_iterations is not None:
+        if isinstance(raw_iterations, str) and raw_iterations.strip().lower() in (
+            "none", "null", "inf", "infinity", "0", "unlimited"
+        ):
+            resolved_max_iterations = None
+        else:
+            resolved_max_iterations = int(raw_iterations)
+    else:
+        resolved_max_iterations = None
+
+    resolved_max_full_obs = int(assistant.get("max_full_observations", 3))
+
     if backend == "deterministic":
         return AssistantRuntimeConfig(
             backend=backend,
@@ -131,9 +169,7 @@ def resolve_assistant_config(  # noqa: PLR0913
                 or profile.get("system")
                 or DEFAULT_SYSTEM_INSTRUCTION
             ),
-            max_context_characters=int(
-                assistant.get("max_context_characters", DEFAULT_MAX_CONTEXT_CHARACTERS)
-            ),
+            max_context_characters=resolved_context_chars,
             max_recent_turns=int(assistant.get("max_recent_turns", 10)),
             max_memories=int(assistant.get("max_memories", 5)),
             max_episodic_turns=int(assistant.get("max_episodic_turns", 5)),
@@ -147,6 +183,8 @@ def resolve_assistant_config(  # noqa: PLR0913
                 or os.environ.get("RAI_INTERACTION_CONTROLLER")
                 or "direct"
             ),
+            max_iterations=resolved_max_iterations,
+            max_full_observations=resolved_max_full_obs,
         )
 
     if backend == "antigravity":
@@ -229,9 +267,7 @@ def resolve_assistant_config(  # noqa: PLR0913
             or profile.get("system")
             or DEFAULT_SYSTEM_INSTRUCTION
         ),
-        max_context_characters=int(
-            assistant.get("max_context_characters", DEFAULT_MAX_CONTEXT_CHARACTERS)
-        ),
+        max_context_characters=resolved_context_chars,
         max_recent_turns=int(assistant.get("max_recent_turns", 10)),
         max_memories=int(assistant.get("max_memories", 5)),
         max_episodic_turns=int(assistant.get("max_episodic_turns", 5)),
@@ -260,6 +296,8 @@ def resolve_assistant_config(  # noqa: PLR0913
             or os.environ.get("RAI_INTERACTION_CONTROLLER")
             or "direct"
         ),
+        max_iterations=resolved_max_iterations,
+        max_full_observations=resolved_max_full_obs,
     )
 
 

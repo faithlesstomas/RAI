@@ -43,6 +43,31 @@ class ModelSettings(SettingsRecord):
     thinking_budget: int | None = Field(default=None, ge=0)
     thinking_level: str | None = None
     interaction_controller: Literal["direct", "bounded_step", "workspace"] | None = None
+    max_iterations: int | None = Field(default=None, ge=1)
+    max_full_observations: int = Field(default=3, ge=1)
+
+    @field_validator("max_iterations", mode="before")
+    @classmethod
+    def _validate_max_iterations(cls, v: Any) -> int | None:
+        if v is None:
+            return None
+        if isinstance(v, str):
+            clean = v.strip().lower()
+            if clean in ("none", "null", "inf", "infinity", "unlimited", "0"):
+                return None
+            return int(clean)
+        if isinstance(v, (int, float)):
+            if v == 0 or v == float("inf"):
+                return None
+            return int(v)
+        return v
+
+    @field_validator("max_full_observations", mode="before")
+    @classmethod
+    def _validate_max_full_obs(cls, v: Any) -> int:
+        if isinstance(v, str):
+            return int(v.strip())
+        return int(v)
 
 
 class TtsSettings(SettingsRecord):

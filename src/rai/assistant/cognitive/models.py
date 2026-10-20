@@ -43,7 +43,7 @@ class WorkspaceState(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid", use_enum_values=True)
 
     cycle: int = Field(default=0, ge=0)
-    max_cycles: int = Field(default=4, ge=1, le=20)
+    max_cycles: int | None = Field(default=4, ge=1)
     goal: str = Field(min_length=1)
     session_id: str = Field(min_length=1)
     turn_id: str = Field(min_length=1)
