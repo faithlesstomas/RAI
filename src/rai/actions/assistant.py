@@ -109,13 +109,22 @@ class AssistantActions:
         trace("assistant.intent.start", turn_id=turn.record_id)
         recognized = await self.recognizer.recognize(turn, cancellation)
         if isinstance(recognized, Failure):
+            if recognized.failure() == "CANCELLED" or cancellation.cancelled:
+                cancellation.cancel()
+                trace("assistant.intent.end", turn_id=turn.record_id, status="cancelled")
+                return None
             trace("assistant.intent.end", turn_id=turn.record_id, status="failure")
             return AssistantCandidate(text="Nie udało się bezpiecznie rozpoznać intencji. Nie wykonałem działania.",
                                       metadata={"intent_failure": recognized.failure()})
+        if cancellation.cancelled:
+            return None
         intent = recognized.unwrap()
         trace("assistant.intent", turn_id=turn.record_id, outcome=intent.outcome,
               query_present=bool(intent.query), data_class=turn.data_class)
-        return await self.dispatch_intent(turn, intent, cancellation)
+        res = await self.dispatch_intent(turn, intent, cancellation)
+        if cancellation.cancelled:
+            return None
+        return res
 
     async def dispatch_intent(  # noqa: PLR0911, PLR0912, PLR0915
         self,
@@ -123,6 +132,8 @@ class AssistantActions:
         intent: ActionIntent,
         cancellation: CancellationToken,
     ) -> AssistantCandidate | None:
+        if cancellation.cancelled:
+            return None
         if intent.outcome == "capabilities.list":
             from rai.assistant.context import format_capabilities_instruction  # noqa: PLC0415
 

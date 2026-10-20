@@ -73,7 +73,10 @@ async def choose(prompt: str, token: CancellationToken, timeout: float | None = 
             (task, cancelled), timeout=timeout, return_when=asyncio.FIRST_COMPLETED
         )
         return task.result().strip().lower() if task in done and not token.cancelled else ""
-    except (EOFError, KeyboardInterrupt):
+    except KeyboardInterrupt:
+        token.cancel()
+        return ""
+    except EOFError:
         return ""
     finally:
         for pending in (task, cancelled):
@@ -126,6 +129,9 @@ class TerminalApprovalBroker:
                 continue
             break
 
+        if cancellation.cancelled:
+            return Failure(HitlApprovalBroker._failure(decision, "CANCELLED", "Approval cancelled"))
+
         if remember and answer in {"a", "d"}:
             data_class_name = request.data_class.value if hasattr(request.data_class, "value") else str(request.data_class)
             rule = ApprovalRule(id="search-" + _new_id(), data_class=data_class_name,
@@ -139,6 +145,8 @@ class TerminalApprovalBroker:
     async def request(
         self, decision: PolicyDecision, cancellation: CancellationToken
     ) -> Result[str, ActionFailure]:
+        if cancellation.cancelled:
+            return Failure(HitlApprovalBroker._failure(decision, "CANCELLED", "Approval cancelled"))
         effects_text = ", ".join(decision.requested_side_effects) or "none"
         typer.echo(
             f"Target: {decision.target_resource}\nEffects: {effects_text}"
@@ -153,6 +161,9 @@ class TerminalApprovalBroker:
                 typer.echo(format_decision_details(decision))
                 continue
             break
+
+        if cancellation.cancelled:
+            return Failure(HitlApprovalBroker._failure(decision, "CANCELLED", "Approval cancelled"))
 
         if answer in {"y", "yes"}:
             return Success(_new_id())

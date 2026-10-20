@@ -2,9 +2,12 @@
 
 from __future__ import annotations
 import asyncio
+import inspect
 import json
+import signal
 import sys
 import click
+from rai.kernel.ports import CancellationToken
 from rai.kernel.records import DataClass
 from .settings import _assistant_config
 from .memory import (
@@ -16,7 +19,7 @@ from .memory import (
 )
 
 
-def _run_assistant_ask(  # noqa: PLR0913
+def _run_assistant_ask(  # noqa: PLR0913, PLR0915
     prompt: str,
     session_id: str | None,
     backend: str | None,
@@ -33,7 +36,7 @@ def _run_assistant_ask(  # noqa: PLR0913
     timeout: float | None = None,
     controller: str | None = None,
 ) -> None:
-    from returns.result import Success  # noqa: PLC0415
+    from returns.result import Failure, Success  # noqa: PLC0415
 
     from rai.assistant.records import ConversationTurn  # noqa: PLC0415
     from rai.container import ApplicationContainer  # noqa: PLC0415
@@ -70,13 +73,65 @@ def _run_assistant_ask(  # noqa: PLR0913
         text=prompt,
     )
 
-    async def _run() -> None:
+    async def _run() -> None:  # noqa: PLR0912, PLR0915
         try:
             start_res = await service.start()
             if not isinstance(start_res, Success):
                 err = start_res.failure()
                 raise click.ClickException(f"[{err.code}] {err.message}")
-            res = await service.accept_turn(turn)
+            turn_token = CancellationToken()
+            accept_task = asyncio.create_task(
+                service.accept_turn(turn, cancellation=turn_token)
+            )
+            loop = asyncio.get_running_loop()
+            sigint_installed = False
+
+            def _handle_sigint() -> None:
+                turn_token.cancel()
+                if not accept_task.done():
+                    accept_task.cancel()
+
+            try:
+                loop.add_signal_handler(signal.SIGINT, _handle_sigint)
+                sigint_installed = True
+            except (NotImplementedError, RuntimeError, ValueError):
+                sigint_installed = False
+
+            cancelled = False
+            try:
+                res = await accept_task
+            except (asyncio.CancelledError, KeyboardInterrupt):
+                cancelled = True
+                turn_token.cancel()
+                res = None
+            finally:
+                if sigint_installed:
+                    try:
+                        loop.remove_signal_handler(signal.SIGINT)
+                    except Exception:
+                        pass
+
+            if (
+                cancelled
+                or turn_token.cancelled
+                or (
+                    isinstance(res, Failure)
+                    and res.failure().code == "CANCELLED"
+                )
+            ):
+                if hasattr(service, "rollback_turn"):
+                    rollback_fn = getattr(service, "rollback_turn")
+                    rollback_res = rollback_fn(turn.record_id)
+                    if asyncio.iscoroutine(rollback_res) or inspect.isawaitable(rollback_res):
+                        await rollback_res
+                elif hasattr(service, "delete_turn"):
+                    del_fn = getattr(service, "delete_turn")
+                    del_res = del_fn(turn.record_id)
+                    if asyncio.iscoroutine(del_res) or inspect.isawaitable(del_res):
+                        await del_res
+                click.echo("\n[Generowanie przerwane. Tura została wycofana.]", err=True)
+                return
+
             if isinstance(res, Success):
                 response = res.unwrap()
                 if show_thinking and response.reasoning_content:
@@ -94,7 +149,7 @@ def _run_assistant_ask(  # noqa: PLR0913
                             err=True,
                         )
                     await _echo_context_manifest(service, response.manifest_id)
-            else:
+            elif res is not None:
                 err = res.failure()
                 raise click.ClickException(f"[{err.code}] {err.message}")
         finally:
@@ -119,7 +174,7 @@ def _run_assistant_chat(  # noqa: PLR0913, PLR0915
     timeout: float | None = None,
     controller: str | None = None,
 ) -> None:
-    from returns.result import Success  # noqa: PLC0415
+    from returns.result import Failure, Success  # noqa: PLC0415
 
     from rai.assistant.records import ConversationTurn  # noqa: PLC0415
     from rai.container import ApplicationContainer  # noqa: PLC0415
@@ -230,9 +285,22 @@ def _run_assistant_chat(  # noqa: PLR0913, PLR0915
                         user_input = await prompt_session.prompt_async("You> ")
                     else:
                         user_input = click.prompt("You", prompt_suffix="> ")
-                except (EOFError, KeyboardInterrupt):
+                except EOFError:
                     click.echo("\nExiting session.")
                     break
+                except KeyboardInterrupt:
+                    try:
+                        if prompt_session is not None:
+                            confirm_exit = await prompt_session.prompt_async("\nExit chat? [y/N] ")
+                        else:
+                            confirm_exit = click.prompt("\nExit chat? [y/N]", default="n", show_default=False)
+                    except (EOFError, KeyboardInterrupt):
+                        click.echo("\nExiting session.")
+                        break
+                    if confirm_exit.strip().lower() in ("y", "yes", "tak", "t"):
+                        click.echo("Exiting session.")
+                        break
+                    continue
                 stripped = user_input.strip()
                 if stripped in ("/exit", "/quit", "/q"):
                     click.echo("Exiting session.")
@@ -344,6 +412,13 @@ def _run_assistant_chat(  # noqa: PLR0913, PLR0915
                 if not stripped:
                     continue
 
+                if stripped == "/remember":
+                    click.echo("Usage: /remember TEXT", err=True)
+                    continue
+                if stripped == "/forget":
+                    click.echo("Usage: /forget TEXT", err=True)
+                    continue
+
                 if stripped.startswith("/remember "):
                     stripped = (
                         f"Remember that {stripped.removeprefix('/remember ').strip()}"
@@ -355,6 +430,12 @@ def _run_assistant_chat(  # noqa: PLR0913, PLR0915
                         if target.casefold() == "all"
                         else f"Forget about {target}"
                     )
+                elif stripped.startswith("/"):
+                    click.echo(
+                        f"Unknown command: '{stripped}'. Type /help for available commands.",
+                        err=True,
+                    )
+                    continue
 
                 turn = ConversationTurn(
                     record_id=_new_id(),
@@ -367,7 +448,60 @@ def _run_assistant_chat(  # noqa: PLR0913, PLR0915
                     text=stripped,
                     reply_to_turn_id=reply_to_turn_id,
                 )
-                result = await service.accept_turn(turn)
+                turn_token = CancellationToken()
+                accept_task = asyncio.create_task(
+                    service.accept_turn(turn, cancellation=turn_token)
+                )
+
+                loop = asyncio.get_running_loop()
+                sigint_installed = False
+
+                def _handle_sigint() -> None:
+                    turn_token.cancel()
+                    if not accept_task.done():
+                        accept_task.cancel()
+
+                try:
+                    loop.add_signal_handler(signal.SIGINT, _handle_sigint)
+                    sigint_installed = True
+                except (NotImplementedError, RuntimeError, ValueError):
+                    sigint_installed = False
+
+                cancelled = False
+                try:
+                    result = await accept_task
+                except (asyncio.CancelledError, KeyboardInterrupt):
+                    cancelled = True
+                    turn_token.cancel()
+                    result = None
+                finally:
+                    if sigint_installed:
+                        try:
+                            loop.remove_signal_handler(signal.SIGINT)
+                        except Exception:
+                            pass
+
+                if (
+                    cancelled
+                    or turn_token.cancelled
+                    or (
+                        isinstance(result, Failure)
+                        and result.failure().code == "CANCELLED"
+                    )
+                ):
+                    if hasattr(service, "rollback_turn"):
+                        rollback_fn = getattr(service, "rollback_turn")
+                        rollback_res = rollback_fn(turn.record_id)
+                        if asyncio.iscoroutine(rollback_res) or inspect.isawaitable(rollback_res):
+                            await rollback_res
+                    elif hasattr(service, "delete_turn"):
+                        del_fn = getattr(service, "delete_turn")
+                        del_res = del_fn(turn.record_id)
+                        if asyncio.iscoroutine(del_res) or inspect.isawaitable(del_res):
+                            await del_res
+                    click.echo("\n[Generowanie przerwane. Tura została wycofana.]", err=True)
+                    continue
+
                 if isinstance(result, Success):
                     response = result.unwrap()
                     if current_show_thinking and response.reasoning_content:
@@ -387,7 +521,7 @@ def _run_assistant_chat(  # noqa: PLR0913, PLR0915
                                 err=True,
                             )
                         await _echo_context_manifest(service, response.manifest_id)
-                else:
+                elif result is not None:
                     err = result.failure()
                     click.echo(f"[Error: {err.code}] {err.message}", err=True)
         finally:

@@ -57,7 +57,7 @@ class DirectController(InteractionController):
             producer_id="direct-controller", kind="controller", version="1.0.0"
         )
 
-    async def process_turn(  # noqa: PLR0911
+    async def process_turn(  # noqa: PLR0911, PLR0912
         self,
         turn: ConversationTurn,
         context: AssistantContextPackage,
@@ -87,6 +87,28 @@ class DirectController(InteractionController):
         action_candidate = (
             await self.actions.handle(turn, token) if self.actions is not None else None
         )
+        if token.cancelled:
+            return Failure(
+                make_assistant_failure(
+                    code="CANCELLED",
+                    message="Turn processing cancelled by user",
+                    request_id=request_id,
+                )
+            )
+        if action_candidate is not None:
+            act_res = action_candidate.metadata.get("action_result") or {}
+            if (
+                act_res.get("status") == "CANCELLED"
+                or act_res.get("error_code") == "CANCELLED"
+                or act_res.get("code") == "CANCELLED"
+            ):
+                return Failure(
+                    make_assistant_failure(
+                        code="CANCELLED",
+                        message="Turn action cancelled by user",
+                        request_id=request_id,
+                    )
+                )
         requires_synthesis = (
             action_candidate is not None
             and (

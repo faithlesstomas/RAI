@@ -34,11 +34,13 @@ from rai.assistant.records import (
     ConversationTurn,
     InferenceRequest,
     ToolObservation,
+    make_assistant_failure,
 )
 from rai.assistant.tool_calling import (
     extract_model_tool_call,
     format_tool_signature,
     intent_from_tool_call,
+    strip_tool_call_tags,
 )
 from rai.diagnostics import trace
 from rai.kernel.ports import CancellationToken, UsageLedger
@@ -384,7 +386,7 @@ class BoundedStepController(InteractionController):
         self.skills = skills
         self.context_builder = context_builder
 
-    async def process_turn(  # noqa: PLR0912, PLR0915
+    async def process_turn(  # noqa: PLR0911, PLR0912, PLR0915
         self,
         turn: ConversationTurn,
         context: AssistantContextPackage,
@@ -403,6 +405,28 @@ class BoundedStepController(InteractionController):
 
         if self.actions is not None and hasattr(self.actions, "handle"):
             action_cand = await self.actions.handle(turn, token)
+            if token.cancelled:
+                return Failure(
+                    make_assistant_failure(
+                        code="CANCELLED",
+                        message="Turn processing cancelled by user",
+                        request_id=turn.record_id,
+                    )
+                )
+            if action_cand is not None:
+                act_res = action_cand.metadata.get("action_result") or {}
+                if (
+                    act_res.get("status") == "CANCELLED"
+                    or act_res.get("error_code") == "CANCELLED"
+                    or act_res.get("code") == "CANCELLED"
+                ):
+                    return Failure(
+                        make_assistant_failure(
+                            code="CANCELLED",
+                            message="Turn action cancelled by user",
+                            request_id=turn.record_id,
+                        )
+                    )
             requires_synthesis = _should_synthesize_action_candidate(action_cand)
             if action_cand is not None and not requires_synthesis:
                 return Success(
@@ -490,6 +514,7 @@ class BoundedStepController(InteractionController):
         last_candidate: AssistantCandidate | None = None
         preamble_box: list[str] = []
         reasoning_chunks: list[str] = []
+        model_step_count = 0
         last_manifest: AssistantContextManifest = manifest.model_copy(
             update={"tool_observation_ids": tuple(initial_obs_ids)}
         )
@@ -498,7 +523,7 @@ class BoundedStepController(InteractionController):
             workflow: BoundedWorkflow,
             cancellation: CancellationToken,
         ) -> Result[dict[str, Any], ActionFailure]:
-            nonlocal last_candidate, last_manifest
+            nonlocal last_candidate, last_manifest, model_step_count
             descriptors = self.capabilities.registry.descriptors() if self.capabilities else ()
             actions_desc = "\n".join(
                 format_tool_signature(d.name, d.description) for d in descriptors
@@ -615,7 +640,8 @@ class BoundedStepController(InteractionController):
                 model_name=str(getattr(self.backend, "model_name", "deterministic")),
             )
 
-            step_num = len(workflow.steps) + 1
+            model_step_count += 1
+            step_num = model_step_count
             trace(
                 "assistant.model.start",
                 turn_id=turn.record_id,
@@ -694,7 +720,7 @@ class BoundedStepController(InteractionController):
                             reasoning_chunks.append(synth_rc.strip())
                     return Success({
                         "action_type": "finish",
-                        "text": synth_cand.text,
+                        "text": strip_tool_call_tags(synth_cand.text),
                         "tokens_in": cand.tokens_in + synth_cand.tokens_in,
                         "tokens_out": cand.tokens_out + synth_cand.tokens_out,
                         "latency_ms": latency + synth_lat,
@@ -725,16 +751,33 @@ class BoundedStepController(InteractionController):
                         if tool_cand is not None:
                             initial_action_metadata.update(tool_cand.metadata)
                             act_res_dict = tool_cand.metadata.get("action_result") or {}
-                            raw_out = (
-                                act_res_dict.get("output")
-                                if isinstance(act_res_dict, dict)
-                                else {"raw_text": tool_cand.text}
-                            )
+                            if isinstance(act_res_dict, dict) and "output" in act_res_dict:
+                                raw_out = act_res_dict.get("output")
+                            elif isinstance(act_res_dict, dict) and "code" in act_res_dict:
+                                raw_out = {
+                                    "status": "FAILED",
+                                    "code": act_res_dict.get("code"),
+                                    "message": act_res_dict.get("message") or tool_cand.text,
+                                }
+                            else:
+                                raw_out = {"raw_text": tool_cand.text}
                             pre_executed_observation = _compact_observation_content(
                                 raw_out,
                                 fallback_text=tool_cand.text,
                                 capability=cap_name,
                             )
+                    elif (
+                        self.capabilities is not None
+                        and self.capabilities.registry.descriptor(cap_name) is None
+                    ):
+                        pre_executed_observation = {
+                            "status": "FAILED",
+                            "code": "UNKNOWN_TOOL",
+                            "message": (
+                                f"Tool '{cap_name}' is not registered. "
+                                "Use one of the registered Available tools or answer directly."
+                            ),
+                        }
                 return Success({
                     "action_type": "tool",
                     "capability": cap_name,
@@ -747,7 +790,7 @@ class BoundedStepController(InteractionController):
 
             return Success({
                 "action_type": "finish",
-                "text": cand.text,
+                "text": strip_tool_call_tags(cand.text),
                 "tokens_in": cand.tokens_in,
                 "tokens_out": cand.tokens_out,
                 "latency_ms": latency,
@@ -764,7 +807,16 @@ class BoundedStepController(InteractionController):
             actor=turn.producer,
         )
         if isinstance(loop_res, Failure):
-            return Failure(loop_res.failure())
+            err = loop_res.failure()
+            if err.code in {"TASK_CANCELLED", "CANCELLED"} or token.cancelled:
+                return Failure(
+                    make_assistant_failure(
+                        code="CANCELLED",
+                        message="Turn processing cancelled by user",
+                        request_id=turn.record_id,
+                    )
+                )
+            return Failure(err)
 
         workflow = loop_res.unwrap()
         total_latency = sum(step.latency_ms for step in workflow.steps)
@@ -775,7 +827,7 @@ class BoundedStepController(InteractionController):
         cand_meta = dict(last_candidate.metadata) if last_candidate is not None else {}
         if reasoning_chunks:
             cand_meta["reasoning_content"] = "\n\n---\n\n".join(reasoning_chunks)
-        delivered_text = workflow.final_synthesis or ""
+        delivered_text = strip_tool_call_tags(workflow.final_synthesis or "")
         if preamble_box and not delivered_text.startswith(preamble_box[0][:30]):
             delivered_text = f"{preamble_box[0]}\n\n{delivered_text}"
 

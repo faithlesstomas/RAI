@@ -36,6 +36,71 @@ def parse_tool_args(raw_args: str) -> dict[str, Any]:
     return {}
 
 
+_TOOL_ALIASES: dict[str, str] = {
+    "search.web": "browser.search",
+    "web.search": "browser.search",
+    "web_search": "browser.search",
+    "search": "browser.search",
+    "internet.search": "browser.search",
+    "browser_search": "browser.search",
+    "browser.read": "browser.read_page",
+    "read_page": "browser.read_page",
+    "browser_read_page": "browser.read_page",
+    "web.read": "browser.read_page",
+    "page.read": "browser.read_page",
+    "browser.open": "browser.open_result",
+    "open_result": "browser.open_result",
+    "browser_open_result": "browser.open_result",
+    "web.open": "browser.open_result",
+    "app.list": "application.list",
+    "apps.list": "application.list",
+    "applications.list": "application.list",
+    "list_applications": "application.list",
+    "app.launch": "application.launch",
+    "apps.launch": "application.launch",
+    "launch_application": "application.launch",
+    "launch_app": "application.launch",
+    "application.open": "application.launch",
+    "open_application": "application.launch",
+    "files.list": "file.list",
+    "list_files": "file.list",
+    "dir.list": "file.list",
+    "directory.list": "file.list",
+    "files.search": "file.search",
+    "find_files": "file.search",
+    "file.open": "document.open",
+    "doc.open": "document.open",
+    "volume.get": "system.volume.get",
+    "audio.volume.get": "system.volume.get",
+    "volume.set": "system.volume.set",
+    "audio.volume.set": "system.volume.set",
+    "process.list": "process.inspect",
+    "processes.inspect": "process.inspect",
+    "history.query": "activity.query",
+    "activity.list": "activity.query",
+    "activity.search": "activity.query",
+}
+
+
+def normalize_tool_capability(capability: str) -> str:
+    """Normalize common model-emitted tool name aliases to registered capability names."""
+    cleaned = capability.strip()
+    return _TOOL_ALIASES.get(cleaned.lower(), cleaned)
+
+
+def strip_tool_call_tags(text: str) -> str:
+    """Remove raw <tool_call>...</tool_call> blocks from historical assistant text."""
+    if not text or ("<tool_call>" not in text and "<|tool_call>" not in text):
+        return text
+    cleaned = re.sub(
+        r"(?:<\|tool_call>|<tool_call>).*?(?:<tool_call\|>|<\|tool_call\|>|<\|tool_call_end\|>|</tool_call>|$)",
+        "",
+        text,
+        flags=re.DOTALL,
+    )
+    return cleaned.strip()
+
+
 def extract_model_tool_call(text: str) -> tuple[str, str, dict[str, Any]] | None:
     """Extract a tool call from LLM output (e.g. Gemma, ChatML, or markdown block).
 
@@ -45,16 +110,17 @@ def extract_model_tool_call(text: str) -> tuple[str, str, dict[str, Any]] | None
     if not text:
         return None
 
-    # 1. Gemma / syntax: <|tool_call>call: cap{args}...
+    # 1. Gemma / ChatML syntax: <|tool_call>[call:] cap[{args}]</tool_call>
     m = re.search(
-        r"(.*?)(?:<\|tool_call>|<tool_call>)\s*call:\s*([\w\.]+)\s*(\{.*?\})(?:<tool_call\|>|<\|tool_call\|>|<\|tool_call_end\|>|</tool_call>|$)",
+        r"(.*?)(?:<\|tool_call>|<tool_call>)\s*(?:call:\s*)?([a-zA-Z_][\w\.-]*)\s*(\{.*?\})?\s*(?:<tool_call\|>|<\|tool_call\|>|<\|tool_call_end\|>|</tool_call>|$)",
         text,
         re.DOTALL,
     )
     if m:
         preamble = m.group(1).strip()
-        capability = m.group(2).strip()
-        args = parse_tool_args(m.group(3))
+        capability = normalize_tool_capability(m.group(2))
+        raw_args = m.group(3)
+        args = parse_tool_args(raw_args) if raw_args else {}
         return (preamble, capability, args)
 
     # 2. JSON tool call: <tool_call>{"name": ..., "arguments": ...}</tool_call> or ```tool_call
@@ -66,11 +132,25 @@ def extract_model_tool_call(text: str) -> tuple[str, str, dict[str, Any]] | None
     if m2:
         preamble = m2.group(1).strip()
         obj = parse_tool_args(m2.group(2))
-        cap = obj.get("name") or obj.get("capability") or obj.get("function")
+        cap = (
+            obj.get("name")
+            or obj.get("capability")
+            or obj.get("function")
+            or obj.get("tool")
+        )
         if cap and isinstance(cap, str):
-            args = obj.get("arguments") or obj.get("args") or {}
-            if isinstance(args, dict):
-                return (preamble, cap.strip(), args)
+            raw_inner_args = (
+                obj.get("arguments") or obj.get("args") or obj.get("parameters")
+            )
+            if isinstance(raw_inner_args, dict):
+                args = raw_inner_args
+            else:
+                args = {
+                    k: v
+                    for k, v in obj.items()
+                    if k not in ("name", "capability", "function", "tool")
+                }
+            return (preamble, normalize_tool_capability(cap), args)
 
     return None
 
@@ -116,6 +196,7 @@ def intent_from_tool_call(  # noqa: PLR0911, PLR0912
     """Convert an extracted tool call into a strongly typed, validated ActionIntent."""
     lang = turn.metadata.get("language") if turn.metadata.get("language") in ("pl", "en") else "pl"
     source_turn_id = turn.record_id
+    capability = normalize_tool_capability(capability)
 
     try:
         if capability == "browser.search":
@@ -136,10 +217,14 @@ def intent_from_tool_call(  # noqa: PLR0911, PLR0912
             selection_int = _parse_int_arg(
                 args.get("selection") or args.get("index") or args.get("result")
             )
+            url_query = str(
+                args.get("url") or args.get("query") or args.get("target") or ""
+            ).strip()
             return ActionIntent(
                 source_turn_id=source_turn_id,
                 outcome=capability,
                 language=lang,
+                query=url_query[:256],
                 selection=selection_int,
             )
 

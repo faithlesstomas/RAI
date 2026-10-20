@@ -81,6 +81,8 @@ class LocalIntentRecognizer:
     async def recognize(  # noqa: PLR0911, PLR0912, PLR0915
         self, turn: ConversationTurn, cancellation: CancellationToken,
     ) -> Result[ActionIntent, str]:
+        if cancellation.cancelled:
+            return Failure("CANCELLED")
         instruction = (
             "Understand the user's current intent, in their own language; do not require command keywords. "  # noqa: S608 - prompt, not SQL
             "Use recent_dialogue to understand follow-ups, user clarifications, and references (such as paths, selections, or 'that directory') in context. "
@@ -201,6 +203,8 @@ class LocalIntentRecognizer:
                     max_tokens=1024, temperature=0.0,
                 )
             generated = await bounded(gen_coro, cancellation, 30.0)
+            if cancellation.cancelled:
+                return Failure("CANCELLED")
             if isinstance(generated, Failure):
                 return Failure("INTENT_BACKEND_FAILED")
             text = generated.unwrap().text
@@ -243,6 +247,7 @@ class LocalIntentRecognizer:
                 return Failure("INTENT_SOURCE_MISMATCH")
             return Success(intent)
         except asyncio.CancelledError:
+            cancellation.cancel()
             return Failure("CANCELLED")
         except asyncio.TimeoutError:
             return Failure("INTENT_TIMEOUT")

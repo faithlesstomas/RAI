@@ -43,6 +43,7 @@ from .audit import (
 from .backends.deterministic import DeterministicAssistantBackend
 from .context import AssistantContextBuilder
 from .controllers.direct import DirectController
+from .memory import extract_memory_proposals
 from .ports import (
     AssistantActionHandler,
     AssistantModelBackend,
@@ -530,6 +531,10 @@ class AssistantService:
         cancellation: CancellationToken,
     ) -> tuple[tuple[MemoryProposal, ...], list[MemoryOperation]]:
         """Merge bounded control proposals with schema-constrained model proposals."""
+        if not candidate_proposals and turn.role == "user":
+            candidate_proposals = extract_memory_proposals(
+                turn.text, turn.record_id, self.producer
+            )
         if self.memory_extractor is None:
             return candidate_proposals, []
 
@@ -1152,6 +1157,11 @@ class AssistantService:
         )
 
     async def delete_turn(self, turn_id: str) -> Result[int, ActionFailure]:
+        return await self.store.delete_turn(turn_id)
+
+    async def rollback_turn(self, turn_id: str) -> Result[int, ActionFailure]:
+        if hasattr(self.store, "rollback_turn"):
+            return await self.store.rollback_turn(turn_id)
         return await self.store.delete_turn(turn_id)
 
     async def accept_turn_stream(

@@ -6,6 +6,7 @@ import asyncio
 from datetime import datetime
 from enum import Enum
 import json
+import re
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_validator
 from returns.result import Failure, Result, Success
@@ -146,6 +147,41 @@ class SchemaConstrainedMemoryExtractor:
             f"object matching this schema, without markdown: {schema}\nSource JSON: {source}"
         )
 
+    @staticmethod
+    def _normalize_raw_output(raw_output: str, turn: ConversationTurn) -> str:
+        """Strip wrappers and repair exact-substring span offsets before strict validation."""
+        cleaned = re.sub(r"<think>.*?</think>", "", raw_output, flags=re.DOTALL).strip()
+        if cleaned.startswith("```"):
+            cleaned = re.sub(r"^```(?:json)?\s*|\s*```$", "", cleaned, flags=re.DOTALL).strip()
+        try:
+            data = json.loads(cleaned)
+        except Exception:  # noqa: BLE001
+            return cleaned
+        if not isinstance(data, dict):
+            return cleaned
+        candidates = data.get("candidates")
+        if isinstance(candidates, list):
+            if not candidates and not isinstance(data.get("confidence"), (int, float)):
+                data["confidence"] = 1.0
+            for cand in candidates:
+                if not isinstance(cand, dict):
+                    continue
+                if not cand.get("source_id") or cand.get("source_id") in ("user", "source", "turn"):
+                    cand["source_id"] = turn.record_id
+                span = cand.get("source_span")
+                if isinstance(span, str) and span and span in turn.text:
+                    start = cand.get("span_start")
+                    end = cand.get("span_end")
+                    if (
+                        not isinstance(start, int)
+                        or not isinstance(end, int)
+                        or turn.text[start:end] != span
+                    ):
+                        idx = turn.text.find(span)
+                        cand["span_start"] = idx
+                        cand["span_end"] = idx + len(span)
+        return json.dumps(data, ensure_ascii=False)
+
     async def extract(  # noqa: PLR0911
         self,
         turn: ConversationTurn,
@@ -200,8 +236,9 @@ class SchemaConstrainedMemoryExtractor:
                 )
             )
         raw_output = generated.unwrap().text.strip()
+        cleaned_output = self._normalize_raw_output(raw_output, turn)
         try:
-            output = MemoryExtractionOutput.model_validate_json(raw_output)
+            output = MemoryExtractionOutput.model_validate_json(cleaned_output)
         except (ValidationError, ValueError, TypeError):
             return Failure(
                 make_assistant_failure(
@@ -210,6 +247,8 @@ class SchemaConstrainedMemoryExtractor:
                     request_id=turn.record_id,
                 )
             )
+        if not output.candidates:
+            return Success(())
         if output.confidence < MIN_BATCH_CONFIDENCE:
             return Failure(
                 make_assistant_failure(

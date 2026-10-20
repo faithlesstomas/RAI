@@ -30,6 +30,7 @@ from ..records import (
     MemoryProposal,
     make_assistant_failure,
 )
+from ..tool_calling import strip_tool_call_tags
 
 _MAX_LIST_ITEMS_IN_CONTENT: int = 3
 _MAX_SEARCH_ITEMS_IN_CONTENT: int = 5
@@ -222,6 +223,8 @@ class LocalAssistantBackend:
                     text = str(turn.get("text", "")).strip()
                     if role not in ("user", "assistant"):
                         role = "user"
+                    if role == "assistant":
+                        text = strip_tool_call_tags(text)
                     if text:
                         messages.append({"role": role, "content": text})
 

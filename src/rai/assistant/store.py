@@ -66,6 +66,9 @@ def _searchable_text(value: str) -> str:
     )
 
 
+_MIN_STEM_LEN: int = 6
+
+
 def _fts_query(terms: tuple[str, ...]) -> str:
     """Build a bounded FTS5 OR query from resolver-produced lexical terms."""
     tokens = tuple(
@@ -1751,6 +1754,57 @@ class SQLiteMemoryGraphStore:
                 if score > 0.0:
                     scored.append((score, record, reason))
 
+            if not scored and use_fts and keywords:
+                stems = [
+                    (kw, _searchable_text(kw)[:_MIN_STEM_LEN])
+                    for kw in keywords
+                    if len(_searchable_text(kw)) >= _MIN_STEM_LEN
+                ]
+                if stems:
+                    fallback_sql = (
+                        "SELECT m.*, l.status AS lifecycle_status, 0.0 AS bm25_score FROM memories m "  # noqa: S608
+                        "JOIN memory_lifecycle l ON m.memory_id = l.memory_id "
+                        "WHERE m.profile_scope = ? "
+                        "  AND l.status = 'ACTIVE' "
+                        f"  AND m.data_class IN ({placeholders}) "
+                        "  AND m.recorded_at <= ? "
+                        "  AND (m.expired_at IS NULL OR m.expired_at > ?) "
+                        "  AND m.valid_from <= ? "
+                        "  AND (m.valid_until IS NULL OR m.valid_until > ?) "
+                        "  AND m.purpose = ? "
+                        "ORDER BY m.created_at DESC LIMIT 50"
+                    )
+                    fallback_params: list[Any] = [
+                        profile_scope,
+                        *allowed_classes,
+                        transaction_iso,
+                        transaction_iso,
+                        valid_iso,
+                        valid_iso,
+                        query.purpose if query else "assistant",
+                    ]
+                    cur.execute(fallback_sql, fallback_params)
+                    for row in cur.fetchall():
+                        record = _memory_from_row(row)
+                        if query is not None and not domain_scope_matches(
+                            record.domain_scope, query.domain_scopes
+                        ):
+                            continue
+                        content_str = _searchable_text(
+                            f"{record.kind} {record.topic} {json.dumps(record.content, ensure_ascii=False)}"
+                        )
+                        matched_stems = [
+                            kw for kw, stem in stems if stem in content_str
+                        ]
+                        if matched_stems:
+                            scored.append(
+                                (
+                                    0.4 + 0.1 * len(matched_stems),
+                                    record,
+                                    f"stem claim match on {matched_stems}",
+                                )
+                            )
+
             scored.sort(key=lambda item: item[0], reverse=True)
             result = tuple((rec, reason) for _, rec, reason in scored[:limit])
             return Success(result)
@@ -2070,6 +2124,82 @@ class SQLiteMemoryGraphStore:
             return Failure(
                 make_assistant_failure(
                     code="DELETE_TURN_FAILED",
+                    message=str(exc),
+                    request_id=turn_id,
+                )
+            )
+        finally:
+            conn.close()
+
+    async def rollback_turn(self, turn_id: str) -> Result[int, ActionFailure]:
+        """Roll back an aborted or cancelled turn and all its associated records completely."""
+        async with self._lock:
+            return await asyncio.to_thread(self._sync_rollback_turn, turn_id)
+
+    def _sync_rollback_turn(self, turn_id: str) -> Result[int, ActionFailure]:
+        conn = self._connect()
+        try:
+            self._init_db(conn)
+            cur = conn.cursor()
+            cur.execute("SELECT node_id FROM nodes WHERE node_id = ?", (turn_id,))
+            exists = cur.fetchone() is not None
+
+            with conn:
+                resp_rows = conn.execute(
+                    "SELECT assistant_turn_id FROM responses WHERE user_turn_id = ? AND assistant_turn_id IS NOT NULL",
+                    (turn_id,),
+                ).fetchall()
+                reply_rows = conn.execute(
+                    "SELECT turn_id FROM turns WHERE reply_to_turn_id = ? AND role = 'assistant'",
+                    (turn_id,),
+                ).fetchall()
+                assistant_turn_ids = {
+                    str(r["assistant_turn_id"]) for r in resp_rows
+                } | {
+                    str(r["turn_id"]) for r in reply_rows
+                }
+
+                created_memories = conn.execute(
+                    "SELECT memory_id FROM memories WHERE source_turn_id = ?",
+                    (turn_id,),
+                ).fetchall()
+                for mem_row in created_memories:
+                    mid = str(mem_row["memory_id"])
+                    lc_row = conn.execute(
+                        "SELECT supersedes_id FROM memory_lifecycle WHERE memory_id = ?",
+                        (mid,),
+                    ).fetchone()
+                    if lc_row and lc_row["supersedes_id"]:
+                        prev_id = str(lc_row["supersedes_id"])
+                        conn.execute(
+                            "UPDATE memory_lifecycle SET status = 'ACTIVE', superseded_by = NULL WHERE memory_id = ?",
+                            (prev_id,),
+                        )
+                        conn.execute(
+                            "UPDATE memories SET expired_at = NULL WHERE memory_id = ?",
+                            (prev_id,),
+                        )
+                    conn.execute("DELETE FROM memories_fts WHERE memory_id = ?", (mid,))
+                    conn.execute("DELETE FROM nodes WHERE node_id = ?", (mid,))
+
+                conn.execute(
+                    "DELETE FROM memory_operations WHERE trigger_id = ?",
+                    (turn_id,),
+                )
+
+                for at_id in assistant_turn_ids:
+                    conn.execute("DELETE FROM turns_fts WHERE turn_id = ?", (at_id,))
+                    conn.execute("DELETE FROM nodes WHERE node_id = ?", (at_id,))
+
+                if exists:
+                    conn.execute("DELETE FROM turns_fts WHERE turn_id = ?", (turn_id,))
+                    conn.execute("DELETE FROM nodes WHERE node_id = ?", (turn_id,))
+
+            return Success(1 if exists else 0)
+        except Exception as exc:  # noqa: BLE001
+            return Failure(
+                make_assistant_failure(
+                    code="ROLLBACK_TURN_FAILED",
                     message=str(exc),
                     request_id=turn_id,
                 )

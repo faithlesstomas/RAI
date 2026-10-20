@@ -3,7 +3,9 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+import html
 import json
+import re
 from typing import Any, Protocol
 from urllib.parse import urlsplit
 
@@ -152,6 +154,60 @@ class CdpBrowserBackend:
             return Failure("BROWSER_READ_FAILED")
 
 
+async def _fetch_http_page_snapshot(  # noqa: PLR0911
+    url: str, token: CancellationToken
+) -> Result[dict[str, Any], str]:
+    """Bounded plain-text HTTP fallback for browser.read_page when no CDP endpoint is configured."""
+    if token.cancelled:
+        return Failure("CANCELLED")
+    if not web_url(url):
+        return Failure("STALE_RESOURCE")
+    try:
+        async with httpx.AsyncClient(
+            timeout=10.0,
+            follow_redirects=True,
+            trust_env=False,
+            headers={"User-Agent": "Mozilla/5.0 (compatible; RAI-Reader/1.0)"},
+        ) as client:
+            async with client.stream("GET", url) as response:
+                response.raise_for_status()
+                if not web_url(str(response.url)):
+                    return Failure("STALE_RESOURCE")
+                raw_bytes = bytearray()
+                async for chunk in response.aiter_bytes(chunk_size=65536):
+                    if token.cancelled:
+                        return Failure("CANCELLED")
+                    raw_bytes.extend(chunk)
+                    if len(raw_bytes) >= 512 * 1024:
+                        break
+                encoding = response.encoding or "utf-8"
+                raw_html = raw_bytes.decode(encoding, errors="replace")
+        title_match = re.search(r"<title[^>]*>(.*?)</title>", raw_html, flags=re.IGNORECASE | re.DOTALL)
+        title = html.unescape(re.sub(r"\s+", " ", title_match.group(1)).strip()) if title_match else url
+        cleaned = re.sub(
+            r"<(?:script|style|noscript|svg|head)[^>]*>.*?</(?:script|style|noscript|svg|head)>",
+            " ",
+            raw_html,
+            flags=re.IGNORECASE | re.DOTALL,
+        )
+        cleaned = re.sub(r"<!--.*?-->", " ", cleaned, flags=re.DOTALL)
+        cleaned = re.sub(r"<[^>]+>", " ", cleaned)
+        text = re.sub(r"\s+", " ", html.unescape(cleaned)).strip()
+        if not text:
+            return Failure("BROWSER_READ_FAILED")
+        return Success({
+            "target_id": f"http:{hashlib.sha256(url.encode()).hexdigest()[:12]}",
+            "observed_url": url,
+            "title": title[:256],
+            "text": text[:MAX_PAGE_CHARACTERS],
+            "untrusted_content": True,
+        })
+    except asyncio.CancelledError:
+        raise
+    except Exception:  # pylint: disable=broad-exception-caught
+        return Failure("BROWSER_READ_FAILED")
+
+
 class BrowserCapability:
     def __init__(self, name: str, handles: SQLiteHandleStore, backend: BrowserBackend) -> None:
         self.name, self.handles, self.backend = name, handles, backend
@@ -204,6 +260,8 @@ class BrowserCapability:
                 if isinstance(open_res, Failure):
                     return Failure(failure(request, open_res.failure()))
                 invoked = await self.backend.read(handle.target, cancellation)
+            elif isinstance(invoked, Failure) and invoked.failure() == "BROWSER_NOT_CONFIGURED":
+                invoked = await _fetch_http_page_snapshot(handle.target, cancellation)
         if isinstance(invoked, Failure):
             return Failure(failure(request, invoked.failure()))
         evidence = invoked.unwrap()

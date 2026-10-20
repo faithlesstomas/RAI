@@ -1,4 +1,7 @@
+from __future__ import annotations
+
 from datetime import timedelta
+from typing import Any
 from returns.result import Failure, Result
 
 from rai.assistant.ports import MemoryGraphStore
@@ -10,6 +13,33 @@ from rai.kernel.transport import normalize_request
 from .dialogue import previous_action
 from .intent import ActionIntent
 from .records import ActionProposal, ActiveChoiceFrame, ChoiceEntry, ChoiceState
+
+
+def match_choice_handle_by_text(choices: dict[str, Any], query: str) -> str | None:
+    """Find a choice entry whose label/name or URL matches query as a substring."""
+    entries = choices.get("entries", ())
+    q_lower = query.casefold().strip()
+    if not q_lower:
+        return None
+    for entry in entries:
+        if not isinstance(entry, dict):
+            continue
+        url = str(entry.get("url", "")).casefold()
+        meta_url = (
+            str(entry.get("metadata", {}).get("url", "")).casefold()
+            if isinstance(entry.get("metadata"), dict)
+            else ""
+        )
+        name = str(entry.get("name", "")).casefold()
+        label = str(entry.get("label", "")).casefold()
+        if (
+            (url and (q_lower in url or url in q_lower))
+            or (meta_url and (q_lower in meta_url or meta_url in q_lower))
+            or (name and (q_lower in name or name in q_lower))
+            or (label and (q_lower in label or label in q_lower))
+        ):
+            return entry.get("handle")
+    return None
 
 
 async def route_action(  # noqa: PLR0913, PLR0912, PLR0915
@@ -42,8 +72,13 @@ async def route_action(  # noqa: PLR0913, PLR0912, PLR0915
             )
         choices = previous.get("action_choices", {})
         entries = choices.get("entries", ())
+        matched_handle = None
+        if choices.get("kind") == "url" and intent.selection is None and intent.query:
+            matched_handle = match_choice_handle_by_text(choices, intent.query)
         if name == "browser.read_page" and intent.selection is None and previous.get("selected_resource_handle"):
             arguments = {"task_id": choices.get("task_id", task_id), "handle": previous["selected_resource_handle"]}
+        elif matched_handle:
+            arguments = {"task_id": choices["task_id"], "handle": matched_handle}
         elif choices.get("kind") != "url" or intent.selection is None or intent.selection > len(entries):
             return AssistantCandidate(text=("Który wynik wybrać? Wyszukaj strony i podaj numer wyniku."
                                             if polish else "Which result? Search the web and select a result number."))
