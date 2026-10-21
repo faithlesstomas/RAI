@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 from datetime import timedelta
+import hashlib
+import re
 from typing import Any
 from returns.result import Failure, Result
 
@@ -10,9 +12,10 @@ from rai.kernel.ports import CancellationToken
 from rai.kernel.service import CapabilityService
 from rai.kernel.records import ActionFailure, ActionResult, PolicyDecision, _new_id, _utc_now
 from rai.kernel.transport import normalize_request
+from .browser import web_url
 from .dialogue import previous_action
 from .intent import ActionIntent
-from .records import ActionProposal, ActiveChoiceFrame, ChoiceEntry, ChoiceState
+from .records import ActionProposal, ActiveChoiceFrame, ChoiceEntry, ChoiceState, ResourceHandle
 
 
 def match_choice_handle_by_text(choices: dict[str, Any], query: str) -> str | None:
@@ -47,7 +50,7 @@ def match_choice_handle_by_text(choices: dict[str, Any], query: str) -> str | No
     return None
 
 
-async def route_action(  # noqa: PLR0913, PLR0912, PLR0915
+async def route_action(  # noqa: PLR0911, PLR0912, PLR0913, PLR0915
     service: CapabilityService, store: MemoryGraphStore | None, profile: str,
     turn: ConversationTurn, intent: ActionIntent, token: CancellationToken,
 ) -> AssistantCandidate | None:
@@ -80,10 +83,39 @@ async def route_action(  # noqa: PLR0913, PLR0912, PLR0915
         matched_handle = None
         if choices.get("kind") == "url" and intent.selection is None and intent.query:
             matched_handle = match_choice_handle_by_text(choices, intent.query)
-        if name == "browser.read_page" and intent.selection is None and previous.get("selected_resource_handle"):
-            arguments = {"task_id": choices.get("task_id", task_id), "handle": previous["selected_resource_handle"]}
-        elif matched_handle:
+        target_url = None
+        if intent.query and web_url(intent.query):
+            target_url = intent.query
+        elif not entries and turn.text:
+            url_match = re.search(r"https?://[^\s<>\"']+", turn.text)
+            if url_match and web_url(url_match.group(0)):
+                target_url = url_match.group(0)
+
+        if matched_handle:
             arguments = {"task_id": choices["task_id"], "handle": matched_handle}
+        elif name == "browser.read_page" and intent.selection is None and previous.get("selected_resource_handle"):
+            arguments = {"task_id": choices.get("task_id", task_id), "handle": previous["selected_resource_handle"]}
+        elif target_url and getattr(service, "handles", None) is not None:
+            now = _utc_now()
+            handle = ResourceHandle(
+                record_id=_new_id(),
+                timestamp=now,
+                producer=turn.producer,
+                actor_id=turn.producer.producer_id,
+                task_id=task_id,
+                kind="url",
+                target=target_url,
+                fingerprint=hashlib.sha256(target_url.encode()).hexdigest(),
+                operations=("browser.open_result", "browser.read_page"),
+                expires_at=now + timedelta(minutes=5),
+                data_class=turn.data_class,
+            )
+            issued = service.handles.issue(handle)
+            if isinstance(issued, Failure):
+                return AssistantCandidate(
+                    text="Nie udało się utworzyć uchwytu zasobu." if polish else "Failed to issue resource handle."
+                )
+            arguments = {"task_id": task_id, "handle": issued.unwrap()}
         elif choices.get("kind") != "url" or intent.selection is None or intent.selection > len(entries):
             if intent.query and intent.selection is None:
                 return None

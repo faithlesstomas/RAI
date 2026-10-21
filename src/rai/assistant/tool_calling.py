@@ -166,8 +166,8 @@ _TOOL_PARAM_HINTS: dict[str, str] = {
     "system.volume.set": '{"percent": <integer 0-100>}',
     "process.inspect": '{"query": "<process name or PID>"}',
     "browser.search": '{"query": "<search query>"}',
-    "browser.open_result": '{"selection": <1-based result index>}',
-    "browser.read_page": '{"selection": <1-based result index>}',
+    "browser.open_result": '{"url": "<web URL to open>", "selection": "<optional 1-based result index from previous search>"}',
+    "browser.read_page": '{"url": "<web URL to read>", "selection": "<optional 1-based result index from previous search>"}',
     "activity.query": '{"query": "<optional app/project filter>", "lookback_minutes": <optional int>}',
     "capabilities.list": "{}",
 }

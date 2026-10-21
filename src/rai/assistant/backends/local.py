@@ -180,7 +180,7 @@ class LocalAssistantBackend:
         observations_in_system = (
             "Tool Observations:" in system_text
             or "Collected Observations:" in system_text
-            or request.strategy == "BOUNDED_STEP"
+            or getattr(request, "strategy", None) == "BOUNDED_STEP"
         )
         if (
             isinstance(tool_observations, (list, tuple))

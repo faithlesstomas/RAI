@@ -1,6 +1,7 @@
 """Routing resolves finite model choices to runtime-issued handles before any invocation."""
 from __future__ import annotations
 
+from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
 
@@ -8,6 +9,7 @@ from returns.result import Failure, Success
 
 from rai.actions.capabilities import failure, result
 from rai.actions.dialogue import previous_action
+from rai.actions.handles import SQLiteHandleStore
 from rai.actions.intent import ActionIntent
 from rai.actions.routing import route_action
 from rai.assistant.records import ConversationTurn
@@ -241,4 +243,30 @@ async def test_read_page_unmatched_query_returns_none_for_agentic_loop() -> None
         service, None, intent("browser.read_page", query="https://unknown-domain.org")
     )
     assert candidate is None
+
+
+async def test_read_page_direct_url_with_handles_issues_handle_and_reads(tmp_path: Path) -> None:
+    handles = SQLiteHandleStore(tmp_path / "handles.db")
+    service = Service({"browser.read_page": {"title": "Direct Page Title", "text": "Direct page body text."}})
+    service.handles = handles  # type: ignore[attr-defined]
+
+    user_turn = ConversationTurn(
+        producer=ACTOR, session_id="s_direct", role="user", text="Please read https://news.example.com/item/123"
+    )
+    candidate = await route_action(
+        service, None, "default", user_turn,  # type: ignore[arg-type]
+        intent("browser.read_page", query="https://news.example.com/item/123"), CancellationToken(),
+    )
+    assert candidate is not None
+    assert "Direct Page Title" in candidate.text
+    assert "Direct page body text." in candidate.text
+    assert len(service.requests) == 1
+    assert service.requests[0].capability == "browser.read_page"
+    issued_handle = service.requests[0].arguments["handle"]
+    resolved = handles.resolve(
+        issued_handle, actor_id=ACTOR.producer_id, task_id=f"action:{user_turn.record_id}", operation="browser.read_page"
+    )
+    assert isinstance(resolved, Success)
+    assert resolved.unwrap().target == "https://news.example.com/item/123"
+
 
