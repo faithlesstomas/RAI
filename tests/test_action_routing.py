@@ -165,3 +165,74 @@ async def test_failed_execution_is_never_presented_as_success() -> None:
     assert "action_choices" not in candidate.metadata
     polish = await route(service, None, intent("browser.search", "pl", query="x"))
     assert polish.text == "Nie potwierdzam wykonania: BACKEND_FAILED."
+
+
+async def test_previous_action_preserves_choices_across_denied_turn() -> None:
+    from rai.actions.dialogue import previous_action
+    from rai.assistant.records import ConversationTurn
+
+    search_action = {
+        "action_choices": {
+            "kind": "url",
+            "task_id": "task-search",
+            "entries": [
+                {"name": "ScienceDaily News", "url": "https://www.sciencedaily.com/news/", "handle": "h-news"},
+            ],
+        },
+        "active_choice_frame": {
+            "record_id": "frame-1",
+            "task_id": "task-search",
+            "source_turn_id": "t1",
+            "intended_capability": "browser.read_page",
+            "state": "ACTIVE",
+            "entries": [{"handle": "h-news", "label": "ScienceDaily"}],
+            "expires_at": "2099-01-01T00:00:00Z",
+        },
+    }
+    denied_action = {
+        "action_result": {"status": "FAILED", "code": "DENIED", "capability": "browser.read_page"},
+    }
+
+    t1_asst = SimpleNamespace(
+        record_id="t1_asst",
+        session_id="s1",
+        role="assistant",
+        data_class=turn().data_class,
+        metadata={"profile_scope": "default", "action": search_action},
+    )
+    t2_asst = SimpleNamespace(
+        record_id="t2_asst",
+        session_id="s1",
+        role="assistant",
+        data_class=turn().data_class,
+        metadata={"profile_scope": "default", "action": denied_action},
+    )
+
+    class MultiTurnStore:
+        async def get_recent_reply_chain(self, **_: Any) -> Any:
+            return Success([t1_asst, t2_asst])
+
+    current_turn = ConversationTurn(
+        producer=ACTOR, session_id="s1", role="user", text="A nie możesz przeczytać https://sciencedaily.com/ ?"
+    )
+    prev = await previous_action(MultiTurnStore(), current_turn, "default")  # type: ignore[arg-type]
+    assert prev.get("action_choices") == search_action["action_choices"]
+    assert prev.get("active_choice_frame") == search_action["active_choice_frame"]
+
+    service = Service({"browser.read_page": {"title": "ScienceDaily", "text": "Content"}})
+    read_cand = await route_action(
+        service, MultiTurnStore(), "default", current_turn,  # type: ignore[arg-type]
+        intent("browser.read_page", query="https://sciencedaily.com/"), CancellationToken(),
+    )
+    assert read_cand is not None
+    assert service.requests[0].capability == "browser.read_page"
+    assert service.requests[0].arguments["handle"] == "h-news"
+
+
+async def test_read_page_unmatched_query_returns_none_for_agentic_loop() -> None:
+    service = Service({})
+    candidate = await route(
+        service, None, intent("browser.read_page", query="https://unknown-domain.org")
+    )
+    assert candidate is None
+

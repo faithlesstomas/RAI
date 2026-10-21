@@ -21,20 +21,25 @@ def match_choice_handle_by_text(choices: dict[str, Any], query: str) -> str | No
     q_lower = query.casefold().strip()
     if not q_lower:
         return None
+    q_clean = q_lower.removeprefix("https://").removeprefix("http://").removeprefix("www.").rstrip("/")
     for entry in entries:
         if not isinstance(entry, dict):
             continue
-        url = str(entry.get("url", "")).casefold()
+        url = str(entry.get("url", "")).casefold().strip()
+        url_clean = url.removeprefix("https://").removeprefix("http://").removeprefix("www.").rstrip("/")
         meta_url = (
-            str(entry.get("metadata", {}).get("url", "")).casefold()
+            str(entry.get("metadata", {}).get("url", "")).casefold().strip()
             if isinstance(entry.get("metadata"), dict)
             else ""
         )
-        name = str(entry.get("name", "")).casefold()
-        label = str(entry.get("label", "")).casefold()
+        meta_clean = meta_url.removeprefix("https://").removeprefix("http://").removeprefix("www.").rstrip("/")
+        name = str(entry.get("name", "")).casefold().strip()
+        label = str(entry.get("label", "")).casefold().strip()
         if (
             (url and (q_lower in url or url in q_lower))
+            or (url_clean and q_clean and (q_clean in url_clean or url_clean in q_clean))
             or (meta_url and (q_lower in meta_url or meta_url in q_lower))
+            or (meta_clean and q_clean and (q_clean in meta_clean or meta_clean in q_clean))
             or (name and (q_lower in name or name in q_lower))
             or (label and (q_lower in label or label in q_lower))
         ):
@@ -45,7 +50,7 @@ def match_choice_handle_by_text(choices: dict[str, Any], query: str) -> str | No
 async def route_action(  # noqa: PLR0913, PLR0912, PLR0915
     service: CapabilityService, store: MemoryGraphStore | None, profile: str,
     turn: ConversationTurn, intent: ActionIntent, token: CancellationToken,
-) -> AssistantCandidate:
+) -> AssistantCandidate | None:
     """Preserve data classification and source identity across each action step."""
     name = intent.outcome
     task_id = f"action:{turn.record_id}"
@@ -80,6 +85,8 @@ async def route_action(  # noqa: PLR0913, PLR0912, PLR0915
         elif matched_handle:
             arguments = {"task_id": choices["task_id"], "handle": matched_handle}
         elif choices.get("kind") != "url" or intent.selection is None or intent.selection > len(entries):
+            if intent.query and intent.selection is None:
+                return None
             return AssistantCandidate(text=("Który wynik wybrać? Wyszukaj strony i podaj numer wyniku."
                                             if polish else "Which result? Search the web and select a result number."))
         else:
