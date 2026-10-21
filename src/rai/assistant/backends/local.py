@@ -50,6 +50,7 @@ class LocalAssistantBackend:
         enable_thinking: bool = False,
         thinking_budget: int | None = None,
         thinking_level: str | None = None,
+        max_observation_characters: int = 64000,
     ) -> None:
         self.engine = engine
         self.model_name = model_name or "local-model"
@@ -60,6 +61,7 @@ class LocalAssistantBackend:
         self.enable_thinking = enable_thinking
         self.thinking_budget = thinking_budget
         self.thinking_level = thinking_level
+        self.max_observation_characters = max_observation_characters
         self.prompt_template_version = "rai-assistant-messages-v5"
         self.is_remote = False
         self._state = LifecycleState.CREATED
@@ -184,7 +186,9 @@ class LocalAssistantBackend:
                     capability = str(item.get("capability", "tool"))
                     summary = str(item.get("summary", ""))
                     content_val = item.get("content", {})
-                    content_str = self._bound_content_repr(content_val, max_len=4500)
+                    content_str = self._bound_content_repr(
+                        content_val, max_len=self.max_observation_characters
+                    )
                     evidence_lines.append(f"- [{capability}] {summary}: {content_str}")
 
         system_parts = [
@@ -265,16 +269,17 @@ class LocalAssistantBackend:
         return "\n".join(rendered)
 
     @staticmethod
-    def _bound_content_repr(content: object, max_len: int = 4500) -> str:
+    def _bound_content_repr(content: object, max_len: int = 64000) -> str:
         """Serialize and bound content to avoid context window explosion."""
         if isinstance(content, dict):
             limits_by_key = {
                 "results": _MAX_SEARCH_ITEMS_IN_CONTENT,
-                "capabilities": 20,
-                "application_names": 256,
-                "documents": 30,
-                "entries": 30,
-                "processes": 30,
+                "capabilities": 50,
+                "application_names": 1024,
+                "applications": 1024,
+                "documents": 100,
+                "entries": 100,
+                "processes": 100,
             }
             bounded_dict = {}
             for k, v in content.items():

@@ -115,8 +115,8 @@ ALLOWED_GENERIC_TRANSITIONS: dict[AgentWorkflowState, set[AgentWorkflowState]] =
 }
 
 
-_MAX_OBSERVATION_CHARS: int = 4500
-_MAX_COMPACT_APPS_FULL: int = 20
+_MAX_OBSERVATION_CHARS: int = 64000
+_MAX_COMPACT_APPS_FULL: int = 1024
 
 
 def _state_str(state: object) -> str:
@@ -207,7 +207,7 @@ def _compact_observation_content(  # noqa: PLR0912
                 if isinstance(raw_names, (list, tuple))
                 else [str(a) for a in apps]
             )
-        compacted["application_names"] = names[:256]
+        compacted["application_names"] = names[:1024]
         if len(apps) <= _MAX_COMPACT_APPS_FULL:
             compacted["applications"] = [
                 {k: v for k, v in a.items() if k not in ("handle", "expires_at")}
@@ -256,11 +256,14 @@ def _compact_observation_content(  # noqa: PLR0912
     return compacted
 
 
-def _format_older_observation_summary(obs: Any) -> str:
+def _format_older_observation_summary(  # noqa: PLR0912
+    obs: Any,  # noqa: ANN401
+) -> str:
     """Format an older observation into a concise 1-line summary for context compaction."""
+    max_chars = 120
     if not isinstance(obs, dict):
         text = str(obs).replace("\n", " ").strip()
-        return text[:120] + "..." if len(text) > 120 else text
+        return text[:max_chars] + "..." if len(text) > max_chars else text
 
     parts: list[str] = []
     if "status" in obs:
@@ -292,7 +295,7 @@ def _format_older_observation_summary(obs: Any) -> str:
 
     if not parts:
         dumped = json.dumps(obs, ensure_ascii=False)
-        return dumped[:120] + "..." if len(dumped) > 120 else dumped
+        return dumped[:max_chars] + "..." if len(dumped) > max_chars else dumped
 
     return ", ".join(parts)
 

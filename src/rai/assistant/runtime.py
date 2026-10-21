@@ -80,7 +80,7 @@ def _local_artifact_version(model: str) -> str | None:
     return f"sha256:{digest.hexdigest()}"
 
 
-def resolve_assistant_config(  # noqa: PLR0913
+def resolve_assistant_config(  # noqa: PLR0912, PLR0913, PLR0915
     config: dict[str, Any],
     *,
     backend_override: str | None = None,
@@ -340,4 +340,5 @@ def build_assistant_backend(runtime: AssistantRuntimeConfig) -> AssistantModelBa
         enable_thinking=runtime.enable_thinking,
         thinking_budget=runtime.thinking_budget,
         thinking_level=runtime.thinking_level,
+        max_observation_characters=max(64000, runtime.max_context_characters),
     )

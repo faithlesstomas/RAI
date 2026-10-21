@@ -597,3 +597,40 @@ async def test_assistant_service_bounded_task_e2e(tmp_path: Path) -> None:
     finally:
         await service.stop()
 
+
+def test_large_application_list_compacting_and_backend_representation() -> None:
+    from rai.actions.workflow import _compact_observation_content
+    from rai.assistant.backends.local import LocalAssistantBackend
+
+    apps = [
+        {
+            "name": f"App {i}",
+            "desktop_id": f"app_{i}.desktop",
+            "categories": ["AudioVideo", "Player", "Video"] if i % 2 == 0 else ["Utility"],
+            "comment": f"Description for app {i}",
+            "generic_name": "Media Player" if i % 2 == 0 else "Tool",
+            "handle": f"handle_{i}",
+            "expires_at": "2026-10-21T12:00:00Z",
+        }
+        for i in range(125)
+    ]
+    raw_output = {"total_count": len(apps), "applications": apps}
+    compacted = _compact_observation_content(raw_output)
+
+    # All 125 applications must remain in the compacted output (not dropped)
+    assert compacted["total_count"] == 125
+    assert len(compacted["applications"]) == 125
+    assert len(compacted["application_names"]) == 125
+    # Technical fields removed, domain fields preserved
+    first = compacted["applications"][0]
+    assert "handle" not in first
+    assert "expires_at" not in first
+    assert first["name"] == "App 0"
+    assert first["categories"] == ["AudioVideo", "Player", "Video"]
+
+    # Local backend representation should keep all apps without truncation
+    backend = LocalAssistantBackend()
+    repr_str = backend._bound_content_repr(compacted, max_len=backend.max_observation_characters)
+    assert "truncated" not in repr_str
+    assert "App 124" in repr_str
+

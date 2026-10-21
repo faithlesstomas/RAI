@@ -14,14 +14,14 @@ from rai.kernel.capabilities import CapabilityDescriptor, CapabilityRegistry, Re
 from rai.kernel.ports import CancellationToken
 from rai.kernel.records import ActionFailure, ActionResult, CapabilityRequest, ProducerIdentity, RiskClass, _utc_now
 
-from .applications import ApplicationBackend
+from .applications import Application, ApplicationBackend
 from .handles import SQLiteHandleStore
 from .records import ResourceHandle
 
 PRODUCER = ProducerIdentity(producer_id="rai.actions", kind="capability", version="1.0.0")
 HANDLE_TTL = timedelta(minutes=5)
 MAX_RESULTS = 30
-MAX_APPLICATION_RESULTS = 256
+MAX_APPLICATION_RESULTS = 1024
 MAX_QUERY_LENGTH = 256
 
 
@@ -62,8 +62,39 @@ class ApplicationList:
         discovered = await self.backend.discover()
         if isinstance(discovered, Failure):
             return Failure(failure(request, discovered.failure()))
-        matches = [app for app in discovered.unwrap()
-                   if any(query.casefold() in name.casefold() for name in (app.name, app.desktop_id, Path(app.executable).name, *app.localized_names))]
+        def _match_app(app: Application, q: str) -> bool:
+            if not q:
+                return True
+            q_cf = q.casefold().strip()
+            targets = [
+                app.name,
+                app.desktop_id,
+                Path(app.executable).name,
+                *app.localized_names,
+                getattr(app, "generic_name", ""),
+                getattr(app, "comment", ""),
+                *getattr(app, "categories", ()),
+                *getattr(app, "mime_types", ()),
+            ]
+            if any(q_cf in t.casefold() for t in targets):
+                return True
+            terms_map = {
+                "wideo": ["video", "player", "movie", "film"],
+                "video": ["wideo", "player", "movie", "film"],
+                "muzyka": ["audio", "music", "sound", "player"],
+                "audio": ["muzyka", "audio", "sound", "player"],
+                "odtwarzacz": ["player", "media", "video", "audio"],
+                "player": ["odtwarzacz", "media"],
+                "przeglądarka": ["browser", "web", "navigator"],
+                "browser": ["przeglądarka", "web"],
+            }
+            extra_terms = terms_map.get(q_cf, [])
+            return any(
+                any(term in t.casefold() for term in extra_terms)
+                for t in targets
+            )
+
+        matches = [app for app in discovered.unwrap() if _match_app(app, query)]
         output = []
         for app in matches[:MAX_APPLICATION_RESULTS]:
             if cancellation.cancelled:
@@ -78,8 +109,19 @@ class ApplicationList:
             issued = await asyncio.to_thread(self.handles.issue, handle)
             if isinstance(issued, Failure):
                 return Failure(failure(request, issued.failure()))
-            output.append({"desktop_id": app.desktop_id, "name": app.name,
-                           "handle": issued.unwrap(), "expires_at": handle.expires_at.isoformat()})
+            app_entry: dict[str, Any] = {
+                "desktop_id": app.desktop_id,
+                "name": app.name,
+                "handle": issued.unwrap(),
+                "expires_at": handle.expires_at.isoformat(),
+            }
+            if getattr(app, "generic_name", ""):
+                app_entry["generic_name"] = app.generic_name
+            if getattr(app, "categories", ()):
+                app_entry["categories"] = list(app.categories)
+            if getattr(app, "comment", ""):
+                app_entry["comment"] = app.comment
+            output.append(app_entry)
         return Success(result(request, {"total_count": len(output), "applications": output, "truncated": len(matches) > MAX_APPLICATION_RESULTS},
                               {"source": "installed-desktop-entries"}))
 
