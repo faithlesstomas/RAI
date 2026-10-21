@@ -53,7 +53,7 @@ class AssistantRuntimeConfig:
     enable_thinking: bool = False
     thinking_budget: int | None = None
     thinking_level: str | None = None
-    interaction_controller: str = "direct"
+    interaction_controller: str = "bounded_step"
     max_iterations: int | None = None
     max_full_observations: int = 3
 
@@ -181,7 +181,7 @@ def resolve_assistant_config(  # noqa: PLR0912, PLR0913, PLR0915
                 assistant.get("interaction_controller")
                 or local_ai.get("interaction_controller")
                 or os.environ.get("RAI_INTERACTION_CONTROLLER")
-                or "direct"
+                or "bounded_step"
             ),
             max_iterations=resolved_max_iterations,
             max_full_observations=resolved_max_full_obs,
@@ -294,7 +294,7 @@ def resolve_assistant_config(  # noqa: PLR0912, PLR0913, PLR0915
             assistant.get("interaction_controller")
             or local_ai.get("interaction_controller")
             or os.environ.get("RAI_INTERACTION_CONTROLLER")
-            or "direct"
+            or "bounded_step"
         ),
         max_iterations=resolved_max_iterations,
         max_full_observations=resolved_max_full_obs,

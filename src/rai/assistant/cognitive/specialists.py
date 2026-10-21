@@ -24,25 +24,43 @@ from rai.skills.models import SkillRegistry
 from .models import WorkspaceContribution, WorkspaceContributionKind, WorkspaceState
 
 PRODUCER = ProducerIdentity(producer_id="workspace-specialist", kind="specialist", version="1.0.0")
+_MIN_REASONABLE_INPUT_TOKENS: int = 50
 
 
-def _make_specialist_budget(max_input_tokens: int, max_output_tokens: int) -> InferenceBudget:
+def _make_specialist_budget(
+    default_max_input: int,
+    default_max_output: int,
+    parent_budget: InferenceBudget | None = None,
+) -> InferenceBudget:
     now = _utc_now()
+    if parent_budget is not None:
+        rem_in = parent_budget.max_input_tokens
+        rem_out = parent_budget.max_output_tokens
+        max_in = min(default_max_input, rem_in) if rem_in > 0 else default_max_input
+        max_out = min(default_max_output, rem_out) if rem_out > 0 else default_max_output
+        max_lat = min(30, parent_budget.max_latency_seconds) if parent_budget.max_latency_seconds > 0 else 30
+        deadline = parent_budget.cancellation_deadline or (now + timedelta(seconds=max_lat))
+    else:
+        max_in = default_max_input
+        max_out = default_max_output
+        max_lat = 30
+        deadline = now + timedelta(seconds=30)
+
     return InferenceBudget(
         record_id=_new_id(),
         timestamp=now,
         producer=PRODUCER,
-        max_input_tokens=max_input_tokens,
-        max_output_tokens=max_output_tokens,
+        max_input_tokens=max_in,
+        max_output_tokens=max_out,
         max_agent_turns=1,
         max_tool_calls=1,
         max_images=0,
         max_audio_seconds=0,
-        max_latency_seconds=30,
+        max_latency_seconds=max_lat,
         max_provider_cost=0,
         max_ram_bytes=2 * 1024 * 1024 * 1024,
         max_vram_bytes=0,
-        cancellation_deadline=now + timedelta(seconds=30),
+        cancellation_deadline=deadline,
     )
 
 
@@ -208,7 +226,14 @@ class ActionReasonerSpecialist:
         if workspace.context is None:
             return Success(None)
 
-        budget = _make_specialist_budget(1024, 256)
+        if (
+            workspace.budget is not None
+            and workspace.budget.max_input_tokens > 0
+            and workspace.budget.max_input_tokens < _MIN_REASONABLE_INPUT_TOKENS
+        ):
+            return Success(None)
+
+        budget = _make_specialist_budget(1024, 256, parent_budget=workspace.budget)
         inference_req = InferenceRequest(
             record_id=_new_id(),
             timestamp=_utc_now(),
@@ -339,7 +364,14 @@ class AnswerDraftSpecialist:
                 }
             )
 
-        budget = _make_specialist_budget(1500, 512)
+        if (
+            workspace.budget is not None
+            and workspace.budget.max_input_tokens > 0
+            and workspace.budget.max_input_tokens < _MIN_REASONABLE_INPUT_TOKENS
+        ):
+            return Success(None)
+
+        budget = _make_specialist_budget(1500, 512, parent_budget=workspace.budget)
         inference_req = InferenceRequest(
             record_id=_new_id(),
             timestamp=_utc_now(),

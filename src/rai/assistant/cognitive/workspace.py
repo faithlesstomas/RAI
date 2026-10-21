@@ -42,6 +42,7 @@ from .arbiter import SalienceArbiter
 from .models import WorkspaceContribution, WorkspaceContributionKind, WorkspaceState
 from .probe import JLensProbe
 from .specialists import (
+    _MIN_REASONABLE_INPUT_TOKENS,
     ActionReasonerSpecialist,
     AnswerDraftSpecialist,
     CognitiveSpecialist,
@@ -51,6 +52,7 @@ from .specialists import (
 
 PRODUCER = ProducerIdentity(producer_id="workspace-engine", kind="controller", version="1.0.0")
 _DEFAULT_MAX_CYCLES: int = 4
+_MAX_CONSECUTIVE_CRITIQUES: int = 2
 _MEMORY_ABSTENTION_TEXT: str = (
     "Nie mam wystarczających, dopuszczonych dowodów w pamięci, aby odpowiedzieć."
 )
@@ -305,10 +307,11 @@ class WorkspaceEngine(InteractionController):
         elif budget.max_agent_turns > 0:
             effective_max_cycles = budget.max_agent_turns
         else:
-            effective_max_cycles = None
+            effective_max_cycles = _DEFAULT_MAX_CYCLES
         workspace = WorkspaceState(
             cycle=0,
             max_cycles=effective_max_cycles,
+            budget=budget,
             goal=turn.text,
             session_id=turn.session_id,
             turn_id=turn.record_id,
@@ -323,8 +326,12 @@ class WorkspaceEngine(InteractionController):
         total_tokens_in = 0
         total_tokens_out = 0
         last_failure: ActionFailure | None = None
+        consecutive_critiques = 0
+        last_draft_text: str | None = None
 
-        while not workspace.converged and (workspace.max_cycles is None or workspace.cycle < workspace.max_cycles):
+        while not workspace.converged and (
+            workspace.max_cycles is not None and workspace.cycle < workspace.max_cycles
+        ):
             if token.cancelled:
                 return Failure(
                     ActionFailure(
@@ -337,6 +344,59 @@ class WorkspaceEngine(InteractionController):
                         message="Deliberation cancelled by token",
                     )
                 )
+
+            elapsed_sec = time.perf_counter() - start_time
+            if (budget.max_latency_seconds > 0 and elapsed_sec >= budget.max_latency_seconds) or (
+                budget.cancellation_deadline is not None and _utc_now() >= budget.cancellation_deadline
+            ):
+                if any(
+                    c.kind == WorkspaceContributionKind.ANSWER_DRAFT and bool(c.content.strip())
+                    for c in workspace.history
+                ):
+                    break
+                return Failure(
+                    ActionFailure(
+                        record_id=_new_id(),
+                        timestamp=_utc_now(),
+                        producer=PRODUCER,
+                        request_id=turn.record_id,
+                        capability="workspace_engine",
+                        code="DEADLINE_EXCEEDED",
+                        message=f"Deliberation exceeded latency budget ({elapsed_sec:.2f}s >= {budget.max_latency_seconds}s)",
+                    )
+                )
+
+            if (budget.max_input_tokens > 0 and total_tokens_in >= budget.max_input_tokens) or (
+                budget.max_output_tokens > 0 and total_tokens_out >= budget.max_output_tokens
+            ):
+                if any(
+                    c.kind == WorkspaceContributionKind.ANSWER_DRAFT and bool(c.content.strip())
+                    for c in workspace.history
+                ):
+                    break
+                return Failure(
+                    ActionFailure(
+                        record_id=_new_id(),
+                        timestamp=_utc_now(),
+                        producer=PRODUCER,
+                        request_id=turn.record_id,
+                        capability="workspace_engine",
+                        code="BUDGET_EXCEEDED",
+                        message=f"Deliberation exceeded token budget (in={total_tokens_in}/{budget.max_input_tokens}, out={total_tokens_out}/{budget.max_output_tokens})",
+                    )
+                )
+
+            rem_in = max(0, budget.max_input_tokens - total_tokens_in) if budget.max_input_tokens > 0 else 0
+            rem_out = max(0, budget.max_output_tokens - total_tokens_out) if budget.max_output_tokens > 0 else 0
+            rem_lat = max(1, int(budget.max_latency_seconds - elapsed_sec)) if budget.max_latency_seconds > 0 else 30
+            cycle_budget = budget.model_copy(
+                update={
+                    "max_input_tokens": rem_in,
+                    "max_output_tokens": rem_out,
+                    "max_latency_seconds": rem_lat,
+                }
+            )
+            workspace = workspace.model_copy(update={"budget": cycle_budget})
 
             trace(
                 "assistant.workspace.cycle",
@@ -445,6 +505,10 @@ class WorkspaceEngine(InteractionController):
                 )
 
             elif winner.kind == WorkspaceContributionKind.ANSWER_DRAFT:
+                if not winner.content.strip():
+                    workspace = workspace.model_copy(update={"cycle": workspace.cycle + 1})
+                    continue
+
                 # Allow grounding specialists to inspect the broadcast draft before converging
                 grounding_critique: WorkspaceContribution | None = None
                 for spec in self.specialists:
@@ -455,6 +519,15 @@ class WorkspaceEngine(InteractionController):
                             break
 
                 if grounding_critique is not None:
+                    consecutive_critiques += 1
+                    if (
+                        winner.content == last_draft_text
+                        or consecutive_critiques > _MAX_CONSECUTIVE_CRITIQUES
+                    ):
+                        grounding_critique = None
+
+                if grounding_critique is not None:
+                    last_draft_text = winner.content
                     workspace = workspace.model_copy(
                         update={
                             "broadcast": grounding_critique,
@@ -513,15 +586,53 @@ class WorkspaceEngine(InteractionController):
         if last_failure is not None and not workspace.history:
             return Failure(last_failure)
 
-        latency_ms = (time.perf_counter() - start_time) * 1000
         draft_candidate = next(
             (
                 c
                 for c in reversed(workspace.history)
-                if c.kind == WorkspaceContributionKind.ANSWER_DRAFT
+                if c.kind == WorkspaceContributionKind.ANSWER_DRAFT and bool(c.content.strip())
             ),
             None,
         )
+        if draft_candidate is None:
+            if budget.max_input_tokens > 0 and (
+                total_tokens_in >= budget.max_input_tokens
+                or budget.max_input_tokens < _MIN_REASONABLE_INPUT_TOKENS
+            ):
+                return Failure(
+                    ActionFailure(
+                        record_id=_new_id(),
+                        timestamp=_utc_now(),
+                        producer=PRODUCER,
+                        request_id=turn.record_id,
+                        capability="workspace_engine",
+                        code="BUDGET_EXCEEDED",
+                        message="Token budget exhausted before candidate generation",
+                    )
+                )
+            if (
+                (
+                    budget.max_latency_seconds > 0
+                    and (time.perf_counter() - start_time) >= budget.max_latency_seconds
+                )
+                or (
+                    budget.cancellation_deadline is not None
+                    and _utc_now() >= budget.cancellation_deadline
+                )
+            ):
+                return Failure(
+                    ActionFailure(
+                        record_id=_new_id(),
+                        timestamp=_utc_now(),
+                        producer=PRODUCER,
+                        request_id=turn.record_id,
+                        capability="workspace_engine",
+                        code="DEADLINE_EXCEEDED",
+                        message="Deliberation deadline exceeded without candidate draft",
+                    )
+                )
+
+        latency_ms = (time.perf_counter() - start_time) * 1000
         final_text = (
             draft_candidate.content
             if draft_candidate

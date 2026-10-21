@@ -4,7 +4,7 @@ from __future__ import annotations
 import click
 
 
-def _assistant_config(  # noqa: PLR0912, PLR0913
+def _assistant_config(  # noqa: PLR0912, PLR0913, PLR0915
     backend: str | None,
     model: str | None,
     profile: str | None = None,
@@ -65,10 +65,7 @@ def _assistant_config(  # noqa: PLR0912, PLR0913
         assistant["context_window"] = context_window
     if timeout is not None:
         assistant["lemonade_timeout"] = timeout
-    had_config_controller = bool(assistant.get("interaction_controller"))
-    if controller is not None and (
-        controller != "bounded_step" or not had_config_controller
-    ):
+    if controller is not None:
         assistant["interaction_controller"] = controller
 
     parsed_iterations: int | None = None
@@ -98,12 +95,7 @@ def _assistant_config(  # noqa: PLR0912, PLR0913
         "max_output_tokens": max_output_tokens,
         "context_window": context_window,
         "lemonade_timeout": timeout,
-        "interaction_controller": (
-            controller
-            if controller is not None
-            and (controller != "bounded_step" or not had_config_controller)
-            else None
-        ),
+        "interaction_controller": controller,
     }
     if has_explicit_iterations:
         cli_overrides["max_iterations"] = parsed_iterations

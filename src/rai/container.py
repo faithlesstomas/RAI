@@ -329,10 +329,12 @@ class ApplicationContainer:
                 if self.testing
                 else JsonlAssistantAuditLedger()
             )
-            asst_cfg = (
-                self.config.get("assistant", {})
-                if isinstance(self.config.get("assistant"), dict)
-                else {}
+            from rai.configuration.resolution import effective_model_settings  # noqa: PLC0415
+
+            effective_asst, _ = effective_model_settings(
+                self.config,
+                profile=str(self.config.get("active_agent") or "default"),
+                overrides=self.config.get("_cli_overrides", {}),
             )
             runtime = (
                 AssistantRuntimeConfig(
@@ -340,7 +342,7 @@ class ApplicationContainer:
                     model="deterministic-conformance",
                     profile_scope=str(self.config.get("active_agent") or "default"),
                     interaction_controller=str(
-                        asst_cfg.get("interaction_controller") or "direct"
+                        effective_asst.get("interaction_controller") or "bounded_step"
                     ),
                 )
                 if self.testing

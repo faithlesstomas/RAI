@@ -94,12 +94,12 @@ def ask_command(  # noqa: PLR0913
         min=1.0,
         help="Inference request timeout in seconds (default: 300s).",
     ),
-    controller: str = typer.Option(
-        "bounded_step",
+    controller: str | None = typer.Option(
+        None,
         "--controller",
         autocompletion=completion.controllers,
-        show_default=True,
-        help="Interaction controller strategy (bounded_step, direct, workspace).",
+        show_default=False,
+        help="Interaction controller strategy (bounded_step, direct, workspace; default: bounded_step).",
     ),
     max_iterations: str | None = typer.Option(
         None,
@@ -210,12 +210,12 @@ def chat_command(  # noqa: PLR0913
         min=1.0,
         help="Inference request timeout in seconds (default: 300s).",
     ),
-    controller: str = typer.Option(
-        "bounded_step",
+    controller: str | None = typer.Option(
+        None,
         "--controller",
         autocompletion=completion.controllers,
-        show_default=True,
-        help="Interaction controller strategy (bounded_step, direct, workspace).",
+        show_default=False,
+        help="Interaction controller strategy (bounded_step, direct, workspace; default: bounded_step).",
     ),
     max_iterations: str | None = typer.Option(
         None,

@@ -379,22 +379,49 @@ async def test_assistant_service_with_custom_controller(tmp_path: Path) -> None:
 def test_cli_controller_option_wires_bounded_step_by_default() -> None:
     import inspect  # noqa: PLC0415
 
+    from rai.actions.workflow import BoundedStepController  # noqa: PLC0415
+    from rai.assistant.cognitive.workspace import WorkspaceEngine  # noqa: PLC0415
     from rai.commands.assistant import ask_command, chat_command  # noqa: PLC0415
     from rai.commands.settings import _assistant_config  # noqa: PLC0415
     from rai.container import ApplicationContainer  # noqa: PLC0415
 
     ask_sig = inspect.signature(ask_command)
     chat_sig = inspect.signature(chat_command)
-    assert ask_sig.parameters["controller"].default.default == "bounded_step"
-    assert chat_sig.parameters["controller"].default.default == "bounded_step"
+    assert ask_sig.parameters["controller"].default.default is None
+    assert chat_sig.parameters["controller"].default.default is None
 
-    cfg = _assistant_config(backend=None, model=None, controller="bounded_step")
-    assistant_cfg = cfg.get("assistant")
-    assert isinstance(assistant_cfg, dict)
-    assert assistant_cfg.get("interaction_controller") == "bounded_step"
-
+    # Default when CLI passes None: resolves to bounded_step
+    cfg = _assistant_config(backend=None, model=None, controller=None)
     container = ApplicationContainer(config=cfg, testing=True)
     assert isinstance(container.assistant_service.controller, BoundedStepController)
+
+
+def test_cli_controller_option_precedence(monkeypatch: pytest.MonkeyPatch) -> None:
+    from rai.actions.workflow import BoundedStepController  # noqa: PLC0415
+    from rai.assistant.cognitive.workspace import WorkspaceEngine  # noqa: PLC0415
+    from rai.assistant.controllers.direct import DirectController  # noqa: PLC0415
+    from rai.commands.settings import _assistant_config  # noqa: PLC0415
+    from rai.container import ApplicationContainer  # noqa: PLC0415
+
+    # 1. Environment variable RAI_INTERACTION_CONTROLLER overrides default when CLI is None
+    monkeypatch.setenv("RAI_INTERACTION_CONTROLLER", "workspace")
+    cfg_env = _assistant_config(backend=None, model=None, controller=None)
+    container_env = ApplicationContainer(config=cfg_env, testing=True)
+    assert isinstance(container_env.assistant_service.controller, WorkspaceEngine)
+
+    # 2. Explicit CLI flag overrides environment variable
+    cfg_cli_override = _assistant_config(backend=None, model=None, controller="direct")
+    container_cli = ApplicationContainer(config=cfg_cli_override, testing=True)
+    assert isinstance(container_cli.assistant_service.controller, DirectController)
+
+    # 3. Explicit CLI flag bounded_step overrides config file setting workspace
+    monkeypatch.delenv("RAI_INTERACTION_CONTROLLER", raising=False)
+    cfg_file = _assistant_config(backend=None, model=None, controller="bounded_step")
+    cfg_file["assistant"]["interaction_controller"] = "workspace"
+    # CLI override should take precedence over config file
+    from rai.configuration.resolution import effective_model_settings  # noqa: PLC0415
+    settings, _ = effective_model_settings(cfg_file, overrides={"interaction_controller": "bounded_step"})
+    assert settings["interaction_controller"] == "bounded_step"
 
 
 @pytest.mark.asyncio

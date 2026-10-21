@@ -8,6 +8,7 @@ from typing import Any
 from pydantic import BaseModel, ConfigDict, Field
 
 from rai.assistant.records import AssistantCandidate
+from rai.kernel.records import InferenceBudget
 
 
 class WorkspaceContributionKind(str, Enum):
@@ -54,4 +55,5 @@ class WorkspaceState(BaseModel):
     tool_calls_count: int = Field(default=0, ge=0)
     converged: bool = False
     final_candidate: AssistantCandidate | None = None
+    budget: InferenceBudget | None = None
     metadata: dict[str, Any] = Field(default_factory=dict)

@@ -444,3 +444,98 @@ async def test_workspace_engine_fails_closed_on_backend_failure() -> None:
     result = await engine.process_turn(turn, context, budget, CancellationToken())
     assert isinstance(result, Failure)
     assert result.failure().code == "MODEL_ERROR"
+
+
+@pytest.mark.asyncio
+async def test_workspace_engine_defaults_max_cycles_safely() -> None:
+    backend = MockModelBackend(responses=["Cycle response."])
+    engine = WorkspaceEngine(backend=backend, max_cycles=None)
+
+    producer = ProducerIdentity(producer_id="user", kind="user", version="1.0.0")
+    turn = ConversationTurn(
+        producer=producer,
+        session_id="session-default-cycles",
+        role="user",
+        text="Check safe max cycles",
+        data_class=DataClass.PUBLIC,
+    )
+    context = _make_context_package(turn)
+    budget = _make_budget().model_copy(update={"max_agent_turns": 0})
+
+    result = await engine.process_turn(turn, context, budget, CancellationToken())
+    assert isinstance(result, Success)
+
+
+@pytest.mark.asyncio
+async def test_workspace_engine_enforces_latency_deadline() -> None:
+    backend = MockModelBackend(responses=["Delayed response."])
+    engine = WorkspaceEngine(backend=backend, max_cycles=4)
+
+    producer = ProducerIdentity(producer_id="user", kind="user", version="1.0.0")
+    turn = ConversationTurn(
+        producer=producer,
+        session_id="session-timeout",
+        role="user",
+        text="Enforce deadline",
+        data_class=DataClass.PUBLIC,
+    )
+    context = _make_context_package(turn)
+    # Deadline in the past
+    past = _utc_now() - timedelta(seconds=10)
+    budget = _make_budget().model_copy(update={"cancellation_deadline": past})
+
+    result = await engine.process_turn(turn, context, budget, CancellationToken())
+    assert isinstance(result, Failure)
+    assert result.failure().code == "DEADLINE_EXCEEDED"
+
+
+@pytest.mark.asyncio
+async def test_workspace_engine_enforces_token_budget_exhaustion() -> None:
+    backend = MockModelBackend(responses=["Response using tokens."])
+    engine = WorkspaceEngine(backend=backend, max_cycles=4)
+
+    producer = ProducerIdentity(producer_id="user", kind="user", version="1.0.0")
+    turn = ConversationTurn(
+        producer=producer,
+        session_id="session-tokens",
+        role="user",
+        text="Exhaust token budget",
+        data_class=DataClass.PUBLIC,
+    )
+    context = _make_context_package(turn)
+    # 1 input token ceiling
+    budget = _make_budget().model_copy(update={"max_input_tokens": 1})
+
+    result = await engine.process_turn(turn, context, budget, CancellationToken())
+    assert isinstance(result, Failure)
+    assert result.failure().code == "BUDGET_EXCEEDED"
+
+
+@pytest.mark.asyncio
+async def test_workspace_engine_critique_circuit_breaker() -> None:
+    # Model produces the same draft every cycle
+    backend = MockModelBackend(
+        responses=[
+            "Identical ungrounded draft.",
+            "Identical ungrounded draft.",
+            "Identical ungrounded draft.",
+        ]
+    )
+    engine = WorkspaceEngine(backend=backend, max_cycles=10)
+
+    producer = ProducerIdentity(producer_id="user", kind="user", version="1.0.0")
+    turn = ConversationTurn(
+        producer=producer,
+        session_id="session-circuit-breaker",
+        role="user",
+        text="Test circuit breaker",
+        data_class=DataClass.PUBLIC,
+    )
+    context = _make_context_package(turn)
+    budget = _make_budget()
+
+    result = await engine.process_turn(turn, context, budget, CancellationToken())
+    assert isinstance(result, Success)
+    candidate = result.unwrap()
+    assert candidate.text == "Identical ungrounded draft."
+

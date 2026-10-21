@@ -4,10 +4,12 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import html
+import ipaddress
 import json
 import re
+import socket
 from typing import Any, Protocol
-from urllib.parse import urlsplit
+from urllib.parse import urljoin, urlsplit
 
 import httpx
 from returns.result import Failure, Result, Success
@@ -25,12 +27,76 @@ MAX_PAGE_CHARACTERS = 16000
 MAX_SEARCH_RESULTS = 5
 
 
+def _is_forbidden_ip(ip: ipaddress.IPv4Address | ipaddress.IPv6Address) -> bool:
+    if isinstance(ip, ipaddress.IPv6Address) and ip.ipv4_mapped:
+        return _is_forbidden_ip(ip.ipv4_mapped)
+    return bool(
+        ip.is_private
+        or ip.is_loopback
+        or ip.is_link_local
+        or ip.is_reserved
+        or ip.is_multicast
+        or ip.is_unspecified
+        or not ip.is_global
+    )
+
+
 def web_url(value: str) -> bool:
     try:
         parsed = urlsplit(value)
-        return (parsed.scheme in {"http", "https"} and bool(parsed.hostname)
-                and not parsed.username and not parsed.password and len(value) <= MAX_URL_CHARACTERS)
+        if not (
+            parsed.scheme in {"http", "https"}
+            and bool(parsed.hostname)
+            and not parsed.username
+            and not parsed.password
+            and len(value) <= MAX_URL_CHARACTERS
+        ):
+            return False
+        host = parsed.hostname.strip("[]").lower()
+        if host == "localhost" or host.endswith(
+            (".localhost", ".local", ".internal", ".lan", ".arpa")
+        ):
+            return False
+        try:
+            ip = ipaddress.ip_address(host)
+            if _is_forbidden_ip(ip):
+                return False
+        except ValueError:
+            pass
+        return True
     except ValueError:
+        return False
+
+
+async def _resolve_and_validate_public_host(hostname: str, port: int) -> bool:
+    try:
+        host = hostname.strip("[]").lower()
+        if host == "localhost" or host.endswith(
+            (".localhost", ".local", ".internal", ".lan", ".arpa")
+        ):
+            return False
+        try:
+            ip = ipaddress.ip_address(host)
+            return not _is_forbidden_ip(ip)
+        except ValueError:
+            pass
+
+        loop = asyncio.get_running_loop()
+        addr_info = await loop.getaddrinfo(
+            hostname,
+            port,
+            proto=socket.IPPROTO_TCP,
+        )
+        if not addr_info:
+            return False
+        for entry in addr_info:
+            sockaddr = entry[4]
+            ip_str = sockaddr[0]
+            ip = ipaddress.ip_address(ip_str)
+            if _is_forbidden_ip(ip):
+                return False
+        return True
+    except (socket.gaierror, ValueError, OSError):
         return False
 
 
@@ -154,7 +220,22 @@ class CdpBrowserBackend:
             return Failure("BROWSER_READ_FAILED")
 
 
-async def _fetch_http_page_snapshot(  # noqa: PLR0911
+def _clean_html_to_text(raw_html: str, fallback_title: str) -> tuple[str, str]:
+    title_match = re.search(r"<title[^>]*>(.*?)</title>", raw_html, flags=re.IGNORECASE | re.DOTALL)
+    title = html.unescape(re.sub(r"\s+", " ", title_match.group(1)).strip()) if title_match else fallback_title
+    cleaned = re.sub(
+        r"<(?:script|style|noscript|svg|head)[^>]*>.*?</(?:script|style|noscript|svg|head)>",
+        " ",
+        raw_html,
+        flags=re.IGNORECASE | re.DOTALL,
+    )
+    cleaned = re.sub(r"<!--.*?-->", " ", cleaned, flags=re.DOTALL)
+    cleaned = re.sub(r"<[^>]+>", " ", cleaned)
+    text = re.sub(r"\s+", " ", html.unescape(cleaned)).strip()
+    return title[:256], text[:MAX_PAGE_CHARACTERS]
+
+
+async def _fetch_http_page_snapshot(  # noqa: PLR0911, PLR0912
     url: str, token: CancellationToken
 ) -> Result[dict[str, Any], str]:
     """Bounded plain-text HTTP fallback for browser.read_page when no CDP endpoint is configured."""
@@ -162,44 +243,58 @@ async def _fetch_http_page_snapshot(  # noqa: PLR0911
         return Failure("CANCELLED")
     if not web_url(url):
         return Failure("STALE_RESOURCE")
+
+    current_url = url
+    max_redirects = 5
+
     try:
         async with httpx.AsyncClient(
             timeout=10.0,
-            follow_redirects=True,
+            follow_redirects=False,
             trust_env=False,
             headers={"User-Agent": "Mozilla/5.0 (compatible; RAI-Reader/1.0)"},
         ) as client:
-            async with client.stream("GET", url) as response:
-                response.raise_for_status()
-                if not web_url(str(response.url)):
+            raw_html = ""
+            for _ in range(max_redirects + 1):
+                if token.cancelled:
+                    return Failure("CANCELLED")
+                if not web_url(current_url):
                     return Failure("STALE_RESOURCE")
-                raw_bytes = bytearray()
-                async for chunk in response.aiter_bytes(chunk_size=65536):
-                    if token.cancelled:
-                        return Failure("CANCELLED")
-                    raw_bytes.extend(chunk)
-                    if len(raw_bytes) >= 512 * 1024:
-                        break
-                encoding = response.encoding or "utf-8"
-                raw_html = raw_bytes.decode(encoding, errors="replace")
-        title_match = re.search(r"<title[^>]*>(.*?)</title>", raw_html, flags=re.IGNORECASE | re.DOTALL)
-        title = html.unescape(re.sub(r"\s+", " ", title_match.group(1)).strip()) if title_match else url
-        cleaned = re.sub(
-            r"<(?:script|style|noscript|svg|head)[^>]*>.*?</(?:script|style|noscript|svg|head)>",
-            " ",
-            raw_html,
-            flags=re.IGNORECASE | re.DOTALL,
-        )
-        cleaned = re.sub(r"<!--.*?-->", " ", cleaned, flags=re.DOTALL)
-        cleaned = re.sub(r"<[^>]+>", " ", cleaned)
-        text = re.sub(r"\s+", " ", html.unescape(cleaned)).strip()
+                parsed = urlsplit(current_url)
+                port = parsed.port or (443 if parsed.scheme == "https" else 80)
+                if not await _resolve_and_validate_public_host(parsed.hostname or "", port):
+                    return Failure("STALE_RESOURCE")
+
+                async with client.stream("GET", current_url) as response:
+                    if response.status_code in {301, 302, 303, 307, 308}:
+                        location = response.headers.get("Location")
+                        if not location:
+                            return Failure("BROWSER_READ_FAILED")
+                        current_url = urljoin(current_url, location)
+                        continue
+
+                    response.raise_for_status()
+                    raw_bytes = bytearray()
+                    async for chunk in response.aiter_bytes(chunk_size=65536):
+                        if token.cancelled:
+                            return Failure("CANCELLED")
+                        raw_bytes.extend(chunk)
+                        if len(raw_bytes) >= 512 * 1024:
+                            break
+                    encoding = response.encoding or "utf-8"
+                    raw_html = raw_bytes.decode(encoding, errors="replace")
+                    break
+            else:
+                return Failure("BROWSER_READ_FAILED")
+
+        title, text = _clean_html_to_text(raw_html, fallback_title=url)
         if not text:
             return Failure("BROWSER_READ_FAILED")
         return Success({
             "target_id": f"http:{hashlib.sha256(url.encode()).hexdigest()[:12]}",
             "observed_url": url,
-            "title": title[:256],
-            "text": text[:MAX_PAGE_CHARACTERS],
+            "title": title,
+            "text": text,
             "untrusted_content": True,
         })
     except asyncio.CancelledError:

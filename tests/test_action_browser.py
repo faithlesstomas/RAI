@@ -76,3 +76,90 @@ async def test_browser_handles_are_scoped_and_local_context_never_searches(tmp_p
     backend.redirect = True
     redirected = await opening.invoke(request, CancellationToken())
     assert redirected.failure().code == 'POSTCONDITION_FAILED'
+
+
+@pytest.mark.parametrize('url', [
+    'http://localhost',
+    'http://localhost:8080/path',
+    'http://foo.local',
+    'http://internal.lan',
+    'http://127.0.0.1',
+    'http://127.0.0.1:8080',
+    'http://192.168.1.1',
+    'http://10.0.0.1',
+    'http://172.16.0.1',
+    'http://169.254.169.254',
+    'http://0.0.0.0',
+    'http://[::1]',
+    'http://[::ffff:127.0.0.1]',
+    'http://[fe80::1]',
+])
+def test_web_url_blocks_private_and_local_addresses(url):
+    assert not web_url(url)
+
+
+async def test_fetch_http_page_snapshot_rejects_private_ips():
+    from rai.actions.browser import _fetch_http_page_snapshot
+    token = CancellationToken()
+    assert (await _fetch_http_page_snapshot("http://127.0.0.1:8080/", token)) == Failure("STALE_RESOURCE")
+    assert (await _fetch_http_page_snapshot("http://localhost:3000/", token)) == Failure("STALE_RESOURCE")
+    assert (await _fetch_http_page_snapshot("http://169.254.169.254/meta-data", token)) == Failure("STALE_RESOURCE")
+
+
+async def test_fetch_http_page_snapshot_rejects_dns_resolving_to_private_ip(monkeypatch):
+    from rai.actions.browser import _fetch_http_page_snapshot
+    token = CancellationToken()
+
+    async def mock_resolve_private(*_args, **_kwargs):
+        return False
+
+    monkeypatch.setattr("rai.actions.browser._resolve_and_validate_public_host", mock_resolve_private)
+    res = await _fetch_http_page_snapshot("https://public-looking-domain.com/page", token)
+    assert res == Failure("STALE_RESOURCE")
+
+
+async def test_fetch_http_page_snapshot_rejects_redirect_to_private_target(monkeypatch):
+    import httpx
+    from rai.actions.browser import _fetch_http_page_snapshot
+    token = CancellationToken()
+
+    async def mock_resolve(hostname, port):
+        return True
+
+    monkeypatch.setattr("rai.actions.browser._resolve_and_validate_public_host", mock_resolve)
+
+    def mock_transport_handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(302, headers={"Location": "http://169.254.169.254/latest/meta-data"})
+
+    transport = httpx.MockTransport(mock_transport_handler)
+    real_client = httpx.AsyncClient
+    monkeypatch.setattr("rai.actions.browser.httpx.AsyncClient", lambda **kwargs: real_client(transport=transport, **kwargs))
+
+    res = await _fetch_http_page_snapshot("https://example.com/start", token)
+    assert res == Failure("STALE_RESOURCE")
+
+
+async def test_fetch_http_page_snapshot_bounds_redirect_chains(monkeypatch):
+    import httpx
+    from rai.actions.browser import _fetch_http_page_snapshot
+    token = CancellationToken()
+
+    async def mock_resolve(hostname, port):
+        return True
+
+    monkeypatch.setattr("rai.actions.browser._resolve_and_validate_public_host", mock_resolve)
+
+    step = 0
+
+    def mock_transport_handler(request: httpx.Request) -> httpx.Response:
+        nonlocal step
+        step += 1
+        return httpx.Response(302, headers={"Location": f"https://example.com/step-{step}"})
+
+    transport = httpx.MockTransport(mock_transport_handler)
+    real_client = httpx.AsyncClient
+    monkeypatch.setattr("rai.actions.browser.httpx.AsyncClient", lambda **kwargs: real_client(transport=transport, **kwargs))
+
+    res = await _fetch_http_page_snapshot("https://example.com/start", token)
+    assert res == Failure("BROWSER_READ_FAILED")
+
