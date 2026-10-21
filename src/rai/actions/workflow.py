@@ -182,7 +182,7 @@ def _compact_observation_content(  # noqa: PLR0912
     """Compact tool output so counts and names survive observation length limits."""
     if not isinstance(output, dict):
         res: dict[str, Any] = {"raw_text": str(output)}
-        if fallback_text:
+        if fallback_text and fallback_text != str(output):
             res["formatted_text"] = fallback_text
         return res
 
@@ -250,6 +250,8 @@ def _compact_observation_content(  # noqa: PLR0912
     if (
         fallback_text
         and "formatted_text" not in compacted
+        and "text" not in compacted
+        and "raw_text" not in compacted
         and capability != "application.list"
     ):
         compacted["formatted_text"] = fallback_text

@@ -634,3 +634,123 @@ def test_large_application_list_compacting_and_backend_representation() -> None:
     assert "truncated" not in repr_str
     assert "App 124" in repr_str
 
+
+def test_compact_observation_avoids_duplicating_text() -> None:
+    from rai.actions.workflow import _compact_observation_content
+
+    # Dict output containing 'text' (e.g. from browser.read_page)
+    raw_output = {
+        "url": "https://example.com",
+        "title": "Example Domain",
+        "text": "This is page text.",
+        "untrusted_content": True,
+    }
+    compacted = _compact_observation_content(
+        raw_output,
+        fallback_text="Example Domain\n\nThis is page text.",
+        capability="browser.read_page",
+    )
+    assert compacted["text"] == "This is page text."
+    assert "formatted_text" not in compacted
+
+    # Non-dict output with identical fallback
+    non_dict = _compact_observation_content("Some text", fallback_text="Some text")
+    assert non_dict["raw_text"] == "Some text"
+    assert "formatted_text" not in non_dict
+
+    # Dict output without text or raw_text should still include formatted_text if fallback is provided
+    status_output = {"status": "SUCCESS"}
+    compacted_status = _compact_observation_content(
+        status_output,
+        fallback_text="Action succeeded with details",
+        capability="custom.tool",
+    )
+    assert compacted_status["formatted_text"] == "Action succeeded with details"
+
+
+def test_local_backend_deduplicates_tool_observations_in_bounded_step() -> None:
+    from rai.assistant.backends.local import LocalAssistantBackend
+    from rai.assistant.records import AssistantContextManifest, AssistantContextPackage, InferenceRequest
+    from rai.kernel.records import _new_id, _utc_now, InferenceBudget, ProducerIdentity
+
+    backend = LocalAssistantBackend()
+    producer = ProducerIdentity(producer_id="test", kind="service", version="1.0")
+    manifest = AssistantContextManifest(
+        record_id=_new_id(),
+        timestamp=_utc_now(),
+        producer=producer,
+        session_id="s1",
+        turn_id="t1",
+    )
+    context = AssistantContextPackage(
+        record_id=_new_id(),
+        timestamp=_utc_now(),
+        producer=producer,
+        session_id="s1",
+        turn_id="t1",
+        manifest=manifest,
+        content={
+            "tool_observations": [
+                {
+                    "capability": "browser.read_page",
+                    "summary": "Read article",
+                    "content": {"text": "Long article text..."},
+                }
+            ],
+            "current_turn": {"text": "Summarize this."},
+        },
+    )
+    now = _utc_now()
+    budget = InferenceBudget(
+        record_id=_new_id(),
+        timestamp=now,
+        producer=producer,
+        max_input_tokens=2048,
+        max_output_tokens=256,
+        max_agent_turns=4,
+        max_tool_calls=5,
+        max_images=0,
+        max_audio_seconds=0,
+        max_latency_seconds=60,
+        max_provider_cost=0,
+        max_ram_bytes=1024 * 1024,
+        max_vram_bytes=0,
+        cancellation_deadline=now,
+    )
+
+    # 1. In BOUNDED_STEP with Tool Observations in system_instruction
+    req_bounded = InferenceRequest(
+        record_id=_new_id(),
+        timestamp=_utc_now(),
+        producer=producer,
+        session_id="s1",
+        turn_id="t1",
+        request_id=_new_id(),
+        context=context,
+        budget=budget,
+        strategy="BOUNDED_STEP",
+        system_instruction="System prompt\n\nTool Observations:\nObservation 1: {...}",
+    )
+    messages_bounded = backend._format_messages(req_bounded)
+    user_msg_bounded = [m["content"] for m in messages_bounded if m["role"] == "user"][0]
+    assert "Wyniki wykonanych narzędzi" not in user_msg_bounded
+    assert "browser.read_page" not in user_msg_bounded
+
+    # 2. In normal turn without observations in system_instruction
+    req_normal = InferenceRequest(
+        record_id=_new_id(),
+        timestamp=_utc_now(),
+        producer=producer,
+        session_id="s1",
+        turn_id="t1",
+        request_id=_new_id(),
+        context=context,
+        budget=budget,
+        strategy="DIRECT",
+        system_instruction="You are a helpful assistant.",
+    )
+    messages_normal = backend._format_messages(req_normal)
+    user_msg_normal = [m["content"] for m in messages_normal if m["role"] == "user"][0]
+    assert "Wyniki wykonanych narzędzi" in user_msg_normal
+    assert "browser.read_page" in user_msg_normal
+

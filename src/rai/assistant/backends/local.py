@@ -177,7 +177,16 @@ class LocalAssistantBackend:
                     evidence_lines.append(f"- [{source_type}; {timestamp}] {content_str}")
 
         tool_observations = request.context.content.get("tool_observations", [])
-        if isinstance(tool_observations, (list, tuple)) and tool_observations:
+        observations_in_system = (
+            "Tool Observations:" in system_text
+            or "Collected Observations:" in system_text
+            or request.strategy == "BOUNDED_STEP"
+        )
+        if (
+            isinstance(tool_observations, (list, tuple))
+            and tool_observations
+            and not observations_in_system
+        ):
             evidence_lines.append(
                 "Wyniki wykonanych narzędzi i akcji w systemie (obserwacje z bieżącej sesji):"
             )
