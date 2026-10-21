@@ -11,6 +11,7 @@ import socket
 from typing import Any, Protocol
 from urllib.parse import urljoin, urlsplit
 
+import httpcore
 import httpx
 from returns.result import Failure, Result, Success
 
@@ -175,6 +176,12 @@ class CdpBrowserBackend:
     async def open(self, url: str, token: CancellationToken) -> Result[dict, str]:
         if not self.endpoint:
             return Failure("BROWSER_NOT_CONFIGURED")
+        if not web_url(url):
+            return Failure("STALE_RESOURCE")
+        parsed = urlsplit(url)
+        port = parsed.port or (443 if parsed.scheme == "https" else 80)
+        if not await _resolve_and_validate_public_host(parsed.hostname or "", port):
+            return Failure("STALE_RESOURCE")
         try:
             async with httpx.AsyncClient(timeout=3, trust_env=False) as client:
                 response = await client.put(f"{self.endpoint}/json/new?about:blank")
@@ -200,6 +207,12 @@ class CdpBrowserBackend:
     async def read(self, url: str, token: CancellationToken) -> Result[dict, str]:
         if not self.endpoint:
             return Failure("BROWSER_NOT_CONFIGURED")
+        if not web_url(url):
+            return Failure("STALE_RESOURCE")
+        parsed = urlsplit(url)
+        port = parsed.port or (443 if parsed.scheme == "https" else 80)
+        if not await _resolve_and_validate_public_host(parsed.hostname or "", port):
+            return Failure("STALE_RESOURCE")
         try:
             pages = [page for page in await self._targets() if page.get("type") == "page" and page.get("url") == url]
             if len(pages) != 1:
@@ -235,6 +248,48 @@ def _clean_html_to_text(raw_html: str, fallback_title: str) -> tuple[str, str]:
     return title[:256], text[:MAX_PAGE_CHARACTERS]
 
 
+class SafeNetworkBackend(httpcore.AnyIOBackend):
+    """Network backend validating that connected TCP sockets do not point to private or loopback IPs."""
+
+    async def connect_tcp(
+        self,
+        host: str,
+        port: int,
+        timeout: float | None = None,
+        local_address: str | None = None,
+        socket_options: Any = None,
+    ) -> httpcore.AsyncNetworkStream:
+        try:
+            ip = ipaddress.ip_address(host.strip("[]"))
+            if _is_forbidden_ip(ip):
+                raise httpcore.ConnectError(f"Connection to forbidden address {ip} blocked")
+        except ValueError:
+            pass
+
+        stream = await super().connect_tcp(  # pylint: disable=no-member
+            host=host,
+            port=port,
+            timeout=timeout,
+            local_address=local_address,
+            socket_options=socket_options,
+        )
+        server_addr = stream.get_extra_info("server_addr")
+        if server_addr:
+            ip = ipaddress.ip_address(server_addr[0])
+            if _is_forbidden_ip(ip):
+                await stream.aclose()
+                raise httpcore.ConnectError(f"Connection to forbidden address {ip} blocked")
+        return stream
+
+
+class SafeAsyncHTTPTransport(httpx.AsyncHTTPTransport):
+    """HTTP transport with post-connect TCP socket verification against SSRF and DNS rebinding."""
+
+    def __init__(self, *args: Any, **kwargs: Any) -> None:
+        super().__init__(*args, **kwargs)
+        self._pool._network_backend = SafeNetworkBackend()
+
+
 async def _fetch_http_page_snapshot(  # noqa: PLR0911, PLR0912
     url: str, token: CancellationToken
 ) -> Result[dict[str, Any], str]:
@@ -248,10 +303,12 @@ async def _fetch_http_page_snapshot(  # noqa: PLR0911, PLR0912
     max_redirects = 5
 
     try:
+        transport = SafeAsyncHTTPTransport(verify=True)
         async with httpx.AsyncClient(
             timeout=10.0,
             follow_redirects=False,
             trust_env=False,
+            transport=transport,
             headers={"User-Agent": "Mozilla/5.0 (compatible; RAI-Reader/1.0)"},
         ) as client:
             raw_html = ""
@@ -297,6 +354,8 @@ async def _fetch_http_page_snapshot(  # noqa: PLR0911, PLR0912
             "text": text,
             "untrusted_content": True,
         })
+    except (httpx.ConnectError, httpcore.ConnectError):
+        return Failure("STALE_RESOURCE")
     except asyncio.CancelledError:
         raise
     except Exception:  # pylint: disable=broad-exception-caught
@@ -345,6 +404,10 @@ class BrowserCapability:
         if (handle.kind != "url" or not web_url(handle.target)
                 or handle.data_class != request.data_class
                 or handle.fingerprint != hashlib.sha256(handle.target.encode()).hexdigest()):
+            return Failure(failure(request, "STALE_RESOURCE"))
+        parsed_target = urlsplit(handle.target)
+        target_port = parsed_target.port or (443 if parsed_target.scheme == "https" else 80)
+        if not await _resolve_and_validate_public_host(parsed_target.hostname or "", target_port):
             return Failure(failure(request, "STALE_RESOURCE"))
         if self.name == "browser.open_result":
             invoked = await self.backend.open(handle.target, cancellation)

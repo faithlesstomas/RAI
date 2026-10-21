@@ -133,7 +133,10 @@ async def test_fetch_http_page_snapshot_rejects_redirect_to_private_target(monke
 
     transport = httpx.MockTransport(mock_transport_handler)
     real_client = httpx.AsyncClient
-    monkeypatch.setattr("rai.actions.browser.httpx.AsyncClient", lambda **kwargs: real_client(transport=transport, **kwargs))
+    monkeypatch.setattr(
+        "rai.actions.browser.httpx.AsyncClient",
+        lambda **kwargs: real_client(transport=transport, **{k: v for k, v in kwargs.items() if k != "transport"}),
+    )
 
     res = await _fetch_http_page_snapshot("https://example.com/start", token)
     assert res == Failure("STALE_RESOURCE")
@@ -158,7 +161,10 @@ async def test_fetch_http_page_snapshot_bounds_redirect_chains(monkeypatch):
 
     transport = httpx.MockTransport(mock_transport_handler)
     real_client = httpx.AsyncClient
-    monkeypatch.setattr("rai.actions.browser.httpx.AsyncClient", lambda **kwargs: real_client(transport=transport, **kwargs))
+    monkeypatch.setattr(
+        "rai.actions.browser.httpx.AsyncClient",
+        lambda **kwargs: real_client(transport=transport, **{k: v for k, v in kwargs.items() if k != "transport"}),
+    )
 
     res = await _fetch_http_page_snapshot("https://example.com/start", token)
     assert res == Failure("BROWSER_READ_FAILED")
@@ -192,5 +198,27 @@ def test_clean_html_to_text_preserves_header_and_body():
     assert "Footer note" in text
     assert "tracking" not in text
     assert "color: red" not in text
+
+
+async def test_cdp_backend_rejects_private_and_resolving_hosts(monkeypatch):
+    backend = CdpBrowserBackend("http://127.0.0.1:9222")
+    token = CancellationToken()
+
+    async def mock_resolve_private(*_args, **_kwargs):
+        return False
+
+    monkeypatch.setattr("rai.actions.browser._resolve_and_validate_public_host", mock_resolve_private)
+    assert await backend.open("http://localtest.me/admin", token) == Failure("STALE_RESOURCE")
+    assert await backend.read("http://localtest.me/admin", token) == Failure("STALE_RESOURCE")
+
+
+async def test_safe_network_backend_blocks_private_ip_socket():
+    import httpcore
+    from rai.actions.browser import SafeNetworkBackend
+
+    backend = SafeNetworkBackend()
+    with pytest.raises(httpcore.ConnectError, match="blocked"):
+        await backend.connect_tcp("127.0.0.1", 1)
+
 
 

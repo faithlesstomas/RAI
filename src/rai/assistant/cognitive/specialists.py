@@ -275,7 +275,17 @@ class ActionReasonerSpecialist:
                 )
             )
 
-        return Success(None)
+        return Success(
+            WorkspaceContribution(
+                cycle=workspace.cycle,
+                specialist_name=self.name,
+                kind=WorkspaceContributionKind.STATUS,
+                content="No action needed",
+                salience=0.0,
+                tokens_in=candidate.tokens_in,
+                tokens_out=candidate.tokens_out,
+            )
+        )
 
 
 class AnswerDraftSpecialist:

@@ -539,3 +539,48 @@ async def test_workspace_engine_critique_circuit_breaker() -> None:
     candidate = result.unwrap()
     assert candidate.text == "Identical ungrounded draft."
 
+
+@pytest.mark.asyncio
+async def test_action_reasoner_tokens_accounted_even_without_tool_call() -> None:
+    from rai.assistant.cognitive.specialists import ActionReasonerSpecialist
+
+    class TokenCountingBackend:
+        def __init__(self) -> None:
+            self.model_name = "test-token-model"
+
+        async def generate(self, request: Any, token: CancellationToken) -> Result[AssistantCandidate, ActionFailure]:
+            return Success(
+                AssistantCandidate(
+                    text="NO_ACTION",
+                    tokens_in=42,
+                    tokens_out=7,
+                )
+            )
+
+    backend = TokenCountingBackend()
+    specialist = ActionReasonerSpecialist(backend=backend, capability_names=("browser.search",))
+    producer = ProducerIdentity(producer_id="user", kind="user", version="1.0.0")
+    turn = ConversationTurn(
+        producer=producer,
+        session_id="session-tokens-no-action",
+        role="user",
+        text="Hello world",
+        data_class=DataClass.PUBLIC,
+    )
+    context = _make_context_package(turn)
+    state = WorkspaceState(
+        goal="Hello world",
+        session_id="session-tokens-no-action",
+        turn_id=turn.record_id,
+        context=context,
+        budget=_make_budget(),
+    )
+    res = await specialist.evaluate(state, CancellationToken())
+    assert isinstance(res, Success)
+    contrib = res.unwrap()
+    assert contrib is not None
+    assert contrib.tokens_in == 42
+    assert contrib.tokens_out == 7
+    assert contrib.salience == 0.0
+
+
