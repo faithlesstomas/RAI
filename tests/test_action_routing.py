@@ -7,6 +7,7 @@ from typing import Any
 from returns.result import Failure, Success
 
 from rai.actions.capabilities import failure, result
+from rai.actions.dialogue import previous_action
 from rai.actions.intent import ActionIntent
 from rai.actions.routing import route_action
 from rai.assistant.records import ConversationTurn
@@ -168,15 +169,20 @@ async def test_failed_execution_is_never_presented_as_success() -> None:
 
 
 async def test_previous_action_preserves_choices_across_denied_turn() -> None:
-    from rai.actions.dialogue import previous_action
-    from rai.assistant.records import ConversationTurn
+    """Verify previous_action retains search choices when an intermediate turn was denied/failed.
 
+    Simulates a 3-turn sequence:
+      1. Assistant returned web search choices (browser.search).
+      2. Assistant returned a denial/failure after user declined an action (e.g. status FAILED, code DENIED).
+      3. User follows up referencing a site from the search results; previous_action and route_action
+         must still resolve the handle from turn 1 instead of losing context.
+    """
     search_action = {
         "action_choices": {
             "kind": "url",
             "task_id": "task-search",
             "entries": [
-                {"name": "ScienceDaily News", "url": "https://www.sciencedaily.com/news/", "handle": "h-news"},
+                {"name": "Example Tech News", "url": "https://www.example.com/news/", "handle": "h-news"},
             ],
         },
         "active_choice_frame": {
@@ -185,7 +191,7 @@ async def test_previous_action_preserves_choices_across_denied_turn() -> None:
             "source_turn_id": "t1",
             "intended_capability": "browser.read_page",
             "state": "ACTIVE",
-            "entries": [{"handle": "h-news", "label": "ScienceDaily"}],
+            "entries": [{"handle": "h-news", "label": "Example News"}],
             "expires_at": "2099-01-01T00:00:00Z",
         },
     }
@@ -213,16 +219,16 @@ async def test_previous_action_preserves_choices_across_denied_turn() -> None:
             return Success([t1_asst, t2_asst])
 
     current_turn = ConversationTurn(
-        producer=ACTOR, session_id="s1", role="user", text="A nie możesz przeczytać https://sciencedaily.com/ ?"
+        producer=ACTOR, session_id="s1", role="user", text="Can you read https://example.com/ ?"
     )
     prev = await previous_action(MultiTurnStore(), current_turn, "default")  # type: ignore[arg-type]
     assert prev.get("action_choices") == search_action["action_choices"]
     assert prev.get("active_choice_frame") == search_action["active_choice_frame"]
 
-    service = Service({"browser.read_page": {"title": "ScienceDaily", "text": "Content"}})
+    service = Service({"browser.read_page": {"title": "Example Tech", "text": "Content"}})
     read_cand = await route_action(
         service, MultiTurnStore(), "default", current_turn,  # type: ignore[arg-type]
-        intent("browser.read_page", query="https://sciencedaily.com/"), CancellationToken(),
+        intent("browser.read_page", query="https://example.com/"), CancellationToken(),
     )
     assert read_cand is not None
     assert service.requests[0].capability == "browser.read_page"
