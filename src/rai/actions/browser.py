@@ -224,7 +224,7 @@ def _clean_html_to_text(raw_html: str, fallback_title: str) -> tuple[str, str]:
     title_match = re.search(r"<title[^>]*>(.*?)</title>", raw_html, flags=re.IGNORECASE | re.DOTALL)
     title = html.unescape(re.sub(r"\s+", " ", title_match.group(1)).strip()) if title_match else fallback_title
     cleaned = re.sub(
-        r"<(?:script|style|noscript|svg|head)[^>]*>.*?</(?:script|style|noscript|svg|head)>",
+        r"<(script|style|noscript|svg|head)\b[^>]*>.*?</\1>",
         " ",
         raw_html,
         flags=re.IGNORECASE | re.DOTALL,

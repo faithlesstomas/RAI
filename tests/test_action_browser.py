@@ -163,3 +163,34 @@ async def test_fetch_http_page_snapshot_bounds_redirect_chains(monkeypatch):
     res = await _fetch_http_page_snapshot("https://example.com/start", token)
     assert res == Failure("BROWSER_READ_FAILED")
 
+
+def test_clean_html_to_text_preserves_header_and_body():
+    from rai.actions.browser import _clean_html_to_text
+
+    raw_html = """<!DOCTYPE html>
+    <html>
+      <head>
+        <title>Science News</title>
+        <script>var tracking = 123;</script>
+        <style>body { color: red; }</style>
+      </head>
+      <body>
+        <header>
+          <h1>Site Header</h1>
+        </header>
+        <main>
+          <p>Breakthrough discovery in materials science.</p>
+        </main>
+        <footer>Footer note</footer>
+        <script src="/footer.js"></script>
+      </body>
+    </html>"""
+    title, text = _clean_html_to_text(raw_html, fallback_title="fallback")
+    assert title == "Science News"
+    assert "Site Header" in text
+    assert "Breakthrough discovery in materials science." in text
+    assert "Footer note" in text
+    assert "tracking" not in text
+    assert "color: red" not in text
+
+
