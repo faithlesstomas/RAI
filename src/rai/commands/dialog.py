@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 import asyncio
+import contextlib
 import inspect
 import json
 import signal
@@ -112,10 +113,8 @@ def _run_assistant_ask(  # noqa: PLR0913, PLR0915
                 res = None
             finally:
                 if sigint_installed:
-                    try:
+                    with contextlib.suppress(Exception):
                         loop.remove_signal_handler(signal.SIGINT)
-                    except Exception:
-                        pass
 
             if (
                 cancelled
@@ -135,7 +134,7 @@ def _run_assistant_ask(  # noqa: PLR0913, PLR0915
                     del_res = del_fn(turn.record_id)
                     if asyncio.iscoroutine(del_res) or inspect.isawaitable(del_res):
                         await del_res
-                click.echo("\n[Generowanie przerwane. Tura została wycofana.]", err=True)
+                click.echo("\n[Generation interrupted. Turn rolled back.]", err=True)
                 return
 
             if isinstance(res, Success):
@@ -488,10 +487,8 @@ def _run_assistant_chat(  # noqa: PLR0913, PLR0915
                     result = None
                 finally:
                     if sigint_installed:
-                        try:
+                        with contextlib.suppress(Exception):
                             loop.remove_signal_handler(signal.SIGINT)
-                        except Exception:
-                            pass
 
                 if (
                     cancelled
@@ -511,7 +508,7 @@ def _run_assistant_chat(  # noqa: PLR0913, PLR0915
                         del_res = del_fn(turn.record_id)
                         if asyncio.iscoroutine(del_res) or inspect.isawaitable(del_res):
                             await del_res
-                    click.echo("\n[Generowanie przerwane. Tura została wycofana.]", err=True)
+                    click.echo("\n[Generation interrupted. Turn rolled back.]", err=True)
                     continue
 
                 if isinstance(result, Success):
