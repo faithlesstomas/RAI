@@ -270,6 +270,93 @@ class MemoryOperation(KernelRecord):
         return self
 
 
+class ObservationSchemaSummary(BaseModel):
+    """Structural summary of stored observation payload without full content."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    top_level_keys: tuple[str, ...] = ()
+    list_fields: dict[str, int] = Field(default_factory=dict)
+    item_fields: dict[str, tuple[str, ...]] = Field(default_factory=dict)
+    total_count: int | None = None
+    primitive_types: dict[str, str] = Field(default_factory=dict)
+
+
+def summarize_observation_schema(content: Any) -> ObservationSchemaSummary:
+    """Extract structural metadata from an observation dictionary without retaining bulky values."""
+    if not isinstance(content, dict):
+        return ObservationSchemaSummary()
+    top_keys = tuple(sorted(str(k) for k in content.keys()))
+    list_fields: dict[str, int] = {}
+    item_fields: dict[str, tuple[str, ...]] = {}
+    primitive_types: dict[str, str] = {}
+    total_count: int | None = None
+
+    if "total_count" in content and isinstance(content["total_count"], (int, float)):
+        total_count = int(content["total_count"])
+
+    for k, v in content.items():
+        k_str = str(k)
+        if isinstance(v, (list, tuple)):
+            list_fields[k_str] = len(v)
+            if total_count is None and (
+                k_str
+                in (
+                    "results",
+                    "applications",
+                    "documents",
+                    "entries",
+                    "processes",
+                    "items",
+                )
+                or len(list_fields) == 1
+            ):
+                total_count = len(v)
+            keys_set: set[str] = set()
+            for item in v[:10]:
+                if isinstance(item, dict):
+                    keys_set.update(str(ik) for ik in item.keys())
+            if keys_set:
+                item_fields[k_str] = tuple(sorted(keys_set))
+        else:
+            primitive_types[k_str] = type(v).__name__
+
+    return ObservationSchemaSummary(
+        top_level_keys=top_keys,
+        list_fields=list_fields,
+        item_fields=item_fields,
+        total_count=total_count,
+        primitive_types=primitive_types,
+    )
+
+
+class ObservationArtifact(KernelRecord):
+    """Durable, session-scoped artifact preserving complete capability outputs."""
+
+    record_type: Literal["observation_artifact"] = "observation_artifact"
+    artifact_id: str = Field(min_length=1)
+    session_id: AssistantSessionId
+    turn_id: str = Field(min_length=1)
+    capability: str = Field(min_length=1)
+    request_id: str = Field(min_length=1)
+    data_class: DataClass = DataClass.LOCAL
+    content: dict[str, Any]
+    schema_summary: ObservationSchemaSummary
+    size_chars: int = Field(ge=0)
+    created_at: datetime = Field(default_factory=_utc_now)
+    expires_at: datetime | None = None
+    provenance: tuple[ProvenanceReference, ...] = ()
+    derived_from: tuple[str, ...] = ()
+
+    @field_validator("data_class")
+    @classmethod
+    def validate_data_class(cls, value: DataClass | str) -> DataClass | str:
+        raw = value.value if isinstance(value, DataClass) else str(value)
+        if raw in (DataClass.SECRET.value, DataClass.BLOCKED.value):
+            raise ValueError(f"observation artifact cannot have {raw} data class")
+        return value
+
+
 class ToolObservation(BaseModel):
     """Structured projection of capability execution results for model reasoning context."""
 
@@ -282,6 +369,7 @@ class ToolObservation(BaseModel):
     summary: str = Field(min_length=1)
     untrusted_content: bool = True
     content: dict[str, Any] = Field(default_factory=dict)
+    artifact_id: str | None = None
 
 
 class AssistantContextManifestItem(BaseModel):
@@ -416,7 +504,8 @@ AnyAssistantRecord = Annotated[
     | AssistantContextManifest
     | AssistantContextPackage
     | InferenceRequest
-    | AssistantResponse,
+    | AssistantResponse
+    | ObservationArtifact,
     Field(discriminator="record_type"),
 ]
 
@@ -431,6 +520,7 @@ ASSISTANT_RECORD_TYPES: dict[str, type[KernelRecord]] = {
         AssistantContextPackage,
         InferenceRequest,
         AssistantResponse,
+        ObservationArtifact,
     )
 }
 

@@ -16,6 +16,8 @@ from .handles import SQLiteHandleStore
 from .records import ResourceHandle
 
 MAX_PROCESSES = 4096
+MAX_PROCESS_RESULTS = 1000
+MAX_RESULTS = MAX_PROCESS_RESULTS
 
 
 def process_metadata(pid: str, proc: Path = Path("/proc")) -> dict | None:
@@ -38,10 +40,11 @@ def process_metadata(pid: str, proc: Path = Path("/proc")) -> dict | None:
         return None
 
 
-def find_processes(query: str) -> tuple[dict, ...]:
+def find_processes(query: str, limit: int | None = None) -> tuple[dict, ...]:
+    max_limit = limit if limit is not None else MAX_RESULTS
     found = []
     for count, path in enumerate(Path("/proc").iterdir()):
-        if count >= MAX_PROCESSES or len(found) >= MAX_RESULTS:
+        if count >= MAX_PROCESSES or len(found) >= max_limit:
             break
         entry = process_metadata(path.name)
         if entry and (query.casefold() in entry["name"].casefold() or query == str(entry["pid"])):
@@ -70,8 +73,10 @@ class ProcessInspect:
         query = request.arguments.get("query", "")
         if not query.strip() or len(query) > 256:  # noqa: PLR2004
             return Failure(failure(request, "INVALID_ARGUMENT"))
+        found = await asyncio.to_thread(find_processes, query)
+        complete = len(found) < MAX_RESULTS
         entries = []
-        for process in await asyncio.to_thread(find_processes, query):
+        for process in found:
             if cancellation.cancelled:
                 return Failure(failure(request, "CANCELLED"))
             now = _utc_now()
@@ -83,7 +88,11 @@ class ProcessInspect:
             if isinstance(issued, Failure):
                 return Failure(failure(request, issued.failure()))
             entries.append({**process, "handle": issued.unwrap()})
-        return Success(result(request, {"processes": entries}, {"current_user_only": True}))
+        return Success(result(request, {
+            "processes": entries,
+            "complete": complete,
+            "reason": None if complete else f"Process listing capped at safety guard of {MAX_RESULTS}",
+        }, {"current_user_only": True}))
 
 
 def register_process_capability(registry: CapabilityRegistry, handles: SQLiteHandleStore) -> None:

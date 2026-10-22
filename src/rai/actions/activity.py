@@ -15,7 +15,7 @@ from rai.kernel.ports import CancellationToken
 from rai.kernel.records import ActionFailure, ActionResult, CapabilityRequest, DataClass, Episode, RiskClass, _utc_now
 from .capabilities import failure, result
 
-_MAX_EPISODES = 30
+_MAX_EPISODES = 1000
 _MAX_LOOKBACK_MINUTES = 10080
 _DATA_CLASS_ALLOWED = {
     DataClass.PUBLIC: {DataClass.PUBLIC},
@@ -40,11 +40,11 @@ class ActivityQuery:
             return Failure(failure(request, "HISTORY_SERVICE_UNAVAILABLE"))
 
         query_str = str(request.arguments.get("query", "")).strip()
-        limit_arg = request.arguments.get("limit", 15)
+        limit_arg = request.arguments.get("limit", 100)
         try:
             limit = min(_MAX_EPISODES, max(1, int(limit_arg)))
         except (ValueError, TypeError):
-            limit = 15
+            limit = 100
 
         try:
             filters = {}
@@ -112,6 +112,7 @@ class ActivityQuery:
 
         matched_episodes.sort(key=lambda item: item["ended_at"], reverse=True)
         results = matched_episodes[:limit]
+        complete = len(matched_episodes) <= limit
 
         empty_reason = None
         if not results:
@@ -125,7 +126,13 @@ class ActivityQuery:
         return Success(
             result(
                 request,
-                {"episodes": results, "count": len(results), "empty_reason": empty_reason},
+                {
+                    "episodes": results,
+                    "count": len(results),
+                    "empty_reason": empty_reason,
+                    "complete": complete,
+                    "reason": None if complete else f"Episodes capped at limit of {limit}",
+                },
                 {"episodes_found": len(results), "data_class": req_dc.value},
             )
         )

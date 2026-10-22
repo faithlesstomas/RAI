@@ -312,6 +312,51 @@ class SchemaStoreMixin:
                 ON memory_operations(profile_scope, created_at, operation_id);
                 """
             )
+            conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS observation_artifacts (
+                    record_id TEXT PRIMARY KEY,
+                    artifact_id TEXT NOT NULL,
+                    session_id TEXT NOT NULL,
+                    turn_id TEXT NOT NULL,
+                    capability TEXT NOT NULL,
+                    request_id TEXT NOT NULL,
+                    data_class TEXT NOT NULL,
+                    content_json TEXT NOT NULL,
+                    schema_summary_json TEXT NOT NULL,
+                    size_chars INTEGER NOT NULL,
+                    created_at TEXT NOT NULL,
+                    expires_at TEXT,
+                    provenance_json TEXT NOT NULL,
+                    derived_from_json TEXT NOT NULL,
+                    producer_json TEXT
+                );
+                """
+            )
+            conn.execute(
+                """
+                CREATE INDEX IF NOT EXISTS idx_obs_session_artifact
+                ON observation_artifacts(session_id, artifact_id);
+                """
+            )
+            conn.execute(
+                """
+                CREATE INDEX IF NOT EXISTS idx_obs_session_record
+                ON observation_artifacts(session_id, record_id);
+                """
+            )
+            conn.execute(
+                """
+                CREATE INDEX IF NOT EXISTS idx_obs_turn_id
+                ON observation_artifacts(turn_id);
+                """
+            )
+            conn.execute(
+                """
+                CREATE INDEX IF NOT EXISTS idx_obs_expires_at
+                ON observation_artifacts(expires_at);
+                """
+            )
             self._migrate_schema(conn)
         self._initialized = True
 

@@ -24,6 +24,7 @@ from .lifecycle import (
     _apply_forget_operations,
     _apply_memories_and_lifecycle,
 )
+from .observations import StoreObservationsMixin
 from .repl import ReplStoreMixin
 from .responses import ResponsesStoreMixin
 from .schema import SchemaStoreMixin
@@ -41,6 +42,7 @@ class SQLiteMemoryGraphStore(
     GraphStoreMixin,
     SearchStoreMixin,
     ReplStoreMixin,
+    StoreObservationsMixin,
 ):
     """Graph-aware SQLite store with strict referential integrity via central nodes."""
 

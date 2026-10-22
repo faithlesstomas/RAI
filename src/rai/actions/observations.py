@@ -1,0 +1,497 @@
+"""Pure-Python observation processing capabilities (safe grep/awk over stored artifacts)."""
+
+from __future__ import annotations
+
+import json
+import re
+from typing import Any
+
+from returns.result import Failure, Result, Success
+
+from rai.assistant.observation_budget import persist_observation_artifact
+from rai.assistant.ports import ObservationStore
+from rai.assistant.records import ObservationArtifact
+from rai.kernel.capabilities import (
+    CapabilityDescriptor,
+    CapabilityRegistry,
+    RegisteredCapability,
+)
+from rai.kernel.ports import CancellationToken
+from rai.kernel.records import (
+    ActionFailure,
+    ActionResult,
+    CapabilityRequest,
+    ProducerIdentity,
+    RiskClass,
+    _new_id,
+    _utc_now,
+)
+
+PRODUCER = ProducerIdentity(
+    producer_id="rai.actions.observations", kind="capability", version="1.0.0"
+)
+MAX_REGEX_PATTERN_LEN = 200
+
+
+def _fail(request: CapabilityRequest, code: str, message: str) -> ActionFailure:
+    return ActionFailure(
+        record_id=f"failure:{request.record_id}:{code}",
+        producer=PRODUCER,
+        correlation_id=request.correlation_id,
+        request_id=request.record_id,
+        capability=request.capability,
+        code=code,
+        message=message,
+    )
+
+
+def _ok(
+    request: CapabilityRequest, output: dict[str, Any], verification: dict[str, Any]
+) -> ActionResult:
+    return ActionResult(
+        record_id=f"result:{request.record_id}",
+        producer=PRODUCER,
+        correlation_id=request.correlation_id,
+        request_id=request.record_id,
+        capability=request.capability,
+        output=output,
+        verification=verification,
+    )
+
+
+def _extract_primary_list(content: dict[str, Any]) -> tuple[str | None, list[Any]]:
+    for key in ("applications", "results", "documents", "entries", "processes", "items", "episodes"):
+        if key in content and isinstance(content[key], (list, tuple)):
+            return key, list(content[key])
+    for k, v in content.items():
+        if isinstance(v, (list, tuple)):
+            return str(k), list(v)
+    return None, []
+
+
+async def _get_artifact(
+    store: ObservationStore | None,
+    ref: str,
+    session_id: str | None = None,
+) -> ObservationArtifact | None:
+    if store is None:
+        return None
+    res = await store.get(session_id or "", ref)
+    if isinstance(res, Success):
+        return res.unwrap()
+    return None
+
+
+class ObservationSearch:
+    """Grep-like search over record collections or text lines in stored artifacts."""
+
+    name = "observation.search"
+
+    def __init__(self, store: ObservationStore) -> None:
+        self.store = store
+
+    async def invoke(  # noqa: PLR0912
+        self, request: CapabilityRequest, cancellation: CancellationToken
+    ) -> Result[ActionResult, ActionFailure]:
+        if cancellation.cancelled:
+            return Failure(_fail(request, "CANCELLED", "Search cancelled"))
+
+        ref = str(request.arguments.get("ref", "")).strip()
+        pattern = str(request.arguments.get("pattern", "")).strip()
+        fields = request.arguments.get("fields")
+        is_regex = bool(request.arguments.get("regex", False))
+        case_sensitive = bool(request.arguments.get("case", False))
+
+        if not ref or not pattern:
+            return Failure(_fail(request, "INVALID_ARGUMENT", "Missing ref or pattern"))
+        if len(pattern) > MAX_REGEX_PATTERN_LEN:
+            return Failure(_fail(request, "PATTERN_TOO_LONG", "Pattern exceeds limit"))
+
+        artifact = await _get_artifact(self.store, ref)
+        if artifact is None:
+            return Failure(_fail(request, "ARTIFACT_NOT_FOUND", f"Artifact {ref} not found"))
+
+        # Compile matcher
+        try:
+            flags = 0 if case_sensitive else re.IGNORECASE
+            pat = pattern if is_regex else re.escape(pattern)
+            compiled = re.compile(pat, flags)
+        except re.error as exc:
+            return Failure(_fail(request, "INVALID_REGEX", str(exc)))
+
+        content = artifact.content
+        matched: list[Any] = []
+
+        # Check if text artifact
+        if "text" in content and isinstance(content["text"], str):
+            lines = content["text"].splitlines()
+            for idx, line in enumerate(lines, 1):
+                if compiled.search(line):
+                    # provide context: previous, current, next line
+                    start_ctx = max(0, idx - 2)
+                    end_ctx = min(len(lines), idx + 1)
+                    context_snippet = "\n".join(lines[start_ctx:end_ctx])
+                    matched.append({
+                        "line_number": idx,
+                        "line": line.strip(),
+                        "context": context_snippet,
+                    })
+        else:
+            list_key, records = _extract_primary_list(content)
+            for item in records:
+                if isinstance(item, dict):
+                    search_keys = fields if fields else list(item.keys())
+                    item_matched = False
+                    for k in search_keys:
+                        val = item.get(k)
+                        if val is not None and compiled.search(str(val)):
+                            item_matched = True
+                            break
+                    if item_matched:
+                        matched.append(item)
+                elif compiled.search(str(item)):
+                    matched.append(item)
+
+        output: dict[str, Any] = {
+            "ref": ref,
+            "pattern": pattern,
+            "total_matches": len(matched),
+            "matches": matched,
+        }
+
+        derived_id = await persist_observation_artifact(
+            store=self.store,
+            session_id=artifact.session_id,
+            turn_id=artifact.turn_id,
+            capability=self.name,
+            request_id=request.record_id,
+            data_class=artifact.data_class,
+            output=output,
+            derived_from=(ref,),
+        )
+        if derived_id:
+            output["artifact_id"] = derived_id
+
+        return Success(_ok(request, output, {"source_artifact_id": ref}))
+
+
+class ObservationFilter:
+    """Filter records by structured field comparisons (contains, equals, numeric)."""
+
+    name = "observation.filter"
+
+    def __init__(self, store: ObservationStore) -> None:
+        self.store = store
+
+    async def invoke(
+        self, request: CapabilityRequest, cancellation: CancellationToken
+    ) -> Result[ActionResult, ActionFailure]:
+        if cancellation.cancelled:
+            return Failure(_fail(request, "CANCELLED", "Filter cancelled"))
+
+        ref = str(request.arguments.get("ref", "")).strip()
+        field = str(request.arguments.get("field", "")).strip()
+        op = str(request.arguments.get("op", "equals")).strip().lower()
+        val = request.arguments.get("value")
+
+        if not ref or not field:
+            return Failure(_fail(request, "INVALID_ARGUMENT", "Missing ref or field"))
+
+        artifact = await _get_artifact(self.store, ref)
+        if artifact is None:
+            return Failure(_fail(request, "ARTIFACT_NOT_FOUND", f"Artifact {ref} not found"))
+
+        _, records = _extract_primary_list(artifact.content)
+        filtered: list[Any] = []
+
+        def _evaluate(item_val: Any) -> bool:  # noqa: PLR0911, PLR0912, ANN401
+            if item_val is None:
+                return False
+            if op == "equals":
+                return str(item_val).casefold() == str(val).casefold()
+            if op == "contains":
+                if isinstance(item_val, (list, tuple)):
+                    return any(str(val).casefold() in str(x).casefold() for x in item_val)
+                return str(val).casefold() in str(item_val).casefold()
+            if op == "startswith":
+                return str(item_val).casefold().startswith(str(val).casefold())
+            if op == "endswith":
+                return str(item_val).casefold().endswith(str(val).casefold())
+            if op == "in":
+                if isinstance(val, (list, tuple)):
+                    return any(str(item_val).casefold() == str(v).casefold() for v in val)
+                return str(item_val).casefold() in str(val).casefold()
+            try:
+                num_item = float(item_val)
+                num_val = float(val)
+                if op == "gt":
+                    return num_item > num_val
+                if op == "gte":
+                    return num_item >= num_val
+                if op == "lt":
+                    return num_item < num_val
+                if op == "lte":
+                    return num_item <= num_val
+            except (ValueError, TypeError):
+                return False
+            return False
+
+        for rec in records:
+            if isinstance(rec, dict):
+                if _evaluate(rec.get(field)):
+                    filtered.append(rec)
+
+        output: dict[str, Any] = {
+            "ref": ref,
+            "field": field,
+            "op": op,
+            "value": val,
+            "total_matches": len(filtered),
+            "results": filtered,
+        }
+
+        derived_id = await persist_observation_artifact(
+            store=self.store,
+            session_id=artifact.session_id,
+            turn_id=artifact.turn_id,
+            capability=self.name,
+            request_id=request.record_id,
+            data_class=artifact.data_class,
+            output=output,
+            derived_from=(ref,),
+        )
+        if derived_id:
+            output["artifact_id"] = derived_id
+
+        return Success(_ok(request, output, {"source_artifact_id": ref}))
+
+
+class ObservationSlice:
+    """Return a pagination window of records or lines from an artifact."""
+
+    name = "observation.slice"
+
+    def __init__(self, store: ObservationStore) -> None:
+        self.store = store
+
+    async def invoke(
+        self, request: CapabilityRequest, cancellation: CancellationToken
+    ) -> Result[ActionResult, ActionFailure]:
+        if cancellation.cancelled:
+            return Failure(_fail(request, "CANCELLED", "Slice cancelled"))
+
+        ref = str(request.arguments.get("ref", "")).strip()
+        offset = max(0, int(request.arguments.get("offset", 0)))
+        limit = min(1000, max(1, int(request.arguments.get("limit", 20))))
+
+        if not ref:
+            return Failure(_fail(request, "INVALID_ARGUMENT", "Missing ref"))
+
+        artifact = await _get_artifact(self.store, ref)
+        if artifact is None:
+            return Failure(_fail(request, "ARTIFACT_NOT_FOUND", f"Artifact {ref} not found"))
+
+        content = artifact.content
+        if "text" in content and isinstance(content["text"], str):
+            all_items = content["text"].splitlines()
+        else:
+            _, all_items = _extract_primary_list(content)
+
+        sliced = all_items[offset : offset + limit]
+        output: dict[str, Any] = {
+            "ref": ref,
+            "offset": offset,
+            "limit": limit,
+            "total_count": len(all_items),
+            "items": sliced,
+        }
+
+        derived_id = await persist_observation_artifact(
+            store=self.store,
+            session_id=artifact.session_id,
+            turn_id=artifact.turn_id,
+            capability=self.name,
+            request_id=request.record_id,
+            data_class=artifact.data_class,
+            output=output,
+            derived_from=(ref,),
+        )
+        if derived_id:
+            output["artifact_id"] = derived_id
+
+        return Success(_ok(request, output, {"source_artifact_id": ref}))
+
+
+class ObservationCount:
+    """Count records or calculate group-by frequencies in an artifact."""
+
+    name = "observation.count"
+
+    def __init__(self, store: ObservationStore) -> None:
+        self.store = store
+
+    async def invoke(
+        self, request: CapabilityRequest, cancellation: CancellationToken
+    ) -> Result[ActionResult, ActionFailure]:
+        if cancellation.cancelled:
+            return Failure(_fail(request, "CANCELLED", "Count cancelled"))
+
+        ref = str(request.arguments.get("ref", "")).strip()
+        field = request.arguments.get("field")
+
+        if not ref:
+            return Failure(_fail(request, "INVALID_ARGUMENT", "Missing ref"))
+
+        artifact = await _get_artifact(self.store, ref)
+        if artifact is None:
+            return Failure(_fail(request, "ARTIFACT_NOT_FOUND", f"Artifact {ref} not found"))
+
+        _, records = _extract_primary_list(artifact.content)
+
+        if not field:
+            output: dict[str, Any] = {
+                "ref": ref,
+                "total_count": len(records),
+            }
+        else:
+            counts: dict[str, int] = {}
+            for rec in records:
+                if isinstance(rec, dict):
+                    v = rec.get(str(field))
+                    if isinstance(v, (list, tuple)):
+                        for sub_v in v:
+                            s = str(sub_v)
+                            counts[s] = counts.get(s, 0) + 1
+                    else:
+                        s = str(v) if v is not None else "null"
+                        counts[s] = counts.get(s, 0) + 1
+            output = {
+                "ref": ref,
+                "field": str(field),
+                "total_records": len(records),
+                "counts": dict(sorted(counts.items(), key=lambda x: x[1], reverse=True)),
+            }
+
+        return Success(_ok(request, output, {"source_artifact_id": ref}))
+
+
+class ObservationGet:
+    """Extract a single field or nested path using JSON pointer notation."""
+
+    name = "observation.get"
+
+    def __init__(self, store: ObservationStore) -> None:
+        self.store = store
+
+    async def invoke(
+        self, request: CapabilityRequest, cancellation: CancellationToken
+    ) -> Result[ActionResult, ActionFailure]:
+        if cancellation.cancelled:
+            return Failure(_fail(request, "CANCELLED", "Get cancelled"))
+
+        ref = str(request.arguments.get("ref", "")).strip()
+        path = str(request.arguments.get("path", "")).strip()
+
+        if not ref or not path:
+            return Failure(_fail(request, "INVALID_ARGUMENT", "Missing ref or path"))
+
+        artifact = await _get_artifact(self.store, ref)
+        if artifact is None:
+            return Failure(_fail(request, "ARTIFACT_NOT_FOUND", f"Artifact {ref} not found"))
+
+        # Navigate JSON pointer
+        segments = [s for s in path.strip("/").split("/") if s]
+        curr: Any = artifact.content
+        try:
+            for seg in segments:
+                if isinstance(curr, dict):
+                    curr = curr[seg]
+                elif isinstance(curr, (list, tuple)):
+                    curr = curr[int(seg)]
+                else:
+                    return Failure(_fail(request, "INVALID_POINTER", f"Cannot index into {type(curr)} with '{seg}'"))
+        except (KeyError, IndexError, ValueError) as exc:
+            return Failure(_fail(request, "PATH_NOT_FOUND", f"Path '{path}' not found: {exc}"))
+
+        output = {
+            "ref": ref,
+            "path": path,
+            "value": curr,
+        }
+        return Success(_ok(request, output, {"source_artifact_id": ref}))
+
+
+def register_observation_capabilities(
+    registry: CapabilityRegistry, store: ObservationStore
+) -> None:
+    """Register all observation processing capabilities into the capability registry."""
+    descriptors_and_impls = (
+        (
+            ObservationSearch(store),
+            {
+                "ref": {"type": "string", "description": "Artifact reference handle (e.g. obs_1)"},
+                "pattern": {"type": "string", "description": "Text or regex search pattern"},
+                "fields": {"type": "array", "items": {"type": "string"}, "description": "Optional fields to restrict search to"},
+                "regex": {"type": "boolean", "description": "Whether pattern is regex"},
+                "case": {"type": "boolean", "description": "Case-sensitive search"},
+            },
+            ["ref", "pattern"],
+            "Search within a stored observation artifact without loading all data into prompt.",
+        ),
+        (
+            ObservationFilter(store),
+            {
+                "ref": {"type": "string", "description": "Artifact reference handle (e.g. obs_1)"},
+                "field": {"type": "string", "description": "Field name to filter on"},
+                "op": {"type": "string", "enum": ["contains", "equals", "startswith", "endswith", "in", "gt", "gte", "lt", "lte"]},
+                "value": {"description": "Target value to compare against"},
+            },
+            ["ref", "field", "op", "value"],
+            "Filter records inside a stored observation artifact by structured conditions.",
+        ),
+        (
+            ObservationSlice(store),
+            {
+                "ref": {"type": "string", "description": "Artifact reference handle (e.g. obs_1)"},
+                "offset": {"type": "integer", "minimum": 0, "default": 0},
+                "limit": {"type": "integer", "minimum": 1, "maximum": 1000, "default": 20},
+            },
+            ["ref"],
+            "Retrieve a pagination slice of records or text lines from a stored artifact.",
+        ),
+        (
+            ObservationCount(store),
+            {
+                "ref": {"type": "string", "description": "Artifact reference handle (e.g. obs_1)"},
+                "field": {"type": "string", "description": "Optional field for group-by count"},
+            },
+            ["ref"],
+            "Count records or group-by frequency distribution in a stored artifact.",
+        ),
+        (
+            ObservationGet(store),
+            {
+                "ref": {"type": "string", "description": "Artifact reference handle (e.g. obs_1)"},
+                "path": {"type": "string", "description": "JSON pointer path (e.g. /applications/0/name)"},
+            },
+            ["ref", "path"],
+            "Extract one field or record from a stored artifact using JSON pointer notation.",
+        ),
+    )
+
+    for impl, props, required, desc in descriptors_and_impls:
+        descriptor = CapabilityDescriptor(
+            name=impl.name,
+            description=desc,
+            input_schema={
+                "type": "object",
+                "properties": props,
+                "required": required,
+                "additionalProperties": False,
+            },
+            risk_class=RiskClass.LOW,
+            side_effects=(),
+            isolation="host-api",
+            verification_plan=("artifact-reference-resolved",),
+        )
+        registry.register(RegisteredCapability(descriptor, implementation=impl))

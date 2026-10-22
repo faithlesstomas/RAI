@@ -771,6 +771,11 @@ class AssistantContextBuilder:
                         else output
                     )
 
+                art_id = (
+                    action_result.get("artifact_id")
+                    or action_data.get("artifact_id")
+                    or (output.get("_artifact_id") if isinstance(output, dict) else None)
+                )
                 obs = ToolObservation(
                     source_id=obs_id,
                     source_turn_id=recent_t.record_id,
@@ -779,6 +784,7 @@ class AssistantContextBuilder:
                     summary=summary,
                     untrusted_content=bool(output.get("untrusted_content", True)),
                     content=obs_content,
+                    artifact_id=art_id,
                 )
             tool_observations.append(obs)
             tool_observation_ids.append(obs.source_id)

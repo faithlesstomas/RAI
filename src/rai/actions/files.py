@@ -23,6 +23,9 @@ from .applications import ApplicationBackend
 
 MAX_VISITED = 10000
 MAX_QUERY = 256
+MAX_DIRECTORY_ENTRIES = 5000
+MAX_FILE_RESULTS = 1000
+MAX_RESULTS = MAX_FILE_RESULTS
 SAFE_DOCUMENT_SUFFIXES = frozenset({".txt", ".md", ".pdf", ".odt", ".ods", ".odp", ".docx", ".xlsx", ".pptx", ".csv", ".rtf"})
 
 
@@ -66,8 +69,14 @@ def _matches_document_query(name: str, query: str) -> bool:
     return query.casefold() in name.casefold()
 
 
-def search_documents(roots: tuple[Path, ...], query: str, directory: Path | None = None) -> tuple[Document, ...]:  # noqa: PLR0912
+def search_documents(
+    roots: tuple[Path, ...],
+    query: str,
+    directory: Path | None = None,
+    limit: int | None = None,
+) -> tuple[Document, ...]:  # noqa: PLR0912
     """Bound work by visited directory entries; never read document contents."""
+    max_limit = limit if limit is not None else MAX_RESULTS
     query_stripped = query.strip()
     query_path = Path(query_stripped)
 
@@ -95,7 +104,7 @@ def search_documents(roots: tuple[Path, ...], query: str, directory: Path | None
     found: list[Document] = []
     pending = list(search_roots)
     visited = 0
-    while pending and visited < MAX_VISITED and len(found) < MAX_RESULTS:
+    while pending and visited < MAX_VISITED and len(found) < max_limit:
         curr_dir = pending.pop()
         try:
             with os.scandir(curr_dir) as entries:
@@ -111,7 +120,7 @@ def search_documents(roots: tuple[Path, ...], query: str, directory: Path | None
                         document = inspect_document(Path(entry.path), roots)
                         if document:
                             found.append(document)
-                            if len(found) >= MAX_RESULTS:
+                            if len(found) >= max_limit:
                                 break
         except OSError:
             continue
@@ -170,7 +179,20 @@ class FileSearch:
                 return Failure(failure(request, issued.failure()))
             entries.append({"name": document.path.name, "path": str(document.path), "handle": issued.unwrap(),
                             "expires_at": handle.expires_at.isoformat()})
-        return Success(result(request, {"documents": entries, "limit": MAX_RESULTS, "total_count": len(entries)}, {"allowed_roots_checked": True}))
+        complete = len(entries) < MAX_FILE_RESULTS
+        return Success(
+            result(
+                request,
+                {
+                    "documents": entries,
+                    "limit": MAX_FILE_RESULTS,
+                    "total_count": len(entries),
+                    "complete": complete,
+                    "reason": None if complete else f"File search capped at safety guard of {MAX_FILE_RESULTS}",
+                },
+                {"allowed_roots_checked": True},
+            )
+        )
 
 
 class FileList:
@@ -203,12 +225,18 @@ class FileList:
                 truncated = False
                 with os.scandir(descriptor) as children:
                     for index, entry in enumerate(children):
-                        if index >= MAX_RESULTS:
+                        if index >= MAX_DIRECTORY_ENTRIES:
                             truncated = True
                             break
                         kind = "symlink" if entry.is_symlink() else "directory" if entry.is_dir(follow_symlinks=False) else "file"
                         entries.append({"name": entry.name, "path": str(path / entry.name), "kind": kind})
-                return {"entries": sorted(entries, key=lambda item: item["name"]), "truncated": truncated}
+                complete = not truncated
+                return {
+                    "entries": sorted(entries, key=lambda item: item["name"]),
+                    "complete": complete,
+                    "reason": None if complete else f"Directory listing exceeded safety guard of {MAX_DIRECTORY_ENTRIES} entries",
+                    "truncated": truncated,
+                }
             finally:
                 os.close(descriptor)
 

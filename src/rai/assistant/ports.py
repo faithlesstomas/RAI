@@ -23,6 +23,7 @@ from .records import (
     MemoryRecord,
     MemoryRelation,
     MemoryRelationKind,
+    ObservationArtifact,
 )
 
 
@@ -240,6 +241,35 @@ class MemoryGraphStore(Protocol):
     async def clear_repl_session(
         self, session_id: str, profile_scope: str = "default"
     ) -> Result[None, ActionFailure]: ...
+
+
+@runtime_checkable
+class ObservationStore(Protocol):
+    """Durable, session-scoped store for tool execution outputs and derived artifacts."""
+
+    async def put(
+        self, artifact: ObservationArtifact
+    ) -> Result[ObservationArtifact, ActionFailure]: ...
+
+    async def get(
+        self, session_id: str, artifact_id_or_stable_id: str
+    ) -> Result[ObservationArtifact | None, ActionFailure]: ...
+
+    async def list_for_session(
+        self, session_id: str, limit: int = 100
+    ) -> Result[tuple[ObservationArtifact, ...], ActionFailure]: ...
+
+    async def delete_for_session(
+        self, session_id: str
+    ) -> Result[int, ActionFailure]: ...
+
+    async def prune_expired(
+        self, now: datetime | None = None
+    ) -> Result[int, ActionFailure]: ...
+
+    async def allocate_artifact_id(
+        self, session_id: str
+    ) -> Result[str, ActionFailure]: ...
 
 
 @runtime_checkable
