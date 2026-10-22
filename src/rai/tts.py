@@ -58,12 +58,16 @@ class TTS:
             logger.warning("Aborting synthesis: voice not loaded.")
             return
 
+        from .speech.normalization import normalize_speech_text  # noqa: PLC0415
+
+        clean_text = normalize_speech_text(text)
+
         if output_path:
             with wave.open(output_path, "wb") as wav_file:
-                self._voice.synthesize(text, wav_file)
+                self._voice.synthesize(clean_text, wav_file)
         else:
             logger.debug("Synthesizing for direct playback.")
-            await self._play_audio(text)
+            await self._play_audio(clean_text)
 
     async def _play_audio(self, text: str) -> None:
         """Synthesizes audio and plays it using sounddevice in a non-blocking way."""

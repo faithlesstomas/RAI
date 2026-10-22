@@ -127,7 +127,7 @@ class LlamaCppEngine:
                 )
             )
 
-        from llama_cpp import Llama  # noqa: PLC0415
+        from llama_cpp import Llama  # noqa: PLC0415  # pylint: disable=import-error
 
         try:
             self.llm = Llama(
@@ -272,7 +272,7 @@ class LlamaCppEngine:
                 yield Failure(load_res.failure())
                 return
 
-        def _create_stream() -> Any:
+        def _create_stream() -> object:
             return self.llm.create_completion(
                 prompt=prompt,
                 stop=stop or [],
@@ -307,7 +307,7 @@ class AsyncLlamaEngine(LocalTextEngine):
 
     def __init__(
         self,
-        engine_or_path: Any,
+        engine_or_path: str | Path | LlamaCppEngine,
         n_ctx: int = 0,
         verbose: bool = False,
     ) -> None:

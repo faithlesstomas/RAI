@@ -18,6 +18,24 @@ from ..protocols import GenerationStats, InferenceResult, LocalTextEngine
 logger = logging.getLogger(__name__)
 
 
+def _sanitize_message_content(raw_content: object) -> str:
+    if isinstance(raw_content, list):
+        return " ".join(str(item) for item in raw_content)
+    if not isinstance(raw_content, str):
+        return str(raw_content) if raw_content is not None else ""
+    return raw_content
+
+
+def _sanitize_messages(messages: list[dict[str, Any]]) -> list[dict[str, str]]:
+    sanitized: list[dict[str, str]] = []
+    for msg in messages:
+        if not isinstance(msg, dict):
+            continue
+        content = _sanitize_message_content(msg.get("content", ""))
+        sanitized.append({**msg, "role": str(msg.get("role", "user")), "content": content})
+    return sanitized
+
+
 class OllamaEngine:
     """
     Non-blocking HTTP-backed adapter for local Ollama daemon.
@@ -116,7 +134,7 @@ class OllamaEngine:
             if messages is not None:
                 response = await client.chat(
                     model=self._model_name,
-                    messages=list(messages),
+                    messages=_sanitize_messages(messages),
                     think=think_param,
                     options=options,
                 )

@@ -589,6 +589,37 @@ async def test_ollama_engine_reads_structured_sdk_chat_response() -> None:
     assert result.unwrap().reasoning_content == "Private reasoning."
 
 
+@pytest.mark.asyncio
+async def test_ollama_engine_sanitizes_non_string_message_content() -> None:
+    """Issue #2: Ollama Message model requires string content; non-string content must be sanitized."""
+    engine = OllamaEngine(model_name="gemma3:4b")
+    mock_client = AsyncMock()
+    mock_client.chat.return_value = {
+        "message": {"role": "assistant", "content": "Clean response"},
+        "eval_count": 5,
+        "prompt_eval_count": 2,
+    }
+
+    with patch.object(engine, "_get_client", return_value=mock_client):
+        # Pass content as list (e.g. ['[]']) as reported in issue #2
+        raw_messages: list[dict[str, Any]] = [
+            {"role": "user", "content": ["[]"]},
+            {"role": "assistant", "content": 123},
+        ]
+        res = await engine.generate(messages=raw_messages)
+        assert isinstance(res, Success)
+        assert res.unwrap().text == "Clean response"
+
+        # Verify sanitized messages passed to client.chat
+        mock_client.chat.assert_awaited_once()
+        passed_messages = mock_client.chat.await_args.kwargs["messages"]
+        assert passed_messages[0]["content"] == "[]"
+        assert passed_messages[1]["content"] == "123"
+        assert isinstance(passed_messages[0]["content"], str)
+        assert isinstance(passed_messages[1]["content"], str)
+
+
+
 # --- Supervisor Health Reporting Test ---
 
 
