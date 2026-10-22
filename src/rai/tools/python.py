@@ -8,7 +8,7 @@ from __future__ import annotations
 import ast
 import logging
 import os
-from typing import Dict, Optional, Tuple
+from typing import Any, Dict, Optional, Tuple
 
 from returns.result import Success
 
@@ -18,9 +18,6 @@ from rai.tools.security.monty import get_monty_runner
 from rai.tools.security.sandbox import get_sandbox_runner
 
 logger = logging.getLogger(__name__)
-
-# In-memory cache for Monty session blobs keyed by session_id
-_SESSION_BLOBS: Dict[str, bytes] = {}
 
 # Modules supported natively by the pure Monty sandbox
 _MONTY_SAFE_MODULES = {
@@ -79,27 +76,51 @@ def can_run_in_monty(code: str) -> Tuple[bool, str]:  # noqa: PLR0911, PLR0912
     return True, "Compatible with pure Monty sandbox."
 
 
-def get_session_blob(session_id: str) -> Optional[bytes]:
-    """Retrieve stored Monty session heap snapshot."""
-    return _SESSION_BLOBS.get(session_id)
+async def get_session_blob(
+    session_id: str, store: Optional[Any] = None
+) -> Optional[bytes]:
+    """Retrieve stored Monty session heap snapshot from persistent storage."""
+    if store is None:
+        from rai.assistant.store import SQLiteMemoryGraphStore  # noqa: PLC0415
+        store = SQLiteMemoryGraphStore()
+    res = await store.get_repl_session(session_id)
+    if isinstance(res, Success) and res.unwrap():
+        blob, _ = res.unwrap()
+        return blob
+    return None
 
 
-def store_session_blob(session_id: str, blob: bytes) -> None:
-    """Persist Monty session heap snapshot in memory."""
-    _SESSION_BLOBS[session_id] = blob
+async def store_session_blob(
+    session_id: str,
+    blob: bytes,
+    variables: Optional[dict[str, str]] = None,
+    store: Optional[Any] = None,
+) -> None:
+    """Persist Monty session heap snapshot into persistent storage."""
+    if store is None:
+        from rai.assistant.store import SQLiteMemoryGraphStore  # noqa: PLC0415
+        store = SQLiteMemoryGraphStore()
+    await store.save_repl_session(session_id, blob, variables or {})
 
 
-def clear_session_blob(session_id: str) -> None:
-    """Clear stored Monty session heap snapshot."""
-    _SESSION_BLOBS.pop(session_id, None)
+async def clear_session_blob(
+    session_id: str, store: Optional[Any] = None
+) -> None:
+    """Clear stored Monty session heap snapshot from persistent storage."""
+    if store is None:
+        from rai.assistant.store import SQLiteMemoryGraphStore  # noqa: PLC0415
+        store = SQLiteMemoryGraphStore()
+    await store.clear_repl_session(session_id)
 
 
-async def run_secure_python_code(  # noqa: PLR0912, PLR0915
+async def run_secure_python_code(  # noqa: PLR0912, PLR0913, PLR0915
     code: str,
     allow_network: bool = False,
     rw_dir: Optional[str] = None,
     session_id: Optional[str] = None,
     force_os_sandbox: bool = False,
+    store: Optional[Any] = None,
+    monty_runner: Optional[Any] = None,
 ) -> str:
     """
     Executes Python code securely via Tiered Sandboxing.
@@ -111,19 +132,27 @@ async def run_secure_python_code(  # noqa: PLR0912, PLR0915
         allow_network, session_id, force_os_sandbox,
     )
 
-    monty_runner = get_monty_runner()
+    if monty_runner is None:
+        monty_runner = get_monty_runner()
     monty_eligible, monty_reason = can_run_in_monty(code)
 
     # 1. Tier-1 Fast-Path: Pure Monty execution (No HITL needed)
     if not force_os_sandbox and not allow_network and monty_eligible and monty_runner.is_available():
         logger.debug("Executing code via Tier-1 Monty nano-sandbox (reason: %s)", monty_reason)
-        prior_blob = get_session_blob(session_id) if session_id else None
+        prior_blob: Optional[bytes] = None
+        if session_id:
+            prior_blob = await get_session_blob(session_id, store=store)
         res = monty_runner.run(code, session_blob=prior_blob)
 
         if isinstance(res, Success):
             monty_result = res.unwrap()
             if session_id and monty_result.session_blob:
-                store_session_blob(session_id, monty_result.session_blob)
+                await store_session_blob(
+                    session_id,
+                    monty_result.session_blob,
+                    variables=monty_result.variables,
+                    store=store,
+                )
 
             output = monty_result.output if monty_result.output else "[Success: Code executed and returned no output]"
 

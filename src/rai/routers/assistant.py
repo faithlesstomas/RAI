@@ -27,11 +27,11 @@ from rai.assistant.records import (
     ConversationTurn,
 )
 from rai.assistant.service import AssistantService
-from rai.dependencies import get_assistant_service
+from rai.dependencies import get_assistant_service, get_monty_runner
 from rai.kernel.records import DataClass, ProducerIdentity, _new_id
 from rai.kernel.ports import LifecycleState
 from rai.tools.security.auth import is_authorized
-from rai.tools.security.monty import get_monty_runner
+from rai.tools.security.monty import MontyRunner
 
 router = APIRouter(prefix="/api/v1/assistant", tags=["Rich Assistant"])
 
@@ -312,8 +312,13 @@ async def execute_session_repl(
     session_id: str,
     request: REPLExecuteRequest,
     service: AssistantService = Depends(get_assistant_service),
+    runner: MontyRunner = Depends(get_monty_runner),
 ) -> REPLExecuteResult:
-    """Execute Python code in the persistent Monty REPL for the given session."""
+    if not isinstance(runner, MontyRunner):
+        from rai.tools.security.monty import get_monty_runner  # noqa: PLC0415
+
+        runner = get_monty_runner()
+
     saved_blob_res = await service.store.get_repl_session(session_id)
     session_blob = (
         saved_blob_res.unwrap()[0]
@@ -321,7 +326,6 @@ async def execute_session_repl(
         else None
     )
 
-    runner = get_monty_runner()
     start_t = time.perf_counter()
     eval_res = runner.run(request.code, session_blob=session_blob)
     duration_ms = (time.perf_counter() - start_t) * 1000.0
@@ -354,8 +358,14 @@ async def execute_session_repl(
 async def get_session_repl_state(
     session_id: str,
     service: AssistantService = Depends(get_assistant_service),
+    runner: MontyRunner = Depends(get_monty_runner),
 ) -> REPLStateResult:
     """Inspect variables and functions present in session's persistent REPL."""
+    if not isinstance(runner, MontyRunner):
+        from rai.tools.security.monty import get_monty_runner  # noqa: PLC0415
+
+        runner = get_monty_runner()
+
     saved_res = await service.store.get_repl_session(session_id)
     if isinstance(saved_res, Failure):
         failure = saved_res.failure()
@@ -373,7 +383,6 @@ async def get_session_repl_state(
 
     session_blob, variables = session_data
     if not variables and session_blob:
-        runner = get_monty_runner()
         inspect_res = runner.inspect_state(session_blob)
         if isinstance(inspect_res, Success):
             variables = inspect_res.unwrap()

@@ -174,12 +174,14 @@ class MontyRunner:
             return Failure(f"INSPECT_ERROR: {exc}")
 
 
-_RUNNER_INSTANCE: Optional[MontyRunner] = None
+def get_monty_runner(
+    max_duration_secs: float = 2.0,
+    max_memory_bytes: int = 32 * 1024 * 1024,
+) -> MontyRunner:
+    """Factory returning an instance of MontyRunner configured with the specified limits."""
+    return MontyRunner(
+        max_duration_secs=max_duration_secs,
+        max_memory_bytes=max_memory_bytes,
+    )
 
 
-def get_monty_runner() -> MontyRunner:
-    """Return the singleton instance of MontyRunner."""
-    global _RUNNER_INSTANCE  # noqa: PLW0603
-    if _RUNNER_INSTANCE is None:
-        _RUNNER_INSTANCE = MontyRunner()
-    return _RUNNER_INSTANCE

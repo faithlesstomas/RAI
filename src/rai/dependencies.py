@@ -13,6 +13,7 @@ from .services.model_registry import ModelRegistry
 from .history.service import RichHistoryService
 from .history.storage import KeyUnavailableError
 from .assistant.service import AssistantService
+from .tools.security.monty import MontyRunner
 from .kernel.ports import LifecycleState
 from returns.result import Failure
 
@@ -74,6 +75,12 @@ async def get_event_journal(request: Request) -> EventJournal:
     if journal is None:
         raise HTTPException(status_code=503, detail="event journal is unavailable")
     return journal
+
+
+def get_monty_runner(request: Request) -> MontyRunner:
+    """Resolve the MontyRunner managed by the application container."""
+    return get_container(request).monty_runner
+
 
 
 async def close_dependencies(container: ApplicationContainer) -> None:

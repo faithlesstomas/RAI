@@ -424,13 +424,11 @@ def _run_assistant_chat(  # noqa: PLR0913, PLR0915
                     click.echo(f"Profile: {service.profile_scope} | Session ID: {sid}")
                     continue
                 if stripped == "/repl":
-                    from rai.tools.security.monty import get_monty_runner  # noqa: PLC0415
-
                     saved_res = await service.store.get_repl_session(sid)
                     if isinstance(saved_res, Success) and saved_res.unwrap():
                         blob, vars_dict = saved_res.unwrap()
                         if not vars_dict and blob:
-                            runner = get_monty_runner()
+                            runner = container.monty_runner
                             inspected = runner.inspect_state(blob)
                             if isinstance(inspected, Success):
                                 vars_dict = inspected.unwrap()

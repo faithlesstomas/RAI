@@ -358,7 +358,13 @@ def test_notebook_interactive_loop(tmp_path: Path) -> None:
     mock_service.store.save_repl_session = AsyncMock(return_value=Success(None))
     mock_service.store.accept_turn = AsyncMock(return_value=Success(None))
     mock_service.store.clear_repl_session = AsyncMock(return_value=Success(None))
+    from rai.tools.security.monty import MontyExecutionResult
+
     mock_container.assistant_service = mock_service
+    mock_container.monty_runner.run.return_value = Success(
+        MontyExecutionResult(output="10", session_blob=b"test-blob", variables={"x": "int"})
+    )
+    mock_container.monty_runner.inspect_state.return_value = Success({"x": "int"})
     mock_container.close = AsyncMock()
 
     export_file = tmp_path / "test_out.ipynb"

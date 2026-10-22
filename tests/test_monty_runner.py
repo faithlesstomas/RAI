@@ -6,12 +6,20 @@ from __future__ import annotations
 import pytest
 from returns.result import Failure, Success
 
+from rai.container import ApplicationContainer
 from rai.tools.security.monty import MontyRunner, get_monty_runner
 
 
-def test_get_monty_runner_singleton() -> None:
-    runner1 = get_monty_runner()
-    runner2 = get_monty_runner()
+def test_get_monty_runner_factory() -> None:
+    runner = get_monty_runner()
+    assert isinstance(runner, MontyRunner)
+    assert runner.is_available()
+
+
+def test_container_monty_runner_managed_lifecycle() -> None:
+    container = ApplicationContainer(config={}, testing=True)
+    runner1 = container.monty_runner
+    runner2 = container.monty_runner
     assert runner1 is runner2
     assert runner1.is_available()
 

@@ -147,3 +147,40 @@ async def test_run_secure_python_code_hitl_denied() -> None:
         assert "Action denied by the user" in output
         mock_approval.register_request.assert_called_once_with(code, "PythonTools")
         mock_approval.wait_for_approval.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_run_secure_python_code_session_persistence_with_store(tmp_path: os.PathLike[str]) -> None:
+    """Test that python session state persists into MemoryGraphStore across execution calls."""
+    from pathlib import Path
+    from returns.result import Success
+    from rai.assistant.store import SQLiteMemoryGraphStore
+    from rai.tools.python import clear_session_blob
+
+    store = SQLiteMemoryGraphStore(Path(tmp_path) / "test_memory.sqlite3")
+    init_res = await store.start()
+    assert isinstance(init_res, Success)
+
+    session_id = "test-session-persistence"
+
+    # Turn 1: define variables
+    out1 = await run_secure_python_code("x = 42\ny = 'hello'", session_id=session_id, store=store)
+    assert "[Active REPL session state:" in out1
+    assert "x (int)" in out1
+
+    # Verify state was saved to SQLite store
+    saved = await store.get_repl_session(session_id)
+    assert saved.unwrap() is not None
+    blob, vars_dict = saved.unwrap()
+    assert len(blob) > 0
+    assert vars_dict["x"] == "int"
+
+    # Turn 2: use variables from previous turn
+    out2 = await run_secure_python_code("x * 2", session_id=session_id, store=store)
+    assert "84" in out2
+
+    # Clear session
+    await clear_session_blob(session_id, store=store)
+    cleared = await store.get_repl_session(session_id)
+    assert cleared.unwrap() is None
+

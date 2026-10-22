@@ -18,7 +18,6 @@ from rai.assistant.records import ConversationTurn
 from rai.container import ApplicationContainer
 from rai.kernel.records import DataClass, ProducerIdentity, _new_id
 from rai.paths import data_dir
-from rai.tools.security.monty import get_monty_runner
 from .settings import _assistant_config
 
 
@@ -68,7 +67,7 @@ def _run_assistant_notebook(  # noqa: PLR0913, PLR0915
         raise click.ClickException(str(exc)) from exc
 
     sid = session_id or _new_id()
-    monty_runner = get_monty_runner()
+    monty_runner = container.monty_runner
 
     click.secho("=" * 64, fg="bright_blue")
     click.secho("  RAI Assistant Interactive Notebook (Monty REPL)", bold=True, fg="bright_cyan")

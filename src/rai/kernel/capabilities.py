@@ -148,6 +148,12 @@ class CapabilityRegistry:
         for group in compatibility_groups:
             self._compatibility_groups.setdefault(group, []).append(capability.name)
 
+    def replace_handler(self, name: str, handler: CapabilityHandler) -> None:
+        """Replace the runtime handler of an already registered capability."""
+        if name not in self._capabilities:
+            raise KeyError(f"capability not registered: {name}")
+        self._capabilities[name]._handler = handler
+
     def descriptors(self) -> tuple[CapabilityDescriptor, ...]:
         return tuple(
             capability.descriptor

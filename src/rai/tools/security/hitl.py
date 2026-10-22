@@ -153,7 +153,7 @@ class ApprovalManager:
         except Exception as e:
             logger.error("Failed to spawn or handle Zenity desktop dialog: %s", e)
 
-    async def wait_for_approval(self, req: ApprovalRequest) -> bool:
+    async def wait_for_approval(self, req: ApprovalRequest) -> bool:  # noqa: PLR0915
         """
         Suspends the executing thread, spawns standard UI prompts,
         and waits until approval is resolved.
@@ -166,7 +166,7 @@ class ApprovalManager:
         if os.environ.get("RAI_SERVE") != "1" and sys.stdin.isatty():
             async def console_prompt() -> None:
                 try:
-                    from ...core import console
+                    from ...core import console  # noqa: PLC0415
                     print("\n")
                     console.print(Panel(
                         f"[bold yellow]Command:[/bold yellow] {req.command}\n"
@@ -175,13 +175,13 @@ class ApprovalManager:
                         border_style="red"
                     ))
                     
-                    import rai.core
+                    import rai.core  # noqa: PLC0415
                     status_ref = rai.core.active_status
                     if status_ref:
                         status_ref.stop()
                         
                     try:
-                        from prompt_toolkit import PromptSession
+                        from prompt_toolkit import PromptSession  # noqa: PLC0415
                         prompt_session = PromptSession()
                         
                         async def get_user_input() -> str:

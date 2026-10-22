@@ -88,7 +88,6 @@ class RAIMagics(Magics):
 
     def _show_repl_state(self) -> None:
         from returns.result import Success  # noqa: PLC0415
-        from rai.tools.security.monty import get_monty_runner  # noqa: PLC0415
 
         service = self._get_service()
 
@@ -96,8 +95,8 @@ class RAIMagics(Magics):
             saved = await service.store.get_repl_session(self.session_id)
             if isinstance(saved, Success) and saved.unwrap():
                 blob, vars_dict = saved.unwrap()
-                if not vars_dict and blob:
-                    runner = get_monty_runner()
+                if not vars_dict and blob and self._container is not None:
+                    runner = self._container.monty_runner
                     res = runner.inspect_state(blob)
                     if isinstance(res, Success):
                         vars_dict = res.unwrap()
