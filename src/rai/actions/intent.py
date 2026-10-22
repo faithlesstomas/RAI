@@ -81,6 +81,8 @@ class LocalIntentRecognizer:
     async def recognize(  # noqa: PLR0911, PLR0912, PLR0915
         self, turn: ConversationTurn, cancellation: CancellationToken,
     ) -> Result[ActionIntent, str]:
+        if cancellation.cancelled:
+            return Failure("CANCELLED")
         instruction = (
             "Understand the user's current intent, in their own language; do not require command keywords. "  # noqa: S608 - prompt, not SQL
             "Use recent_dialogue to understand follow-ups, user clarifications, and references (such as paths, selections, or 'that directory') in context. "
@@ -111,8 +113,8 @@ class LocalIntentRecognizer:
             "return activity.query (optional query string to filter, or empty for recent). "
             "NEVER return application.launch for an application named Activity or Activities when the user is asking about activity history or system events! "
             "Questions asking about conversation history, dialogue topics, what was discussed, what you remember from our chats or previous conversations (e.g. 'o czym przed chwilą rozmawialiśmy', 'o czym rozmawialiśmy', 'co pamiętasz z naszej ostatniej rozmowy', 'what did we talk about', 'what do you remember from our chat') are dialogue memory questions, NOT system activity queries. Return no_action so the assistant can answer from conversation memory. "
-            "When the user asks what applications can be launched, what applications are installed, or asks to list/show programs "
-            "(e.g. 'jakie aplikacje możesz uruchomić?', 'wypisz aplikacje', 'what applications can you launch?'), return application.list. "
+            "When the user asks what applications can be launched, what applications are installed, or asks to list/show/count/filter programs by category or purpose "
+            "(e.g. 'jakie aplikacje możesz uruchomić?', 'wypisz aplikacje', 'które z nich są do multimediów?', 'what applications can you launch?'), return application.list with query empty ('') unless a specific literal application name is being searched. "
             "Questions asking ONLY about configured access permissions or allowed filesystem roots MUST use file.access, not application.list or clarify. "
             "If the user provides a path in response to a previous question asking for a path or directory, use document.open with that path. "
             "If the user rejects previous choices (e.g. 'none of the above', 'żadna z podanych') or asks what application fits a description "
@@ -201,6 +203,8 @@ class LocalIntentRecognizer:
                     max_tokens=1024, temperature=0.0,
                 )
             generated = await bounded(gen_coro, cancellation, 30.0)
+            if cancellation.cancelled:
+                return Failure("CANCELLED")
             if isinstance(generated, Failure):
                 return Failure("INTENT_BACKEND_FAILED")
             text = generated.unwrap().text
@@ -243,6 +247,7 @@ class LocalIntentRecognizer:
                 return Failure("INTENT_SOURCE_MISMATCH")
             return Success(intent)
         except asyncio.CancelledError:
+            cancellation.cancel()
             return Failure("CANCELLED")
         except asyncio.TimeoutError:
             return Failure("INTENT_TIMEOUT")

@@ -1,4 +1,9 @@
+from __future__ import annotations
+
 from datetime import timedelta
+import hashlib
+import re
+from typing import Any
 from returns.result import Failure, Result
 
 from rai.assistant.ports import MemoryGraphStore
@@ -7,15 +12,48 @@ from rai.kernel.ports import CancellationToken
 from rai.kernel.service import CapabilityService
 from rai.kernel.records import ActionFailure, ActionResult, PolicyDecision, _new_id, _utc_now
 from rai.kernel.transport import normalize_request
+from .browser import web_url
 from .dialogue import previous_action
 from .intent import ActionIntent
-from .records import ActionProposal, ActiveChoiceFrame, ChoiceEntry, ChoiceState
+from .records import ActionProposal, ActiveChoiceFrame, ChoiceEntry, ChoiceState, ResourceHandle
 
 
-async def route_action(  # noqa: PLR0913, PLR0912, PLR0915
+def match_choice_handle_by_text(choices: dict[str, Any], query: str) -> str | None:
+    """Find a choice entry whose label/name or URL matches query as a substring."""
+    entries = choices.get("entries", ())
+    q_lower = query.casefold().strip()
+    if not q_lower:
+        return None
+    q_clean = q_lower.removeprefix("https://").removeprefix("http://").removeprefix("www.").rstrip("/")
+    for entry in entries:
+        if not isinstance(entry, dict):
+            continue
+        url = str(entry.get("url", "")).casefold().strip()
+        url_clean = url.removeprefix("https://").removeprefix("http://").removeprefix("www.").rstrip("/")
+        meta_url = (
+            str(entry.get("metadata", {}).get("url", "")).casefold().strip()
+            if isinstance(entry.get("metadata"), dict)
+            else ""
+        )
+        meta_clean = meta_url.removeprefix("https://").removeprefix("http://").removeprefix("www.").rstrip("/")
+        name = str(entry.get("name", "")).casefold().strip()
+        label = str(entry.get("label", "")).casefold().strip()
+        if (
+            (url and (q_lower in url or url in q_lower))
+            or (url_clean and q_clean and (q_clean in url_clean or url_clean in q_clean))
+            or (meta_url and (q_lower in meta_url or meta_url in q_lower))
+            or (meta_clean and q_clean and (q_clean in meta_clean or meta_clean in q_clean))
+            or (name and (q_lower in name or name in q_lower))
+            or (label and (q_lower in label or label in q_lower))
+        ):
+            return entry.get("handle")
+    return None
+
+
+async def route_action(  # noqa: PLR0911, PLR0912, PLR0913, PLR0915
     service: CapabilityService, store: MemoryGraphStore | None, profile: str,
     turn: ConversationTurn, intent: ActionIntent, token: CancellationToken,
-) -> AssistantCandidate:
+) -> AssistantCandidate | None:
     """Preserve data classification and source identity across each action step."""
     name = intent.outcome
     task_id = f"action:{turn.record_id}"
@@ -42,9 +80,45 @@ async def route_action(  # noqa: PLR0913, PLR0912, PLR0915
             )
         choices = previous.get("action_choices", {})
         entries = choices.get("entries", ())
-        if name == "browser.read_page" and intent.selection is None and previous.get("selected_resource_handle"):
+        matched_handle = None
+        if choices.get("kind") == "url" and intent.selection is None and intent.query:
+            matched_handle = match_choice_handle_by_text(choices, intent.query)
+        target_url = None
+        if intent.query and web_url(intent.query):
+            target_url = intent.query
+        elif not entries and turn.text:
+            url_match = re.search(r"https?://[^\s<>\"']+", turn.text)
+            if url_match and web_url(url_match.group(0)):
+                target_url = url_match.group(0)
+
+        if matched_handle:
+            arguments = {"task_id": choices["task_id"], "handle": matched_handle}
+        elif name == "browser.read_page" and intent.selection is None and previous.get("selected_resource_handle"):
             arguments = {"task_id": choices.get("task_id", task_id), "handle": previous["selected_resource_handle"]}
+        elif target_url and getattr(service, "handles", None) is not None:
+            now = _utc_now()
+            handle = ResourceHandle(
+                record_id=_new_id(),
+                timestamp=now,
+                producer=turn.producer,
+                actor_id=turn.producer.producer_id,
+                task_id=task_id,
+                kind="url",
+                target=target_url,
+                fingerprint=hashlib.sha256(target_url.encode()).hexdigest(),
+                operations=("browser.open_result", "browser.read_page"),
+                expires_at=now + timedelta(minutes=5),
+                data_class=turn.data_class,
+            )
+            issued = service.handles.issue(handle)
+            if isinstance(issued, Failure):
+                return AssistantCandidate(
+                    text="Nie udało się utworzyć uchwytu zasobu." if polish else "Failed to issue resource handle."
+                )
+            arguments = {"task_id": task_id, "handle": issued.unwrap()}
         elif choices.get("kind") != "url" or intent.selection is None or intent.selection > len(entries):
+            if intent.query and intent.selection is None:
+                return None
             return AssistantCandidate(text=("Który wynik wybrać? Wyszukaj strony i podaj numer wyniku."
                                             if polish else "Which result? Search the web and select a result number."))
         else:

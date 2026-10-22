@@ -709,17 +709,66 @@ class AssistantContextBuilder:
                 elif capability == "browser.open_result":
                     obs_content = {"observed_url": output.get("observed_url", "")}
                     summary = f"Opened URL in browser: {output.get('observed_url', '')}"
+                elif capability == "application.list":
+                    apps = output.get("applications", [])
+                    names = [
+                        f"{a.get('name', '')} ({a.get('desktop_id', '')})"
+                        if isinstance(a, dict) and a.get("desktop_id")
+                        else (str(a.get("name", "")) if isinstance(a, dict) else str(a))
+                        for a in apps
+                    ] if isinstance(apps, (list, tuple)) and apps else list(output.get("application_names", []))
+                    total = int(output.get("total_count", len(names)))
+                    obs_content = {
+                        "total_count": total,
+                        "application_names": names[:256],
+                    }
+                    summary = f"Application discovery returned {total} applications"
+                elif capability == "file.search":
+                    docs = output.get("documents", [])
+                    clean_docs = [
+                        {k: v for k, v in d.items() if k not in ("handle", "expires_at")}
+                        if isinstance(d, dict)
+                        else d
+                        for d in (docs if isinstance(docs, (list, tuple)) else ())
+                    ]
+                    obs_content = {
+                        "total_count": int(output.get("total_count", len(clean_docs))),
+                        "documents": clean_docs[:50],
+                    }
+                    summary = f"File search returned {len(clean_docs)} documents"
+                elif capability == "file.list":
+                    entries = output.get("entries", [])
+                    clean_entries = (
+                        list(entries) if isinstance(entries, (list, tuple)) else []
+                    )
+                    obs_content = {
+                        "total_count": len(clean_entries),
+                        "entries": clean_entries[:50],
+                        "truncated": bool(output.get("truncated", False)),
+                    }
+                    summary = f"Directory listing returned {len(clean_entries)} entries"
                 elif capability == "process.inspect":
                     if "processes" in output and isinstance(output["processes"], (list, tuple)):
-                        procs = output.get("processes", [])
-                        obs_content = {"processes": procs[:10]}
+                        procs = [
+                            {k: v for k, v in p.items() if k not in ("handle", "expires_at", "fingerprint")}
+                            if isinstance(p, dict)
+                            else p
+                            for p in output.get("processes", [])
+                        ]
+                        obs_content = {"total_count": len(procs), "processes": procs[:20]}
                         summary = f"Process inspection returned {len(procs)} processes"
                     else:
-                        obs_content = output
+                        obs_content = {
+                            k: v for k, v in output.items() if k not in ("handle", "expires_at", "fingerprint")
+                        } if isinstance(output, dict) else output
                         proc_name = output.get("name") or output.get("pid") or "process"
                         summary = f"Process inspection details for {proc_name}"
                 else:
-                    obs_content = output
+                    obs_content = (
+                        {k: v for k, v in output.items() if k not in ("handle", "expires_at")}
+                        if isinstance(output, dict)
+                        else output
+                    )
 
                 obs = ToolObservation(
                     source_id=obs_id,

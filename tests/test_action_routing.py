@@ -1,12 +1,15 @@
 """Routing resolves finite model choices to runtime-issued handles before any invocation."""
 from __future__ import annotations
 
+from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
 
 from returns.result import Failure, Success
 
 from rai.actions.capabilities import failure, result
+from rai.actions.dialogue import previous_action
+from rai.actions.handles import SQLiteHandleStore
 from rai.actions.intent import ActionIntent
 from rai.actions.routing import route_action
 from rai.assistant.records import ConversationTurn
@@ -165,3 +168,105 @@ async def test_failed_execution_is_never_presented_as_success() -> None:
     assert "action_choices" not in candidate.metadata
     polish = await route(service, None, intent("browser.search", "pl", query="x"))
     assert polish.text == "Nie potwierdzam wykonania: BACKEND_FAILED."
+
+
+async def test_previous_action_preserves_choices_across_denied_turn() -> None:
+    """Verify previous_action retains search choices when an intermediate turn was denied/failed.
+
+    Simulates a 3-turn sequence:
+      1. Assistant returned web search choices (browser.search).
+      2. Assistant returned a denial/failure after user declined an action (e.g. status FAILED, code DENIED).
+      3. User follows up referencing a site from the search results; previous_action and route_action
+         must still resolve the handle from turn 1 instead of losing context.
+    """
+    search_action = {
+        "action_choices": {
+            "kind": "url",
+            "task_id": "task-search",
+            "entries": [
+                {"name": "Example Tech News", "url": "https://www.example.com/news/", "handle": "h-news"},
+            ],
+        },
+        "active_choice_frame": {
+            "record_id": "frame-1",
+            "task_id": "task-search",
+            "source_turn_id": "t1",
+            "intended_capability": "browser.read_page",
+            "state": "ACTIVE",
+            "entries": [{"handle": "h-news", "label": "Example News"}],
+            "expires_at": "2099-01-01T00:00:00Z",
+        },
+    }
+    denied_action = {
+        "action_result": {"status": "FAILED", "code": "DENIED", "capability": "browser.read_page"},
+    }
+
+    t1_asst = SimpleNamespace(
+        record_id="t1_asst",
+        session_id="s1",
+        role="assistant",
+        data_class=turn().data_class,
+        metadata={"profile_scope": "default", "action": search_action},
+    )
+    t2_asst = SimpleNamespace(
+        record_id="t2_asst",
+        session_id="s1",
+        role="assistant",
+        data_class=turn().data_class,
+        metadata={"profile_scope": "default", "action": denied_action},
+    )
+
+    class MultiTurnStore:
+        async def get_recent_reply_chain(self, **_: Any) -> Any:
+            return Success([t1_asst, t2_asst])
+
+    current_turn = ConversationTurn(
+        producer=ACTOR, session_id="s1", role="user", text="Can you read https://example.com/ ?"
+    )
+    prev = await previous_action(MultiTurnStore(), current_turn, "default")  # type: ignore[arg-type]
+    assert prev.get("action_choices") == search_action["action_choices"]
+    assert prev.get("active_choice_frame") == search_action["active_choice_frame"]
+
+    service = Service({"browser.read_page": {"title": "Example Tech", "text": "Content"}})
+    read_cand = await route_action(
+        service, MultiTurnStore(), "default", current_turn,  # type: ignore[arg-type]
+        intent("browser.read_page", query="https://example.com/"), CancellationToken(),
+    )
+    assert read_cand is not None
+    assert service.requests[0].capability == "browser.read_page"
+    assert service.requests[0].arguments["handle"] == "h-news"
+
+
+async def test_read_page_unmatched_query_returns_none_for_agentic_loop() -> None:
+    service = Service({})
+    candidate = await route(
+        service, None, intent("browser.read_page", query="https://unknown-domain.org")
+    )
+    assert candidate is None
+
+
+async def test_read_page_direct_url_with_handles_issues_handle_and_reads(tmp_path: Path) -> None:
+    handles = SQLiteHandleStore(tmp_path / "handles.db")
+    service = Service({"browser.read_page": {"title": "Direct Page Title", "text": "Direct page body text."}})
+    service.handles = handles  # type: ignore[attr-defined]
+
+    user_turn = ConversationTurn(
+        producer=ACTOR, session_id="s_direct", role="user", text="Please read https://news.example.com/item/123"
+    )
+    candidate = await route_action(
+        service, None, "default", user_turn,  # type: ignore[arg-type]
+        intent("browser.read_page", query="https://news.example.com/item/123"), CancellationToken(),
+    )
+    assert candidate is not None
+    assert "Direct Page Title" in candidate.text
+    assert "Direct page body text." in candidate.text
+    assert len(service.requests) == 1
+    assert service.requests[0].capability == "browser.read_page"
+    issued_handle = service.requests[0].arguments["handle"]
+    resolved = handles.resolve(
+        issued_handle, actor_id=ACTOR.producer_id, task_id=f"action:{user_turn.record_id}", operation="browser.read_page"
+    )
+    assert isinstance(resolved, Success)
+    assert resolved.unwrap().target == "https://news.example.com/item/123"
+
+

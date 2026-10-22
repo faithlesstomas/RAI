@@ -1518,11 +1518,11 @@ Training is an explicit experimental stage, not an inference side effect:
   provenance, source reliability, temporal validity, contradiction and
   calibration; a model's self-reported confidence is evidence, not probability
   or authorization.
-- [ ] If intervention is justified, place the experimental workspace/controller
+- [/] If intervention is justified, place the experimental workspace/controller
   behind a separately startable protocol with no direct persistence or
   capability access. It emits proposals and observations through the same
   validation and policy path as every model.
-- [ ] Require an ADR after the observation-only experiments to decide whether a
+- [/] Require an ADR after the observation-only experiments to decide whether a
   useful GW-like process belongs in an optional RAI research module, an external
   cognitive runtime or nowhere. It must not emerge implicitly inside
   `AssistantService`.

@@ -30,6 +30,7 @@ from ..records import (
     MemoryProposal,
     make_assistant_failure,
 )
+from ..tool_calling import strip_tool_call_tags
 
 _MAX_LIST_ITEMS_IN_CONTENT: int = 3
 _MAX_SEARCH_ITEMS_IN_CONTENT: int = 5
@@ -49,6 +50,7 @@ class LocalAssistantBackend:
         enable_thinking: bool = False,
         thinking_budget: int | None = None,
         thinking_level: str | None = None,
+        max_observation_characters: int = 64000,
     ) -> None:
         self.engine = engine
         self.model_name = model_name or "local-model"
@@ -59,6 +61,7 @@ class LocalAssistantBackend:
         self.enable_thinking = enable_thinking
         self.thinking_budget = thinking_budget
         self.thinking_level = thinking_level
+        self.max_observation_characters = max_observation_characters
         self.prompt_template_version = "rai-assistant-messages-v5"
         self.is_remote = False
         self._state = LifecycleState.CREATED
@@ -174,7 +177,16 @@ class LocalAssistantBackend:
                     evidence_lines.append(f"- [{source_type}; {timestamp}] {content_str}")
 
         tool_observations = request.context.content.get("tool_observations", [])
-        if isinstance(tool_observations, (list, tuple)) and tool_observations:
+        observations_in_system = (
+            "Tool Observations:" in system_text
+            or "Collected Observations:" in system_text
+            or getattr(request, "strategy", None) == "BOUNDED_STEP"
+        )
+        if (
+            isinstance(tool_observations, (list, tuple))
+            and tool_observations
+            and not observations_in_system
+        ):
             evidence_lines.append(
                 "Wyniki wykonanych narzędzi i akcji w systemie (obserwacje z bieżącej sesji):"
             )
@@ -183,7 +195,9 @@ class LocalAssistantBackend:
                     capability = str(item.get("capability", "tool"))
                     summary = str(item.get("summary", ""))
                     content_val = item.get("content", {})
-                    content_str = self._bound_content_repr(content_val, max_len=3000)
+                    content_str = self._bound_content_repr(
+                        content_val, max_len=self.max_observation_characters
+                    )
                     evidence_lines.append(f"- [{capability}] {summary}: {content_str}")
 
         system_parts = [
@@ -222,6 +236,8 @@ class LocalAssistantBackend:
                     text = str(turn.get("text", "")).strip()
                     if role not in ("user", "assistant"):
                         role = "user"
+                    if role == "assistant":
+                        text = strip_tool_call_tags(text)
                     if text:
                         messages.append({"role": role, "content": text})
 
@@ -262,16 +278,21 @@ class LocalAssistantBackend:
         return "\n".join(rendered)
 
     @staticmethod
-    def _bound_content_repr(content: object, max_len: int = 3000) -> str:
+    def _bound_content_repr(content: object, max_len: int = 64000) -> str:
         """Serialize and bound content to avoid context window explosion."""
         if isinstance(content, dict):
+            limits_by_key = {
+                "results": _MAX_SEARCH_ITEMS_IN_CONTENT,
+                "capabilities": 50,
+                "application_names": 1024,
+                "applications": 1024,
+                "documents": 100,
+                "entries": 100,
+                "processes": 100,
+            }
             bounded_dict = {}
             for k, v in content.items():
-                limit = (
-                    _MAX_SEARCH_ITEMS_IN_CONTENT
-                    if k == "results"
-                    else _MAX_LIST_ITEMS_IN_CONTENT
-                )
+                limit = limits_by_key.get(str(k), _MAX_LIST_ITEMS_IN_CONTENT)
                 if isinstance(v, (list, tuple)) and len(v) > limit:
                     bounded_dict[k] = list(v[:limit]) + [
                         f"... (+{len(v) - limit} more items truncated)"

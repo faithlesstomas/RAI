@@ -161,3 +161,22 @@ parsers. Routing output remains a hint; deterministic policy makes the final
 `LOCAL`, `ASK`, `ESCALATE` or `DENY` decision in Stage 4.5. Contract or prompt
 changes must advance their versions so cached output cannot cross the new
 validation boundary.
+
+## Multi-Step Bounded Workflows and `SKILLS.md`
+
+Whereas `ProcessorSupervisor.process_bounded` executes a single schema-constrained
+inference pass returning a `Claim`, multi-step capability orchestration in the
+assistant surface is governed by `BoundedStepController` (`rai.actions.workflow`):
+
+- **Universal Finite State Machine:** Transitions strictly through
+  `PLANNING` $\rightarrow$ `EVALUATING` $\rightarrow$ `EXECUTING` $\rightarrow$ `OBSERVING` $\rightarrow$ `SYNTHESIZING` $\rightarrow$ `COMPLETE`
+  (or `FAILED` / `CANCELLED`), bounded by `BoundedWorkflowLimits` (`max_steps`,
+  `max_tool_calls`, `max_searches`, `max_page_reads`, `timeout_seconds`).
+- **Single-Use Scoped Approvals:** High-risk capability steps validate `approval_id`
+  against `workflow.approvals_used` so an approval token cannot be replayed across
+  subsequent steps.
+- **Declarative `SKILLS.md` Registry (`rai.skills`):** Skills are defined as
+  Markdown documents with YAML frontmatter (`name`, `description`,
+  `required_capabilities`, `max_steps`, `risk_class`). `SkillRegistry` filters
+  skills against the capabilities active in `CapabilityRegistry` before formatting
+  procedural instructions for `BoundedStepController` or `WorkspaceEngine`.

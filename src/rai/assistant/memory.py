@@ -34,8 +34,14 @@ _AGE_PATTERNS = (
     re.compile(r"\bi am\s+(\d{1,3})\s+years? old\b", re.IGNORECASE),
 )
 _EXPLICIT_FACT_PATTERNS = (
-    re.compile(r"\bzapamiętaj(?: proszę)?[, :]*(?:że\s+)?(.+)", re.IGNORECASE),
-    re.compile(r"\bremember(?: please)?[, :]*(?:that\s+)?(.+)", re.IGNORECASE),
+    re.compile(
+        r"\b(?:zapamiętaj|zapamiętać)(?: proszę)?[, :]*(?:(?:że|aby|żeby|by)\s+)?(.+)",
+        re.IGNORECASE,
+    ),
+    re.compile(
+        r"\bremember(?: please)?[, :]*(?:(?:that|to)\s+)?(.+)",
+        re.IGNORECASE,
+    ),
 )
 _FORGET_PATTERNS = (
     re.compile(
@@ -224,9 +230,9 @@ def _modality(text: str, start: int, end: int) -> tuple[str, bool, float]:
         for marker in ("ktoś powiedział", "podobno", "someone said", "apparently")
     ):
         return "hearsay", False, 0.35
-    if any(
-        marker in lowered
-        for marker in ("chyba", "wydaje mi się", "może", "i think", "maybe", "probably")
+    if re.search(
+        r"\b(?:chyba|wydaje mi się|może|być może|i think|maybe|probably)\b",
+        lowered,
     ):
         return "hedged", False, 0.55
     negated = bool(

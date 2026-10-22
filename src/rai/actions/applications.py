@@ -36,6 +36,9 @@ class Application:
     executable: str
     localized_names: tuple[str, ...] = ()
     mime_types: tuple[str, ...] = ()
+    categories: tuple[str, ...] = ()
+    comment: str = ""
+    generic_name: str = ""
 
 
 @dataclass(frozen=True)
@@ -85,10 +88,25 @@ def read_application(path: Path, desktop_id: str) -> Application | None:  # noqa
         executable = shutil.which(argv[0])
         if executable is None:
             return None
-        return Application(desktop_id, entry.get("Name", desktop_id)[:256], path,
-                           hashlib.sha256(payload).hexdigest(), str(Path(executable).resolve()),
-                           tuple(value[:256] for key, value in entry.items() if key.startswith("name[")),
-                           tuple(value for value in entry.get("MimeType", "").split(";") if value)[:64])
+        categories = tuple(
+            value.strip()[:64]
+            for value in entry.get("Categories", "").split(";")
+            if value.strip()
+        )[:32]
+        comment = entry.get("Comment", "")[:256]
+        generic_name = entry.get("GenericName", "")[:256]
+        return Application(
+            desktop_id,
+            entry.get("Name", desktop_id)[:256],
+            path,
+            hashlib.sha256(payload).hexdigest(),
+            str(Path(executable).resolve()),
+            tuple(value[:256] for key, value in entry.items() if key.startswith("name[")),
+            tuple(value for value in entry.get("MimeType", "").split(";") if value)[:64],
+            categories=categories,
+            comment=comment,
+            generic_name=generic_name,
+        )
     except (OSError, UnicodeError, ConfigError, KeyError, ValueError):
         return None
 

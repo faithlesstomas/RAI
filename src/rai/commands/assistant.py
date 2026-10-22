@@ -94,6 +94,31 @@ def ask_command(  # noqa: PLR0913
         min=1.0,
         help="Inference request timeout in seconds (default: 300s).",
     ),
+    controller: str | None = typer.Option(
+        None,
+        "--controller",
+        autocompletion=completion.controllers,
+        show_default=False,
+        help="Interaction controller strategy (bounded_step, direct, workspace; default: bounded_step).",
+    ),
+    max_iterations: str | None = typer.Option(
+        None,
+        "--max-iterations",
+        "-i",
+        help="Maximum workflow iterations or 'inf'/'none' for unbounded.",
+    ),
+    max_full_observations: int | None = typer.Option(
+        None,
+        "--max-full-observations",
+        min=1,
+        help="Number of most recent full observations retained in context.",
+    ),
+    max_context_characters: int | None = typer.Option(
+        None,
+        "--max-context-characters",
+        min=100,
+        help="Maximum context characters budget.",
+    ),
 ) -> None:
     """Send a single prompt to the assistant."""
     _run_assistant_ask(
@@ -111,6 +136,10 @@ def ask_command(  # noqa: PLR0913
         context_window=context_window,
         data_class=data_class,
         timeout=timeout,
+        controller=controller,
+        max_iterations=max_iterations,
+        max_full_observations=max_full_observations,
+        max_context_characters=max_context_characters,
     )
 
 
@@ -181,6 +210,31 @@ def chat_command(  # noqa: PLR0913
         min=1.0,
         help="Inference request timeout in seconds (default: 300s).",
     ),
+    controller: str | None = typer.Option(
+        None,
+        "--controller",
+        autocompletion=completion.controllers,
+        show_default=False,
+        help="Interaction controller strategy (bounded_step, direct, workspace; default: bounded_step).",
+    ),
+    max_iterations: str | None = typer.Option(
+        None,
+        "--max-iterations",
+        "-i",
+        help="Maximum workflow iterations or 'inf'/'none' for unbounded.",
+    ),
+    max_full_observations: int | None = typer.Option(
+        None,
+        "--max-full-observations",
+        min=1,
+        help="Number of most recent full observations retained in context.",
+    ),
+    max_context_characters: int | None = typer.Option(
+        None,
+        "--max-context-characters",
+        min=100,
+        help="Maximum context characters budget.",
+    ),
 ) -> None:
     """Start an interactive chat session with the assistant."""
     _run_assistant_chat(
@@ -197,6 +251,10 @@ def chat_command(  # noqa: PLR0913
         context_window=context_window,
         data_class=data_class,
         timeout=timeout,
+        controller=controller,
+        max_iterations=max_iterations,
+        max_full_observations=max_full_observations,
+        max_context_characters=max_context_characters,
     )
 
 

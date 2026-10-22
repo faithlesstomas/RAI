@@ -109,13 +109,22 @@ class AssistantActions:
         trace("assistant.intent.start", turn_id=turn.record_id)
         recognized = await self.recognizer.recognize(turn, cancellation)
         if isinstance(recognized, Failure):
+            if recognized.failure() == "CANCELLED" or cancellation.cancelled:
+                cancellation.cancel()
+                trace("assistant.intent.end", turn_id=turn.record_id, status="cancelled")
+                return None
             trace("assistant.intent.end", turn_id=turn.record_id, status="failure")
             return AssistantCandidate(text="Nie udało się bezpiecznie rozpoznać intencji. Nie wykonałem działania.",
                                       metadata={"intent_failure": recognized.failure()})
+        if cancellation.cancelled:
+            return None
         intent = recognized.unwrap()
         trace("assistant.intent", turn_id=turn.record_id, outcome=intent.outcome,
               query_present=bool(intent.query), data_class=turn.data_class)
-        return await self.dispatch_intent(turn, intent, cancellation)
+        res = await self.dispatch_intent(turn, intent, cancellation)
+        if cancellation.cancelled:
+            return None
+        return res
 
     async def dispatch_intent(  # noqa: PLR0911, PLR0912, PLR0915
         self,
@@ -123,10 +132,34 @@ class AssistantActions:
         intent: ActionIntent,
         cancellation: CancellationToken,
     ) -> AssistantCandidate | None:
+        if cancellation.cancelled:
+            return None
         if intent.outcome == "capabilities.list":
             from rai.assistant.context import format_capabilities_instruction  # noqa: PLC0415
 
-            return AssistantCandidate(text=format_capabilities_instruction(self.capabilities.registry, base_instruction=""))
+            descriptors = (
+                self.capabilities.registry.descriptors()
+                if self.capabilities.registry is not None
+                else ()
+            )
+            return AssistantCandidate(
+                text=format_capabilities_instruction(
+                    self.capabilities.registry, base_instruction=""
+                ),
+                metadata={
+                    "action_result": {
+                        "capability": "capabilities.list",
+                        "status": "SUCCEEDED",
+                        "output": {
+                            "total_count": len(descriptors),
+                            "capabilities": [
+                                {"name": d.name, "description": d.description}
+                                for d in descriptors
+                            ],
+                        },
+                    },
+                },
+            )
         if intent.outcome == "no_action":
             return None
         if intent.outcome == "clarify":
@@ -358,9 +391,17 @@ class AssistantActions:
                 return AssistantCandidate(text=(f"Wyszukiwanie dokumentów nie powiodło się: {fetched.failure().code}."
                                                 if intent.language == "pl" else
                                                 f"Document search failed: {fetched.failure().code}."))
-            entries = fetched.unwrap().output["documents"]
+            fetched_res = fetched.unwrap()
+            entries = fetched_res.output["documents"]
             text = "\n".join(f"{i}. {item['name']}" for i, item in enumerate(entries, 1))
-            metadata: dict[str, Any] = {"action_choices": {"kind": "file", "task_id": task_id, "entries": entries}}
+            act_dump = fetched_res.model_dump(mode="json")
+            if isinstance(act_dump.get("output"), dict):
+                act_dump["output"] = {"total_count": len(entries), **act_dump["output"]}
+            metadata: dict[str, Any] = {
+                "action_choices": {"kind": "file", "task_id": task_id, "entries": entries},
+                "action_result": act_dump,
+                "remote_tokens": 0,
+            }
             if entries:
                 choice_entries = tuple(
                     ChoiceEntry(
@@ -450,8 +491,9 @@ class AssistantActions:
                 text=message("Lista aplikacji jest niedostępna.", "Application listing is unavailable.")
             )
         task_id = f"action:{turn.record_id}"
+        query_str = intent.query.strip()
         listing = normalize_request(
-            descriptor, {"task_id": task_id, "query": intent.query.strip()}, actor=turn.producer,
+            descriptor, {"task_id": task_id, "query": query_str}, actor=turn.producer,
             request_id=f"{turn.record_id}:applications", data_class=turn.data_class,
         )
         _, listed = await self.capabilities.invoke(listing, cancellation)
@@ -461,11 +503,30 @@ class AssistantActions:
                              f"Application discovery failed: {listed.failure().code}.")
             )
         applications = listed.unwrap().output["applications"]
+        if not applications and query_str:
+            fallback_listing = normalize_request(
+                descriptor, {"task_id": task_id, "query": ""}, actor=turn.producer,
+                request_id=f"{turn.record_id}:applications:all", data_class=turn.data_class,
+            )
+            _, fallback_listed = await self.capabilities.invoke(fallback_listing, cancellation)
+            if isinstance(fallback_listed, Success):
+                applications = fallback_listed.unwrap().output["applications"]
         names = [str(app["name"]) for app in applications]
         if not names:
             return AssistantCandidate(
                 text=message("Nie znalazłem zainstalowanych aplikacji w systemie.",
-                             "I could not find installed applications in the system.")
+                             "I could not find installed applications in the system."),
+                metadata={
+                    "action_result": {
+                        "capability": "application.list",
+                        "status": "SUCCEEDED",
+                        "output": {
+                            "total_count": 0,
+                            "application_names": [],
+                            "applications": [],
+                        },
+                    },
+                },
             )
         sample = names[:MAX_DISPLAYED_APPLICATIONS]
         more = (
@@ -485,9 +546,20 @@ class AssistantActions:
                 + "\n".join(f"- {n}" for n in sample)
                 + f"{more}\n\nTo launch an application, simply say e.g. 'Launch {sample[0]}'."
             )
+        output_dict: dict[str, Any] = {
+            "total_count": len(applications),
+            "application_names": names,
+            "applications": applications,
+        }
+        if query_str:
+            output_dict["requested_filter"] = query_str
         metadata = {
             "action_choices": {"kind": "application", "task_id": task_id, "entries": applications},
-            "action_result": {"status": "SUCCEEDED", "output": {"applications": applications}},
+            "action_result": {
+                "capability": "application.list",
+                "status": "SUCCEEDED",
+                "output": output_dict,
+            },
         }
         return AssistantCandidate(
             text=reply,

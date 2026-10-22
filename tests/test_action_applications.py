@@ -195,3 +195,61 @@ async def test_application_launch_data_class_and_backend_failure(tmp_path: Path)
     # Backend launch error
     backend.launch_fail = True
     assert (await launcher.invoke(req_launch, CancellationToken())).failure().code == "LAUNCH_ERROR"
+
+
+def test_desktop_entry_categories_and_comments_are_parsed(tmp_path: Path) -> None:
+    path = tmp_path / "vlc.desktop"
+    write_entry(
+        path,
+        "Categories=AudioVideo;Player;Video;\n"
+        "Comment=Media player\n"
+        "GenericName=Video Player\n"
+    )
+    app = read_application(path, path.name)
+    assert app is not None
+    assert app.categories == ("AudioVideo", "Player", "Video")
+    assert app.comment == "Media player"
+    assert app.generic_name == "Video Player"
+
+
+@pytest.mark.asyncio
+async def test_application_list_matches_categories_and_generic_names(tmp_path: Path) -> None:
+    from rai.actions.capabilities import ApplicationList
+    path = tmp_path / "totem.desktop"
+    write_entry(
+        path,
+        "Categories=AudioVideo;Video;Player;\n"
+        "GenericName=Movie Player\n"
+        "Comment=Play movies and video clips\n"
+    )
+    app = read_application(path, path.name)
+    assert app is not None
+
+    class Backend:
+        async def discover(self) -> Result[tuple[Application, ...], str]:
+            return Success((app,))
+
+    backend = Backend()
+    handles = SQLiteHandleStore(tmp_path / "handles.db")
+    app_list = ApplicationList(backend, handles)
+    registry = CapabilityRegistry()
+    register_application_capabilities(registry, backend, handles)
+
+    # Search by category 'video' (or 'wideo') should match
+    req_video = normalize_request(registry.descriptor("application.list"), {"task_id": "t", "query": "video"})
+    res_video = (await app_list.invoke(req_video, CancellationToken())).unwrap()
+    assert res_video.output["total_count"] == 1
+    matched_app = res_video.output["applications"][0]
+    assert matched_app["desktop_id"] == "totem.desktop"
+    assert "Video" in matched_app["categories"]
+    assert matched_app["generic_name"] == "Movie Player"
+
+    # Search by Polish synonym 'wideo' should also match
+    req_wideo = normalize_request(registry.descriptor("application.list"), {"task_id": "t", "query": "wideo"})
+    res_wideo = (await app_list.invoke(req_wideo, CancellationToken())).unwrap()
+    assert res_wideo.output["total_count"] == 1
+
+    # Search by Polish synonym 'odtwarzacz' should match 'Player'
+    req_odtwarzacz = normalize_request(registry.descriptor("application.list"), {"task_id": "t", "query": "odtwarzacz"})
+    res_odtwarzacz = (await app_list.invoke(req_odtwarzacz, CancellationToken())).unwrap()
+    assert res_odtwarzacz.output["total_count"] == 1

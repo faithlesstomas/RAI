@@ -15,6 +15,7 @@ if TYPE_CHECKING:
     from .assistant.ports import MemoryGraphStore
     from .assistant.service import AssistantService
 
+from .assistant.backends.deterministic import DeterministicAssistantBackend
 from .assistant.context import format_capabilities_instruction
 from .kernel.audit import InMemoryAuditLedger, JsonlAuditLedger
 from .kernel.capabilities import CapabilityRegistry
@@ -41,7 +42,7 @@ from .actions.volume import PactlVolumeBackend, register_volume_capabilities
 from .actions.processes import register_process_capability
 from .actions.execution import SQLiteExecutionStore
 from .actions.handles import SQLiteHandleStore
-from .actions.workflow import TaskStepController
+from .actions.workflow import BoundedWorkflowLimits, TaskStepController
 from .paths import data_dir
 from .services.history import HistoryService
 from .services.model_registry import ModelRegistry
@@ -328,11 +329,21 @@ class ApplicationContainer:
                 if self.testing
                 else JsonlAssistantAuditLedger()
             )
+            from rai.configuration.resolution import effective_model_settings  # noqa: PLC0415
+
+            effective_asst, _ = effective_model_settings(
+                self.config,
+                profile=str(self.config.get("active_agent") or "default"),
+                overrides=self.config.get("_cli_overrides", {}),
+            )
             runtime = (
                 AssistantRuntimeConfig(
                     backend="deterministic",
                     model="deterministic-conformance",
                     profile_scope=str(self.config.get("active_agent") or "default"),
+                    interaction_controller=str(
+                        effective_asst.get("interaction_controller") or "bounded_step"
+                    ),
                 )
                 if self.testing
                 else resolve_assistant_config(self.config)
@@ -359,35 +370,93 @@ class ApplicationContainer:
                     )
                 except KeyUnavailableError:
                     self._rich_history_error = "KEY_UNAVAILABLE"
+            actions = (
+                AssistantActions(
+                    self.capability_service,
+                    LocalIntentRecognizer(
+                        backend.engine,
+                        self.memory_graph_store,
+                        runtime.profile_scope,
+                        applications=LinuxApplicationBackend(),
+                    ),
+                    self.memory_graph_store,
+                    runtime.profile_scope,
+                )
+                if isinstance(backend, LocalAssistantBackend) and backend.engine is not None
+                else None
+            )
+            effective_backend = backend or DeterministicAssistantBackend()
+
+            from .skills.defaults import create_default_skill_registry  # noqa: PLC0415
+
+            skills_registry = create_default_skill_registry()
+            context_builder = AssistantContextBuilder(
+                store=self.memory_graph_store,
+                system_instruction=format_capabilities_instruction(
+                    (
+                        self.capability_registry
+                        if isinstance(backend, LocalAssistantBackend)
+                        and backend.engine is not None
+                        else None
+                    ),
+                    base_instruction=runtime.system_instruction,
+                ),
+                profile_scope=runtime.profile_scope,
+                evidence_providers=evidence_providers,
+                max_context_characters=runtime.max_context_characters,
+                max_recent_turns=runtime.max_recent_turns,
+                max_memories=runtime.max_memories,
+                max_episodic_turns=runtime.max_episodic_turns,
+                max_external_evidence=runtime.max_external_evidence,
+                memory_sufficiency_threshold=(runtime.memory_sufficiency_threshold),
+            )
+            step_limits = BoundedWorkflowLimits(
+                max_steps=None,
+                max_iterations=runtime.max_iterations,
+                max_tool_calls=None,
+            )
+            step_ctrl = TaskStepController(
+                capabilities=self.capability_service,
+                backend=effective_backend,
+                actions=actions,
+                skills=skills_registry,
+                context_builder=context_builder,
+                limits=step_limits,
+                max_full_observations=runtime.max_full_observations,
+            )
+            from .assistant.controllers.direct import DirectController  # noqa: PLC0415
+
+            if runtime.interaction_controller == "bounded_step":
+                active_controller = step_ctrl
+            elif runtime.interaction_controller == "workspace":
+                from .assistant.cognitive.workspace import WorkspaceEngine  # noqa: PLC0415
+
+                active_controller = WorkspaceEngine(
+                    capabilities=self.capability_service,
+                    actions=actions,
+                    backend=effective_backend,
+                    skills=skills_registry,
+                    context_builder=context_builder,
+                    max_cycles=runtime.max_iterations,
+                )
+            else:
+                active_controller = DirectController(
+                    backend=effective_backend,
+                    actions=actions,
+                    context_builder=context_builder,
+                )
+
             self._assistant_service = AssistantService(
-                actions=(AssistantActions(self.capability_service,
-                                          LocalIntentRecognizer(backend.engine, self.memory_graph_store, runtime.profile_scope,
-                                                                applications=LinuxApplicationBackend()),
-                                          self.memory_graph_store, runtime.profile_scope)
-                         if isinstance(backend, LocalAssistantBackend) and backend.engine is not None
-                         else None),
+                actions=actions,
                 store=self.memory_graph_store,
                 backend=backend,
-                step_controller=TaskStepController(),
+                step_controller=step_ctrl,
+                controller=active_controller,
                 memory_extractor=memory_extractor,
-                context_builder=AssistantContextBuilder(
-                    store=self.memory_graph_store,
-                    system_instruction=format_capabilities_instruction(
-                        (self.capability_registry if isinstance(backend, LocalAssistantBackend)
-                         and backend.engine is not None else None),
-                        base_instruction=runtime.system_instruction,
-                    ),
-                    profile_scope=runtime.profile_scope,
-                    evidence_providers=evidence_providers,
-                    max_context_characters=runtime.max_context_characters,
-                    max_recent_turns=runtime.max_recent_turns,
-                    max_memories=runtime.max_memories,
-                    max_episodic_turns=runtime.max_episodic_turns,
-                    max_external_evidence=runtime.max_external_evidence,
-                    memory_sufficiency_threshold=(runtime.memory_sufficiency_threshold),
-                ),
+                context_builder=context_builder,
                 audit_ledger=audit,
                 profile_scope=runtime.profile_scope,
+                max_iterations=runtime.max_iterations,
             )
         return self._assistant_service
 
