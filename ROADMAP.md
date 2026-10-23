@@ -1647,15 +1647,19 @@ actions.
 
 #### 5.3 Risk and approval policy
 
-- [ ] Allow `LOW` read-only actions automatically under the selected profile.
-- [ ] Permit reusable approval rules only for narrowly parameterized `MODERATE`
+- [x] Allow `LOW` read-only actions automatically under the selected profile.
+- [/] Permit reusable approval rules only for narrowly parameterized `MODERATE`
   actions.
-- [ ] Require action-time approval for `HIGH` actions such as external data
+- [x] Require action-time approval for `HIGH` actions such as external data
   transfer or editing user documents.
-- [ ] Deny `CRITICAL` actions by default; require explicit administrative policy
+- [/] Deny `CRITICAL` actions by default; require explicit administrative policy
   for destructive, privilege-changing or credential-related operations.
-- [ ] Present exact targets, side effects, data egress and rollback limitations in
+- [/] Present exact targets, side effects, data egress and rollback limitations in
   approval prompts.
+
+Risk classification and policy evaluation are enforced via `src/rai/kernel/policy.py`
+(`PolicyEngine`) and terminal approval workflows in `src/rai/commands/approval.py`
+(`TerminalApprovalBroker`).
 
 #### 5.4 Execution and verification
 
@@ -1762,7 +1766,7 @@ release, capability authority, verification and durable evidence.
   transfer.
 - [/] Prefer claims, summaries and stable resource handles over raw files,
   screenshots or full activity history.
-- [ ] Preview the manifest in `HYBRID_APPROVAL` mode before transmission.
+- [/] Preview the manifest in `HYBRID_APPROVAL` mode before transmission.
 - [/] Persist the manifest, approval and actual transmitted-size/usage metadata.
 - [/] Prevent a backend from requesting broader historical context without a new
   policy decision.

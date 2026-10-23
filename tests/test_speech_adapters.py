@@ -5,6 +5,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from pathlib import Path
 
+from unittest.mock import MagicMock
+
 from returns.result import Failure, Success
 
 from rai.kernel.ports import CancellationToken
@@ -21,7 +23,7 @@ from rai.speech.piper import (
     resolve_local_piper_voice,
 )
 from rai.speech.player import SoundDeviceAudioPlayer
-from rai.tts import resolve_voice_path
+from rai.tts import TTS, resolve_voice_path
 
 EXPECTED_CHUNKS = 2
 
@@ -257,3 +259,31 @@ async def test_sounddevice_player_reports_device_failure_without_audio_data() ->
     assert isinstance(result, Failure)
     assert result.failure().code == "PLAYBACK_FAILED"
     assert "host device" not in result.failure().message
+
+
+async def test_legacy_tts_synthesize_normalizes_markdown(tmp_path: Path) -> None:
+    tts = TTS(str(tmp_path / "dummy_model.onnx"))
+    mock_voice = MagicMock()
+
+    def fake_synthesize(_text: str, wav_file: object) -> None:
+        getattr(wav_file, "setnchannels")(1)
+        getattr(wav_file, "setsampwidth")(2)
+        getattr(wav_file, "setframerate")(22050)
+        getattr(wav_file, "writeframes")(b"")
+
+    mock_voice.synthesize.side_effect = fake_synthesize
+    tts._voice = mock_voice
+
+    markdown_input = "# Nagłówek\nOto **ważny** tekst z `kodem`."
+    out_file = str(tmp_path / "out.wav")
+
+    await tts.synthesize(markdown_input, output_path=out_file)
+
+    mock_voice.synthesize.assert_called_once()
+    passed_text = mock_voice.synthesize.call_args[0][0]
+    assert passed_text == "Nagłówek Oto ważny tekst z kodem."
+    assert "#" not in passed_text
+    assert "**" not in passed_text
+    assert "`" not in passed_text
+
+
