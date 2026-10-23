@@ -54,7 +54,12 @@ def effective_model_settings(
                             else (
                                 int(env[name])
                                 if key == "max_iterations"
-                                else env[name]
+                                else (
+                                    str(env[name]).strip().lower()
+                                    in ("true", "1", "yes", "on")
+                                    if key == "bypass_intent_recognizer"
+                                    else env[name]
+                                )
                             )
                         )
                     )

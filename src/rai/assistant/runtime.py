@@ -158,6 +158,14 @@ def resolve_assistant_config(  # noqa: PLR0912, PLR0913, PLR0915
 
     resolved_max_full_obs = int(assistant.get("max_full_observations", 3))
 
+    raw_bypass = assistant.get("bypass_intent_recognizer")
+    if isinstance(raw_bypass, str):
+        resolved_bypass = raw_bypass.strip().lower() in ("true", "1", "yes", "on")
+    elif raw_bypass is not None:
+        resolved_bypass = bool(raw_bypass)
+    else:
+        resolved_bypass = True
+
     if backend == "deterministic":
         return AssistantRuntimeConfig(
             backend=backend,
@@ -186,6 +194,7 @@ def resolve_assistant_config(  # noqa: PLR0912, PLR0913, PLR0915
             ),
             max_iterations=resolved_max_iterations,
             max_full_observations=resolved_max_full_obs,
+            bypass_intent_recognizer=resolved_bypass,
         )
 
     if backend == "antigravity":
@@ -299,11 +308,7 @@ def resolve_assistant_config(  # noqa: PLR0912, PLR0913, PLR0915
         ),
         max_iterations=resolved_max_iterations,
         max_full_observations=resolved_max_full_obs,
-        bypass_intent_recognizer=bool(
-            assistant.get("bypass_intent_recognizer", True)
-            if assistant.get("bypass_intent_recognizer") is not None
-            else True
-        ),
+        bypass_intent_recognizer=resolved_bypass,
     )
 
 

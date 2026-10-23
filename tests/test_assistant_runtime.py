@@ -14,7 +14,11 @@ from rai.assistant.runtime import (
     resolve_assistant_config,
 )
 from rai.cli import cli
-from rai.kernel.capabilities import CapabilityRegistry
+from rai.kernel.capabilities import (
+    CapabilityDescriptor,
+    CapabilityRegistry,
+    RegisteredCapability,
+)
 
 MINIMUM_GUILE_OCCURRENCES = 2
 
@@ -131,7 +135,6 @@ def test_empty_capability_registry_does_not_advertise_actions() -> None:
 
 
 def test_partial_registry_only_advertises_registered_actions() -> None:
-    from rai.kernel.capabilities import CapabilityDescriptor, RegisteredCapability
     registry = CapabilityRegistry()
     registry.register(RegisteredCapability(CapabilityDescriptor(
         name="application.list", description="List applications", input_schema={"type": "object"},
@@ -145,3 +148,39 @@ def test_partial_registry_only_advertises_registered_actions() -> None:
 
 def test_disconnected_executor_does_not_advertise_actions() -> None:
     assert "No executable Linux actions" in format_capabilities_instruction(None)
+
+
+def test_bypass_intent_recognizer_resolution_config_and_env(monkeypatch: pytest.MonkeyPatch) -> None:
+    # 1. Default is True
+    res_default = resolve_assistant_config({"assistant": {"backend": "deterministic"}})
+    assert res_default.bypass_intent_recognizer is True
+
+    # 2. Config file override (boolean False)
+    res_cfg_false = resolve_assistant_config(
+        {"assistant": {"backend": "deterministic", "bypass_intent_recognizer": False}}
+    )
+    assert res_cfg_false.bypass_intent_recognizer is False
+
+    # 3. Config file override (boolean True)
+    res_cfg_true = resolve_assistant_config(
+        {"assistant": {"backend": "deterministic", "bypass_intent_recognizer": True}}
+    )
+    assert res_cfg_true.bypass_intent_recognizer is True
+
+    # 4. Environment variable override ("false" / "0")
+    monkeypatch.setenv("RAI_BYPASS_INTENT_RECOGNIZER", "false")
+    res_env_false = resolve_assistant_config({"assistant": {"backend": "deterministic"}})
+    assert res_env_false.bypass_intent_recognizer is False
+
+    monkeypatch.setenv("RAI_BYPASS_INTENT_RECOGNIZER", "0")
+    res_env_zero = resolve_assistant_config({"assistant": {"backend": "deterministic"}})
+    assert res_env_zero.bypass_intent_recognizer is False
+
+    # 5. Environment variable override ("true" / "1")
+    monkeypatch.setenv("RAI_BYPASS_INTENT_RECOGNIZER", "true")
+    res_env_true = resolve_assistant_config(
+        {"assistant": {"backend": "deterministic", "bypass_intent_recognizer": False}}
+    )
+    # Environment has precedence over assistant config layer
+    assert res_env_true.bypass_intent_recognizer is True
+
