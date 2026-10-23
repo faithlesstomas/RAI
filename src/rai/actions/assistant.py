@@ -36,7 +36,7 @@ class AssistantActions:
         self.store, self.profile = store, profile
 
     async def handle(  # noqa: PLR0911, PLR0912, PLR0915
-        self, turn: ConversationTurn, cancellation: CancellationToken,
+        self, turn: ConversationTurn, cancellation: CancellationToken, *, choice_frame_only: bool = False,
     ) -> AssistantCandidate | None:
         if turn.role != "user":
             return None
@@ -106,6 +106,8 @@ class AssistantActions:
                                     ),
                                     metadata={"choice_rejected": "FRAME_INACTIVE", "frame_id": latest_frame.record_id},
                                 )
+        if choice_frame_only:
+            return None
         trace("assistant.intent.start", turn_id=turn.record_id)
         recognized = await self.recognizer.recognize(turn, cancellation)
         if isinstance(recognized, Failure):

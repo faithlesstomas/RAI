@@ -468,6 +468,7 @@ class ApplicationContainer:
                 context_builder=context_builder,
                 limits=step_limits,
                 max_full_observations=runtime.max_full_observations,
+                bypass_intent_recognizer=runtime.bypass_intent_recognizer,
             )
             from .assistant.controllers.direct import DirectController  # noqa: PLC0415
 

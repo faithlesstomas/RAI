@@ -703,6 +703,7 @@ async def test_application_list_semantic_query_fallback_and_in_turn_chaining(
         capabilities=cap_service,
         backend=FilteringModelBackend(),
         actions=actions,
+        bypass_intent_recognizer=False,
     )
 
     producer = ProducerIdentity(producer_id="user", kind="user", version="1.0.0")

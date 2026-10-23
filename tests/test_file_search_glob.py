@@ -1,9 +1,9 @@
 """Tests for glob pattern matching, directory scoping, and multi-step request ID uniqueness in file operations."""
 from __future__ import annotations
 
-import json
+from datetime import timedelta
 from pathlib import Path
-from typing import Any
+from typing import Any, NoReturn
 
 import pytest
 from returns.result import Result, Success
@@ -13,19 +13,37 @@ from rai.actions.execution import SQLiteExecutionStore
 from rai.actions.files import (
     Document,
     _matches_document_query,
+    inspect_document,
     register_file_capabilities,
     search_documents,
 )
 from rai.actions.handles import SQLiteHandleStore
 from rai.actions.intent import ActionIntent
+from rai.actions.records import ActiveChoiceFrame, ChoiceEntry, ChoiceState, ResourceHandle
 from rai.actions.service import ActionCapabilityService
-from rai.assistant.records import ConversationTurn
+from rai.actions.workflow import BoundedStepController
+from rai.assistant.ports import AssistantModelBackend
+from rai.assistant.records import (
+    AssistantCandidate,
+    AssistantContextManifest,
+    AssistantContextPackage,
+    ConversationTurn,
+    InferenceRequest,
+)
+from rai.assistant.store import SQLiteMemoryGraphStore
 from rai.assistant.tool_calling import intent_from_tool_call
 from rai.kernel.audit import InMemoryAuditLedger
 from rai.kernel.capabilities import CapabilityRegistry
 from rai.kernel.policy import PolicyEngine
-from rai.kernel.ports import CancellationToken
-from rai.kernel.records import ProducerIdentity
+from rai.kernel.ports import CancellationToken, LifecycleState
+from rai.kernel.records import (
+    ActionFailure,
+    DataClass,
+    InferenceBudget,
+    ProducerIdentity,
+    _new_id,
+    _utc_now,
+)
 from rai.kernel.synthetic import SyntheticApprovalBroker
 from rai.kernel.transport import normalize_request
 
@@ -204,3 +222,253 @@ async def test_multi_step_request_id_uniqueness_avoids_collision(tmp_path: Path)
     # Verify execution store recorded both distinct requests without collision
     assert cand1.metadata.get("action_result") is not None
     assert cand2.metadata.get("action_result") is not None
+
+
+def _make_context_package(turn: ConversationTurn) -> AssistantContextPackage:
+    producer = ProducerIdentity(producer_id="test", kind="test", version="1.0.0")
+    manifest = AssistantContextManifest(
+        producer=producer,
+        session_id=turn.session_id,
+        turn_id=turn.record_id,
+        evidence_required=False,
+        routing_decision="recent_conversation",
+    )
+    return AssistantContextPackage(
+        producer=producer,
+        session_id=turn.session_id,
+        turn_id=turn.record_id,
+        manifest=manifest,
+        content={"recent_turns": [], "tool_observations": []},
+    )
+
+
+def _make_budget() -> InferenceBudget:
+    now = _utc_now()
+    return InferenceBudget(
+        record_id=_new_id(),
+        timestamp=now,
+        producer=ProducerIdentity(producer_id="test", kind="test", version="1.0.0"),
+        max_input_tokens=2048,
+        max_output_tokens=512,
+        max_agent_turns=5,
+        max_tool_calls=5,
+        max_images=0,
+        max_audio_seconds=0,
+        max_latency_seconds=60,
+        max_provider_cost=0,
+        max_ram_bytes=2 * 1024 * 1024 * 1024,
+        max_vram_bytes=0,
+        cancellation_deadline=now + timedelta(seconds=60),
+    )
+
+
+class ScriptedAgentBackend(AssistantModelBackend):
+    def __init__(self, steps: list[str]) -> None:
+        self.steps = steps
+        self.step_idx = 0
+        self.requests: list[InferenceRequest] = []
+        self._state = LifecycleState.RUNNING
+        self.model_name = "scripted-agent"
+
+    @property
+    def state(self) -> LifecycleState:
+        return self._state
+
+    @property
+    def is_remote(self) -> bool:
+        return False
+
+    async def start(self) -> Result[LifecycleState, ActionFailure]:
+        return Success(LifecycleState.RUNNING)
+
+    async def stop(self) -> Result[LifecycleState, ActionFailure]:
+        return Success(LifecycleState.STOPPED)
+
+    async def generate(
+        self, request: InferenceRequest, cancellation: CancellationToken
+    ) -> Result[AssistantCandidate, ActionFailure]:
+        del cancellation
+        self.requests.append(request)
+        if self.step_idx < len(self.steps):
+            reply = self.steps[self.step_idx]
+            self.step_idx += 1
+        else:
+            reply = "No more scripted steps."
+        return Success(
+            AssistantCandidate(
+                text=reply,
+                tokens_in=100,
+                tokens_out=20,
+            )
+        )
+
+    def stream(self, request: InferenceRequest, cancellation: CancellationToken) -> NoReturn:
+        del request, cancellation
+        raise NotImplementedError
+
+
+class TrackingRecognizer:
+    def __init__(self) -> None:
+        self.calls: list[str] = []
+
+    async def recognize(
+        self, turn: ConversationTurn, cancellation: CancellationToken
+    ) -> Result[ActionIntent, str]:
+        del cancellation
+        self.calls.append(turn.text)
+        return Success(
+            ActionIntent(
+                source_turn_id=turn.record_id,
+                outcome="clarify",
+                language="pl",
+                clarification="W którym katalogu szukać?",
+            )
+        )
+
+
+async def test_bounded_step_controller_bypasses_intent_recognizer_for_file_search(tmp_path: Path) -> None:
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    (workspace / "1103858973.pdf").write_text("pdf content")
+    (workspace / "notes.txt").write_text("text content")
+
+    class DummyBackend:
+        async def open(self, document: Document, cancellation: CancellationToken) -> Result[dict[str, Any], str]:
+            return Success({"status": "OK"})
+
+    registry = CapabilityRegistry()
+    handles = SQLiteHandleStore(tmp_path / "handles.db")
+    register_file_capabilities(registry, (workspace,), handles, DummyBackend())
+
+    service = ActionCapabilityService(registry, PolicyEngine(), InMemoryAuditLedger(), SyntheticApprovalBroker())
+    service.handles = handles
+    service.executions = SQLiteExecutionStore(tmp_path / "executions.db")
+
+    recognizer = TrackingRecognizer()
+    actions = AssistantActions(capabilities=service, recognizer=recognizer, store=None)
+    backend = ScriptedAgentBackend(
+        steps=[
+            '<tool_call>call: file.search{"query": "*.pdf"}</tool_call>',
+            "Znaleziono dokument: 1103858973.pdf.",
+        ]
+    )
+    controller = BoundedStepController(
+        capabilities=service,
+        backend=backend,
+        actions=actions,
+        bypass_intent_recognizer=True,
+    )
+
+    turn = ConversationTurn(
+        producer=ACTOR,
+        session_id="s-search",
+        role="user",
+        text="Przeszukaj katalogi pod kątem plików pdf.",
+        data_class=DataClass.LOCAL,
+    )
+    res = await controller.process_turn(
+        turn, _make_context_package(turn), _make_budget(), CancellationToken()
+    )
+    assert isinstance(res, Success)
+    cand = res.unwrap()
+    assert "1103858973.pdf" in cand.text
+    # Ensure recognizer was bypassed completely, preventing premature clarify prompts
+    assert len(recognizer.calls) == 0
+    assert cand.metadata.get("tool_calls_executed") == 1
+
+
+async def test_bounded_step_controller_preserves_choice_frame_when_bypassing_recognizer(tmp_path: Path) -> None:
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    pdf_file = workspace / "1103858973.pdf"
+    pdf_file.write_text("pdf content")
+
+    class DummyBackend:
+        async def open(self, document: Document, cancellation: CancellationToken) -> Result[dict[str, Any], str]:
+            return Success({"status": "OK", "path": str(document.path)})
+
+    registry = CapabilityRegistry()
+    handles = SQLiteHandleStore(tmp_path / "handles.db")
+    doc_backend = DummyBackend()
+    register_file_capabilities(registry, (workspace,), handles, doc_backend)
+
+    service = ActionCapabilityService(registry, PolicyEngine(), InMemoryAuditLedger(), SyntheticApprovalBroker())
+    service.handles = handles
+    service.executions = SQLiteExecutionStore(tmp_path / "executions.db")
+
+    now = _utc_now()
+    doc_inspected = inspect_document(pdf_file, (workspace,), allow_directory=True)
+    assert doc_inspected is not None
+    res_handle = ResourceHandle(
+        producer=ACTOR,
+        timestamp=now,
+        actor_id=ACTOR.producer_id,
+        task_id="task-choice-1",
+        kind="file",
+        target=str(pdf_file),
+        fingerprint=doc_inspected.fingerprint,
+        operations=("document.open",),
+        expires_at=now + timedelta(minutes=10),
+        data_class=DataClass.LOCAL,
+    )
+    issued = handles.issue(res_handle)
+    assert isinstance(issued, Success)
+    handle_token = issued.unwrap()
+
+    store = SQLiteMemoryGraphStore(tmp_path / "memory.db")
+    frame = ActiveChoiceFrame(
+        record_id="frame-choice-1",
+        timestamp=now,
+        producer=ProducerIdentity(producer_id="assistant", kind="agent", version="1.0.0"),
+        session_id="session-choice",
+        profile_scope="default",
+        task_id="task-choice-1",
+        source_turn_id="turn-assistant-0",
+        intended_capability="document.open",
+        entries=(
+            ChoiceEntry(index=1, handle=handle_token, label="1103858973.pdf", metadata={"path": str(pdf_file)}),
+        ),
+        state=ChoiceState.ACTIVE,
+        expires_at=now + timedelta(minutes=10),
+        data_class=DataClass.LOCAL,
+    )
+    prev_turn = ConversationTurn(
+        record_id="turn-assistant-0",
+        producer=ProducerIdentity(producer_id="assistant", kind="agent", version="1.0.0"),
+        session_id="session-choice",
+        role="assistant",
+        text="Wybierz dokument:\n1. 1103858973.pdf",
+        status="COMPLETED",
+        metadata={"active_choice_frame": frame.model_dump(mode="json")},
+    )
+    await store.accept_turn(prev_turn)
+
+    recognizer = TrackingRecognizer()
+    actions = AssistantActions(capabilities=service, recognizer=recognizer, store=store, profile="default")
+    backend = ScriptedAgentBackend(steps=[])
+    controller = BoundedStepController(
+        capabilities=service,
+        backend=backend,
+        actions=actions,
+        bypass_intent_recognizer=True,
+    )
+
+    turn = ConversationTurn(
+        producer=ACTOR,
+        session_id="session-choice",
+        role="user",
+        text="1",
+        data_class=DataClass.LOCAL,
+    )
+    res = await controller.process_turn(
+        turn, _make_context_package(turn), _make_budget(), CancellationToken()
+    )
+    assert isinstance(res, Success)
+    cand = res.unwrap()
+    # Choice was executed directly without invoking intent recognizer or model loop
+    assert len(recognizer.calls) == 0
+    assert len(backend.requests) == 0
+    assert cand.text.startswith("Otworzyłem dokument")
+    assert cand.metadata.get("consumed_choice_frame_id") == "frame-choice-1"
+    assert cand.metadata.get("action_result") is not None
+

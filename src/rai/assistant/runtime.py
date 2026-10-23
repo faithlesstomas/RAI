@@ -56,6 +56,7 @@ class AssistantRuntimeConfig:
     interaction_controller: str = "bounded_step"
     max_iterations: int | None = None
     max_full_observations: int = 3
+    bypass_intent_recognizer: bool = True
 
 
 def _discover_gguf(search_root: Path) -> Path | None:
@@ -298,6 +299,11 @@ def resolve_assistant_config(  # noqa: PLR0912, PLR0913, PLR0915
         ),
         max_iterations=resolved_max_iterations,
         max_full_observations=resolved_max_full_obs,
+        bypass_intent_recognizer=bool(
+            assistant.get("bypass_intent_recognizer", True)
+            if assistant.get("bypass_intent_recognizer") is not None
+            else True
+        ),
     )
 
 

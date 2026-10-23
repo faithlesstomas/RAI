@@ -269,7 +269,7 @@ class AssistantActionHandler(Protocol):
     """Explicit user intents producing capability-backed response candidates."""
 
     async def handle(
-        self, turn: ConversationTurn, cancellation: CancellationToken,
+        self, turn: ConversationTurn, cancellation: CancellationToken, *, choice_frame_only: bool = False,
     ) -> AssistantCandidate | None: ...
 
 

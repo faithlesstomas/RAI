@@ -164,13 +164,6 @@ def _should_synthesize_action_candidate(  # noqa: PLR0911
             and not output.get("episodes")
         ):
             return False
-        if (
-            cap in {"process.inspect", "file.search"}
-            and isinstance(output, dict)
-            and not output.get("processes")
-            and not output.get("documents")
-        ):
-            return False
         return True
     return False
 
@@ -427,6 +420,7 @@ class BoundedStepController(InteractionController):
         skills: SkillRegistry | None = None,
         context_builder: object = None,
         max_full_observations: int = 3,
+        bypass_intent_recognizer: bool = True,
     ) -> None:
         self.ledger = ledger
         self.capabilities = capabilities
@@ -436,6 +430,7 @@ class BoundedStepController(InteractionController):
         self.skills = skills
         self.context_builder = context_builder
         self.max_full_observations = max_full_observations
+        self.bypass_intent_recognizer = bypass_intent_recognizer
 
     async def process_turn(  # noqa: PLR0911, PLR0912, PLR0915
         self,
@@ -455,7 +450,13 @@ class BoundedStepController(InteractionController):
         executed_calls: set[tuple[str, str]] = set()
 
         if self.actions is not None and hasattr(self.actions, "handle"):
-            action_cand = await self.actions.handle(turn, token)
+            if self.bypass_intent_recognizer:
+                try:
+                    action_cand = await self.actions.handle(turn, token, choice_frame_only=True)
+                except TypeError:
+                    action_cand = await self.actions.handle(turn, token)
+            else:
+                action_cand = await self.actions.handle(turn, token)
             if token.cancelled:
                 return Failure(
                     make_assistant_failure(

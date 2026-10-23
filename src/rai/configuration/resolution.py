@@ -69,6 +69,7 @@ def effective_model_settings(
                     "max_iterations": "RAI_MAX_ITERATIONS",
                     "max_full_observations": "RAI_MAX_FULL_OBSERVATIONS",
                     "max_context_characters": "RAI_MAX_CONTEXT_CHARACTERS",
+                    "bypass_intent_recognizer": "RAI_BYPASS_INTENT_RECOGNIZER",
                 }.items()
                 if env.get(name) is not None
             },
