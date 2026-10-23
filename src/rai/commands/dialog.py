@@ -29,7 +29,7 @@ def _run_assistant_ask(  # noqa: PLR0913, PLR0915
     profile: str | None = None,
     system: str | None = None,
     thinking: bool | None = None,
-    show_thinking: bool = False,
+    show_thinking: bool | None = None,
     thinking_budget: int | None = None,
     max_output_tokens: int | None = None,
     context_window: int | None = None,
@@ -46,6 +46,10 @@ def _run_assistant_ask(  # noqa: PLR0913, PLR0915
     from rai.container import ApplicationContainer  # noqa: PLC0415
     from rai.kernel.records import ProducerIdentity, _new_id  # noqa: PLC0415
 
+    resolved_thinking = thinking
+    if show_thinking is True and resolved_thinking is None:
+        resolved_thinking = True
+
     try:
         container = ApplicationContainer(
             config=_assistant_config(
@@ -53,7 +57,7 @@ def _run_assistant_ask(  # noqa: PLR0913, PLR0915
                 model,
                 profile,
                 system,
-                thinking=thinking,
+                thinking=resolved_thinking,
                 thinking_budget=thinking_budget,
                 max_output_tokens=max_output_tokens,
                 context_window=context_window,
@@ -139,7 +143,16 @@ def _run_assistant_ask(  # noqa: PLR0913, PLR0915
 
             if isinstance(res, Success):
                 response = res.unwrap()
-                if show_thinking and response.reasoning_content:
+                resolved_show_thinking = (
+                    show_thinking
+                    if show_thinking is not None
+                    else (
+                        resolved_thinking
+                        if resolved_thinking is not None
+                        else getattr(service.backend, "enable_thinking", False)
+                    )
+                )
+                if resolved_show_thinking and response.reasoning_content:
                     click.secho(
                         f"\n[Thinking]\n{response.reasoning_content}\n[/Thinking]\n",
                         fg="cyan",
@@ -171,7 +184,7 @@ def _run_assistant_chat(  # noqa: PLR0913, PLR0915
     profile: str | None = None,
     system: str | None = None,
     thinking: bool | None = None,
-    show_thinking: bool = False,
+    show_thinking: bool | None = None,
     thinking_budget: int | None = None,
     max_output_tokens: int | None = None,
     context_window: int | None = None,
@@ -188,6 +201,10 @@ def _run_assistant_chat(  # noqa: PLR0913, PLR0915
     from rai.container import ApplicationContainer  # noqa: PLC0415
     from rai.kernel.records import ProducerIdentity, _new_id  # noqa: PLC0415
 
+    resolved_thinking = thinking
+    if show_thinking is True and resolved_thinking is None:
+        resolved_thinking = True
+
     try:
         container = ApplicationContainer(
             config=_assistant_config(
@@ -195,7 +212,7 @@ def _run_assistant_chat(  # noqa: PLR0913, PLR0915
                 model,
                 profile,
                 system,
-                thinking=thinking,
+                thinking=resolved_thinking,
                 thinking_budget=thinking_budget,
                 max_output_tokens=max_output_tokens,
                 context_window=context_window,
@@ -223,11 +240,17 @@ def _run_assistant_chat(  # noqa: PLR0913, PLR0915
     click.echo("Type /help for commands, /exit or /q to quit.\n")
 
     current_thinking = (
-        thinking
-        if thinking is not None
+        resolved_thinking
+        if resolved_thinking is not None
         else getattr(service.backend, "enable_thinking", False)
     )
-    current_show_thinking = show_thinking
+    current_show_thinking = (
+        show_thinking
+        if show_thinking is not None
+        else current_thinking
+    )
+    if hasattr(service.backend, "enable_thinking"):
+        service.backend.enable_thinking = current_thinking
 
     prompt_session = None
     if sys.stdin.isatty():
@@ -379,11 +402,14 @@ def _run_assistant_chat(  # noqa: PLR0913, PLR0915
                         cmd = parts[1].lower()
                         if cmd in ("on", "true", "1", "enable"):
                             current_thinking = True
+                            current_show_thinking = True
                             click.echo("Thinking mode: ON")
                         elif cmd in ("off", "false", "0", "disable"):
                             current_thinking = False
+                            current_show_thinking = False
                             click.echo("Thinking mode: OFF")
                         elif cmd == "show":
+                            current_thinking = True
                             current_show_thinking = True
                             click.echo("Show thinking: ON")
                         elif cmd == "hide":
@@ -393,6 +419,7 @@ def _run_assistant_chat(  # noqa: PLR0913, PLR0915
                             click.echo("Usage: /thinking [on|off|show|hide]")
                     else:
                         current_thinking = not current_thinking
+                        current_show_thinking = current_thinking
                         click.echo(
                             f"Thinking mode: {'ON' if current_thinking else 'OFF'}"
                         )
