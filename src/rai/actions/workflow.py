@@ -954,6 +954,38 @@ class BoundedStepController(InteractionController):
         if initial_observations or workflow.tool_calls_executed > 0:
             synthesized_meta["synthesized_from_action"] = True
 
+        last_tool_step = next(
+            (s for s in reversed(workflow.steps) if s.capability and s.observation is not None),
+            None,
+        )
+        if last_tool_step is not None:
+            is_failure = (
+                isinstance(last_tool_step.observation, dict)
+                and (
+                    last_tool_step.observation.get("status") == "FAILED"
+                    or "code" in last_tool_step.observation
+                )
+            )
+            if is_failure:
+                obs_dict = (
+                    last_tool_step.observation
+                    if isinstance(last_tool_step.observation, dict)
+                    else {}
+                )
+                synthesized_meta["action_result"] = {
+                    "capability": last_tool_step.capability,
+                    "code": obs_dict.get("code", "ACTION_FAILED"),
+                    "message": obs_dict.get("message", "Tool action failed"),
+                    "status": "FAILED",
+                }
+            else:
+                synthesized_meta["action_result"] = {
+                    "capability": last_tool_step.capability,
+                    "output": last_tool_step.observation,
+                    "arguments": last_tool_step.arguments,
+                    "status": "SUCCEEDED",
+                }
+
         candidate = AssistantCandidate(
             text=delivered_text,
             proposals=proposals,
