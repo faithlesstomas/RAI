@@ -1766,7 +1766,7 @@ release, capability authority, verification and durable evidence.
   transfer.
 - [/] Prefer claims, summaries and stable resource handles over raw files,
   screenshots or full activity history.
-- [x] Preview the manifest in `HYBRID_APPROVAL` mode before transmission.
+- [/] Preview the manifest in `HYBRID_APPROVAL` mode before transmission.
 - [/] Persist the manifest, approval and actual transmitted-size/usage metadata.
 - [/] Prevent a backend from requesting broader historical context without a new
   policy decision.
