@@ -257,7 +257,7 @@ _TOOL_PARAM_HINTS: dict[str, str] = {
     "application.launch": '{"query": "<app name or desktop_id>", "selection": "<optional 1-based index>"}',
     "file.access": "{}",
     "file.list": '{"query": "<absolute directory path>"}',
-    "file.search": '{"query": "<filename or substring>"}',
+    "file.search": '{"query": "<filename, pattern e.g. *.pdf, or substring>", "directory": "<optional allowed directory path>"}',
     "document.open": '{"query": "<file/dir path or name>", "selection": "<optional 1-based index>", "application": "<optional app>"}',
     "system.volume.get": "{}",
     "system.volume.set": '{"percent": <integer 0-100>}',
@@ -412,14 +412,18 @@ def intent_from_tool_call(  # noqa: PLR0911, PLR0912
             )
 
         if capability in {"file.search", "file.list"}:
+            dir_str = str(args.get("directory") or args.get("dir") or "").strip()
             query_str = str(
                 args.get("query")
                 or args.get("path")
-                or args.get("directory")
                 or args.get("name")
                 or args.get("filename")
+                or args.get("pattern")
                 or ""
             ).strip()
+            if not query_str and dir_str:
+                query_str = dir_str
+                dir_str = ""
             if not query_str:
                 return None
             return ActionIntent(
@@ -427,6 +431,7 @@ def intent_from_tool_call(  # noqa: PLR0911, PLR0912
                 outcome=capability,
                 language=lang,
                 query=query_str[:256],
+                directory=dir_str[:256],
             )
 
         if capability == "document.open":

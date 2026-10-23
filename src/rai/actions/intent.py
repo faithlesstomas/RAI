@@ -38,6 +38,7 @@ class ActionIntent(BaseModel):
                      "system.volume.get", "system.volume.set", "process.inspect", "activity.query", "capabilities.list"]
     language: Literal["pl", "en"]
     query: Annotated[str, Field(max_length=256)] = ""
+    directory: Annotated[str, Field(max_length=256)] = ""
     application: Annotated[str, Field(max_length=256)] = ""
     lookback_minutes: int | None = Field(default=None, strict=True, ge=1, le=10080)
     percent: int | None = Field(default=None, strict=True, ge=0, le=100)

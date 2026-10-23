@@ -63,6 +63,7 @@ PRODUCER = ProducerIdentity(producer_id="bounded-step-controller", kind="service
 _MEMORY_ABSTENTION_TEXT: str = (
     "Nie mam wystarczających, dopuszczonych dowodów w pamięci, aby odpowiedzieć."
 )
+_MAX_PREAMBLE_ATTACH_CHARS: int = 200
 
 
 class AgentWorkflowState(str, Enum):
@@ -590,8 +591,36 @@ class BoundedStepController(InteractionController):
             obs_ids = list(initial_obs_ids)
             for idx, obs in enumerate(all_obs):
                 i = idx + 1
+                cap_name: str | None = None
+                args_dict: dict[str, Any] | None = None
+                if idx < len(initial_observations) and idx < len(initial_obs_records):
+                    cap_name = str(initial_obs_records[idx].get("capability") or "") or None
+                elif idx >= len(initial_observations):
+                    step_obs_idx = idx - len(initial_observations)
+                    obs_steps = [
+                        s for s in workflow.steps
+                        if s.observation is not None or s.state_after == AgentWorkflowState.OBSERVING
+                    ]
+                    if step_obs_idx < len(obs_steps):
+                        cap_name = obs_steps[step_obs_idx].capability
+                        args_dict = obs_steps[step_obs_idx].arguments
+
+                clean_args = (
+                    {k: v for k, v in args_dict.items() if k != "task_id" and v not in ("", None)}
+                    if isinstance(args_dict, dict)
+                    else None
+                )
+                obs_to_format = obs
+                if isinstance(obs, dict):
+                    obs_dict = dict(obs)
+                    if cap_name and "capability" not in obs_dict:
+                        obs_dict["capability"] = cap_name
+                    if clean_args and "query" in clean_args and "query" not in obs_dict:
+                        obs_dict["query"] = clean_args["query"]
+                    obs_to_format = obs_dict
+
                 if idx < cutoff:
-                    summary_text = _format_older_observation_summary(obs)
+                    summary_text = _format_older_observation_summary(obs_to_format)
                     obs_lines.append(f"Observation {i} (summary): {summary_text}")
                     if i > len(initial_observations):
                         step_obs_idx = i - len(initial_observations)
@@ -601,7 +630,7 @@ class BoundedStepController(InteractionController):
                             ToolObservation(
                                 source_id=obs_id,
                                 source_turn_id=turn.record_id,
-                                capability="workflow_step",
+                                capability=cap_name or "workflow_step",
                                 status="SUCCESS",
                                 summary=summary_text[:120],
                                 untrusted_content=True,
@@ -610,8 +639,13 @@ class BoundedStepController(InteractionController):
                         )
                 else:
                     compacted_obs = (
-                        _compact_observation_content(obs) if isinstance(obs, dict) else obs
+                        _compact_observation_content(obs_to_format) if isinstance(obs_to_format, dict) else obs_to_format
                     )
+                    if isinstance(compacted_obs, dict):
+                        if cap_name and "capability" not in compacted_obs:
+                            compacted_obs = {"capability": cap_name, **compacted_obs}
+                        if clean_args and "query" in clean_args and "query" not in compacted_obs:
+                            compacted_obs["query"] = clean_args["query"]
                     obs_summary = json.dumps(compacted_obs, ensure_ascii=False)
                     if len(obs_summary) > _MAX_OBSERVATION_CHARS:
                         obs_summary = obs_summary[:_MAX_OBSERVATION_CHARS] + "... (truncated)"
@@ -624,7 +658,7 @@ class BoundedStepController(InteractionController):
                             ToolObservation(
                                 source_id=obs_id,
                                 source_turn_id=turn.record_id,
-                                capability="workflow_step",
+                                capability=cap_name or "workflow_step",
                                 status="SUCCESS",
                                 summary=obs_summary[:120],
                                 untrusted_content=True,
@@ -813,18 +847,13 @@ class BoundedStepController(InteractionController):
                 if self.actions is not None and hasattr(self.actions, "dispatch_intent"):
                     tool_intent = intent_from_tool_call(turn, cap_name, tool_args)
                     if tool_intent is not None:
-                        step_turn = (
-                            turn.model_copy(
-                                update={
-                                    "metadata": {
-                                        **turn.metadata,
-                                        "in_turn_action": dict(initial_action_metadata),
-                                    }
-                                }
-                            )
-                            if initial_action_metadata
-                            else turn
-                        )
+                        step_meta = {
+                            **turn.metadata,
+                            "step_id": str(model_step_count),
+                        }
+                        if initial_action_metadata:
+                            step_meta["in_turn_action"] = dict(initial_action_metadata)
+                        step_turn = turn.model_copy(update={"metadata": step_meta})
                         tool_cand = await self.actions.dispatch_intent(
                             step_turn, tool_intent, cancellation
                         )
@@ -909,7 +938,15 @@ class BoundedStepController(InteractionController):
         if reasoning_chunks:
             cand_meta["reasoning_content"] = "\n\n---\n\n".join(reasoning_chunks)
         delivered_text = strip_tool_call_tags(workflow.final_synthesis or "")
-        if preamble_box and not delivered_text.startswith(preamble_box[0][:30]):
+        if not delivered_text and preamble_box:
+            delivered_text = preamble_box[0]
+        elif (
+            preamble_box
+            and len(workflow.steps) <= 1
+            and len(preamble_box[0].strip()) > 0
+            and len(delivered_text) < _MAX_PREAMBLE_ATTACH_CHARS
+            and not delivered_text.startswith(preamble_box[0][:30])
+        ):
             delivered_text = f"{preamble_box[0]}\n\n{delivered_text}"
 
         synthesized_meta: dict[str, Any] = {}

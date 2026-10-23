@@ -346,14 +346,16 @@ class AssistantActions:
 
     async def _document_intent(self, turn: ConversationTurn, intent: ActionIntent,  # noqa: PLR0911, PLR0912, PLR0915
                                cancellation: CancellationToken) -> AssistantCandidate:
-        task_id = f"action:{turn.record_id}"
+        step_id = turn.metadata.get("step_id")
+        req_suffix = f":step_{step_id}" if step_id else ""
+        task_id = f"action:{turn.record_id}{req_suffix}"
         descriptor = self.capabilities.registry.descriptor(intent.outcome)
         if descriptor is None:
             return AssistantCandidate(text=("Obsługa dokumentów jest niedostępna."
                                             if intent.language == "pl" else "Document actions are unavailable."))
         if intent.outcome == "file.access":
             request = normalize_request(descriptor, {"task_id": task_id}, actor=turn.producer,
-                                        request_id=f"{turn.record_id}:file-access", data_class=turn.data_class)
+                                        request_id=f"{turn.record_id}{req_suffix}:file-access", data_class=turn.data_class)
             _, accessed = await self.capabilities.invoke(request, cancellation)
             if isinstance(accessed, Failure):
                 return AssistantCandidate(text=("Nie mogę odczytać konfiguracji dostępu." if intent.language == "pl"
@@ -370,7 +372,7 @@ class AssistantActions:
             return AssistantCandidate(text=text, metadata={"action_result": accessed.unwrap().model_dump(mode="json"), "remote_tokens": 0})
         if intent.outcome == "file.list":
             request = normalize_request(descriptor, {"query": intent.query, "task_id": task_id},
-                                        actor=turn.producer, request_id=f"{turn.record_id}:file-list", data_class=turn.data_class)
+                                        actor=turn.producer, request_id=f"{turn.record_id}{req_suffix}:file-list", data_class=turn.data_class)
             _, listed = await self.capabilities.invoke(request, cancellation)
             if isinstance(listed, Failure):
                 return AssistantCandidate(text=(f"Nie mogę wylistować katalogu: {listed.failure().code}."
@@ -383,8 +385,11 @@ class AssistantActions:
                 metadata={"action_result": listed.unwrap().model_dump(mode="json"), "remote_tokens": 0})
         if intent.outcome == "file.search":
             descriptor = self.capabilities.registry.descriptor("file.search")
-            request = normalize_request(descriptor, {"query": intent.query, "task_id": task_id},
-                                        actor=turn.producer, request_id=f"{turn.record_id}:file-search", data_class=turn.data_class)
+            search_args = {"query": intent.query, "task_id": task_id}
+            if getattr(intent, "directory", None):
+                search_args["directory"] = intent.directory
+            request = normalize_request(descriptor, search_args,
+                                        actor=turn.producer, request_id=f"{turn.record_id}{req_suffix}:file-search", data_class=turn.data_class)
             _, fetched = await self.capabilities.invoke(request, cancellation)
             if isinstance(fetched, Failure):
                 if fetched.failure().code == "FILE_ROOTS_NOT_CONFIGURED":
@@ -476,7 +481,7 @@ class AssistantActions:
                     else "Specify the application and path: ") + (names or intent.application))
             arguments["application_handle"] = matches[0]["handle"]
         request = normalize_request(descriptor, arguments,
-                                    actor=turn.producer, request_id=f"{turn.record_id}:document-open", data_class=turn.data_class)
+                                    actor=turn.producer, request_id=f"{turn.record_id}{req_suffix}:document-open", data_class=turn.data_class)
         decision, executed = await self.capabilities.invoke(request, cancellation)
         terminal = executed.failure() if isinstance(executed, Failure) else executed.unwrap()
         text = (("Otwarcie dokumentu potwierdzone." if intent.language == "pl" else "Document opening verified.")
@@ -496,11 +501,13 @@ class AssistantActions:
             return AssistantCandidate(
                 text=message("Lista aplikacji jest niedostępna.", "Application listing is unavailable.")
             )
-        task_id = f"action:{turn.record_id}"
+        step_id = turn.metadata.get("step_id")
+        req_suffix = f":step_{step_id}" if step_id else ""
+        task_id = f"action:{turn.record_id}{req_suffix}"
         query_str = intent.query.strip()
         listing = normalize_request(
             descriptor, {"task_id": task_id, "query": query_str}, actor=turn.producer,
-            request_id=f"{turn.record_id}:applications", data_class=turn.data_class,
+            request_id=f"{turn.record_id}{req_suffix}:applications", data_class=turn.data_class,
         )
         _, listed = await self.capabilities.invoke(listing, cancellation)
         if isinstance(listed, Failure):
@@ -512,7 +519,7 @@ class AssistantActions:
         if not applications and query_str:
             fallback_listing = normalize_request(
                 descriptor, {"task_id": task_id, "query": ""}, actor=turn.producer,
-                request_id=f"{turn.record_id}:applications:all", data_class=turn.data_class,
+                request_id=f"{turn.record_id}{req_suffix}:applications:all", data_class=turn.data_class,
             )
             _, fallback_listed = await self.capabilities.invoke(fallback_listing, cancellation)
             if isinstance(fallback_listed, Success):

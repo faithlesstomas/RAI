@@ -56,7 +56,9 @@ async def route_action(  # noqa: PLR0911, PLR0912, PLR0913, PLR0915
 ) -> AssistantCandidate | None:
     """Preserve data classification and source identity across each action step."""
     name = intent.outcome
-    task_id = f"action:{turn.record_id}"
+    step_id = turn.metadata.get("step_id")
+    req_suffix = f":step_{step_id}" if step_id else ""
+    task_id = f"action:{turn.record_id}{req_suffix}"
     arguments = {"task_id": task_id}
     polish = intent.language == "pl"
     choices = {}
@@ -67,7 +69,7 @@ async def route_action(  # noqa: PLR0911, PLR0912, PLR0913, PLR0915
         if descriptor is None:
             return None
         request = normalize_request(descriptor, params, actor=turn.producer,
-                                    request_id=f"{turn.record_id}:{capability}", data_class=turn.data_class)
+                                    request_id=f"{turn.record_id}{req_suffix}:{capability}", data_class=turn.data_class)
         return await service.invoke(request, token)
 
     if name in {"browser.open_result", "browser.read_page"}:
