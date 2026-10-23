@@ -166,6 +166,12 @@ def resolve_assistant_config(  # noqa: PLR0912, PLR0913, PLR0915
     else:
         resolved_bypass = True
 
+    raw_thinking = enable_thinking if enable_thinking is not None else assistant.get("enable_thinking", False)
+    if isinstance(raw_thinking, str):
+        resolved_enable_thinking = raw_thinking.strip().lower() in ("true", "1", "yes", "on")
+    else:
+        resolved_enable_thinking = bool(raw_thinking)
+
     if backend == "deterministic":
         return AssistantRuntimeConfig(
             backend=backend,
@@ -185,6 +191,17 @@ def resolve_assistant_config(  # noqa: PLR0912, PLR0913, PLR0915
             max_external_evidence=int(assistant.get("max_external_evidence", 5)),
             memory_sufficiency_threshold=float(
                 assistant.get("memory_sufficiency_threshold", 0.75)
+            ),
+            enable_thinking=resolved_enable_thinking,
+            thinking_budget=(
+                thinking_budget
+                if thinking_budget is not None
+                else assistant.get("thinking_budget")
+            ),
+            thinking_level=(
+                thinking_level
+                if thinking_level is not None
+                else (assistant.get("thinking_level") or local_ai.get("thinking_level"))
             ),
             interaction_controller=str(
                 assistant.get("interaction_controller")
@@ -285,11 +302,7 @@ def resolve_assistant_config(  # noqa: PLR0912, PLR0913, PLR0915
         memory_sufficiency_threshold=float(
             assistant.get("memory_sufficiency_threshold", 0.75)
         ),
-        enable_thinking=bool(
-            enable_thinking
-            if enable_thinking is not None
-            else assistant.get("enable_thinking", False)
-        ),
+        enable_thinking=resolved_enable_thinking,
         thinking_budget=(
             thinking_budget
             if thinking_budget is not None

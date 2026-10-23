@@ -184,3 +184,15 @@ def test_bypass_intent_recognizer_resolution_config_and_env(monkeypatch: pytest.
     # Environment has precedence over assistant config layer
     assert res_env_true.bypass_intent_recognizer is True
 
+    # 6. RAI_ENABLE_THINKING boolean resolution
+    monkeypatch.setenv("RAI_ENABLE_THINKING", "true")
+    res_thinking_true = resolve_assistant_config({"assistant": {"backend": "deterministic"}})
+    assert res_thinking_true.enable_thinking is True
+
+    monkeypatch.setenv("RAI_ENABLE_THINKING", "false")
+    res_thinking_false = resolve_assistant_config(
+        {"assistant": {"backend": "deterministic", "enable_thinking": True}}
+    )
+    assert res_thinking_false.enable_thinking is False
+
+
