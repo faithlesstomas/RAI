@@ -113,9 +113,15 @@ class AssistantActions:
                 cancellation.cancel()
                 trace("assistant.intent.end", turn_id=turn.record_id, status="cancelled")
                 return None
-            trace("assistant.intent.end", turn_id=turn.record_id, status="failure")
-            return AssistantCandidate(text="Nie udało się bezpiecznie rozpoznać intencji. Nie wykonałem działania.",
-                                      metadata={"intent_failure": recognized.failure()})
+            polish = turn.metadata.get("language") != "en"
+            return AssistantCandidate(
+                text=(
+                    "Nie udało się bezpiecznie rozpoznać intencji. Nie wykonałem działania."
+                    if polish
+                    else "Could not safely recognize intent. No action was taken."
+                ),
+                metadata={"intent_failure": recognized.failure()},
+            )
         if cancellation.cancelled:
             return None
         intent = recognized.unwrap()

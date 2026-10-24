@@ -53,7 +53,18 @@ file to `.gitignore` is not a substitute for rotation.
   construction.
 - Add one backend through a conformance contract rather than branching core
   logic by provider name.
-- Use English for commit messages, issues/MRs, code identifiers, and all documentation.
+- Strictly adhere to the English language policy across all code, prompts, logs, and documentation.
+
+### Language policy (English standard)
+
+English is the mandatory project language across all technical and developer-facing surfaces:
+
+- **Source code**: class, function, variable, and constant identifiers, type annotations, inline comments, docstrings, and module documentation.
+- **Diagnostics and telemetry**: logging messages, exception messages, error codes, and audit ledger entries.
+- **LLM and Agent interfaces**: system prompts, instruction templates, prompt engineering heuristics, few-shot examples, tool schemas, capability descriptors, context headers, and default messages. English is essential here: safety alignment, jailbreak defenses, delimiter adherence, and system instruction following in LLMs (particularly smaller local models) are heavily optimized on English tokens. Non-English or mixed prompts degrade guardrail reliability and instruction compliance.
+- **Documentation and collaboration**: public Sphinx documentation, README/ROADMAP/SECURITY files, Architecture Decision Records (ADRs), internal GitLab Wiki (`rai.wiki.git`), commit messages, merge requests, issues, and code reviews.
+
+*Note on Multilingual User Interaction*: As an intelligent desktop assistant, RAI supports processing multilingual user interactions (such as Polish or multilingual queries) and interacting with localized desktop environments. Conversational intent extraction patterns, entity recognition heuristics, and evaluation test corpora may handle multilingual inputs, but all internal architecture, system prompts, operational logs, developer documentation, and default prompt templates must remain strictly in English.
 
 ## Commits and semantic versioning
 

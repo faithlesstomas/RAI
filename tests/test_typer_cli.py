@@ -375,7 +375,7 @@ def test_notebook_interactive_loop(tmp_path: Path) -> None:
                 "rai.commands.notebook.click.prompt",
                 side_effect=[
                     "x = 10",
-                    "? Napisz kod przypisujący a = 123",
+                    "? Write code assigning a = 123",
                     "/session",
                     "/invalid_cmd",
                     "/repl",

@@ -167,7 +167,7 @@ async def test_assistant_repl_and_notebook_endpoints(
     # Accept a turn to populate session history
     await accept_assistant_turn(
         AssistantTurnRequest(
-            prompt="Napisz skrypt liczący sumę:\n```python\na = 1\nb = 2\na + b\n```",
+            prompt="Write a script calculating the sum:\n```python\na = 1\nb = 2\na + b\n```",
             session_id=session_id,
         ),
         assistant_service,
