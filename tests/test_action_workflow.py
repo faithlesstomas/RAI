@@ -20,14 +20,25 @@ from rai.actions.workflow import (
     ResearchWorkflowLimits,
     ResearchWorkflowState,
     TaskStepController,
+    _compact_observation_content,
 )
+from rai.assistant.backends.local import LocalAssistantBackend
+from rai.assistant.records import AssistantContextManifest, AssistantContextPackage, InferenceRequest
 from rai.assistant.service import AssistantService
 from rai.assistant.store import SQLiteMemoryGraphStore
 from rai.kernel.audit import InMemoryAuditLedger
 from rai.kernel.capabilities import CapabilityDescriptor, CapabilityRegistry, RegisteredCapability
 from rai.kernel.policy import PolicyEngine
 from rai.kernel.ports import CancellationToken
-from rai.kernel.records import ActionFailure, DataClass, ProducerIdentity, RiskClass
+from rai.kernel.records import (
+    ActionFailure,
+    DataClass,
+    InferenceBudget,
+    ProducerIdentity,
+    RiskClass,
+    _new_id,
+    _utc_now,
+)
 from rai.kernel.synthetic import SyntheticApprovalBroker, SyntheticUsageLedger
 
 
@@ -599,9 +610,6 @@ async def test_assistant_service_bounded_task_e2e(tmp_path: Path) -> None:
 
 
 def test_large_application_list_compacting_and_backend_representation() -> None:
-    from rai.actions.workflow import _compact_observation_content
-    from rai.assistant.backends.local import LocalAssistantBackend
-
     apps = [
         {
             "name": f"App {i}",
@@ -636,8 +644,6 @@ def test_large_application_list_compacting_and_backend_representation() -> None:
 
 
 def test_compact_observation_avoids_duplicating_text() -> None:
-    from rai.actions.workflow import _compact_observation_content
-
     # Dict output containing 'text' (e.g. from browser.read_page)
     raw_output = {
         "url": "https://example.com",
@@ -669,10 +675,6 @@ def test_compact_observation_avoids_duplicating_text() -> None:
 
 
 def test_local_backend_deduplicates_tool_observations_in_bounded_step() -> None:
-    from rai.assistant.backends.local import LocalAssistantBackend
-    from rai.assistant.records import AssistantContextManifest, AssistantContextPackage, InferenceRequest
-    from rai.kernel.records import _new_id, _utc_now, InferenceBudget, ProducerIdentity
-
     backend = LocalAssistantBackend()
     producer = ProducerIdentity(producer_id="test", kind="service", version="1.0")
     manifest = AssistantContextManifest(
@@ -733,7 +735,7 @@ def test_local_backend_deduplicates_tool_observations_in_bounded_step() -> None:
     )
     messages_bounded = backend._format_messages(req_bounded)
     user_msg_bounded = [m["content"] for m in messages_bounded if m["role"] == "user"][0]
-    assert "Wyniki wykonanych narzędzi" not in user_msg_bounded
+    assert "Tool and action execution results" not in user_msg_bounded
     assert "browser.read_page" not in user_msg_bounded
 
     # 2. In normal turn without observations in system_instruction
@@ -751,6 +753,6 @@ def test_local_backend_deduplicates_tool_observations_in_bounded_step() -> None:
     )
     messages_normal = backend._format_messages(req_normal)
     user_msg_normal = [m["content"] for m in messages_normal if m["role"] == "user"][0]
-    assert "Wyniki wykonanych narzędzi" in user_msg_normal
+    assert "Tool and action execution results" in user_msg_normal
     assert "browser.read_page" in user_msg_normal
 
