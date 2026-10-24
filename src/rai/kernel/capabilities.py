@@ -33,7 +33,9 @@ DEFAULT_ACTION_TIMEOUT = 30.0
 class CapabilityDescriptor(BaseModel):
     """Transport-neutral metadata and validation contract for one capability."""
 
-    model_config = ConfigDict(frozen=True, extra="forbid", use_enum_values=True)
+    model_config = ConfigDict(
+        frozen=True, extra="forbid", use_enum_values=True, arbitrary_types_allowed=True
+    )
 
     name: str = Field(pattern=r"^[a-z][a-z0-9]*(?:[._][a-z0-9]+)*$")
     description: str = Field(min_length=1)
@@ -44,12 +46,25 @@ class CapabilityDescriptor(BaseModel):
     requires_isolation: bool = False
     verification_plan: tuple[str, ...] = Field(min_length=1)
     timeout_seconds: float | None = Field(default=None, gt=0)
+    risk_evaluator: Callable[[dict[str, Any]], RiskClass] | None = Field(
+        default=None, exclude=True
+    )
 
     @field_validator("input_schema")
     @classmethod
     def freeze_schema(cls, value: dict[str, Any]) -> dict[str, Any]:
         del cls
         return freeze_json_value(value)
+
+    def effective_risk(self, arguments: dict[str, Any] | None = None) -> RiskClass:
+        """Resolve dynamic risk class for provided capability arguments if an evaluator is configured."""
+        evaluator = self.risk_evaluator
+        if callable(evaluator):
+            try:
+                return evaluator(arguments or {})
+            except Exception:
+                return self.risk_class
+        return self.risk_class
 
 
 class RegisteredCapability:

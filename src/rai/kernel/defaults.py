@@ -59,6 +59,7 @@ def _descriptor(  # noqa: PLR0913
     side_effects: tuple[str, ...],
     isolation: str,
     verification: tuple[str, ...],
+    risk_evaluator: Callable[[dict[str, Any]], RiskClass] | None = None,
 ) -> CapabilityDescriptor:
     return CapabilityDescriptor(
         name=name,
@@ -69,7 +70,20 @@ def _descriptor(  # noqa: PLR0913
         isolation=isolation,
         requires_isolation=isolation == "bubblewrap-or-guix",
         verification_plan=verification,
+        risk_evaluator=risk_evaluator,
     )
+
+
+def _python_risk_evaluator(arguments: dict[str, Any]) -> RiskClass:
+    code = arguments.get("code", "")
+    force_os = arguments.get("force_os_sandbox", False)
+    allow_network = arguments.get("allow_network", False)
+    if force_os or allow_network:
+        return RiskClass.HIGH
+    from rai.tools.python import can_run_in_monty  # noqa: PLC0415
+
+    can_run, _ = can_run_in_monty(code)
+    return RiskClass.LOW if can_run else RiskClass.HIGH
 
 
 async def _shell(arguments: dict[str, Any]) -> dict[str, Any]:
@@ -325,6 +339,7 @@ def create_default_capability_registry() -> CapabilityRegistry:
                 ("process", "filesystem", "network"),
                 "bubblewrap-or-guix",
                 ("sandbox-terminal-status",),
+                risk_evaluator=_python_risk_evaluator,
             ),
             _python,
             run_secure_python_code,

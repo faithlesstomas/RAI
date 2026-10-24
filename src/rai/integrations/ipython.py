@@ -11,7 +11,10 @@ Usage in Jupyter / IPython:
 from __future__ import annotations
 
 import asyncio
-from typing import Any, Optional
+from collections.abc import Coroutine
+from typing import Any, Optional, TypeVar
+
+_T = TypeVar("_T")
 
 try:
     from IPython.core.magic import Magics, cell_magic, line_magic, magics_class
@@ -31,13 +34,30 @@ except ImportError:  # pragma: no cover
         return func
 
 
+def _run_async(coro: Coroutine[Any, Any, _T]) -> _T:
+    """Run an async coroutine from synchronous contexts safely, even if an event loop is already running (e.g. Jupyter)."""
+    try:
+        loop = asyncio.get_running_loop()
+    except RuntimeError:
+        loop = None
+
+    if loop is not None and loop.is_running():
+        import concurrent.futures  # noqa: PLC0415
+
+        with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
+            return pool.submit(asyncio.run, coro).result()
+    return asyncio.run(coro)
+
+
 @magics_class
 class RAIMagics(Magics):
     """IPython Magics for interacting with RAI Assistant and persistent REPL."""
 
     def __init__(self, shell: object = None, session_id: Optional[str] = None) -> None:
         super().__init__(shell)
-        self.session_id = session_id or "ipython-session"
+        from rai.kernel.records import _new_id  # noqa: PLC0415
+
+        self.session_id = session_id or f"ipython-{_new_id()[:12]}"
         self._container: Any = None
         self._service: Any = None
 
@@ -109,7 +129,7 @@ class RAIMagics(Magics):
             else:
                 print("REPL session has no active variables.")
 
-        asyncio.run(_fetch())
+        _run_async(_fetch())
 
     def _ask_assistant(self, prompt: str) -> None:
         from returns.result import Success  # noqa: PLC0415
@@ -142,7 +162,7 @@ class RAIMagics(Magics):
                 err = res.failure()
                 print(f"Error: [{err.code}] {err.message}")
 
-        asyncio.run(_run())
+        _run_async(_run())
 
 
 def load_ipython_extension(ipython: Any) -> None:  # noqa: ANN401

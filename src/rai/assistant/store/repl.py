@@ -33,6 +33,7 @@ class ReplStoreMixin:
     ) -> Result[None, ActionFailure]:
         try:
             conn = self._connect()
+            self._init_db(conn)
             cur = conn.cursor()
             now = _utc_now().isoformat()
             cur.execute(
@@ -64,6 +65,7 @@ class ReplStoreMixin:
     ) -> Result[tuple[bytes, dict[str, str]] | None, ActionFailure]:
         try:
             conn = self._connect()
+            self._init_db(conn)
             cur = conn.cursor()
             cur.execute(
                 "SELECT snapshot_blob, variables_json FROM assistant_repl_sessions WHERE session_id = ?",
@@ -91,6 +93,7 @@ class ReplStoreMixin:
     ) -> Result[None, ActionFailure]:
         try:
             conn = self._connect()
+            self._init_db(conn)
             cur = conn.cursor()
             cur.execute(
                 "DELETE FROM assistant_repl_sessions WHERE session_id = ?",

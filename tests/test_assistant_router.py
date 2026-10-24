@@ -4,11 +4,13 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from unittest.mock import AsyncMock, patch
 
 import pytest
-from returns.result import Success
+from returns.result import Failure, Success
 
 from rai.assistant.backends.deterministic import DeterministicAssistantBackend
+from rai.assistant.records import make_assistant_failure
 from rai.assistant.service import AssistantService
 from rai.assistant.store import SQLiteMemoryGraphStore
 from rai.routers.assistant import (
@@ -178,4 +180,35 @@ async def test_assistant_repl_and_notebook_endpoints(
     nb_dict = json.loads(nb_resp.body.decode("utf-8"))
     assert nb_dict["nbformat"] == 4
     assert len(nb_dict["cells"]) >= 2
+
+
+@pytest.mark.asyncio
+async def test_assistant_repl_persistence_failure_handling(
+    assistant_service: AssistantService,
+) -> None:
+    """Test that failure to persist session blob results in status='error' and descriptive message."""
+    start = await assistant_service.start()
+    assert isinstance(start, Success)
+    session_id = "failing-persistence-session"
+
+    with patch.object(
+        assistant_service.store,
+        "save_repl_session",
+        new=AsyncMock(
+            return_value=Failure(
+                make_assistant_failure(
+                    code="SAVE_REPL_SESSION_FAILED",
+                    message="Database disk image is malformed",
+                    request_id="test-repl",
+                )
+            )
+        ),
+    ):
+        exec_res = await execute_session_repl(
+            session_id,
+            REPLExecuteRequest(code="x = 100"),
+            assistant_service,
+        )
+        assert exec_res.status == "error"
+        assert "State Persistence Error: Database disk image is malformed" in exec_res.output
 

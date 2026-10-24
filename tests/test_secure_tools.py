@@ -2,12 +2,23 @@
 Unit and integration tests for secure shell and python tools.
 """
 import os
-import pytest
+from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
-from rai.tools.shell import run_secure_shell_command
-from rai.tools.python import run_secure_python_code
+import pytest
+from returns.result import Failure, Success
+
+from rai.assistant.records import make_assistant_failure
+from rai.assistant.store import SQLiteMemoryGraphStore
+from rai.kernel.audit import InMemoryAuditLedger
+from rai.kernel.defaults import create_default_capability_registry
+from rai.kernel.policy import PolicyEngine
+from rai.kernel.records import PolicyOutcome, RiskClass
+from rai.kernel.service import CapabilityService
+from rai.kernel.transport import normalize_request
+from rai.tools.python import clear_session_blob, run_secure_python_code
 from rai.tools.security.sandbox import SandboxResult
+from rai.tools.shell import run_secure_shell_command
 
 
 @pytest.mark.asyncio
@@ -152,11 +163,6 @@ async def test_run_secure_python_code_hitl_denied() -> None:
 @pytest.mark.asyncio
 async def test_run_secure_python_code_session_persistence_with_store(tmp_path: os.PathLike[str]) -> None:
     """Test that python session state persists into MemoryGraphStore across execution calls."""
-    from pathlib import Path
-    from returns.result import Success
-    from rai.assistant.store import SQLiteMemoryGraphStore
-    from rai.tools.python import clear_session_blob
-
     store = SQLiteMemoryGraphStore(Path(tmp_path) / "test_memory.sqlite3")
     init_res = await store.start()
     assert isinstance(init_res, Success)
@@ -183,4 +189,66 @@ async def test_run_secure_python_code_session_persistence_with_store(tmp_path: o
     await clear_session_blob(session_id, store=store)
     cleared = await store.get_repl_session(session_id)
     assert cleared.unwrap() is None
+
+
+@pytest.mark.asyncio
+async def test_run_python_code_capability_service_fast_path_and_hitl() -> None:
+    """Test that pure python executes seamlessly through CapabilityService without HITL, while risky code demands approval."""
+    registry = create_default_capability_registry()
+    service = CapabilityService(
+        registry=registry,
+        policy=PolicyEngine(isolation_available=lambda _iso: True),
+        audit=InMemoryAuditLedger(),
+        approvals=None,  # No approval broker configured
+    )
+
+    # 1. Pure Python code fast path (Tier-1 Monty) through CapabilityService
+    descriptor = registry.descriptor("run_python_code")
+    assert descriptor is not None
+    req_pure = normalize_request(
+        descriptor,
+        {"code": "x = 10; y = 20; x + y", "session_id": "cap-pure-session"},
+    )
+    decision_pure, result_pure = await service.invoke(req_pure)
+    assert decision_pure is not None
+    assert decision_pure.outcome == PolicyOutcome.ALLOW
+    assert decision_pure.risk_class == RiskClass.LOW
+    assert isinstance(result_pure, Success)
+    action_res = result_pure.unwrap()
+    assert "30" in action_res.output["text"]
+    assert "[Active REPL session state:" in action_res.output["text"]
+
+    # 2. Risky code requiring OS sandbox escalates to HIGH risk and fails with APPROVAL_UNAVAILABLE
+    req_risky = normalize_request(
+        descriptor,
+        {"code": "import os\nos.listdir('.')"},
+    )
+    decision_risky, result_risky = await service.invoke(req_risky)
+    assert decision_risky is not None
+    assert decision_risky.outcome == PolicyOutcome.ASK
+    assert decision_risky.risk_class == RiskClass.HIGH
+    assert isinstance(result_risky, Failure)
+    assert result_risky.failure().code == "APPROVAL_UNAVAILABLE"
+
+
+@pytest.mark.asyncio
+async def test_run_secure_python_code_storage_failure_handling() -> None:
+    """Test that persistence failures in store_session_blob result in an Execution Failure."""
+    mock_store = MagicMock()
+    mock_store.get_repl_session = AsyncMock(return_value=Success(None))
+    mock_store.save_repl_session = AsyncMock(
+        return_value=Failure(
+            make_assistant_failure(
+                code="SAVE_REPL_SESSION_FAILED",
+                message="Disk quota exceeded",
+                request_id="test_fail",
+            )
+        )
+    )
+
+    output = await run_secure_python_code(
+        "x = 99", session_id="failing-session", store=mock_store
+    )
+    assert output.startswith("Execution Failure:")
+    assert "Failed to persist REPL session state: Disk quota exceeded" in output
 

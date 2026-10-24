@@ -36,6 +36,7 @@ class PolicyEngine:
         self, request: CapabilityRequest, descriptor: CapabilityDescriptor
     ) -> PolicyDecision:
         outcome, reasons = self._outcome(request, descriptor)
+        effective_risk = descriptor.effective_risk(request.arguments)
         trace("capability.policy", request_id=request.record_id, capability=descriptor.name,
               outcome=outcome.value, reasons=",".join(reasons), data_class=request.data_class)
         return PolicyDecision(
@@ -45,7 +46,7 @@ class PolicyEngine:
             correlation_id=request.correlation_id,
             request_id=request.record_id,
             outcome=outcome,
-            risk_class=descriptor.risk_class,
+            risk_class=effective_risk,
             policy_version=self.policy_version,
             reason_codes=reasons,
             actor=request.actor,
@@ -68,12 +69,16 @@ class PolicyEngine:
             return PolicyOutcome.DENY, ("UNDECLARED_SIDE_EFFECT",)
         if request.verification_plan != descriptor.verification_plan:
             return PolicyOutcome.DENY, ("VERIFICATION_PLAN_MISMATCH",)
-        if descriptor.requires_isolation and (
+        effective_risk = descriptor.effective_risk(request.arguments)
+        requires_isolation = (
+            descriptor.requires_isolation and effective_risk != RiskClass.LOW
+        )
+        if requires_isolation and (
             request.isolation != descriptor.isolation
             or not self._isolation_available(descriptor.isolation)
         ):
             return PolicyOutcome.DENY, ("ISOLATION_UNAVAILABLE",)
-        if descriptor.risk_class == RiskClass.CRITICAL:
+        if effective_risk == RiskClass.CRITICAL:
             return PolicyOutcome.DENY, ("CRITICAL_RISK",)
         network_egress = request.target_resource.startswith(
             ("https://", "http://")
@@ -84,6 +89,6 @@ class PolicyEngine:
             return PolicyOutcome.DENY, ("LOCAL_DATA_EGRESS_FORBIDDEN",)
         if network_egress and request.data_class == DataClass.PRIVATE:
             return PolicyOutcome.ESCALATE, ("PRIVATE_DATA_EGRESS",)
-        if descriptor.risk_class in {RiskClass.MODERATE, RiskClass.HIGH}:
-            return PolicyOutcome.ASK, (f"{descriptor.risk_class}_RISK_APPROVAL",)
+        if effective_risk in {RiskClass.MODERATE, RiskClass.HIGH}:
+            return PolicyOutcome.ASK, (f"{effective_risk}_RISK_APPROVAL",)
         return PolicyOutcome.ALLOW, ("LOW_RISK_LOCAL",)

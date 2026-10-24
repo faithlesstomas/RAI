@@ -10,8 +10,9 @@ import logging
 import os
 from typing import Any, Dict, Optional, Tuple
 
-from returns.result import Success
+from returns.result import Failure, Result, Success
 
+from rai.kernel.records import ActionFailure
 from rai.paths import cache_dir
 from rai.tools.security.hitl import get_approval_manager
 from rai.tools.security.monty import get_monty_runner
@@ -95,25 +96,25 @@ async def store_session_blob(
     blob: bytes,
     variables: Optional[dict[str, str]] = None,
     store: Optional[Any] = None,
-) -> None:
+) -> Result[None, ActionFailure]:
     """Persist Monty session heap snapshot into persistent storage."""
     if store is None:
         from rai.assistant.store import SQLiteMemoryGraphStore  # noqa: PLC0415
         store = SQLiteMemoryGraphStore()
-    await store.save_repl_session(session_id, blob, variables or {})
+    return await store.save_repl_session(session_id, blob, variables or {})
 
 
 async def clear_session_blob(
     session_id: str, store: Optional[Any] = None
-) -> None:
+) -> Result[None, ActionFailure]:
     """Clear stored Monty session heap snapshot from persistent storage."""
     if store is None:
         from rai.assistant.store import SQLiteMemoryGraphStore  # noqa: PLC0415
         store = SQLiteMemoryGraphStore()
-    await store.clear_repl_session(session_id)
+    return await store.clear_repl_session(session_id)
 
 
-async def run_secure_python_code(  # noqa: PLR0912, PLR0913, PLR0915
+async def run_secure_python_code(  # noqa: PLR0911, PLR0912, PLR0913, PLR0915
     code: str,
     allow_network: bool = False,
     rw_dir: Optional[str] = None,
@@ -147,12 +148,18 @@ async def run_secure_python_code(  # noqa: PLR0912, PLR0913, PLR0915
         if isinstance(res, Success):
             monty_result = res.unwrap()
             if session_id and monty_result.session_blob:
-                await store_session_blob(
+                save_res = await store_session_blob(
                     session_id,
                     monty_result.session_blob,
                     variables=monty_result.variables,
                     store=store,
                 )
+                if isinstance(save_res, Failure):
+                    err = save_res.failure()
+                    logger.error(
+                        "Failed to persist session blob for %s: %s", session_id, err.message
+                    )
+                    return f"Execution Failure:\nFailed to persist REPL session state: {err.message}"
 
             output = monty_result.output if monty_result.output else "[Success: Code executed and returned no output]"
 

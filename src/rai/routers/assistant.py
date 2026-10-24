@@ -341,9 +341,20 @@ async def execute_session_repl(
 
     res = eval_res.unwrap()
     if res.session_blob:
-        await service.store.save_repl_session(
+        save_res = await service.store.save_repl_session(
             session_id, res.session_blob, res.variables
         )
+        if isinstance(save_res, Failure):
+            failure = save_res.failure()
+            return REPLExecuteResult(
+                session_id=session_id,
+                output=f"{res.output}\n\n[State Persistence Error: {failure.message}]"
+                if res.output
+                else f"[State Persistence Error: {failure.message}]",
+                variables=res.variables,
+                duration_ms=round(duration_ms, 2),
+                status="error",
+            )
 
     return REPLExecuteResult(
         session_id=session_id,
