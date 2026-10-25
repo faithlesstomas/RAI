@@ -178,8 +178,10 @@ async def test_assistant_repl_and_notebook_endpoints(
     assert f'filename="session_{session_id}.ipynb"' in nb_resp.headers["Content-Disposition"]
 
     nb_dict = json.loads(nb_resp.body.decode("utf-8"))
-    assert nb_dict["nbformat"] == 4
-    assert len(nb_dict["cells"]) >= 2
+    expected_nbformat = 4
+    min_cells = 2
+    assert nb_dict["nbformat"] == expected_nbformat
+    assert len(nb_dict["cells"]) >= min_cells
 
 
 @pytest.mark.asyncio

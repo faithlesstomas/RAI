@@ -115,11 +115,13 @@ class ApprovalManager:
             return
 
         # Prepare a highly visible security warning
+        is_python = req.tool_name in ("PythonTools", "run_python_code")
+        content_label = "Script:" if is_python else "Command:"
         dialog_text = (
             "🚨 RAI SECURITY GATEWAY DIALOG 🚨\n\n"
             f"An AI agent wants to execute a command outside the sandbox.\n"
             f"Tool: [bold]{req.tool_name}[/bold]\n\n"
-            "Command:\n"
+            f"{content_label}\n"
             f"👉 {req.command}\n\n"
             "Do you authorize this system execution?"
         )
@@ -168,8 +170,10 @@ class ApprovalManager:
                 try:
                     from ...core import console  # noqa: PLC0415
                     print("\n")
+                    is_python = req.tool_name in ("PythonTools", "run_python_code")
+                    content_label = "Script" if is_python else "Command"
                     console.print(Panel(
-                        f"[bold yellow]Command:[/bold yellow] {req.command}\n"
+                        f"[bold yellow]{content_label}:[/bold yellow] {req.command}\n"
                         f"[bold yellow]Tool:[/bold yellow] {req.tool_name}",
                         title="🚨 RAI STANDALONE GATEWAY - AUTHORIZATION REQUIRED 🚨",
                         border_style="red"

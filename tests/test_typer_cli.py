@@ -10,8 +10,10 @@ from typer.testing import CliRunner
 from rai.cli import cli
 from rai.commands import approval
 from rai.commands.dialog import _run_assistant_ask, _run_assistant_chat
+from rai.commands.notebook import _run_assistant_notebook
 from rai.kernel.ports import CancellationToken
 from rai.kernel.records import DataClass, ProducerIdentity
+from rai.tools.security.monty import MontyExecutionResult
 from rai.assistant.records import (
     AssistantContextManifest,
     AssistantContextManifestItem,
@@ -341,8 +343,6 @@ def test_notebook_command_dispatch() -> None:
 
 
 def test_notebook_interactive_loop(tmp_path: Path) -> None:
-    from rai.commands.notebook import _run_assistant_notebook
-
     mock_container = MagicMock()
     mock_service = MagicMock()
     mock_service.profile_scope = "default"
@@ -358,7 +358,6 @@ def test_notebook_interactive_loop(tmp_path: Path) -> None:
     mock_service.store.save_repl_session = AsyncMock(return_value=Success(None))
     mock_service.store.accept_turn = AsyncMock(return_value=Success(None))
     mock_service.store.clear_repl_session = AsyncMock(return_value=Success(None))
-    from rai.tools.security.monty import MontyExecutionResult
 
     mock_container.assistant_service = mock_service
     mock_container.monty_runner.run.return_value = Success(

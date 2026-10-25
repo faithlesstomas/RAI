@@ -89,6 +89,31 @@ async def confirm(prompt: str, token: CancellationToken) -> bool:
     return await choose(prompt + " [y/N] ", token) in {"y", "yes"}
 
 
+def _format_action_summary(request: CapabilityRequest, decision: PolicyDecision) -> str:
+    if request.capability in BROWSER_ACTIONS:
+        return review_text(request)
+    effects_text = ", ".join(decision.requested_side_effects) or "none"
+    if request.capability == "run_python_code" and "code" in request.arguments:
+        return (
+            f"Action: run_python_code (Tier-2 Bubblewrap OS execution)\n"
+            f"Target: {decision.target_resource}\n"
+            f"Effects: {effects_text}\n"
+            f"Script:\n{request.arguments['code']}"
+        )
+    if request.capability == "run_shell_command" and "command" in request.arguments:
+        return (
+            f"Action: run_shell_command\n"
+            f"Target: {decision.target_resource}\n"
+            f"Effects: {effects_text}\n"
+            f"Command: {request.arguments['command']}"
+        )
+    return (
+        f"Action: {request.capability}\n"
+        f"Target: {decision.target_resource}\n"
+        f"Effects: {effects_text}"
+    )
+
+
 class TerminalApprovalBroker:
     def __init__(self, profile: str | None = None, path: Path | None = None) -> None:
         self.profile = profile
@@ -107,13 +132,7 @@ class TerminalApprovalBroker:
                 return Success(f"rule:{self.profile}:{rule.id}")
             return Failure(HitlApprovalBroker._failure(decision, "DENIED", "Profile rule denied action"))
 
-        if request.capability in BROWSER_ACTIONS:
-            typer.echo(review_text(request))
-        else:
-            effects_text = ", ".join(decision.requested_side_effects) or "none"
-            typer.echo(
-                f"Action: {request.capability}\nTarget: {decision.target_resource}\nEffects: {effects_text}"
-            )
+        typer.echo(_format_action_summary(request, decision))
 
         remember = bool(self.profile and request.capability == "browser.search")
         prompt = ("Approve? [y=once / N=deny / a=remember exact query / d=remember denial / s=show details] "

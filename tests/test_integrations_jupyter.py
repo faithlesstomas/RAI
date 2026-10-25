@@ -30,7 +30,8 @@ def test_monty_jupyter_kernel_execution_and_persistence() -> None:
     # Verify stdout was emitted
     assert mock_send.called
     stream_calls = [call for call in mock_send.call_args_list if call.args[1] == "stream"]
-    assert len(stream_calls) >= 2
+    min_stream_calls = 2
+    assert len(stream_calls) >= min_stream_calls
 
 
 def test_monty_jupyter_kernel_empty_and_error() -> None:

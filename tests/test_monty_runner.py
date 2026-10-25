@@ -34,7 +34,8 @@ def test_monty_runner_eval_pure_expression() -> None:
     assert isinstance(res, Success)
     result = res.unwrap()
     assert result.output == "4"
-    assert result.return_value == 4
+    expected_return = 4
+    assert result.return_value == expected_return
     assert result.duration_ms >= 0.0
     assert len(result.session_blob) > 0
 

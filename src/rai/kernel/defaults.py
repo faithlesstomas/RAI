@@ -687,8 +687,12 @@ class HitlApprovalBroker:
     ) -> Result[str, ActionFailure]:
         from rai.actions.consent import BROWSER_ACTIONS, review_text  # noqa: PLC0415
 
-        if request.capability not in BROWSER_ACTIONS:
+        if request.capability not in BROWSER_ACTIONS and request.capability not in {
+            "run_python_code",
+            "run_shell_command",
+        }:
             return await self.request(decision, cancellation)
+
         if cancellation.cancelled:
             return Failure(self._failure(decision, "CANCELLED", "approval was cancelled"))
         manager = get_approval_manager()
@@ -700,7 +704,25 @@ class HitlApprovalBroker:
             "side_effects": list(decision.requested_side_effects),
             "reason_codes": list(decision.reason_codes),
         }
-        pending = manager.register_request(review_text(request), request.capability, details=details)
+
+        if request.capability in BROWSER_ACTIONS:
+            command_text = review_text(request)
+            tool_name = request.capability
+        elif request.capability == "run_python_code":
+            code = str(request.arguments.get("code", ""))
+            command_text = code
+            tool_name = "PythonTools"
+            details["code"] = code
+        elif request.capability == "run_shell_command":
+            cmd = str(request.arguments.get("command", ""))
+            command_text = cmd
+            tool_name = "ShellTools"
+            details["command"] = cmd
+        else:
+            command_text = f"{decision.target_resource}: {','.join(decision.requested_side_effects)}"
+            tool_name = request.capability
+
+        pending = manager.register_request(command_text, tool_name, details=details)
         try:
             approved = await manager.wait_for_approval(pending)
             if approved and not cancellation.cancelled:

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import inspect
 from typing import Protocol
 
 from returns.result import Failure, Result, Success
@@ -63,7 +64,11 @@ class CapabilityService:
                     self._failure(request, "APPROVAL_UNAVAILABLE", "approval is required")
                 )
             else:
-                approval = await self.approvals.request(decision, token)
+                review_action = getattr(self.approvals, "request_action", None)
+                if callable(review_action) and inspect.iscoroutinefunction(review_action):
+                    approval = await review_action(decision, request, token)
+                else:
+                    approval = await self.approvals.request(decision, token)
                 if isinstance(approval, Failure):
                     result = Failure(approval.failure())
                 else:

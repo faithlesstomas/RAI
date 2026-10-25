@@ -10,11 +10,19 @@ from returns.result import Failure, Success
 
 from rai.assistant.records import make_assistant_failure
 from rai.assistant.store import SQLiteMemoryGraphStore
+from rai.commands.approval import TerminalApprovalBroker
 from rai.container import ApplicationContainer
 from rai.kernel.audit import InMemoryAuditLedger
-from rai.kernel.defaults import create_default_capability_registry
+from rai.kernel.defaults import HitlApprovalBroker, create_default_capability_registry
 from rai.kernel.policy import PolicyEngine
-from rai.kernel.records import PolicyOutcome, RiskClass
+from rai.kernel.ports import CancellationToken
+from rai.kernel.records import (
+    DataClass,
+    PolicyDecision,
+    PolicyOutcome,
+    ProducerIdentity,
+    RiskClass,
+)
 from rai.kernel.service import CapabilityService
 from rai.kernel.transport import normalize_request
 from rai.tools.python import clear_session_blob, get_session_repl_lock, run_secure_python_code
@@ -429,3 +437,116 @@ async def test_run_python_code_capability_hitl_single_prompt() -> None:
         mock_approval.register_request.assert_not_called()
         assert isinstance(result, Success)
         assert "hello from os" in result.unwrap().output["text"]
+
+
+@pytest.mark.asyncio
+async def test_hitl_approval_broker_registers_exact_python_script() -> None:
+    """Test that HitlApprovalBroker passes the exact Python script and details for Tier-2 approval."""
+    broker = HitlApprovalBroker()
+    producer = ProducerIdentity(producer_id="test", kind="test", version="1.0.0")
+    decision = PolicyDecision(
+        producer=producer,
+        request_id="req-py-1",
+        outcome=PolicyOutcome.ASK,
+        risk_class=RiskClass.HIGH,
+        policy_version="1.0.0",
+        reason_codes=("PYTHON_HOST_EXECUTION",),
+        actor=producer,
+        data_class=DataClass.PUBLIC,
+        target_resource="python:workspace",
+        requested_side_effects=("process",),
+        isolation="host-process",
+        verification_plan=("observed",),
+    )
+    registry = create_default_capability_registry()
+    descriptor = registry.descriptor("run_python_code")
+    assert descriptor is not None
+    test_script = "import os\nprint(os.getpid())"
+    req = normalize_request(descriptor, {"code": test_script})
+
+    with patch("rai.kernel.defaults.get_approval_manager") as mock_get_manager:
+        mock_manager = MagicMock()
+        mock_manager.register_request.return_value = MagicMock()
+        mock_manager.wait_for_approval = AsyncMock(return_value=True)
+        mock_get_manager.return_value = mock_manager
+
+        res = await broker.request_action(decision, req, CancellationToken())
+        assert isinstance(res, Success)
+        mock_manager.register_request.assert_called_once()
+        call_args, call_kwargs = mock_manager.register_request.call_args
+        assert call_args[0] == test_script
+        assert call_args[1] == "PythonTools"
+        assert call_kwargs["details"]["code"] == test_script
+        assert call_kwargs["details"]["target_resource"] == "capability://run_python_code"
+
+
+@pytest.mark.asyncio
+async def test_terminal_approval_broker_shows_exact_python_script(tmp_path: Path) -> None:
+    """Test that TerminalApprovalBroker prints the exact Python script for Tier-2 approval."""
+    config_file = tmp_path / "approvals.json"
+    config_file.write_text("{}", encoding="utf-8")
+    broker = TerminalApprovalBroker(profile="default", path=config_file)
+    producer = ProducerIdentity(producer_id="test", kind="test", version="1.0.0")
+    decision = PolicyDecision(
+        producer=producer,
+        request_id="req-py-2",
+        outcome=PolicyOutcome.ASK,
+        risk_class=RiskClass.HIGH,
+        policy_version="1.0.0",
+        reason_codes=("PYTHON_HOST_EXECUTION",),
+        actor=producer,
+        data_class=DataClass.PUBLIC,
+        target_resource="python:workspace",
+        requested_side_effects=("process",),
+        isolation="host-process",
+        verification_plan=("observed",),
+    )
+    registry = create_default_capability_registry()
+    descriptor = registry.descriptor("run_python_code")
+    assert descriptor is not None
+    test_script = "import sys\nprint('running tier-2')"
+    req = normalize_request(descriptor, {"code": test_script})
+
+    with patch("rai.commands.approval.typer.echo") as mock_echo, \
+         patch("rai.commands.approval.choose", new=AsyncMock(return_value="y")):
+        res = await broker.request_action(decision, req, CancellationToken())
+        assert isinstance(res, Success)
+        mock_echo.assert_called_once()
+        echo_output = mock_echo.call_args[0][0]
+        assert "Script:" in echo_output
+        assert test_script in echo_output
+        assert "Tier-2 Bubblewrap OS execution" in echo_output
+
+
+@pytest.mark.asyncio
+async def test_capability_service_delegates_to_request_action() -> None:
+    """Test that CapabilityService invokes broker.request_action with request arguments."""
+    registry = create_default_capability_registry()
+    mock_broker = MagicMock()
+    mock_broker.request_action = AsyncMock(return_value=Success("approval-py-123"))
+
+    service = CapabilityService(
+        registry=registry,
+        policy=PolicyEngine(isolation_available=lambda _iso: True),
+        audit=InMemoryAuditLedger(),
+        approvals=mock_broker,
+    )
+
+    mock_result = SandboxResult(returncode=0, stdout="done\n", stderr="", sandbox_type="bubblewrap")
+    with patch("rai.tools.python.get_sandbox_runner") as mock_get_runner:
+        mock_runner = MagicMock()
+        mock_runner.run.return_value = mock_result
+        mock_get_runner.return_value = mock_runner
+
+        descriptor = registry.descriptor("run_python_code")
+        assert descriptor is not None
+        test_code = "import os\nos.listdir('.')"
+        req = normalize_request(descriptor, {"code": test_code})
+        decision, result = await service.invoke(req)
+
+        assert decision is not None
+        assert decision.outcome == PolicyOutcome.ASK
+        mock_broker.request_action.assert_called_once()
+        call_decision, call_req, _ = mock_broker.request_action.call_args[0]
+        assert call_req.arguments["code"] == test_code
+        assert isinstance(result, Success)
