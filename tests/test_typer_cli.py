@@ -394,5 +394,3 @@ def test_notebook_interactive_loop(tmp_path: Path) -> None:
     assert mock_service.store.save_repl_session.called
     assert mock_service.store.clear_repl_session.called
     assert export_file.exists()
-
-

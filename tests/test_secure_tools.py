@@ -10,13 +10,14 @@ from returns.result import Failure, Success
 
 from rai.assistant.records import make_assistant_failure
 from rai.assistant.store import SQLiteMemoryGraphStore
+from rai.container import ApplicationContainer
 from rai.kernel.audit import InMemoryAuditLedger
 from rai.kernel.defaults import create_default_capability_registry
 from rai.kernel.policy import PolicyEngine
 from rai.kernel.records import PolicyOutcome, RiskClass
 from rai.kernel.service import CapabilityService
 from rai.kernel.transport import normalize_request
-from rai.tools.python import clear_session_blob, run_secure_python_code
+from rai.tools.python import clear_session_blob, get_session_repl_lock, run_secure_python_code
 from rai.tools.security.sandbox import SandboxResult
 from rai.tools.shell import run_secure_shell_command
 
@@ -100,11 +101,11 @@ async def test_run_secure_python_code_success() -> None:
         mock_runner = MagicMock()
         mock_runner.run.return_value = mock_result
         mock_get_runner.return_value = mock_runner
-        
+
         mock_approval = MagicMock()
         mock_approval.wait_for_approval = AsyncMock(return_value=True)
         mock_get_approval.return_value = mock_approval
-        
+
         output = await run_secure_python_code("print(2+2)", force_os_sandbox=True)
         
         assert "4" in output
@@ -177,11 +178,11 @@ async def test_run_secure_python_code_monty_unavailable_fallback_requires_hitl()
     with patch("rai.tools.python.get_sandbox_runner") as mock_get_runner, \
          patch("rai.tools.python.get_approval_manager") as mock_get_approval, \
          patch("rai.tools.python.get_monty_runner", return_value=mock_monty):
-        
+
         mock_runner = MagicMock()
         mock_runner.run.return_value = mock_result
         mock_get_runner.return_value = mock_runner
-        
+
         mock_approval = MagicMock()
         mock_approval.wait_for_approval = AsyncMock(return_value=True)
         mock_get_approval.return_value = mock_approval
@@ -333,3 +334,98 @@ async def test_run_secure_python_code_storage_failure_handling() -> None:
     assert output.startswith("Execution Failure:")
     assert "Failed to persist REPL session state: Disk quota exceeded" in output
 
+
+@pytest.mark.asyncio
+async def test_run_secure_python_code_load_failure_handling() -> None:
+    """Test that failure to retrieve session blob results in an Execution Failure and aborts execution."""
+    mock_store = MagicMock()
+    mock_store.get_repl_session = AsyncMock(
+        return_value=Failure(
+            make_assistant_failure(
+                code="GET_REPL_SESSION_FAILED",
+                message="Corrupted session database",
+                request_id="test_fail_load",
+            )
+        )
+    )
+    mock_store.save_repl_session = AsyncMock()
+
+    output = await run_secure_python_code(
+        "x = 123", session_id="corrupt-session", store=mock_store
+    )
+    assert output.startswith("Execution Failure:")
+    assert "Failed to load REPL session state: Corrupted session database" in output
+    mock_store.save_repl_session.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_container_python_propagates_profile_scope(tmp_path: Path) -> None:
+    """Test that ApplicationContainer's run_python_code wrapper propagates active profile_scope."""
+    container = ApplicationContainer(
+        config={"active_agent": "researcher"},
+        testing=True,
+    )
+    assert container.active_profile == "researcher"
+
+    with patch("rai.tools.python.run_secure_python_code", new=AsyncMock(return_value="[Success]")) as mock_run:
+        handler = container.capability_registry._capabilities["run_python_code"]._handler
+        assert handler is not None
+        res = await handler({"code": "x = 42", "session_id": "test-session"})
+        assert res == {"text": "[Success]"}
+        mock_run.assert_called_once()
+        assert mock_run.call_args.kwargs["profile_scope"] == "researcher"
+        assert mock_run.call_args.kwargs["require_hitl"] is False
+
+
+@pytest.mark.asyncio
+async def test_session_repl_lock_shared_serialization() -> None:
+    """Test that get_session_repl_lock returns the same lock for identical (profile_scope, session_id)."""
+    lock1 = await get_session_repl_lock("profile_a", "session_1")
+    lock2 = await get_session_repl_lock("profile_a", "session_1")
+    lock3 = await get_session_repl_lock("profile_b", "session_1")
+    lock4 = await get_session_repl_lock("profile_a", "session_2")
+
+    assert lock1 is lock2
+    assert lock1 is not lock3
+    assert lock1 is not lock4
+
+
+@pytest.mark.asyncio
+async def test_run_python_code_capability_hitl_single_prompt() -> None:
+    """Test that CapabilityService asks for HITL approval once and does not double-prompt in handler."""
+    registry = create_default_capability_registry()
+    mock_broker = MagicMock()
+    mock_broker.request = AsyncMock(return_value=Success("approval-123"))
+
+    service = CapabilityService(
+        registry=registry,
+        policy=PolicyEngine(isolation_available=lambda _iso: True),
+        audit=InMemoryAuditLedger(),
+        approvals=mock_broker,
+    )
+
+    mock_result = SandboxResult(returncode=0, stdout="hello from os\n", stderr="", sandbox_type="bubblewrap")
+    with patch("rai.tools.python.get_sandbox_runner") as mock_get_runner, \
+         patch("rai.tools.python.get_approval_manager") as mock_get_approval:
+        mock_runner = MagicMock()
+        mock_runner.run.return_value = mock_result
+        mock_get_runner.return_value = mock_runner
+
+        mock_approval = MagicMock()
+        mock_approval.wait_for_approval = AsyncMock(return_value=True)
+        mock_get_approval.return_value = mock_approval
+
+        descriptor = registry.descriptor("run_python_code")
+        assert descriptor is not None
+        req = normalize_request(
+            descriptor,
+            {"code": "import os\nos.listdir('.')"},
+        )
+        decision, result = await service.invoke(req)
+
+        assert decision is not None
+        assert decision.outcome == PolicyOutcome.ASK
+        mock_broker.request.assert_called_once()
+        mock_approval.register_request.assert_not_called()
+        assert isinstance(result, Success)
+        assert "hello from os" in result.unwrap().output["text"]

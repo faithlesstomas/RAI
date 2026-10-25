@@ -143,6 +143,10 @@ class ApplicationContainer:
             async def _container_python(arguments: dict[str, Any]) -> dict[str, Any]:
                 from .tools.python import run_secure_python_code  # noqa: PLC0415
 
+                profile_scope = (
+                    arguments.get("profile_scope")
+                    or self.active_profile
+                )
                 output = await run_secure_python_code(
                     arguments["code"],
                     allow_network=arguments.get("allow_network", False),
@@ -150,6 +154,8 @@ class ApplicationContainer:
                     force_os_sandbox=arguments.get("force_os_sandbox", False),
                     store=self.memory_graph_store,
                     monty_runner=self.monty_runner,
+                    profile_scope=profile_scope,
+                    require_hitl=arguments.get("require_hitl", False),
                 )
                 if output.startswith(("Execution Error", "Execution Failure")):
                     raise RuntimeError(output)
@@ -334,6 +340,12 @@ class ApplicationContainer:
             )
         return self._monty_runner
 
+    @property
+    def active_profile(self) -> str:
+        """Active profile scope for the container."""
+        if self._assistant_service is not None:
+            return self._assistant_service.profile_scope
+        return str(self.config.get("active_agent") or "default")
 
     @property
     def assistant_service(self) -> AssistantService:

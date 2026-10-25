@@ -212,3 +212,34 @@ async def test_assistant_repl_persistence_failure_handling(
         assert exec_res.status == "error"
         assert "State Persistence Error: Database disk image is malformed" in exec_res.output
 
+
+@pytest.mark.asyncio
+async def test_assistant_repl_load_failure_handling(
+    assistant_service: AssistantService,
+) -> None:
+    """Test that failure to load session blob results in status='error' and does not run from empty state."""
+    start = await assistant_service.start()
+    assert isinstance(start, Success)
+    session_id = "failing-load-session"
+
+    with patch.object(
+        assistant_service.store,
+        "get_repl_session",
+        new=AsyncMock(
+            return_value=Failure(
+                make_assistant_failure(
+                    code="GET_REPL_SESSION_FAILED",
+                    message="Database read failed",
+                    request_id="test-repl-load",
+                )
+            )
+        ),
+    ), patch.object(assistant_service.store, "save_repl_session") as mock_save:
+        exec_res = await execute_session_repl(
+            session_id,
+            REPLExecuteRequest(code="x = 100"),
+            assistant_service,
+        )
+        assert exec_res.status == "error"
+        assert "State Load Error: Database read failed" in exec_res.output
+        mock_save.assert_not_called()

@@ -308,16 +308,7 @@ async def get_memory_diagnostics(
     return result.unwrap().model_dump(mode="json")
 
 
-_repl_session_locks: dict[tuple[str, str], asyncio.Lock] = {}
-_repl_session_locks_guard = asyncio.Lock()
-
-
-async def _get_session_repl_lock(profile_scope: str, session_id: str) -> asyncio.Lock:
-    key = (profile_scope, session_id)
-    async with _repl_session_locks_guard:
-        if key not in _repl_session_locks:
-            _repl_session_locks[key] = asyncio.Lock()
-        return _repl_session_locks[key]
+from rai.tools.python import get_session_repl_lock as _get_session_repl_lock
 
 
 @router.post("/sessions/{session_id}/repl/execute", response_model=REPLExecuteResult)
@@ -337,9 +328,18 @@ async def execute_session_repl(
         saved_blob_res = await service.store.get_repl_session(
             session_id, profile_scope=service.profile_scope
         )
+        if isinstance(saved_blob_res, Failure):
+            failure = saved_blob_res.failure()
+            return REPLExecuteResult(
+                session_id=session_id,
+                output=f"State Load Error: {failure.message}",
+                variables={},
+                duration_ms=0.0,
+                status="error",
+            )
         session_blob = (
             saved_blob_res.unwrap()[0]
-            if isinstance(saved_blob_res, Success) and saved_blob_res.unwrap()
+            if saved_blob_res.unwrap() is not None
             else None
         )
 

@@ -183,5 +183,3 @@ def get_monty_runner(
         max_duration_secs=max_duration_secs,
         max_memory_bytes=max_memory_bytes,
     )
-
-

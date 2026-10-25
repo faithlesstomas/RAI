@@ -107,6 +107,7 @@ async def _python(arguments: dict[str, Any]) -> dict[str, Any]:
         session_id=arguments.get("session_id"),
         force_os_sandbox=arguments.get("force_os_sandbox", False),
         profile_scope=arguments.get("profile_scope", "default"),
+        require_hitl=arguments.get("require_hitl", False),
     )
     if output.startswith(("Execution Error", "Execution Failure")):
         raise RuntimeError(output)
