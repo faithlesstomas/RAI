@@ -424,7 +424,9 @@ def _run_assistant_chat(  # noqa: PLR0913, PLR0915
                     click.echo(f"Profile: {service.profile_scope} | Session ID: {sid}")
                     continue
                 if stripped == "/repl":
-                    saved_res = await service.store.get_repl_session(sid)
+                    saved_res = await service.store.get_repl_session(
+                        sid, profile_scope=service.profile_scope
+                    )
                     if isinstance(saved_res, Success) and saved_res.unwrap():
                         blob, vars_dict = saved_res.unwrap()
                         if not vars_dict and blob:
@@ -442,7 +444,9 @@ def _run_assistant_chat(  # noqa: PLR0913, PLR0915
                         click.echo("REPL session has no active variables.")
                     continue
                 if stripped == "/repl reset":
-                    await service.store.clear_repl_session(sid)
+                    await service.store.clear_repl_session(
+                        sid, profile_scope=service.profile_scope
+                    )
                     click.secho("REPL session reset.", fg="green")
                     continue
                 if stripped.startswith("/export"):

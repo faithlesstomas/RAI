@@ -801,7 +801,12 @@ class AssistantContextBuilder:
         ]
         repl_variables: dict[str, str] = {}
         if hasattr(self.store, "get_repl_session"):
-            repl_res = await self.store.get_repl_session(turn.session_id)
+            scope = (
+                turn.metadata.get("profile_scope", self.profile_scope)
+                if hasattr(turn, "metadata") and isinstance(turn.metadata, dict)
+                else self.profile_scope
+            )
+            repl_res = await self.store.get_repl_session(turn.session_id, profile_scope=scope)
             if isinstance(repl_res, Success) and repl_res.unwrap():
                 _blob, repl_variables = repl_res.unwrap()
 

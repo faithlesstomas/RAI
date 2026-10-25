@@ -112,7 +112,9 @@ class RAIMagics(Magics):
         service = self._get_service()
 
         async def _fetch() -> None:
-            saved = await service.store.get_repl_session(self.session_id)
+            saved = await service.store.get_repl_session(
+                self.session_id, profile_scope=service.profile_scope
+            )
             if isinstance(saved, Success) and saved.unwrap():
                 blob, vars_dict = saved.unwrap()
                 if not vars_dict and blob and self._container is not None:

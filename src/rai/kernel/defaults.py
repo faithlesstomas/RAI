@@ -80,7 +80,12 @@ def _python_risk_evaluator(arguments: dict[str, Any]) -> RiskClass:
     allow_network = arguments.get("allow_network", False)
     if force_os or allow_network:
         return RiskClass.HIGH
+    from rai.tools.security.monty import get_monty_runner  # noqa: PLC0415
     from rai.tools.python import can_run_in_monty  # noqa: PLC0415
+
+    monty_runner = get_monty_runner()
+    if not monty_runner.is_available():
+        return RiskClass.HIGH
 
     can_run, _ = can_run_in_monty(code)
     return RiskClass.LOW if can_run else RiskClass.HIGH
@@ -101,6 +106,7 @@ async def _python(arguments: dict[str, Any]) -> dict[str, Any]:
         allow_network=arguments.get("allow_network", False),
         session_id=arguments.get("session_id"),
         force_os_sandbox=arguments.get("force_os_sandbox", False),
+        profile_scope=arguments.get("profile_scope", "default"),
     )
     if output.startswith(("Execution Error", "Execution Failure")):
         raise RuntimeError(output)

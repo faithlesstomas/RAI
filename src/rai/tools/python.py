@@ -6,6 +6,7 @@ Secure Python execution tool utilizing tiered sandboxing:
 from __future__ import annotations
 
 import ast
+import asyncio
 import logging
 import os
 from typing import Any, Dict, Optional, Tuple
@@ -32,6 +33,7 @@ _MONTY_SAFE_MODULES = {
 _RISKY_KEYWORDS = [
     "import os", "import subprocess", "import sys", "import socket",
     "import urllib", "import requests", "import shutil", "eval(", "exec(", "open(",
+    "__import__",
 ]
 
 
@@ -66,7 +68,27 @@ def can_run_in_monty(code: str) -> Tuple[bool, str]:  # noqa: PLR0911, PLR0912
                 if root_pkg not in _MONTY_SAFE_MODULES:
                     return False, f"Module '{node.module}' requires full OS environment."
 
-        # 2. Unsupported syntax constructs in Monty
+        # 2. Builtin calls and identifiers requiring CPython
+        elif isinstance(node, ast.Name):
+            if node.id in {
+                "__import__", "eval", "exec", "open", "compile",
+                "breakpoint", "globals", "locals", "vars",
+            }:
+                return False, f"Builtin identifier '{node.id}' requires full OS environment."
+        elif isinstance(node, ast.Call):
+            if isinstance(node.func, ast.Name) and node.func.id in {
+                "__import__", "eval", "exec", "open", "compile",
+                "breakpoint", "globals", "locals", "vars",
+            }:
+                return False, f"Builtin call '{node.func.id}' requires full OS environment."
+        elif isinstance(node, ast.Attribute):
+            if node.attr in {
+                "__subclasses__", "__globals__", "__code__", "__builtins__",
+                "__class__", "__base__", "__bases__", "__loader__", "__spec__",
+            }:
+                return False, f"Reflection attribute '{node.attr}' requires full OS environment."
+
+        # 3. Unsupported syntax constructs in Monty
         elif isinstance(node, ast.ClassDef) and node.bases:
             return False, "Class inheritance requires full CPython."
         elif isinstance(node, (ast.Yield, ast.YieldFrom)):
@@ -78,13 +100,13 @@ def can_run_in_monty(code: str) -> Tuple[bool, str]:  # noqa: PLR0911, PLR0912
 
 
 async def get_session_blob(
-    session_id: str, store: Optional[Any] = None
+    session_id: str, store: Optional[Any] = None, profile_scope: str = "default"
 ) -> Optional[bytes]:
     """Retrieve stored Monty session heap snapshot from persistent storage."""
     if store is None:
         from rai.assistant.store import SQLiteMemoryGraphStore  # noqa: PLC0415
         store = SQLiteMemoryGraphStore()
-    res = await store.get_repl_session(session_id)
+    res = await store.get_repl_session(session_id, profile_scope=profile_scope)
     if isinstance(res, Success) and res.unwrap():
         blob, _ = res.unwrap()
         return blob
@@ -96,22 +118,25 @@ async def store_session_blob(
     blob: bytes,
     variables: Optional[dict[str, str]] = None,
     store: Optional[Any] = None,
+    profile_scope: str = "default",
 ) -> Result[None, ActionFailure]:
     """Persist Monty session heap snapshot into persistent storage."""
     if store is None:
         from rai.assistant.store import SQLiteMemoryGraphStore  # noqa: PLC0415
         store = SQLiteMemoryGraphStore()
-    return await store.save_repl_session(session_id, blob, variables or {})
+    return await store.save_repl_session(
+        session_id, blob, variables or {}, profile_scope=profile_scope
+    )
 
 
 async def clear_session_blob(
-    session_id: str, store: Optional[Any] = None
+    session_id: str, store: Optional[Any] = None, profile_scope: str = "default"
 ) -> Result[None, ActionFailure]:
     """Clear stored Monty session heap snapshot from persistent storage."""
     if store is None:
         from rai.assistant.store import SQLiteMemoryGraphStore  # noqa: PLC0415
         store = SQLiteMemoryGraphStore()
-    return await store.clear_repl_session(session_id)
+    return await store.clear_repl_session(session_id, profile_scope=profile_scope)
 
 
 async def run_secure_python_code(  # noqa: PLR0911, PLR0912, PLR0913, PLR0915
@@ -122,6 +147,7 @@ async def run_secure_python_code(  # noqa: PLR0911, PLR0912, PLR0913, PLR0915
     force_os_sandbox: bool = False,
     store: Optional[Any] = None,
     monty_runner: Optional[Any] = None,
+    profile_scope: str = "default",
 ) -> str:
     """
     Executes Python code securely via Tiered Sandboxing.
@@ -129,8 +155,8 @@ async def run_secure_python_code(  # noqa: PLR0911, PLR0912, PLR0913, PLR0915
     OS-level actions escalate to Bubblewrap under HITL authorization.
     """
     logger.info(
-        "Agent requested python execution (allow_network=%s, session_id=%s, force_os_sandbox=%s)",
-        allow_network, session_id, force_os_sandbox,
+        "Agent requested python execution (allow_network=%s, session_id=%s, force_os_sandbox=%s, profile_scope=%s)",
+        allow_network, session_id, force_os_sandbox, profile_scope,
     )
 
     if monty_runner is None:
@@ -142,8 +168,8 @@ async def run_secure_python_code(  # noqa: PLR0911, PLR0912, PLR0913, PLR0915
         logger.debug("Executing code via Tier-1 Monty nano-sandbox (reason: %s)", monty_reason)
         prior_blob: Optional[bytes] = None
         if session_id:
-            prior_blob = await get_session_blob(session_id, store=store)
-        res = monty_runner.run(code, session_blob=prior_blob)
+            prior_blob = await get_session_blob(session_id, store=store, profile_scope=profile_scope)
+        res = await asyncio.to_thread(monty_runner.run, code, session_blob=prior_blob)
 
         if isinstance(res, Success):
             monty_result = res.unwrap()
@@ -153,6 +179,7 @@ async def run_secure_python_code(  # noqa: PLR0911, PLR0912, PLR0913, PLR0915
                     monty_result.session_blob,
                     variables=monty_result.variables,
                     store=store,
+                    profile_scope=profile_scope,
                 )
                 if isinstance(save_res, Failure):
                     err = save_res.failure()
@@ -175,18 +202,16 @@ async def run_secure_python_code(  # noqa: PLR0911, PLR0912, PLR0913, PLR0915
     # 2. Tier-2 Escalation: Full OS execution in Bubblewrap
     logger.info("Escalating Python execution to Tier-2 Bubblewrap runner.")
 
-    # Human-in-the-Loop policy check
-    requires_approval = allow_network or any(kw in code for kw in _RISKY_KEYWORDS)
-    if requires_approval:
-        logger.info("Python script requires explicit human authorization. Suspending coroutine...")
-        approval_manager = get_approval_manager()
-        req = approval_manager.register_request(code, "PythonTools")
+    # Human-in-the-Loop policy check: all CPython executions require explicit human authorization
+    logger.info("Python script in Tier-2 OS environment requires explicit human authorization. Suspending coroutine...")
+    approval_manager = get_approval_manager()
+    req = approval_manager.register_request(code, "PythonTools")
 
-        approved = await approval_manager.wait_for_approval(req)
-        if not approved:
-            logger.warning("Execution denied by user for Python code.")
-            return "Execution Error: Action denied by the user."
-        logger.info("Execution approved by user. Resuming...")
+    approved = await approval_manager.wait_for_approval(req)
+    if not approved:
+        logger.warning("Execution denied by user for Python code.")
+        return "Execution Error: Action denied by the user."
+    logger.info("Execution approved by user. Resuming...")
 
     # Setup the sandbox read-write working directory
     user_cache = str(cache_dir() / "sandbox")
@@ -204,7 +229,8 @@ async def run_secure_python_code(  # noqa: PLR0911, PLR0912, PLR0913, PLR0915
     runner = get_sandbox_runner()
     cmd_list = ["python3", "/output/script.py"]
 
-    result = runner.run(
+    result = await asyncio.to_thread(
+        runner.run,
         cmd_list,
         allow_network=allow_network,
         rw_dir=active_rw_dir,

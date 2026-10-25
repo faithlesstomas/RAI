@@ -586,3 +586,28 @@ async def test_repl_session_persistence(store: SQLiteMemoryGraphStore) -> None:
     fetch_res3 = await store.get_repl_session(session_id)
     assert isinstance(fetch_res3, Success)
     assert fetch_res3.unwrap() is None
+
+    # Test profile_scope isolation
+    work_scope = "profile-work"
+    home_scope = "profile-home"
+    common_session = "sess-shared-id"
+    work_blob = b"WORK_DATA"
+    home_blob = b"HOME_DATA"
+
+    await store.save_repl_session(common_session, work_blob, {"env": "work"}, profile_scope=work_scope)
+    await store.save_repl_session(common_session, home_blob, {"env": "home"}, profile_scope=home_scope)
+
+    work_res = await store.get_repl_session(common_session, profile_scope=work_scope)
+    home_res = await store.get_repl_session(common_session, profile_scope=home_scope)
+
+    assert isinstance(work_res, Success) and work_res.unwrap() is not None
+    assert isinstance(home_res, Success) and home_res.unwrap() is not None
+    assert work_res.unwrap()[0] == work_blob
+    assert work_res.unwrap()[1] == {"env": "work"}
+    assert home_res.unwrap()[0] == home_blob
+    assert home_res.unwrap()[1] == {"env": "home"}
+
+    # Clearing work profile leaves home profile intact
+    await store.clear_repl_session(common_session, profile_scope=work_scope)
+    assert (await store.get_repl_session(common_session, profile_scope=work_scope)).unwrap() is None
+    assert (await store.get_repl_session(common_session, profile_scope=home_scope)).unwrap() is not None

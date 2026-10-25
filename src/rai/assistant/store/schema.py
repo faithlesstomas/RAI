@@ -141,13 +141,40 @@ class SchemaStoreMixin:
             conn.execute(
                 """
                 CREATE TABLE IF NOT EXISTS assistant_repl_sessions (
-                    session_id TEXT PRIMARY KEY,
+                    profile_scope TEXT NOT NULL DEFAULT 'default',
+                    session_id TEXT NOT NULL,
                     updated_at TEXT NOT NULL,
                     snapshot_blob BLOB NOT NULL,
-                    variables_json TEXT NOT NULL
+                    variables_json TEXT NOT NULL,
+                    PRIMARY KEY (profile_scope, session_id)
                 );
                 """
             )
+            # Automatic schema migration check for early single-column session_id primary key
+            cur = conn.cursor()
+            cur.execute("PRAGMA table_info(assistant_repl_sessions);")
+            cols = [row[1] for row in cur.fetchall()]
+            if cols and "profile_scope" not in cols:
+                conn.execute("ALTER TABLE assistant_repl_sessions RENAME TO _old_assistant_repl_sessions;")
+                conn.execute(
+                    """
+                    CREATE TABLE assistant_repl_sessions (
+                        profile_scope TEXT NOT NULL DEFAULT 'default',
+                        session_id TEXT NOT NULL,
+                        updated_at TEXT NOT NULL,
+                        snapshot_blob BLOB NOT NULL,
+                        variables_json TEXT NOT NULL,
+                        PRIMARY KEY (profile_scope, session_id)
+                    );
+                    """
+                )
+                conn.execute(
+                    """
+                    INSERT INTO assistant_repl_sessions (profile_scope, session_id, updated_at, snapshot_blob, variables_json)
+                    SELECT 'default', session_id, updated_at, snapshot_blob, variables_json FROM _old_assistant_repl_sessions;
+                    """
+                )
+                conn.execute("DROP TABLE _old_assistant_repl_sessions;")
             conn.execute(
                 """
                 CREATE TABLE IF NOT EXISTS relations (

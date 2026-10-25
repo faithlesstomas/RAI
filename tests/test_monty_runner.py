@@ -16,12 +16,16 @@ def test_get_monty_runner_factory() -> None:
     assert runner.is_available()
 
 
-def test_container_monty_runner_managed_lifecycle() -> None:
+@pytest.mark.asyncio
+async def test_container_monty_runner_managed_lifecycle() -> None:
     container = ApplicationContainer(config={}, testing=True)
     runner1 = container.monty_runner
     runner2 = container.monty_runner
     assert runner1 is runner2
     assert runner1.is_available()
+
+    await container.close()
+    assert container._monty_runner is None
 
 
 def test_monty_runner_eval_pure_expression() -> None:

@@ -92,17 +92,24 @@ async def test_run_secure_shell_command_hitl_denied() -> None:
 
 @pytest.mark.asyncio
 async def test_run_secure_python_code_success() -> None:
-    """Test that python code executed via OS sandbox uses bubblewrap."""
+    """Test that python code executed via OS sandbox uses bubblewrap and requires approval."""
     mock_result = SandboxResult(returncode=0, stdout="4\n", stderr="", sandbox_type="bubblewrap")
     
-    with patch("rai.tools.python.get_sandbox_runner") as mock_get_runner:
+    with patch("rai.tools.python.get_sandbox_runner") as mock_get_runner, \
+         patch("rai.tools.python.get_approval_manager") as mock_get_approval:
         mock_runner = MagicMock()
         mock_runner.run.return_value = mock_result
         mock_get_runner.return_value = mock_runner
         
+        mock_approval = MagicMock()
+        mock_approval.wait_for_approval = AsyncMock(return_value=True)
+        mock_get_approval.return_value = mock_approval
+        
         output = await run_secure_python_code("print(2+2)", force_os_sandbox=True)
         
         assert "4" in output
+        mock_approval.register_request.assert_called_once_with("print(2+2)", "PythonTools")
+        mock_approval.wait_for_approval.assert_called_once()
         mock_runner.run.assert_called_once()
         # The script is run via python3 from /output/script.py
         cmd_args = mock_runner.run.call_args[0][0]
@@ -158,6 +165,80 @@ async def test_run_secure_python_code_hitl_denied() -> None:
         assert "Action denied by the user" in output
         mock_approval.register_request.assert_called_once_with(code, "PythonTools")
         mock_approval.wait_for_approval.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_run_secure_python_code_monty_unavailable_fallback_requires_hitl() -> None:
+    """When Monty runner is unavailable, execution must fallback to Tier-2 and require HITL approval."""
+    mock_result = SandboxResult(returncode=0, stdout="2\n", stderr="", sandbox_type="bubblewrap")
+    mock_monty = MagicMock()
+    mock_monty.is_available.return_value = False
+
+    with patch("rai.tools.python.get_sandbox_runner") as mock_get_runner, \
+         patch("rai.tools.python.get_approval_manager") as mock_get_approval, \
+         patch("rai.tools.python.get_monty_runner", return_value=mock_monty):
+        
+        mock_runner = MagicMock()
+        mock_runner.run.return_value = mock_result
+        mock_get_runner.return_value = mock_runner
+        
+        mock_approval = MagicMock()
+        mock_approval.wait_for_approval = AsyncMock(return_value=True)
+        mock_get_approval.return_value = mock_approval
+
+        code = "x = 1 + 1; print(x)"
+        output = await run_secure_python_code(code, monty_runner=mock_monty)
+
+        assert "2" in output
+        mock_approval.register_request.assert_called_once_with(code, "PythonTools")
+        mock_approval.wait_for_approval.assert_called_once()
+        mock_runner.run.assert_called_once()
+
+
+def test_can_run_in_monty_rejections() -> None:
+    from rai.tools.python import can_run_in_monty  # noqa: PLC0415
+
+    ok, reason = can_run_in_monty("__import__('os').system('id')")
+    assert not ok
+    assert "sensitive builtins" in reason or "Builtin" in reason
+
+    ok, reason = can_run_in_monty("eval('2 + 2')")
+    assert not ok
+
+    ok, reason = can_run_in_monty("exec('x = 1')")
+    assert not ok
+
+    ok, reason = can_run_in_monty("open('/etc/passwd')")
+    assert not ok
+
+    ok, reason = can_run_in_monty("().__class__.__base__.__subclasses__()")
+    assert not ok
+    assert "Reflection attribute" in reason
+
+    ok, _ = can_run_in_monty("x = 42\ny = [i * 2 for i in range(10)]")
+    assert ok
+
+
+def test_python_risk_evaluator_policy() -> None:
+    from rai.kernel.defaults import _python_risk_evaluator  # noqa: PLC0415
+
+    # Safe pure python with Monty available -> LOW
+    assert _python_risk_evaluator({"code": "x = 1 + 1"}) == RiskClass.LOW
+
+    # Dynamic imports or OS operations -> HIGH
+    assert _python_risk_evaluator({"code": "__import__('os').system('id')"}) == RiskClass.HIGH
+    assert _python_risk_evaluator({"code": "import os"}) == RiskClass.HIGH
+    assert _python_risk_evaluator({"code": "open('test.txt')"}) == RiskClass.HIGH
+
+    # force_os_sandbox or allow_network -> HIGH
+    assert _python_risk_evaluator({"code": "x = 1", "force_os_sandbox": True}) == RiskClass.HIGH
+    assert _python_risk_evaluator({"code": "x = 1", "allow_network": True}) == RiskClass.HIGH
+
+    # When Monty runner is unavailable -> unconditionally HIGH
+    mock_runner = MagicMock()
+    mock_runner.is_available.return_value = False
+    with patch("rai.tools.security.monty.get_monty_runner", return_value=mock_runner):
+        assert _python_risk_evaluator({"code": "x = 1 + 1"}) == RiskClass.HIGH
 
 
 @pytest.mark.asyncio

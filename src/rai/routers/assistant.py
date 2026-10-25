@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 import time
 from typing import AsyncGenerator
@@ -307,6 +308,18 @@ async def get_memory_diagnostics(
     return result.unwrap().model_dump(mode="json")
 
 
+_repl_session_locks: dict[tuple[str, str], asyncio.Lock] = {}
+_repl_session_locks_guard = asyncio.Lock()
+
+
+async def _get_session_repl_lock(profile_scope: str, session_id: str) -> asyncio.Lock:
+    key = (profile_scope, session_id)
+    async with _repl_session_locks_guard:
+        if key not in _repl_session_locks:
+            _repl_session_locks[key] = asyncio.Lock()
+        return _repl_session_locks[key]
+
+
 @router.post("/sessions/{session_id}/repl/execute", response_model=REPLExecuteResult)
 async def execute_session_repl(
     session_id: str,
@@ -319,50 +332,59 @@ async def execute_session_repl(
 
         runner = get_monty_runner()
 
-    saved_blob_res = await service.store.get_repl_session(session_id)
-    session_blob = (
-        saved_blob_res.unwrap()[0]
-        if isinstance(saved_blob_res, Success) and saved_blob_res.unwrap()
-        else None
-    )
-
-    start_t = time.perf_counter()
-    eval_res = runner.run(request.code, session_blob=session_blob)
-    duration_ms = (time.perf_counter() - start_t) * 1000.0
-
-    if isinstance(eval_res, Failure):
-        return REPLExecuteResult(
-            session_id=session_id,
-            output=f"Execution error: {eval_res.failure()}",
-            variables={},
-            duration_ms=round(duration_ms, 2),
-            status="error",
+    lock = await _get_session_repl_lock(service.profile_scope, session_id)
+    async with lock:
+        saved_blob_res = await service.store.get_repl_session(
+            session_id, profile_scope=service.profile_scope
+        )
+        session_blob = (
+            saved_blob_res.unwrap()[0]
+            if isinstance(saved_blob_res, Success) and saved_blob_res.unwrap()
+            else None
         )
 
-    res = eval_res.unwrap()
-    if res.session_blob:
-        save_res = await service.store.save_repl_session(
-            session_id, res.session_blob, res.variables
+        start_t = time.perf_counter()
+        eval_res = await asyncio.to_thread(
+            runner.run, request.code, session_blob=session_blob
         )
-        if isinstance(save_res, Failure):
-            failure = save_res.failure()
+        duration_ms = (time.perf_counter() - start_t) * 1000.0
+
+        if isinstance(eval_res, Failure):
             return REPLExecuteResult(
                 session_id=session_id,
-                output=f"{res.output}\n\n[State Persistence Error: {failure.message}]"
-                if res.output
-                else f"[State Persistence Error: {failure.message}]",
-                variables=res.variables,
+                output=f"Execution error: {eval_res.failure()}",
+                variables={},
                 duration_ms=round(duration_ms, 2),
                 status="error",
             )
 
-    return REPLExecuteResult(
-        session_id=session_id,
-        output=res.output,
-        variables=res.variables,
-        duration_ms=round(duration_ms, 2),
-        status="ok",
-    )
+        res = eval_res.unwrap()
+        if res.session_blob:
+            save_res = await service.store.save_repl_session(
+                session_id,
+                res.session_blob,
+                res.variables,
+                profile_scope=service.profile_scope,
+            )
+            if isinstance(save_res, Failure):
+                failure = save_res.failure()
+                return REPLExecuteResult(
+                    session_id=session_id,
+                    output=f"{res.output}\n\n[State Persistence Error: {failure.message}]"
+                    if res.output
+                    else f"[State Persistence Error: {failure.message}]",
+                    variables=res.variables,
+                    duration_ms=round(duration_ms, 2),
+                    status="error",
+                )
+
+        return REPLExecuteResult(
+            session_id=session_id,
+            output=res.output,
+            variables=res.variables,
+            duration_ms=round(duration_ms, 2),
+            status="ok",
+        )
 
 
 @router.get("/sessions/{session_id}/repl/state", response_model=REPLStateResult)
@@ -377,7 +399,9 @@ async def get_session_repl_state(
 
         runner = get_monty_runner()
 
-    saved_res = await service.store.get_repl_session(session_id)
+    saved_res = await service.store.get_repl_session(
+        session_id, profile_scope=service.profile_scope
+    )
     if isinstance(saved_res, Failure):
         failure = saved_res.failure()
         raise HTTPException(
@@ -394,7 +418,7 @@ async def get_session_repl_state(
 
     session_blob, variables = session_data
     if not variables and session_blob:
-        inspect_res = runner.inspect_state(session_blob)
+        inspect_res = await asyncio.to_thread(runner.inspect_state, session_blob)
         if isinstance(inspect_res, Success):
             variables = inspect_res.unwrap()
 
@@ -411,14 +435,18 @@ async def reset_session_repl(
     service: AssistantService = Depends(get_assistant_service),
 ) -> dict[str, str]:
     """Reset persistent Monty REPL state for the session."""
-    clear_res = await service.store.clear_repl_session(session_id)
-    if isinstance(clear_res, Failure):
-        failure = clear_res.failure()
-        raise HTTPException(
-            status_code=500,
-            detail={"code": failure.code, "message": failure.message},
+    lock = await _get_session_repl_lock(service.profile_scope, session_id)
+    async with lock:
+        clear_res = await service.store.clear_repl_session(
+            session_id, profile_scope=service.profile_scope
         )
-    return {"status": "ok", "session_id": session_id}
+        if isinstance(clear_res, Failure):
+            failure = clear_res.failure()
+            raise HTTPException(
+                status_code=500,
+                detail={"code": failure.code, "message": failure.message},
+            )
+        return {"status": "ok", "session_id": session_id}
 
 
 @router.get("/sessions/{session_id}/notebook.ipynb")

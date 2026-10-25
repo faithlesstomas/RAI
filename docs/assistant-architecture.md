@@ -323,3 +323,48 @@ The active controller can also be set via `RAI_INTERACTION_CONTROLLER` or `assis
 
 1. **ActiveChoiceFrame Lifecycle:** When an action generates selectable options (such as web search results or process lists), an `ActiveChoiceFrame` is persisted with expiration and distinct resource handles. User selections (`"1"`, `"first"`) resolve deterministically via `resolve_choice_selection` against the frame, transitioning the frame to `CONSUMED`. Expired or cancelled frames reject execution without invoking model generation.
 2. **In-Turn Tool Observation Synthesis:** When an executed action produces untrusted external data (such as `browser.read_page`), the controller packages the output into a structured `ToolObservation`, injects it into the turn's `AssistantContextPackage`, and synthesizes a grounded natural-language answer under the remaining turn budget.
+
+## Persistent Session REPL and Tiered Python Execution
+
+Rich Assistant integrates stateful Python execution into conversation turns, CLI workflows, and HTTP endpoints via a two-tier sandboxing architecture:
+
+```text
+Python Code Request
+  │
+  ├─► AST Analysis (can_run_in_monty) & MontyRunner available?
+  │     │
+  │     ├─► YES (pure algorithmic, safe imports, zero-IO)
+  │     │     └─► Tier-1: Pure Monty Nano-Sandbox (<1 ms, 32MB quota, 2s timeout)
+  │     │           └─► Load prior heap snapshot from store (profile_scope, session_id)
+  │     │           └─► Execute via worker pool & serialize new heap snapshot
+  │     │           └─► Update assistant context package with active variables
+  │     │
+  │     └─► NO (OS imports, dynamic __import__, network, reflection, or Monty unavailable)
+  │           └─► Tier-2: Bubblewrap OS Namespace Container
+  │                 └─► Capability policy / HITL authorization mandatory (RiskClass.HIGH)
+  │                 └─► Approval granted?
+  │                       ├─► YES ─► Execute in isolated bwrap CPython environment
+  │                       └─► NO  ─► Execution Error: Action denied by the user (fail-closed)
+```
+
+### Persistent Heap State and Profile Scoping
+
+Session variables and heap definitions are preserved across conversation turns. The memory store persists Monty heap binary snapshots and JSON variable summaries under compound primary keys `(profile_scope, session_id)` in the `assistant_repl_sessions` table:
+
+- **Cross-Turn Continuity**: Variables assigned in earlier turns (e.g., `data = [1, 2, 3]`) remain in scope for later computations without re-running code.
+- **Context Injection**: Extracted active variables (`repl_variables`) are included in `AssistantContextPackage` so reasoning backends are aware of current REPL bindings.
+- **Profile Partitioning**: Sessions sharing an identical `session_id` under different profile scopes remain strictly isolated.
+
+### REST API Endpoints
+
+The assistant service exposes dedicated endpoints for interactive environments:
+
+- `POST /api/v1/assistant/sessions/{session_id}/repl/execute`: Evaluates code against the session's REPL state outside the asyncio event loop (`asyncio.to_thread`), serialized per session via asyncio locks.
+- `GET /api/v1/assistant/sessions/{session_id}/repl/state`: Inspects currently defined variables, functions, and types in the session heap.
+- `POST /api/v1/assistant/sessions/{session_id}/repl/reset`: Clears stored variables and heap snapshot for the session.
+- `GET /api/v1/assistant/sessions/{session_id}/notebook.ipynb`: Exports conversation turns, code blocks, and execution outputs as a standard Jupyter notebook.
+
+### CLI and Notebook Workflows
+
+1. **Interactive Notebook CLI (`rai assistant notebook`)**: Launches a terminal-based notebook REPL where prompts produce streaming assistant responses, code blocks are auto-executed in the session's Monty REPL, and commands `/repl`, `/repl reset`, `/history`, and `/export [path.ipynb]` provide session inspection and export.
+2. **IPython and Jupyter Magics (`%rai`, `%%rai`)**: Integrates RAI assistant into active Jupyter notebooks. Uses isolated session identifiers per magic instance, executes coroutines cleanly even inside running event loops, and shares variables within the notebook's active profile scope.

@@ -229,7 +229,9 @@ def _run_assistant_notebook(  # noqa: PLR0913, PLR0915
                     continue
 
                 if stripped == "/repl":
-                    saved_res = await service.store.get_repl_session(sid)
+                    saved_res = await service.store.get_repl_session(
+                        sid, profile_scope=service.profile_scope
+                    )
                     if isinstance(saved_res, Success) and saved_res.unwrap():
                         blob, vars_dict = saved_res.unwrap()
                         if not vars_dict and blob:
@@ -247,7 +249,9 @@ def _run_assistant_notebook(  # noqa: PLR0913, PLR0915
                     continue
 
                 if stripped == "/repl reset":
-                    await service.store.clear_repl_session(sid)
+                    await service.store.clear_repl_session(
+                        sid, profile_scope=service.profile_scope
+                    )
                     click.secho("REPL session reset.", fg="yellow")
                     continue
 
@@ -307,7 +311,9 @@ def _run_assistant_notebook(  # noqa: PLR0913, PLR0915
                         code_blocks = _extract_code_blocks(response.text)
                         py_blocks = [code for lang, code in code_blocks if lang in ("python", "py", "")]
                         if py_blocks:
-                            saved_s = await service.store.get_repl_session(sid)
+                            saved_s = await service.store.get_repl_session(
+                                sid, profile_scope=service.profile_scope
+                            )
                             current_blob = (
                                 saved_s.unwrap()[0]
                                 if isinstance(saved_s, Success) and saved_s.unwrap()
@@ -320,7 +326,10 @@ def _run_assistant_notebook(  # noqa: PLR0913, PLR0915
                                     current_blob = b_res.session_blob
                                     if b_res.session_blob:
                                         await service.store.save_repl_session(
-                                            sid, b_res.session_blob, b_res.variables
+                                            sid,
+                                            b_res.session_blob,
+                                            b_res.variables,
+                                            profile_scope=service.profile_scope,
                                         )
                                     if b_res.output:
                                         click.secho(f"Out [{cell_index}]: ", fg="bright_red", bold=True, nl=False)
@@ -354,7 +363,9 @@ def _run_assistant_notebook(  # noqa: PLR0913, PLR0915
                 full_code = "\n".join(code_lines)
 
                 # Fetch prior snapshot
-                saved_res = await service.store.get_repl_session(sid)
+                saved_res = await service.store.get_repl_session(
+                    sid, profile_scope=service.profile_scope
+                )
                 session_blob = (
                     saved_res.unwrap()[0]
                     if isinstance(saved_res, Success) and saved_res.unwrap()
@@ -367,7 +378,12 @@ def _run_assistant_notebook(  # noqa: PLR0913, PLR0915
                 if isinstance(eval_res, Success):
                     monty_res = eval_res.unwrap()
                     if monty_res.session_blob:
-                        await service.store.save_repl_session(sid, monty_res.session_blob, monty_res.variables)
+                        await service.store.save_repl_session(
+                            sid,
+                            monty_res.session_blob,
+                            monty_res.variables,
+                            profile_scope=service.profile_scope,
+                        )
 
                     cell_markdown = f"```python\n{full_code}\n```"
                     if monty_res.output:

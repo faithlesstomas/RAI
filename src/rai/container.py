@@ -518,3 +518,6 @@ class ApplicationContainer:
         elif self._memory_graph_store is not None:
             await self._memory_graph_store.stop()
             self._memory_graph_store = None
+        if self._monty_runner is not None:
+            self._monty_runner.close()
+            self._monty_runner = None
