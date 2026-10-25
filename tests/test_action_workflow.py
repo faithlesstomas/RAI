@@ -510,6 +510,59 @@ async def test_generic_workflow_execute_generic_step_and_approvals(tmp_path: Pat
     assert reuse_res.failure().code == "APPROVAL_ALREADY_USED"
 
 
+async def test_generic_workflow_execute_generic_step_injects_session_id(tmp_path: Path) -> None:
+    captured_args: dict[str, Any] = {}
+
+    def test_handler(args: dict[str, Any]) -> dict[str, Any]:
+        captured_args.update(args)
+        return {"result": "ok"}
+
+    registry = CapabilityRegistry()
+    registry.register(
+        RegisteredCapability(
+            CapabilityDescriptor(
+                name="python.repl",
+                description="Python REPL with session_id support",
+                input_schema={
+                    "type": "object",
+                    "properties": {
+                        "code": {"type": "string"},
+                        "session_id": {"type": "string"},
+                    },
+                },
+                risk_class=RiskClass.LOW,
+                side_effects=(),
+                isolation="host-api",
+                verification_plan=("observed",),
+            ),
+            handler=test_handler,
+        )
+    )
+    handles = SQLiteHandleStore(tmp_path / "handles.db")
+    audit = InMemoryAuditLedger()
+    capabilities = ActionCapabilityService(registry, PolicyEngine(), audit, SyntheticApprovalBroker())
+    capabilities.handles = handles
+    capabilities.executions = SQLiteExecutionStore(tmp_path / "executions.db")
+
+    controller = BoundedStepController(ledger=SyntheticUsageLedger())
+    wf = controller.create_generic_workflow(
+        task_id="task-repl-1",
+        session_id="session-xyz-123",
+        goal="Run code",
+    )
+
+    res = await controller.execute_generic_step(
+        workflow=wf,
+        capabilities=capabilities,
+        capability_name="python.repl",
+        arguments={"code": "x = 42"},
+        cancellation=CancellationToken(),
+    )
+    assert isinstance(res, Success)
+    assert captured_args.get("session_id") == "session-xyz-123"
+    assert captured_args.get("code") == "x = 42"
+
+
 async def test_generic_workflow_agentic_loop_e2e(tmp_path: Path) -> None:
     registry = CapabilityRegistry()
     registry.register(

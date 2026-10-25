@@ -10,7 +10,7 @@ from collections.abc import Awaitable, Callable
 from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
-from rai.diagnostics import trace
+from rai.diagnostics import trace, trace_payload
 
 from returns.result import Failure, Result, Success
 
@@ -96,6 +96,12 @@ class RegisteredCapability:
     ) -> Result[ActionResult, ActionFailure]:
         started = time.monotonic()
         trace("capability.start", request_id=request.record_id, capability=self.name)
+        trace_payload(
+            "capability.request",
+            request.arguments,
+            request_id=request.record_id,
+            capability=self.name,
+        )
         try:
             executed = await self._invoke(request, cancellation)
         except asyncio.CancelledError:
@@ -106,6 +112,13 @@ class RegisteredCapability:
               status="failure" if isinstance(executed, Failure) else "success",
               code=executed.failure().code if isinstance(executed, Failure) else "OK",
               elapsed_ms=round((time.monotonic() - started) * 1000))
+        if isinstance(executed, Success):
+            trace_payload(
+                "capability.response",
+                executed.unwrap().output,
+                request_id=request.record_id,
+                capability=self.name,
+            )
         return executed
 
     async def _invoke(

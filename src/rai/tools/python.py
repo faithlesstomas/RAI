@@ -13,6 +13,7 @@ from typing import TYPE_CHECKING, Any, Dict, Optional, Tuple
 
 from returns.result import Failure, Result, Success
 
+from rai.diagnostics import trace, trace_payload
 from rai.kernel.records import ActionFailure
 from rai.paths import cache_dir
 from rai.tools.security.hitl import get_approval_manager
@@ -230,7 +231,11 @@ async def run_secure_python_code(  # noqa: PLR0911, PLR0912, PLR0913, PLR0915
                 # State-Aware Feedback: append concise variable state
                 if monty_result.variables:
                     var_summary = ", ".join(f"{k} ({v})" for k, v in sorted(monty_result.variables.items()))
+                    trace("capability.repl_state", session_id=session_id or "none", variables=var_summary)
+                    trace_payload("capability.repl_state", monty_result.variables, session_id=session_id or "none")
                     output += f"\n\n[Active REPL session state: {var_summary}]"
+                else:
+                    trace("capability.repl_state", session_id=session_id or "none", variables="empty")
 
                 return output
             else:
