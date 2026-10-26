@@ -351,22 +351,23 @@ def test_chat_repl_and_export_commands(tmp_path: Path) -> None:
 
     with patch("rai.container.ApplicationContainer", return_value=mock_container):
         with patch("rai.commands.approval.configure_approvals"):
-            with patch(
-                "rai.commands.dialog.click.prompt",
-                side_effect=[
-                    "/repl",
-                    "/repl x = 42",
-                    f"/export {export_file}",
-                    "/repl reset",
-                    "/exit",
-                ],
-            ):
-                _run_assistant_chat(
-                    session_id="test-chat-session",
-                    backend="deterministic",
-                    model=None,
-                    show_context=False,
-                )
+            with patch("sys.stdin.isatty", return_value=False):
+                with patch(
+                    "rai.commands.dialog.click.prompt",
+                    side_effect=[
+                        "/repl",
+                        "/repl x = 42",
+                        f"/export {export_file}",
+                        "/repl reset",
+                        "/exit",
+                    ],
+                ):
+                    _run_assistant_chat(
+                        session_id="test-chat-session",
+                        backend="deterministic",
+                        model=None,
+                        show_context=False,
+                    )
 
     assert mock_service.store.get_repl_session.called
     assert mock_service.store.save_repl_session.called
@@ -409,21 +410,22 @@ def test_chat_repl_storage_failure_handling() -> None:
 
     with patch("rai.container.ApplicationContainer", return_value=mock_container):
         with patch("rai.commands.approval.configure_approvals"):
-            with patch(
-                "rai.commands.dialog.click.prompt",
-                side_effect=[
-                    "/repl",
-                    "/repl x = 1",
-                    "/repl reset",
-                    "/exit",
-                ],
-            ):
-                _run_assistant_chat(
-                    session_id="test-chat-fail-session",
-                    backend="deterministic",
-                    model=None,
-                    show_context=False,
-                )
+            with patch("sys.stdin.isatty", return_value=False):
+                with patch(
+                    "rai.commands.dialog.click.prompt",
+                    side_effect=[
+                        "/repl",
+                        "/repl x = 1",
+                        "/repl reset",
+                        "/exit",
+                    ],
+                ):
+                    _run_assistant_chat(
+                        session_id="test-chat-fail-session",
+                        backend="deterministic",
+                        model=None,
+                        show_context=False,
+                    )
 
     # Neither monty runner nor save_repl_session should be called on read failure
     mock_container.monty_runner.run.assert_not_called()
@@ -458,19 +460,20 @@ def test_chat_repl_save_failure_handling() -> None:
 
     with patch("rai.container.ApplicationContainer", return_value=mock_container):
         with patch("rai.commands.approval.configure_approvals"):
-            with patch(
-                "rai.commands.dialog.click.prompt",
-                side_effect=[
-                    "/repl x = 42",
-                    "/exit",
-                ],
-            ):
-                _run_assistant_chat(
-                    session_id="test-chat-save-fail-session",
-                    backend="deterministic",
-                    model=None,
-                    show_context=False,
-                )
+            with patch("sys.stdin.isatty", return_value=False):
+                with patch(
+                    "rai.commands.dialog.click.prompt",
+                    side_effect=[
+                        "/repl x = 42",
+                        "/exit",
+                    ],
+                ):
+                    _run_assistant_chat(
+                        session_id="test-chat-save-fail-session",
+                        backend="deterministic",
+                        model=None,
+                        show_context=False,
+                    )
 
     mock_container.monty_runner.run.assert_called_once()
     mock_service.store.save_repl_session.assert_called_once()

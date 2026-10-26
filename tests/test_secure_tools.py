@@ -402,6 +402,35 @@ async def test_session_repl_lock_shared_serialization() -> None:
     assert lock1 is not lock4
 
 
+def test_session_repl_lock_no_closed_loop_retention() -> None:
+    """Ensure that event loops with contended/uncontended locks are collected without registry retention."""
+    import asyncio  # noqa: PLC0415
+    import gc  # noqa: PLC0415
+    import weakref  # noqa: PLC0415
+
+    async def run_locks() -> None:
+        l1 = await get_session_repl_lock("profile_test", "session_test")
+        await l1.acquire()
+
+        async def waiter() -> None:
+            await l1.acquire()
+
+        task = asyncio.create_task(waiter())
+        await asyncio.sleep(0.01)
+        l1.release()
+        await task
+
+    loop = asyncio.new_event_loop()
+    loop.run_until_complete(run_locks())
+    loop.close()
+
+    loop_ref = weakref.ref(loop)
+    del loop
+    gc.collect()
+
+    assert loop_ref() is None
+
+
 @pytest.mark.asyncio
 async def test_run_python_code_capability_hitl_single_prompt() -> None:
     """Test that CapabilityService asks for HITL approval once and does not double-prompt in handler."""

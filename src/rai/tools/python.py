@@ -11,7 +11,6 @@ import logging
 import os
 import threading
 from typing import TYPE_CHECKING, Any, Dict, Optional, Tuple
-import weakref
 
 from returns.result import Failure, Result, Success
 
@@ -106,24 +105,44 @@ def can_run_in_monty(code: str) -> Tuple[bool, str]:  # noqa: PLR0911, PLR0912
     return True, "Compatible with pure Monty sandbox."
 
 
-_repl_session_locks: weakref.WeakKeyDictionary[
-    asyncio.AbstractEventLoop, dict[tuple[str, str], asyncio.Lock]
-] = weakref.WeakKeyDictionary()
 _repl_session_locks_guard = threading.Lock()
+_fallback_repl_locks: dict[tuple[str, str], asyncio.Lock] = {}
+
+
+def clear_session_repl_locks(loop: Optional[asyncio.AbstractEventLoop] = None) -> None:
+    """Explicitly clear cached REPL session locks for an event loop."""
+    try:
+        target_loop = loop or asyncio.get_running_loop()
+    except RuntimeError:
+        with _repl_session_locks_guard:
+            _fallback_repl_locks.clear()
+        return
+
+    with _repl_session_locks_guard:
+        if hasattr(target_loop, "_rai_repl_locks"):
+            target_loop._rai_repl_locks.clear()
+        _fallback_repl_locks.clear()
 
 
 async def get_session_repl_lock(profile_scope: str, session_id: str) -> asyncio.Lock:
-    """Acquire or create an asyncio lock for serializing REPL operations per (profile_scope, session_id)."""
+    """
+    Acquire or create an asyncio lock for serializing REPL operations per (profile_scope, session_id).
+    Locks are attached directly to the active event loop to ensure proper loop-isolation without
+    retaining references to closed loops in global registries.
+    """
     loop = asyncio.get_running_loop()
     key = (profile_scope, session_id)
     with _repl_session_locks_guard:
-        loop_locks = _repl_session_locks.get(loop)
-        if loop_locks is None:
-            loop_locks = {}
-            _repl_session_locks[loop] = loop_locks
-        if key not in loop_locks:
-            loop_locks[key] = asyncio.Lock()
-        return loop_locks[key]
+        try:
+            if not hasattr(loop, "_rai_repl_locks"):
+                loop._rai_repl_locks = {}
+            locks = loop._rai_repl_locks
+        except AttributeError:
+            locks = _fallback_repl_locks
+
+        if key not in locks:
+            locks[key] = asyncio.Lock()
+        return locks[key]
 
 
 async def get_session_blob(
