@@ -20,10 +20,15 @@ from rai.kernel.capabilities import CapabilityRegistry
 from rai.kernel.policy import PolicyEngine
 from rai.kernel.ports import CancellationToken
 from rai.kernel.records import ActionResult, CapabilityRequest, DataClass, ProducerIdentity
+import uvicorn
+from mcp.client.session import ClientSession
+from mcp.client.sse import sse_client
+
 from rai.kernel.service import CapabilityService
 from rai.kernel.transport import normalize_request
 from rai.routers.mcp import call_tool
 from rai.server import create_app
+from rai.tools.security.auth import authorization_headers, create_session_token
 
 ACTOR = ProducerIdentity(producer_id="user", kind="user", version="1.0.0")
 
@@ -360,7 +365,7 @@ async def test_observation_requires_session_id(
     assert isinstance(cap_res1, Success)
     res1 = await cap_res1.unwrap().invoke(req1, CancellationToken())
     assert isinstance(res1, Failure)
-    assert res1.failure().code == "INVALID_ARGUMENT"
+    assert res1.failure().code == "UNAUTHORIZED"
     assert "session_id" in res1.failure().message
 
     # Empty session_id -> capability rejection
@@ -611,6 +616,28 @@ async def test_observation_get_rfc6901_empty_tokens_and_invalid_pointers(
     assert isinstance(res_oob, Failure)
     assert res_oob.failure().code == "PATH_NOT_FOUND"
 
+    # 8. Empty pointer "" returns the root document
+    req_root = normalize_request(
+        desc,
+        {"session_id": "session-rfc", "ref": "obs_rfc_spec", "path": ""},
+        actor=ACTOR,
+        data_class=DataClass.LOCAL,
+    )
+    res_root = (await _invoke(registry, req_root)).output
+    assert res_root["value"] == (await store.get("session-rfc", "obs_rfc_spec")).unwrap().content
+    assert res_root["path"] == ""
+
+    # 9. Missing path argument fails with INVALID_ARGUMENT
+    req_no_path = normalize_request(
+        desc,
+        {"session_id": "session-rfc", "ref": "obs_rfc_spec"},
+        actor=ACTOR,
+        data_class=DataClass.LOCAL,
+    )
+    res_no_path = await registry.resolve(req_no_path).unwrap().invoke(req_no_path, CancellationToken())
+    assert isinstance(res_no_path, Failure)
+    assert res_no_path.failure().code == "INVALID_ARGUMENT"
+
 
 @pytest.mark.asyncio
 async def test_observation_search_pagination_and_bounds(
@@ -791,17 +818,40 @@ def test_observation_transport_session_isolation_rest(tmp_path: Path) -> None:
         data_class=DataClass.LOCAL,
     ).model_dump(mode="json")
 
-    # 1. REST call with victim session in body, but NO X-Session-ID header
+    # 1. REST call with victim session in body, but NO session token
     resp_unauth = client.post("/api/v1/capabilities/invoke", json=req_body)
     assert resp_unauth.status_code == 200
     res_data = resp_unauth.json()
     assert res_data["ok"] is False
     assert res_data["result"]["code"] == "UNAUTHORIZED"
 
-    # 2. REST call with X-Session-ID: session-attacker (attempting to read victim's artifact)
+    # 2. REST call with client trying X-Session-ID header (ignored/unauthenticated)
+    resp_fake_header = client.post(
+        "/api/v1/capabilities/invoke",
+        headers={"x-session-id": "session-victim"},
+        json=req_body,
+    )
+    assert resp_fake_header.status_code == 200
+    res_fake_data = resp_fake_header.json()
+    assert res_fake_data["ok"] is False
+    assert res_fake_data["result"]["code"] == "UNAUTHORIZED"
+
+    # 3. REST call with forged X-Session-Token
+    resp_forged = client.post(
+        "/api/v1/capabilities/invoke",
+        headers={"x-session-token": "session-victim.invalid_sig"},
+        json=req_body,
+    )
+    assert resp_forged.status_code == 200
+    res_forged_data = resp_forged.json()
+    assert res_forged_data["ok"] is False
+    assert res_forged_data["result"]["code"] == "UNAUTHORIZED"
+
+    # 4. REST call with valid X-Session-Token for session-attacker (attempting to read victim's artifact)
+    attacker_token = create_session_token("session-attacker")
     resp_attacker = client.post(
         "/api/v1/capabilities/invoke",
-        headers={"x-session-id": "session-attacker"},
+        headers={"x-session-token": attacker_token},
         json=req_body,
     )
     assert resp_attacker.status_code == 200
@@ -809,16 +859,122 @@ def test_observation_transport_session_isolation_rest(tmp_path: Path) -> None:
     assert res_att_data["ok"] is False
     assert res_att_data["result"]["code"] == "ARTIFACT_NOT_FOUND"
 
-    # 3. Legitimate REST call with X-Session-ID: session-victim
+    # 5. Legitimate REST call with valid X-Session-Token: session-victim
+    victim_token = create_session_token("session-victim")
     resp_legit = client.post(
         "/api/v1/capabilities/invoke",
-        headers={"x-session-id": "session-victim"},
+        headers={"x-session-token": victim_token},
         json=req_body,
     )
     assert resp_legit.status_code == 200
     res_legit_data = resp_legit.json()
     assert res_legit_data["ok"] is True
     assert res_legit_data["result"]["output"]["value"] == "victim-rest-secret"
+
+
+@pytest.mark.asyncio
+async def test_observation_visited_limits_and_cooperative_yielding(
+    registry: CapabilityRegistry, store: SQLiteMemoryGraphStore
+) -> None:
+    large_items = [{"id": i, "val": f"val_{i}"} for i in range(12000)]
+    art = ObservationArtifact(
+        artifact_id="obs_large",
+        session_id="session-large",
+        turn_id="turn-large",
+        capability="test",
+        request_id="req-large",
+        data_class=DataClass.LOCAL,
+        content={"items": large_items},
+        schema_summary=summarize_observation_schema({"items": large_items[:10]}),
+        size_chars=50000,
+        producer=ACTOR,
+    )
+    await store.put(art)
+
+    # 1. Search over 12,000 items with 0 matches: must hit MAX_VISITED_LIMIT (10,000)
+    desc_search = registry.descriptor("observation.search")
+    assert desc_search is not None
+    req_search = normalize_request(
+        desc_search,
+        {"session_id": "session-large", "ref": "obs_large", "pattern": "nonexistent_pattern"},
+        actor=ACTOR,
+        data_class=DataClass.LOCAL,
+    )
+    res_search = (await _invoke(registry, req_search)).output
+    assert res_search["total_matches"] == 0
+    assert res_search["complete"] is False
+    assert "Hit maximum search scan limit" in (res_search["reason"] or "")
+
+    # 2. Filter over 12,000 items with 0 matches: must hit MAX_VISITED_LIMIT (10,000)
+    desc_filter = registry.descriptor("observation.filter")
+    assert desc_filter is not None
+    req_filter = normalize_request(
+        desc_filter,
+        {"session_id": "session-large", "ref": "obs_large", "field": "val", "op": "equals", "value": "nonexistent"},
+        actor=ACTOR,
+        data_class=DataClass.LOCAL,
+    )
+    res_filter = (await _invoke(registry, req_filter)).output
+    assert res_filter["total_matches"] == 0
+    assert res_filter["complete"] is False
+    assert "Hit maximum filter scan limit" in (res_filter["reason"] or "")
+
+
+@pytest.mark.asyncio
+async def test_observation_mcp_sse_end_to_end(tmp_path: Path) -> None:
+    container = ApplicationContainer(
+        config={"db_path": str(tmp_path / "memory_sse.sqlite3")},
+        audit_ledger=InMemoryAuditLedger(),
+        testing=True,
+    )
+    art = ObservationArtifact(
+        artifact_id="obs_victim_sse",
+        session_id="session-victim",
+        turn_id="turn-victim",
+        capability="test",
+        request_id="req-victim-sse",
+        data_class=DataClass.LOCAL,
+        content={"secret": "victim-sse-secret"},
+        schema_summary=summarize_observation_schema({"secret": "victim-sse-secret"}),
+        size_chars=50,
+        producer=ACTOR,
+    )
+    await container.memory_graph_store.put(art)
+
+    app = create_app(container)
+    config = uvicorn.Config(app, host="127.0.0.1", port=8991, log_level="warning")
+    server = uvicorn.Server(config)
+    server_task = asyncio.create_task(server.serve())
+    await asyncio.sleep(0.5)
+
+    try:
+        # 1. Attacker connects via SSE without session token, attempts to access victim's artifact
+        headers = dict(authorization_headers())
+        async with sse_client("http://127.0.0.1:8991/api/v1/mcp/sse", headers=headers) as (r1, w1):
+            async with ClientSession(r1, w1) as session1:
+                await session1.initialize()
+                # Attacker passes session_id="session-victim" in arguments
+                res_att = await session1.call_tool(
+                    "observation.get",
+                    {"ref": "obs_victim_sse", "path": "/secret", "session_id": "session-victim"},
+                )
+                assert res_att.isError is True
+                assert "ARTIFACT_NOT_FOUND" in res_att.content[0].text
+
+        # 2. Legitimate client connects via SSE presenting a valid session token for session-victim
+        headers["x-session-token"] = create_session_token("session-victim")
+        async with sse_client("http://127.0.0.1:8991/api/v1/mcp/sse", headers=headers) as (r2, w2):
+            async with ClientSession(r2, w2) as session2:
+                await session2.initialize()
+                res_legit = await session2.call_tool(
+                    "observation.get",
+                    {"ref": "obs_victim_sse", "path": "/secret"},
+                )
+                assert res_legit.isError is False
+                assert "victim-sse-secret" in res_legit.content[0].text
+    finally:
+        server.should_exit = True
+        await server_task
 
 
 def test_register_observation_capabilities(store: SQLiteMemoryGraphStore) -> None:

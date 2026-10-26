@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 import logging
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any
 
 from fastapi import APIRouter, Request
@@ -19,6 +19,7 @@ from rai.kernel.capabilities import CapabilityDescriptor
 from rai.kernel.records import ActionFailure, CapabilityRequest, ProducerIdentity
 from rai.kernel.service import CapabilityService
 from rai.kernel.transport import InvocationEnvelope, invoke_envelope, normalize_request
+from rai.tools.security.auth import verify_session_token
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/v1/mcp", tags=["MCP"])
@@ -37,10 +38,13 @@ def _service(request: Request) -> CapabilityService:
 
 
 def _mcp_tool(descriptor: CapabilityDescriptor) -> types.Tool:
+    schema = json.loads(json.dumps(descriptor.input_schema))
+    if isinstance(schema, dict) and "required" in schema and isinstance(schema["required"], list):
+        schema["required"] = [r for r in schema["required"] if r != "session_id"]
     return types.Tool(
         name=descriptor.name,
         description=descriptor.description,
-        inputSchema=descriptor.input_schema,
+        inputSchema=schema,
         outputSchema=InvocationEnvelope.model_json_schema(),
     )
 
@@ -102,16 +106,18 @@ async def call_tool(
     )
 
 
-@dataclass(frozen=True)
+@dataclass
 class McpRuntime:
     server: Server
     transport: SseServerTransport
+    transport_sessions: dict[str, str] = field(default_factory=dict)
 
 
 def create_mcp_runtime(service: CapabilityService) -> McpRuntime:
     """Create an app-scoped MCP server whose handlers close over the container."""
     server = Server("rai-secure-gateway")
     transport = SseServerTransport("/api/v1/mcp/messages")
+    runtime = McpRuntime(server, transport)
 
     @server.list_tools()  # pylint: disable=no-member
     async def handle_list_tools() -> list[types.Tool]:
@@ -123,15 +129,26 @@ def create_mcp_runtime(service: CapabilityService) -> McpRuntime:
         try:
             ctx = server.request_context
             if ctx and ctx.request:
-                trusted_session_id = (
-                    ctx.request.headers.get("x-session-id")
-                    or ctx.request.query_params.get("session_id")
+                transport_id = ctx.request.query_params.get("session_id") or ""
+                session_token = (
+                    ctx.request.headers.get("x-session-token")
+                    or ctx.request.query_params.get("session_token")
                 )
+                verified_session = verify_session_token(session_token) if session_token else None
+                if verified_session:
+                    runtime.transport_sessions[transport_id] = verified_session
+                    trusted_session_id = verified_session
+                elif transport_id in runtime.transport_sessions:
+                    trusted_session_id = runtime.transport_sessions[transport_id]
+                elif transport_id:
+                    assigned = f"mcp-session-{transport_id}"
+                    runtime.transport_sessions[transport_id] = assigned
+                    trusted_session_id = assigned
         except LookupError:
             pass
         return await call_tool(service, name, arguments, session_id=trusted_session_id)
 
-    return McpRuntime(server, transport)
+    return runtime
 
 
 async def handle_stateless_mcp(  # noqa: PLR0911
@@ -173,11 +190,11 @@ async def handle_stateless_mcp(  # noqa: PLR0911
             return _rpc_error(
                 request_id, -32602, "Invalid params: 'name' is required", status_code=400
             )
-        trusted_session_id = (
-            request.headers.get("x-session-id")
-            or request.query_params.get("session_id")
-            or ""
+        session_token = (
+            request.headers.get("x-session-token")
+            or request.query_params.get("session_token")
         )
+        trusted_session_id = verify_session_token(session_token) or ""
         result = await call_tool(
             service, name, params.get("arguments", {}), session_id=trusted_session_id
         )
@@ -205,9 +222,20 @@ def _rpc_error(
 @router.get("/sse")
 async def mcp_sse(request: Request) -> Response:
     runtime: McpRuntime = request.app.state.mcp_runtime
+    session_token = (
+        request.headers.get("x-session-token")
+        or request.query_params.get("session_token")
+    )
+    verified_session = verify_session_token(session_token) if session_token else None
+    writers_before = set(runtime.transport._read_stream_writers.keys())
     async with runtime.transport.connect_sse(
         request.scope, request.receive, request._send
     ) as (read_stream, write_stream):
+        new_writers = set(runtime.transport._read_stream_writers.keys()) - writers_before
+        if new_writers:
+            transport_uuid = next(iter(new_writers)).hex
+            assigned_session = verified_session or f"mcp-session-{transport_uuid}"
+            runtime.transport_sessions[transport_uuid] = assigned_session
         await runtime.server.run(
             read_stream,
             write_stream,

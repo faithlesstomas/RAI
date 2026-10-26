@@ -34,6 +34,8 @@ PRODUCER = ProducerIdentity(
 MAX_REGEX_PATTERN_LEN = 200
 REGEX_TIMEOUT_SECONDS = 2.0
 MAX_SCAN_LIMIT = 10000
+MAX_VISITED_LIMIT = 10000
+YIELD_INTERVAL = 100
 DEFAULT_PAGE_LIMIT = 100
 MAX_PAGE_LIMIT = 1000
 
@@ -87,15 +89,21 @@ async def _get_artifact(
     return None
 
 
-def _search_text_lines(
+async def _search_text_lines(
     lines: list[str],
     compiled: re.Pattern[str],
     cancellation: CancellationToken,
 ) -> Result[tuple[list[dict[str, Any]], bool], None]:
     matched: list[dict[str, Any]] = []
+    hit_scan_limit = False
     for idx, line in enumerate(lines, 1):
-        if idx % 100 == 0 and cancellation.cancelled:
-            return Failure(None)
+        if idx % YIELD_INTERVAL == 0:
+            await asyncio.sleep(0)
+            if cancellation.cancelled:
+                return Failure(None)
+        if idx > MAX_VISITED_LIMIT:
+            hit_scan_limit = True
+            break
         if compiled.search(line):
             start_ctx = max(0, idx - 2)
             end_ctx = min(len(lines), idx + 1)
@@ -106,20 +114,27 @@ def _search_text_lines(
                 "context": context_snippet,
             })
             if len(matched) >= MAX_SCAN_LIMIT:
-                return Success((matched, True))
-    return Success((matched, False))
+                hit_scan_limit = True
+                break
+    return Success((matched, hit_scan_limit))
 
 
-def _search_records(
+async def _search_records(
     records: list[Any],
     compiled: re.Pattern[str],
     fields: list[str] | None,
     cancellation: CancellationToken,
 ) -> Result[tuple[list[Any], bool], None]:
     matched: list[Any] = []
-    for count, item in enumerate(records):
-        if count % 100 == 0 and cancellation.cancelled:
-            return Failure(None)
+    hit_scan_limit = False
+    for count, item in enumerate(records, 1):
+        if count % YIELD_INTERVAL == 0:
+            await asyncio.sleep(0)
+            if cancellation.cancelled:
+                return Failure(None)
+        if count > MAX_VISITED_LIMIT:
+            hit_scan_limit = True
+            break
         if isinstance(item, dict):
             search_keys = fields if fields else list(item.keys())
             item_matched = False
@@ -133,8 +148,9 @@ def _search_records(
         elif compiled.search(str(item)):
             matched.append(item)
         if len(matched) >= MAX_SCAN_LIMIT:
-            return Success((matched, True))
-    return Success((matched, False))
+            hit_scan_limit = True
+            break
+    return Success((matched, hit_scan_limit))
 
 
 class ObservationSearch:
@@ -180,10 +196,10 @@ class ObservationSearch:
         content = artifact.content
         if "text" in content and isinstance(content["text"], str):
             lines = content["text"].splitlines()
-            search_res = _search_text_lines(lines, compiled, cancellation)
+            search_res = await _search_text_lines(lines, compiled, cancellation)
         else:
             _, records = _extract_primary_list(content)
-            search_res = _search_records(records, compiled, fields, cancellation)
+            search_res = await _search_records(records, compiled, fields, cancellation)
 
         if isinstance(search_res, Failure):
             return Failure(_fail(request, "CANCELLED", "Search cancelled"))
@@ -193,7 +209,7 @@ class ObservationSearch:
         paginated = matched[offset : offset + limit]
         complete = not hit_scan_limit and offset == 0 and total_matches <= limit
         if hit_scan_limit:
-            reason = f"Hit maximum search scan limit ({MAX_SCAN_LIMIT})"
+            reason = f"Hit maximum search scan limit ({MAX_VISITED_LIMIT} items inspected or {MAX_SCAN_LIMIT} matches)"
         elif not complete:
             reason = f"Results paginated ({len(paginated)} of {total_matches} matches returned)"
         else:
@@ -259,6 +275,31 @@ def _evaluate_filter_condition(item_val: Any, op: str, val: Any) -> bool:  # noq
     return False
 
 
+async def _filter_records(
+    records: list[Any],
+    field: str,
+    op: str,
+    val: Any,  # noqa: ANN401
+    cancellation: CancellationToken,
+) -> Result[tuple[list[Any], bool], None]:
+    filtered: list[Any] = []
+    hit_scan_limit = False
+    for count, rec in enumerate(records, 1):
+        if count % YIELD_INTERVAL == 0:
+            await asyncio.sleep(0)
+            if cancellation.cancelled:
+                return Failure(None)
+        if count > MAX_VISITED_LIMIT:
+            hit_scan_limit = True
+            break
+        if isinstance(rec, dict) and _evaluate_filter_condition(rec.get(field), op, val):
+            filtered.append(rec)
+            if len(filtered) >= MAX_SCAN_LIMIT:
+                hit_scan_limit = True
+                break
+    return Success((filtered, hit_scan_limit))
+
+
 class ObservationFilter:
     """Filter records by structured field comparisons (contains, equals, numeric)."""
 
@@ -295,23 +336,16 @@ class ObservationFilter:
             return Failure(_fail(request, "ARTIFACT_NOT_FOUND", f"Artifact {ref} not found"))
 
         _, records = _extract_primary_list(artifact.content)
-        filtered: list[Any] = []
-        hit_scan_limit = False
-
-        for count, rec in enumerate(records):
-            if count % 100 == 0 and cancellation.cancelled:
-                return Failure(_fail(request, "CANCELLED", "Filter cancelled"))
-            if isinstance(rec, dict) and _evaluate_filter_condition(rec.get(field), op, val):
-                filtered.append(rec)
-                if len(filtered) >= MAX_SCAN_LIMIT:
-                    hit_scan_limit = True
-                    break
+        filter_res = await _filter_records(records, field, op, val, cancellation)
+        if isinstance(filter_res, Failure):
+            return Failure(_fail(request, "CANCELLED", "Filter cancelled"))
+        filtered, hit_scan_limit = filter_res.unwrap()
 
         total_matches = len(filtered)
         paginated = filtered[offset : offset + limit]
         complete = not hit_scan_limit and offset == 0 and total_matches <= limit
         if hit_scan_limit:
-            reason = f"Hit maximum filter scan limit ({MAX_SCAN_LIMIT})"
+            reason = f"Hit maximum filter scan limit ({MAX_VISITED_LIMIT} items inspected or {MAX_SCAN_LIMIT} matches)"
         elif not complete:
             reason = f"Results paginated ({len(paginated)} of {total_matches} matches returned)"
         else:
@@ -476,8 +510,10 @@ class ObservationCount:
 
 
 def _parse_json_pointer(path: str) -> Result[list[str], str]:
+    if path == "":
+        return Success([])
     if not path.startswith("/"):
-        return Failure("JSON pointer must start with '/'")
+        return Failure("JSON pointer must be empty or start with '/'")
     segments: list[str] = []
     for raw_seg in path[1:].split("/"):
         if re.search(r"~(?![01])", raw_seg) or raw_seg.endswith("~"):
@@ -525,12 +561,14 @@ class ObservationGet:
 
         session_id = str(request.arguments.get("session_id", "")).strip()
         ref = str(request.arguments.get("ref", "")).strip()
+        if "path" not in request.arguments:
+            return Failure(_fail(request, "INVALID_ARGUMENT", "Missing path"))
         path = str(request.arguments.get("path", "")).strip()
 
         if not session_id:
             return Failure(_fail(request, "UNAUTHORIZED", "Missing session_id"))
-        if not ref or not path:
-            return Failure(_fail(request, "INVALID_ARGUMENT", "Missing ref or path"))
+        if not ref:
+            return Failure(_fail(request, "INVALID_ARGUMENT", "Missing ref"))
 
         parse_res = _parse_json_pointer(path)
         if isinstance(parse_res, Failure):
@@ -570,7 +608,7 @@ def register_observation_capabilities(
                 "offset": {"type": "integer", "minimum": 0, "default": 0},
                 "limit": {"type": "integer", "minimum": 1, "maximum": 1000, "default": 100},
             },
-            ["session_id", "ref", "pattern"],
+            ["ref", "pattern"],
             "Search within a stored observation artifact without loading all data into prompt.",
         ),
         (
@@ -584,7 +622,7 @@ def register_observation_capabilities(
                 "offset": {"type": "integer", "minimum": 0, "default": 0},
                 "limit": {"type": "integer", "minimum": 1, "maximum": 1000, "default": 100},
             },
-            ["session_id", "ref", "field", "op", "value"],
+            ["ref", "field", "op", "value"],
             "Filter records inside a stored observation artifact by structured conditions.",
         ),
         (
@@ -595,7 +633,7 @@ def register_observation_capabilities(
                 "offset": {"type": "integer", "minimum": 0, "default": 0},
                 "limit": {"type": "integer", "minimum": 1, "maximum": 1000, "default": 20},
             },
-            ["session_id", "ref"],
+            ["ref"],
             "Retrieve a pagination slice of records or text lines from a stored artifact.",
         ),
         (
@@ -605,7 +643,7 @@ def register_observation_capabilities(
                 "ref": {"type": "string", "description": "Artifact reference handle (e.g. obs_1)"},
                 "field": {"type": "string", "description": "Optional field for group-by count"},
             },
-            ["session_id", "ref"],
+            ["ref"],
             "Count records or group-by frequency distribution in a stored artifact.",
         ),
         (
@@ -615,7 +653,7 @@ def register_observation_capabilities(
                 "ref": {"type": "string", "description": "Artifact reference handle (e.g. obs_1)"},
                 "path": {"type": "string", "description": "JSON pointer path (e.g. /applications/0/name)"},
             },
-            ["session_id", "ref", "path"],
+            ["ref", "path"],
             "Extract one field or record from a stored artifact using JSON pointer notation.",
         ),
     )

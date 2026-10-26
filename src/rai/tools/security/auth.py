@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import hmac
 import os
 import secrets
@@ -12,6 +13,7 @@ from rai.paths import runtime_dir
 
 TOKEN_ENV = "RAI_API_TOKEN"  # noqa: S105 -- environment variable name
 TOKEN_HEADER = "X-RAI-Token"  # noqa: S105 -- HTTP header name
+SESSION_TOKEN_HEADER = "X-Session-Token"  # noqa: S105 -- HTTP header name
 
 
 def auth_disabled() -> bool:
@@ -74,3 +76,22 @@ def is_authorized(
             supplied = authorization[7:].strip()
     supplied = supplied or query_token
     return bool(supplied) and hmac.compare_digest(supplied, get_api_token())
+
+
+def create_session_token(session_id: str) -> str:
+    """Create a tamper-proof signed session token for an authorized session ID."""
+    secret = get_api_token().encode("utf-8")
+    sig = hmac.new(secret, session_id.encode("utf-8"), hashlib.sha256).hexdigest()
+    return f"{session_id}.{sig}"
+
+
+def verify_session_token(token: str | None) -> str | None:
+    """Validate a signed session token and return the verified session_id, or None if invalid."""
+    if not token or "." not in token:
+        return None
+    session_id, sig = token.rsplit(".", 1)
+    secret = get_api_token().encode("utf-8")
+    expected_sig = hmac.new(secret, session_id.encode("utf-8"), hashlib.sha256).hexdigest()
+    if hmac.compare_digest(sig, expected_sig):
+        return session_id
+    return None

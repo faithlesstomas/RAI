@@ -8,6 +8,7 @@ from ..dependencies import get_capability_service
 from ..kernel.records import CapabilityRequest
 from ..kernel.service import CapabilityService
 from ..kernel.transport import InvocationEnvelope, invoke_envelope
+from ..tools.security.auth import verify_session_token
 
 router = APIRouter(prefix="/api/v1/capabilities", tags=["Capabilities"])
 
@@ -30,11 +31,11 @@ async def invoke_capability(
     request: CapabilityRequest,
     service: CapabilityService = Depends(get_capability_service),
 ) -> InvocationEnvelope:
-    trusted_session_id = (
-        http_request.headers.get("x-session-id")
-        or http_request.query_params.get("session_id")
-        or ""
+    session_token = (
+        http_request.headers.get("x-session-token")
+        or http_request.query_params.get("session_token")
     )
+    trusted_session_id = verify_session_token(session_token) or ""
     descriptor = service.registry.descriptor(request.capability)
     expects_session = bool(
         descriptor and "session_id" in descriptor.input_schema.get("properties", {})
