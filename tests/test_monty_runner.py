@@ -120,3 +120,17 @@ def test_monty_runner_inspect_state() -> None:
     vars_dict = inspect_res.unwrap()
     assert vars_dict.get("a") == "int"
     assert vars_dict.get("b") == "str"
+
+
+def test_monty_runner_inspect_values() -> None:
+    runner = MontyRunner()
+    res1 = runner.run("a = 42\nitems = [1, 2, 3]")
+    assert isinstance(res1, Success)
+    blob = res1.unwrap().session_blob
+    assert blob is not None
+
+    values_res = runner.inspect_values(blob)
+    assert isinstance(values_res, Success)
+    details = values_res.unwrap()
+    assert details["a"] == {"type": "int", "value": "42"}
+    assert details["items"] == {"type": "list", "value": "[1, 2, 3]"}

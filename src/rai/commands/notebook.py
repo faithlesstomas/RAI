@@ -234,11 +234,23 @@ def _run_assistant_notebook(  # noqa: PLR0913, PLR0915
                     )
                     if isinstance(saved_res, Success) and saved_res.unwrap():
                         blob, vars_dict = saved_res.unwrap()
-                        if not vars_dict and blob:
-                            inspected = monty_runner.inspect_state(blob)
-                            if isinstance(inspected, Success):
-                                vars_dict = inspected.unwrap()
-                        if vars_dict:
+                        detailed: dict[str, dict[str, str]] = {}
+                        if blob:
+                            inspected_vals = await asyncio.to_thread(
+                                monty_runner.inspect_values, blob
+                            )
+                            if isinstance(inspected_vals, Success):
+                                detailed = inspected_vals.unwrap()
+                        if detailed:
+                            click.secho(f"Active REPL variables (Session {sid}):", fg="bright_cyan")
+                            for k, info in sorted(detailed.items()):
+                                v_type = info.get("type", "unknown")
+                                v_val = info.get("value", "")
+                                if v_val:
+                                    click.echo(f"  {click.style(k, bold=True)} ({v_type}) = {v_val}")
+                                else:
+                                    click.echo(f"  {click.style(k, bold=True)}: {v_type}")
+                        elif vars_dict:
                             click.secho(f"Active REPL variables (Session {sid}):", fg="bright_cyan")
                             for k, v in sorted(vars_dict.items()):
                                 click.echo(f"  {click.style(k, bold=True)}: {v}")

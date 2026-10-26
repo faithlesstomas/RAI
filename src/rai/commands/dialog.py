@@ -257,6 +257,9 @@ def _run_assistant_chat(  # noqa: PLR0913, PLR0915
                 "/remember",
                 "/forget",
                 "/session",
+                "/repl",
+                "/repl reset",
+                "/export",
                 "/config",
                 "/config show",
             ]
@@ -329,7 +332,7 @@ def _run_assistant_chat(  # noqa: PLR0913, PLR0915
                         "/remember TEXT explicitly save a fact\n"
                         "/forget TEXT remove matching memory; use 'all' for everything\n"
                         "/session   current profile and session ID\n"
-                        "/repl      view active variables in persistent REPL\n"
+                        "/repl [expr] inspect active variables & values, or evaluate Python expression\n"
                         "/repl reset clear REPL session state\n"
                         "/export [file.ipynb] export conversation as Jupyter Notebook\n"
                         "/exit      leave the chat"
@@ -429,12 +432,24 @@ def _run_assistant_chat(  # noqa: PLR0913, PLR0915
                     )
                     if isinstance(saved_res, Success) and saved_res.unwrap():
                         blob, vars_dict = saved_res.unwrap()
-                        if not vars_dict and blob:
-                            runner = container.monty_runner
-                            inspected = runner.inspect_state(blob)
-                            if isinstance(inspected, Success):
-                                vars_dict = inspected.unwrap()
-                        if vars_dict:
+                        runner = container.monty_runner
+                        detailed: dict[str, dict[str, str]] = {}
+                        if blob:
+                            inspected_vals = await asyncio.to_thread(
+                                runner.inspect_values, blob
+                            )
+                            if isinstance(inspected_vals, Success):
+                                detailed = inspected_vals.unwrap()
+                        if detailed:
+                            click.echo("Active REPL variables:")
+                            for k, info in sorted(detailed.items()):
+                                v_type = info.get("type", "unknown")
+                                v_val = info.get("value", "")
+                                if v_val:
+                                    click.secho(f"  {k} ({v_type}) = {v_val}", fg="cyan")
+                                else:
+                                    click.secho(f"  {k}: {v_type}", fg="cyan")
+                        elif vars_dict:
                             click.echo("Active REPL variables:")
                             for k, v in sorted(vars_dict.items()):
                                 click.secho(f"  {k}: {v}", fg="cyan")
@@ -444,10 +459,57 @@ def _run_assistant_chat(  # noqa: PLR0913, PLR0915
                         click.echo("REPL session has no active variables.")
                     continue
                 if stripped == "/repl reset":
-                    await service.store.clear_repl_session(
-                        sid, profile_scope=service.profile_scope
-                    )
+                    from rai.tools.python import get_session_repl_lock  # noqa: PLC0415
+
+                    lock = get_session_repl_lock(service.profile_scope, sid)
+                    async with lock:
+                        await service.store.clear_repl_session(
+                            sid, profile_scope=service.profile_scope
+                        )
                     click.secho("REPL session reset.", fg="green")
+                    continue
+                if stripped.startswith("/repl "):
+                    from rai.tools.python import get_session_repl_lock  # noqa: PLC0415
+
+                    expr = stripped[len("/repl ") :].strip()
+                    if expr:
+                        lock = get_session_repl_lock(service.profile_scope, sid)
+                        async with lock:
+                            saved_res = await service.store.get_repl_session(
+                                sid, profile_scope=service.profile_scope
+                            )
+                            blob = (
+                                saved_res.unwrap()[0]
+                                if isinstance(saved_res, Success) and saved_res.unwrap()
+                                else None
+                            )
+                            runner = container.monty_runner
+                            eval_res = await asyncio.to_thread(
+                                runner.run, expr, session_blob=blob
+                            )
+                            if isinstance(eval_res, Success):
+                                m_res = eval_res.unwrap()
+                                if m_res.session_blob:
+                                    await service.store.save_repl_session(
+                                        sid,
+                                        m_res.session_blob,
+                                        m_res.variables,
+                                        profile_scope=service.profile_scope,
+                                    )
+                                if m_res.output:
+                                    click.echo(m_res.output)
+                                elif m_res.variables:
+                                    var_summary = ", ".join(
+                                        f"{k}: {v}"
+                                        for k, v in sorted(m_res.variables.items())
+                                    )
+                                    click.secho(
+                                        f"[REPL state: {var_summary}]", fg="cyan"
+                                    )
+                            else:
+                                click.secho(
+                                    f"REPL Error: {eval_res.failure()}", fg="red"
+                                )
                     continue
                 if stripped.startswith("/export"):
                     parts = stripped.split(maxsplit=1)

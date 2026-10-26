@@ -173,6 +173,45 @@ class MontyRunner:
         except Exception as exc:
             return Failure(f"INSPECT_ERROR: {exc}")
 
+    def inspect_values(
+        self, session_blob: bytes, max_repr_len: int = 200
+    ) -> Result[dict[str, dict[str, str]], str]:
+        """Inspect variable names, types, and repr previews stored in a session snapshot."""
+        if not self.is_available():
+            return Failure("MONTY_UNAVAILABLE")
+        if not session_blob:
+            return Success({})
+        pool = self._get_pool()
+        limit = max(20, int(max_repr_len))
+        try:
+            with pool.checkout(
+                limits={
+                    "max_memory": self.max_memory_bytes,
+                    "max_feed_duration_secs": self.max_duration_secs,
+                }
+            ) as session:
+                session.load_session(session_blob)
+                inspect_code = (
+                    f"{{k: {{'type': type(v).__name__, 'value': repr(v)[:{limit}] + "
+                    f"('...' if len(repr(v)) > {limit} else '')}} "
+                    "for k, v in locals().items() if not k.startswith('_')}"
+                )
+                inspected = session.feed_run(inspect_code)
+                if isinstance(inspected, dict):
+                    out: dict[str, dict[str, str]] = {}
+                    for k, val in inspected.items():
+                        if isinstance(val, dict):
+                            out[str(k)] = {
+                                "type": str(val.get("type", "unknown")),
+                                "value": str(val.get("value", "")),
+                            }
+                        else:
+                            out[str(k)] = {"type": str(val), "value": ""}
+                    return Success(out)
+                return Success({})
+        except Exception as exc:
+            return Failure(f"INSPECT_ERROR: {exc}")
+
 
 def get_monty_runner(
     max_duration_secs: float = 2.0,

@@ -93,19 +93,24 @@ def _format_action_summary(request: CapabilityRequest, decision: PolicyDecision)
     if request.capability in BROWSER_ACTIONS:
         return review_text(request)
     effects_text = ", ".join(decision.requested_side_effects) or "none"
-    if request.capability == "run_python_code" and "code" in request.arguments:
+    reasons_text = ", ".join(decision.reason_codes) or str(decision.risk_class)
+    if request.capability == "run_python_code":
+        script_body = str(request.arguments.get("code") or "<empty script>")
         return (
             f"Action: run_python_code (Tier-2 Bubblewrap OS execution)\n"
+            f"Risk: {decision.risk_class} ({reasons_text})\n"
             f"Target: {decision.target_resource}\n"
             f"Effects: {effects_text}\n"
-            f"Script:\n{request.arguments['code']}"
+            f"Script:\n{script_body}"
         )
-    if request.capability == "run_shell_command" and "command" in request.arguments:
+    if request.capability == "run_shell_command":
+        cmd_body = str(request.arguments.get("command") or "<empty command>")
         return (
             f"Action: run_shell_command\n"
+            f"Risk: {decision.risk_class} ({reasons_text})\n"
             f"Target: {decision.target_resource}\n"
             f"Effects: {effects_text}\n"
-            f"Command: {request.arguments['command']}"
+            f"Command: {cmd_body}"
         )
     return (
         f"Action: {request.capability}\n"

@@ -550,3 +550,42 @@ async def test_capability_service_delegates_to_request_action() -> None:
         call_decision, call_req, _ = mock_broker.request_action.call_args[0]
         assert call_req.arguments["code"] == test_code
         assert isinstance(result, Success)
+
+
+@pytest.mark.asyncio
+async def test_capability_service_rejects_missing_code_before_hitl_prompt() -> None:
+    """Malformed run_python_code request missing 'code' must fail with INVALID_ARGUMENT without prompting HITL."""
+    registry = create_default_capability_registry()
+    mock_broker = MagicMock()
+    mock_broker.request_action = AsyncMock(return_value=Success("approval-py-123"))
+
+    service = CapabilityService(
+        registry=registry,
+        policy=PolicyEngine(isolation_available=lambda _iso: True),
+        audit=InMemoryAuditLedger(),
+        approvals=mock_broker,
+    )
+
+    descriptor = registry.descriptor("run_python_code")
+    assert descriptor is not None
+    req = normalize_request(descriptor, {"session_id": "sess-1"})
+    decision, result = await service.invoke(req)
+
+    assert decision is not None
+    assert decision.outcome == PolicyOutcome.ASK
+    mock_broker.request_action.assert_not_called()
+    assert isinstance(result, Failure)
+    assert result.failure().code == "INVALID_ARGUMENT"
+
+
+def test_extract_model_tool_call_gemma_multiline_and_quotes() -> None:
+    """Gemma tool call syntax with <|"|> delimiters, newlines, quotes, and dicts must preserve code."""
+    from rai.assistant.tool_calling import extract_model_tool_call  # noqa: PLC0415
+
+    code_body = 'from scipy.special import zeta\nd = {"s": 2}\nprint(f"zeta(2) = {zeta(d[\'s\'])}")'
+    raw = f'<|tool_call>call:run_python_code{{code:<|"|>{code_body}<|"|>}}<tool_call|>'
+    extracted = extract_model_tool_call(raw)
+    assert extracted is not None
+    _, cap, args = extracted
+    assert cap == "run_python_code"
+    assert args.get("code") == code_body
