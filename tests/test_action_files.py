@@ -144,4 +144,3 @@ async def test_file_search_reports_incomplete_when_scan_limit_exceeded(
     res = outcome.unwrap()
     assert res.output["complete"] is False
     assert "scan limit" in (res.output["reason"] or "")
-

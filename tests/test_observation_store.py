@@ -266,4 +266,3 @@ async def test_unique_alias_collision_handling(store: SQLiteMemoryGraphStore) ->
     assert get1 is not None and get1.content["val"] == 1
     get2 = (await store.get(session_id, "obs_2")).unwrap()
     assert get2 is not None and get2.content["val"] == 2
-

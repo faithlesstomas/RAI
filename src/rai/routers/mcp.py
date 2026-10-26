@@ -66,15 +66,28 @@ async def call_tool(
     name: str,
     arguments: dict[str, Any],
     request_record: CapabilityRequest | None = None,
+    session_id: str | None = None,
 ) -> types.CallToolResult:
     """Invoke one MCP tool through the same service as CLI and REST."""
     descriptor = service.registry.descriptor(name)
     if descriptor is None:
         envelope = _transport_failure(name, "capability is not registered")
     else:
-        request = request_record or normalize_request(
-            descriptor, arguments, actor=MCP_ACTOR
-        )
+        bound_arguments = dict(arguments)
+        expects_session = "session_id" in descriptor.input_schema.get("properties", {})
+        if expects_session or "session_id" in bound_arguments:
+            bound_arguments["session_id"] = session_id or ""
+
+        if request_record is not None:
+            request = request_record
+            if expects_session or "session_id" in request.arguments:
+                bound_args = dict(request.arguments)
+                bound_args["session_id"] = session_id or ""
+                request = request.model_copy(update={"arguments": bound_args})
+        else:
+            request = normalize_request(
+                descriptor, bound_arguments, actor=MCP_ACTOR
+            )
         envelope = await invoke_envelope(service, request)
     serialized = envelope.model_dump(mode="json")
     result = envelope.result
@@ -106,7 +119,17 @@ def create_mcp_runtime(service: CapabilityService) -> McpRuntime:
 
     @server.call_tool()  # pylint: disable=no-member
     async def handle_call_tool(name: str, arguments: dict[str, Any]) -> types.CallToolResult:
-        return await call_tool(service, name, arguments)
+        trusted_session_id = None
+        try:
+            ctx = server.request_context
+            if ctx and ctx.request:
+                trusted_session_id = (
+                    ctx.request.headers.get("x-session-id")
+                    or ctx.request.query_params.get("session_id")
+                )
+        except LookupError:
+            pass
+        return await call_tool(service, name, arguments, session_id=trusted_session_id)
 
     return McpRuntime(server, transport)
 
@@ -150,7 +173,14 @@ async def handle_stateless_mcp(  # noqa: PLR0911
             return _rpc_error(
                 request_id, -32602, "Invalid params: 'name' is required", status_code=400
             )
-        result = await call_tool(service, name, params.get("arguments", {}))
+        trusted_session_id = (
+            request.headers.get("x-session-id")
+            or request.query_params.get("session_id")
+            or ""
+        )
+        result = await call_tool(
+            service, name, params.get("arguments", {}), session_id=trusted_session_id
+        )
         return _rpc_result(request_id, result.model_dump(exclude_none=True, by_alias=True))
     return _rpc_error(request_id, -32601, f"Method '{method}' not found")
 

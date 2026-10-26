@@ -77,5 +77,3 @@ def test_find_processes_detailed_limits(tmp_path: Path, monkeypatch: MonkeyPatch
     assert len(procs2) == 0
     assert complete2 is False
     assert "scan limit" in (reason2 or "")
-
-

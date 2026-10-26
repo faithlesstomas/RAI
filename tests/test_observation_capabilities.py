@@ -8,15 +8,22 @@ from pathlib import Path
 import pytest
 from returns.result import Failure, Success
 
+from conftest import ASGITestClient
 from rai.actions.observations import (
     register_observation_capabilities,
 )
 from rai.assistant.records import ObservationArtifact, summarize_observation_schema
 from rai.assistant.store import SQLiteMemoryGraphStore
+from rai.container import ApplicationContainer
+from rai.kernel.audit import InMemoryAuditLedger
 from rai.kernel.capabilities import CapabilityRegistry
+from rai.kernel.policy import PolicyEngine
 from rai.kernel.ports import CancellationToken
 from rai.kernel.records import ActionResult, CapabilityRequest, DataClass, ProducerIdentity
+from rai.kernel.service import CapabilityService
 from rai.kernel.transport import normalize_request
+from rai.routers.mcp import call_tool
+from rai.server import create_app
 
 ACTOR = ProducerIdentity(producer_id="user", kind="user", version="1.0.0")
 
@@ -490,36 +497,328 @@ async def test_observation_get_rfc6901_unescaping(
 
 
 @pytest.mark.asyncio
-async def test_observation_get_root_pointer_rejected(
+@pytest.mark.asyncio
+async def test_observation_get_rfc6901_empty_tokens_and_invalid_pointers(
     registry: CapabilityRegistry, store: SQLiteMemoryGraphStore
 ) -> None:
+    content = {
+        "": "root_empty_value",
+        "nested": {"": "nested_empty_value", "key": "val"},
+        "items": ["first", "second"],
+    }
     art = ObservationArtifact(
-        artifact_id="obs_root",
-        session_id="session-root",
-        turn_id="turn-root",
+        artifact_id="obs_rfc_spec",
+        session_id="session-rfc",
+        turn_id="turn-rfc",
         capability="test",
-        request_id="req-root",
+        request_id="req-rfc",
         data_class=DataClass.LOCAL,
-        content={"key": "val"},
-        schema_summary=summarize_observation_schema({"key": "val"}),
-        size_chars=50,
+        content=content,
+        schema_summary=summarize_observation_schema(content),
+        size_chars=100,
         producer=ACTOR,
     )
     await store.put(art)
 
     desc = registry.descriptor("observation.get")
     assert desc is not None
-    req = normalize_request(
+
+    # 1. "/" accesses empty key "" in root object
+    req1 = normalize_request(
         desc,
-        {"session_id": "session-root", "ref": "obs_root", "path": "/"},
+        {"session_id": "session-rfc", "ref": "obs_rfc_spec", "path": "/"},
         actor=ACTOR,
         data_class=DataClass.LOCAL,
     )
-    cap_res = registry.resolve(req)
-    assert isinstance(cap_res, Success)
-    res = await cap_res.unwrap().invoke(req, CancellationToken())
-    assert isinstance(res, Failure)
-    assert res.failure().code == "INVALID_POINTER"
+    res1 = (await _invoke(registry, req1)).output
+    assert res1["value"] == "root_empty_value"
+
+    # 2. "/nested/" accesses empty key "" in object "nested"
+    req2 = normalize_request(
+        desc,
+        {"session_id": "session-rfc", "ref": "obs_rfc_spec", "path": "/nested/"},
+        actor=ACTOR,
+        data_class=DataClass.LOCAL,
+    )
+    res2 = (await _invoke(registry, req2)).output
+    assert res2["value"] == "nested_empty_value"
+
+    # 3. "/items/0" accesses first array element
+    req3 = normalize_request(
+        desc,
+        {"session_id": "session-rfc", "ref": "obs_rfc_spec", "path": "/items/0"},
+        actor=ACTOR,
+        data_class=DataClass.LOCAL,
+    )
+    res3 = (await _invoke(registry, req3)).output
+    assert res3["value"] == "first"
+
+    # 4. Missing empty key under nested
+    req4 = normalize_request(
+        desc,
+        {"session_id": "session-rfc", "ref": "obs_rfc_spec", "path": "/items/"},
+        actor=ACTOR,
+        data_class=DataClass.LOCAL,
+    )
+    cap4 = registry.resolve(req4).unwrap()
+    res4 = await cap4.invoke(req4, CancellationToken())
+    assert isinstance(res4, Failure)
+    assert res4.failure().code == "INVALID_POINTER"
+
+    # 5. Missing key
+    req5 = normalize_request(
+        desc,
+        {"session_id": "session-rfc", "ref": "obs_rfc_spec", "path": "/missing"},
+        actor=ACTOR,
+        data_class=DataClass.LOCAL,
+    )
+    cap5 = registry.resolve(req5).unwrap()
+    res5 = await cap5.invoke(req5, CancellationToken())
+    assert isinstance(res5, Failure)
+    assert res5.failure().code == "PATH_NOT_FOUND"
+
+    # 6. Invalid escapes (~2, trailing ~)
+    for bad_path in ("/bad/~2", "/bad~"):
+        req_bad = normalize_request(
+            desc,
+            {"session_id": "session-rfc", "ref": "obs_rfc_spec", "path": bad_path},
+            actor=ACTOR,
+            data_class=DataClass.LOCAL,
+        )
+        res_bad = await registry.resolve(req_bad).unwrap().invoke(req_bad, CancellationToken())
+        assert isinstance(res_bad, Failure)
+        assert res_bad.failure().code == "INVALID_POINTER"
+
+    # 7. Array invalid index (leading zero, negative, out of bounds)
+    for bad_idx in ("/items/01", "/items/-1"):
+        req_idx = normalize_request(
+            desc,
+            {"session_id": "session-rfc", "ref": "obs_rfc_spec", "path": bad_idx},
+            actor=ACTOR,
+            data_class=DataClass.LOCAL,
+        )
+        res_idx = await registry.resolve(req_idx).unwrap().invoke(req_idx, CancellationToken())
+        assert isinstance(res_idx, Failure)
+        assert res_idx.failure().code == "INVALID_POINTER"
+
+    req_oob = normalize_request(
+        desc,
+        {"session_id": "session-rfc", "ref": "obs_rfc_spec", "path": "/items/5"},
+        actor=ACTOR,
+        data_class=DataClass.LOCAL,
+    )
+    res_oob = await registry.resolve(req_oob).unwrap().invoke(req_oob, CancellationToken())
+    assert isinstance(res_oob, Failure)
+    assert res_oob.failure().code == "PATH_NOT_FOUND"
+
+
+@pytest.mark.asyncio
+async def test_observation_search_pagination_and_bounds(
+    registry: CapabilityRegistry, store: SQLiteMemoryGraphStore
+) -> None:
+    items = [{"id": i, "name": f"item_{i}"} for i in range(10)]
+    content = {"items": items}
+    art = ObservationArtifact(
+        artifact_id="obs_search_page",
+        session_id="session-page",
+        turn_id="turn-page",
+        capability="test",
+        request_id="req-page",
+        data_class=DataClass.LOCAL,
+        content=content,
+        schema_summary=summarize_observation_schema(content),
+        size_chars=200,
+        producer=ACTOR,
+    )
+    await store.put(art)
+
+    desc = registry.descriptor("observation.search")
+    assert desc is not None
+
+    # Page 1: limit 3, offset 0
+    req1 = normalize_request(
+        desc,
+        {"session_id": "session-page", "ref": "obs_search_page", "pattern": "item_", "limit": 3, "offset": 0},
+        actor=ACTOR,
+        data_class=DataClass.LOCAL,
+    )
+    res1 = (await _invoke(registry, req1)).output
+    assert res1["total_matches"] == 10
+    assert len(res1["matches"]) == 3
+    assert res1["offset"] == 0
+    assert res1["limit"] == 3
+    assert res1["complete"] is False
+    assert "paginated" in (res1["reason"] or "")
+
+    # Page 2: limit 3, offset 3
+    req2 = normalize_request(
+        desc,
+        {"session_id": "session-page", "ref": "obs_search_page", "pattern": "item_", "limit": 3, "offset": 3},
+        actor=ACTOR,
+        data_class=DataClass.LOCAL,
+    )
+    res2 = (await _invoke(registry, req2)).output
+    assert len(res2["matches"]) == 3
+    assert res2["matches"][0]["id"] == 3
+    assert res2["complete"] is False
+
+    # Full page: limit 10, offset 0
+    req3 = normalize_request(
+        desc,
+        {"session_id": "session-page", "ref": "obs_search_page", "pattern": "item_", "limit": 10, "offset": 0},
+        actor=ACTOR,
+        data_class=DataClass.LOCAL,
+    )
+    res3 = (await _invoke(registry, req3)).output
+    assert len(res3["matches"]) == 10
+    assert res3["complete"] is True
+    assert res3["reason"] is None
+
+
+@pytest.mark.asyncio
+async def test_observation_filter_pagination_and_cancellation(
+    registry: CapabilityRegistry, store: SQLiteMemoryGraphStore
+) -> None:
+    items = [{"id": i, "score": i * 10} for i in range(10)]
+    content = {"items": items}
+    art = ObservationArtifact(
+        artifact_id="obs_filter_page",
+        session_id="session-filter",
+        turn_id="turn-filter",
+        capability="test",
+        request_id="req-filter",
+        data_class=DataClass.LOCAL,
+        content=content,
+        schema_summary=summarize_observation_schema(content),
+        size_chars=200,
+        producer=ACTOR,
+    )
+    await store.put(art)
+
+    desc = registry.descriptor("observation.filter")
+    assert desc is not None
+
+    # Paginated filter
+    req1 = normalize_request(
+        desc,
+        {"session_id": "session-filter", "ref": "obs_filter_page", "field": "score", "op": "gte", "value": 0, "limit": 4, "offset": 0},
+        actor=ACTOR,
+        data_class=DataClass.LOCAL,
+    )
+    res1 = (await _invoke(registry, req1)).output
+    assert res1["total_matches"] == 10
+    assert len(res1["results"]) == 4
+    assert res1["complete"] is False
+    assert "paginated" in (res1["reason"] or "")
+
+    # Cooperative cancellation
+    token = CancellationToken()
+    token.cancel()
+    res_cancel = await registry.resolve(req1).unwrap().invoke(req1, token)
+    assert isinstance(res_cancel, Failure)
+    assert res_cancel.failure().code == "CANCELLED"
+
+
+@pytest.mark.asyncio
+async def test_observation_transport_session_isolation_mcp(
+    registry: CapabilityRegistry, store: SQLiteMemoryGraphStore
+) -> None:
+    art = ObservationArtifact(
+        artifact_id="obs_victim",
+        session_id="session-victim",
+        turn_id="turn-victim",
+        capability="test",
+        request_id="req-victim",
+        data_class=DataClass.LOCAL,
+        content={"secret": "victim-private-data"},
+        schema_summary=summarize_observation_schema({"secret": "victim-private-data"}),
+        size_chars=50,
+        producer=ACTOR,
+    )
+    await store.put(art)
+
+    service = CapabilityService(registry, PolicyEngine(), InMemoryAuditLedger())
+
+    # 1. Attacker calls tool specifying victim's session_id in arguments, but transport session is session-attacker
+    mcp_result = await call_tool(
+        service,
+        "observation.get",
+        {"session_id": "session-victim", "ref": "obs_victim", "path": "/secret"},
+        session_id="session-attacker",
+    )
+    assert mcp_result.isError is True
+    assert "ARTIFACT_NOT_FOUND" in mcp_result.content[0].text
+
+    # 2. Client calls without transport session_id
+    mcp_unauth = await call_tool(
+        service,
+        "observation.get",
+        {"session_id": "session-victim", "ref": "obs_victim", "path": "/secret"},
+        session_id=None,
+    )
+    assert mcp_unauth.isError is True
+    assert "UNAUTHORIZED" in mcp_unauth.content[0].text
+
+
+def test_observation_transport_session_isolation_rest(tmp_path: Path) -> None:
+    container = ApplicationContainer(
+        config={"db_path": str(tmp_path / "memory.sqlite3")},
+        audit_ledger=InMemoryAuditLedger(),
+        testing=True,
+    )
+
+    art = ObservationArtifact(
+        artifact_id="obs_victim_rest",
+        session_id="session-victim",
+        turn_id="turn-victim",
+        capability="test",
+        request_id="req-victim-rest",
+        data_class=DataClass.LOCAL,
+        content={"secret": "victim-rest-secret"},
+        schema_summary=summarize_observation_schema({"secret": "victim-rest-secret"}),
+        size_chars=50,
+        producer=ACTOR,
+    )
+    asyncio.run(container.memory_graph_store.put(art))
+
+    client = ASGITestClient(create_app(container))
+    desc = container.capability_registry.descriptor("observation.get")
+    assert desc is not None
+    req_body = normalize_request(
+        desc,
+        {"session_id": "session-victim", "ref": "obs_victim_rest", "path": "/secret"},
+        actor=ACTOR,
+        data_class=DataClass.LOCAL,
+    ).model_dump(mode="json")
+
+    # 1. REST call with victim session in body, but NO X-Session-ID header
+    resp_unauth = client.post("/api/v1/capabilities/invoke", json=req_body)
+    assert resp_unauth.status_code == 200
+    res_data = resp_unauth.json()
+    assert res_data["ok"] is False
+    assert res_data["result"]["code"] == "UNAUTHORIZED"
+
+    # 2. REST call with X-Session-ID: session-attacker (attempting to read victim's artifact)
+    resp_attacker = client.post(
+        "/api/v1/capabilities/invoke",
+        headers={"x-session-id": "session-attacker"},
+        json=req_body,
+    )
+    assert resp_attacker.status_code == 200
+    res_att_data = resp_attacker.json()
+    assert res_att_data["ok"] is False
+    assert res_att_data["result"]["code"] == "ARTIFACT_NOT_FOUND"
+
+    # 3. Legitimate REST call with X-Session-ID: session-victim
+    resp_legit = client.post(
+        "/api/v1/capabilities/invoke",
+        headers={"x-session-id": "session-victim"},
+        json=req_body,
+    )
+    assert resp_legit.status_code == 200
+    res_legit_data = resp_legit.json()
+    assert res_legit_data["ok"] is True
+    assert res_legit_data["result"]["output"]["value"] == "victim-rest-secret"
 
 
 def test_register_observation_capabilities(store: SQLiteMemoryGraphStore) -> None:
