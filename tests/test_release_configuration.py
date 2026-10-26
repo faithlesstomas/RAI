@@ -73,7 +73,10 @@ def test_release_commit_branch_pipeline_is_suppressed_without_suppressing_tag() 
     pipeline = Path(".gitlab-ci.yml").read_text(encoding="utf-8")
 
     assert f"- if: '{RELEASE_COMMIT_WORKFLOW_RULE}'\n      when: never" in pipeline
-    assert "    - when: always\n\n" in pipeline
+    assert "- if: '$CI_PIPELINE_SOURCE == \"merge_request_event\"'" in pipeline
+    assert "- if: '$CI_COMMIT_BRANCH && $CI_OPEN_MERGE_REQUESTS'\n      when: never" in pipeline
+    assert "- if: '$CI_COMMIT_BRANCH'" in pipeline
+    assert "- if: '$CI_COMMIT_TAG'" in pipeline
     assert "$CI_COMMIT_BRANCH" in RELEASE_COMMIT_WORKFLOW_RULE
 
 
