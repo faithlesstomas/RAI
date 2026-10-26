@@ -89,13 +89,27 @@ async def confirm(prompt: str, token: CancellationToken) -> bool:
     return await choose(prompt + " [y/N] ", token) in {"y", "yes"}
 
 
+def _sanitize_terminal_text(text: str) -> str:
+    """Strip ANSI escape sequences and neutralize control characters for safe terminal output."""
+    import re  # noqa: PLC0415
+
+    # Strip ANSI escape sequences (\x1b[...] and OSC sequences)
+    stripped = re.sub(r"\x1b(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])", "", text)
+    # Neutralize control characters except standard newlines and tabs
+    return "".join(
+        ch if (ch in ("\n", "\t") or (ord(ch) >= 32 and ord(ch) != 127)) else repr(ch)[1:-1]
+        for ch in stripped
+    )
+
+
 def _format_action_summary(request: CapabilityRequest, decision: PolicyDecision) -> str:
     if request.capability in BROWSER_ACTIONS:
         return review_text(request)
     effects_text = ", ".join(decision.requested_side_effects) or "none"
     reasons_text = ", ".join(decision.reason_codes) or str(decision.risk_class)
     if request.capability == "run_python_code":
-        script_body = str(request.arguments.get("code") or "<empty script>")
+        raw_script = str(request.arguments.get("code") or "<empty script>")
+        script_body = _sanitize_terminal_text(raw_script)
         return (
             f"Action: run_python_code (Tier-2 Bubblewrap OS execution)\n"
             f"Risk: {decision.risk_class} ({reasons_text})\n"
@@ -104,7 +118,8 @@ def _format_action_summary(request: CapabilityRequest, decision: PolicyDecision)
             f"Script:\n{script_body}"
         )
     if request.capability == "run_shell_command":
-        cmd_body = str(request.arguments.get("command") or "<empty command>")
+        raw_cmd = str(request.arguments.get("command") or "<empty command>")
+        cmd_body = _sanitize_terminal_text(raw_cmd)
         return (
             f"Action: run_shell_command\n"
             f"Risk: {decision.risk_class} ({reasons_text})\n"

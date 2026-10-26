@@ -430,6 +430,12 @@ def _run_assistant_chat(  # noqa: PLR0913, PLR0915
                     saved_res = await service.store.get_repl_session(
                         sid, profile_scope=service.profile_scope
                     )
+                    if isinstance(saved_res, Failure):
+                        click.secho(
+                            f"Failed to load REPL session state: {saved_res.failure().message}",
+                            fg="red",
+                        )
+                        continue
                     if isinstance(saved_res, Success) and saved_res.unwrap():
                         blob, vars_dict = saved_res.unwrap()
                         runner = container.monty_runner
@@ -463,10 +469,16 @@ def _run_assistant_chat(  # noqa: PLR0913, PLR0915
 
                     lock = await get_session_repl_lock(service.profile_scope, sid)
                     async with lock:
-                        await service.store.clear_repl_session(
+                        clear_res = await service.store.clear_repl_session(
                             sid, profile_scope=service.profile_scope
                         )
-                    click.secho("REPL session reset.", fg="green")
+                        if isinstance(clear_res, Failure):
+                            click.secho(
+                                f"Failed to reset REPL session: {clear_res.failure().message}",
+                                fg="red",
+                            )
+                        else:
+                            click.secho("REPL session reset.", fg="green")
                     continue
                 if stripped.startswith("/repl "):
                     from rai.tools.python import get_session_repl_lock  # noqa: PLC0415
@@ -478,6 +490,12 @@ def _run_assistant_chat(  # noqa: PLR0913, PLR0915
                             saved_res = await service.store.get_repl_session(
                                 sid, profile_scope=service.profile_scope
                             )
+                            if isinstance(saved_res, Failure):
+                                click.secho(
+                                    f"Failed to load REPL session state: {saved_res.failure().message}",
+                                    fg="red",
+                                )
+                                continue
                             blob = (
                                 saved_res.unwrap()[0]
                                 if isinstance(saved_res, Success) and saved_res.unwrap()
@@ -490,12 +508,18 @@ def _run_assistant_chat(  # noqa: PLR0913, PLR0915
                             if isinstance(eval_res, Success):
                                 m_res = eval_res.unwrap()
                                 if m_res.session_blob:
-                                    await service.store.save_repl_session(
+                                    save_res = await service.store.save_repl_session(
                                         sid,
                                         m_res.session_blob,
                                         m_res.variables,
                                         profile_scope=service.profile_scope,
                                     )
+                                    if isinstance(save_res, Failure):
+                                        click.secho(
+                                            f"Failed to persist REPL session state: {save_res.failure().message}",
+                                            fg="red",
+                                        )
+                                        continue
                                 if m_res.output:
                                     click.echo(m_res.output)
                                 elif m_res.variables:

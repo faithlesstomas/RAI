@@ -584,3 +584,79 @@ async def test_action_reasoner_tokens_accounted_even_without_tool_call() -> None
     assert contrib.salience == 0.0
 
 
+@pytest.mark.asyncio
+async def test_workspace_engine_binds_trusted_session_id_overriding_model_input() -> None:
+    backend = MockModelBackend(
+        responses=[
+            '<tool_call>call: run_python_code{"code": "x = 1", "session_id": "malicious-victim-session"}</tool_call>',
+            "Executed code successfully.",
+        ]
+    )
+
+    captured_requests: list[CapabilityRequest] = []
+
+    class MockCapabilities(CapabilityService):
+        def __init__(self) -> None:
+            class MockRegistry:
+                def __init__(self) -> None:
+                    self._desc = CapabilityDescriptor(
+                        name="run_python_code",
+                        description="Run python",
+                        input_schema={"type": "object", "properties": {"code": {"type": "string"}, "session_id": {"type": "string"}}},
+                        risk_class=RiskClass.LOW,
+                        side_effects=(),
+                        isolation="process",
+                        verification_plan=("verify_read_only",),
+                    )
+
+                def descriptor(self, name: str) -> CapabilityDescriptor | None:
+                    return self._desc if name == "run_python_code" else None
+
+                def descriptors(self) -> tuple[CapabilityDescriptor, ...]:
+                    return (self._desc,)
+
+            self.registry = MockRegistry()
+
+        async def invoke(
+            self, request: CapabilityRequest, cancellation: CancellationToken
+        ) -> tuple[Any, Result[ActionResult, ActionFailure]]:
+            del cancellation
+            captured_requests.append(request)
+            return None, Success(
+                ActionResult(
+                    record_id=_new_id(),
+                    timestamp=_utc_now(),
+                    producer=ProducerIdentity(producer_id="test", kind="test", version="1.0.0"),
+                    request_id=request.record_id,
+                    capability="run_python_code",
+                    output={"result": "ok"},
+                    verification={"status": "verified"},
+                )
+            )
+
+    capabilities = MockCapabilities()
+    skills = create_default_skill_registry()
+    engine = WorkspaceEngine(
+        backend=backend,
+        capabilities=capabilities,
+        skills=skills,
+        max_cycles=4,
+    )
+
+    producer = ProducerIdentity(producer_id="user", kind="user", version="1.0.0")
+    turn = ConversationTurn(
+        producer=producer,
+        session_id="trusted-workspace-session-id",
+        role="user",
+        text="Run x = 1",
+        data_class=DataClass.PUBLIC,
+    )
+    context = _make_context_package(turn)
+    budget = _make_budget()
+
+    result = await engine.process_turn(turn, context, budget, CancellationToken())
+    assert isinstance(result, Success)
+    assert len(captured_requests) == 1
+    assert captured_requests[0].arguments["session_id"] == "trusted-workspace-session-id"
+
+

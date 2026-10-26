@@ -165,8 +165,7 @@ class WorkspaceEngine(InteractionController):
             if descriptor is not None:
                 call_args = dict(args)
                 if (
-                    "session_id" not in call_args
-                    and turn.session_id
+                    turn.session_id
                     and isinstance(descriptor.input_schema, dict)
                     and "session_id" in descriptor.input_schema.get("properties", {})
                 ):

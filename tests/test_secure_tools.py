@@ -3,10 +3,11 @@ Unit and integration tests for secure shell and python tools.
 """
 import os
 from pathlib import Path
+from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-from returns.result import Failure, Success
+from returns.result import Failure, Result, Success
 
 from rai.assistant.records import make_assistant_failure
 from rai.assistant.store import SQLiteMemoryGraphStore
@@ -17,6 +18,7 @@ from rai.kernel.defaults import HitlApprovalBroker, create_default_capability_re
 from rai.kernel.policy import PolicyEngine
 from rai.kernel.ports import CancellationToken
 from rai.kernel.records import (
+    ActionResult,
     DataClass,
     PolicyDecision,
     PolicyOutcome,
@@ -589,3 +591,63 @@ def test_extract_model_tool_call_gemma_multiline_and_quotes() -> None:
     _, cap, args = extracted
     assert cap == "run_python_code"
     assert args.get("code") == code_body
+
+
+def test_format_action_summary_sanitizes_escape_sequences() -> None:
+    """Terminal approval summary must strip ANSI escape sequences and non-printable control chars."""
+    from rai.commands.approval import _format_action_summary  # noqa: PLC0415
+
+    registry = create_default_capability_registry()
+    descriptor = registry.descriptor("run_python_code")
+    assert descriptor is not None
+
+    malicious_code = "import os\n# \x1b[2K\rPrompt hijacked!\nprint('real code')"
+    req = normalize_request(descriptor, {"code": malicious_code})
+    policy = PolicyEngine(isolation_available=lambda _: True)
+    decision = policy.evaluate(req, descriptor)
+    summary = _format_action_summary(req, decision)
+    assert "\x1b" not in summary
+    assert "Prompt hijacked!" in summary
+    assert "print('real code')" in summary
+
+
+@pytest.mark.asyncio
+async def test_workflow_binds_trusted_session_id_overriding_model_input() -> None:
+    """Workflow controller must always bind trusted session_id even if model passed a different one."""
+    from rai.actions.workflow import BoundedStepController  # noqa: PLC0415
+    from rai.kernel.records import _utc_now  # noqa: PLC0415
+
+    registry = create_default_capability_registry()
+    mock_service = MagicMock()
+    mock_service.registry = registry
+
+    captured_requests: list[Any] = []
+
+    async def mock_invoke(req: Any, cancellation: Any) -> tuple[Any, Result[Any, Any]]:
+        captured_requests.append(req)
+        return None, Success(ActionResult(
+            record_id="res-1",
+            timestamp=_utc_now(),
+            producer=ProducerIdentity(producer_id="p-1", kind="test", version="1.0"),
+            request_id=req.record_id,
+            capability=req.capability,
+            output={"result": "ok"},
+            verification={"status": "verified"},
+        ))
+
+    mock_service.invoke = mock_invoke
+
+    controller = BoundedStepController(capabilities=mock_service)
+    wf = controller.create_generic_workflow(
+        task_id="task-step-1", session_id="trusted-session-uuid", goal="Run code"
+    )
+
+    # Model attempts to target a different session
+    malicious_args = {"code": "x = 1", "session_id": "malicious-victim-session"}
+
+    res = await controller.execute_generic_step(
+        wf, mock_service, "run_python_code", malicious_args, CancellationToken()
+    )
+    assert isinstance(res, Success)
+    assert len(captured_requests) == 1
+    assert captured_requests[0].arguments["session_id"] == "trusted-session-uuid"

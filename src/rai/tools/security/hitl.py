@@ -168,13 +168,21 @@ class ApprovalManager:
         if os.environ.get("RAI_SERVE") != "1" and sys.stdin.isatty():
             async def console_prompt() -> None:
                 try:
+                    import re  # noqa: PLC0415
+                    from rich.text import Text  # noqa: PLC0415
                     from ...core import console  # noqa: PLC0415
+
                     print("\n")
                     is_python = req.tool_name in ("PythonTools", "run_python_code")
                     content_label = "Script" if is_python else "Command"
+                    sanitized_cmd = re.sub(r"\x1b(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])", "", req.command)
+                    panel_content = Text()
+                    panel_content.append(f"{content_label}:\n", style="bold yellow")
+                    panel_content.append(f"{sanitized_cmd}\n")
+                    panel_content.append("Tool: ", style="bold yellow")
+                    panel_content.append(str(req.tool_name))
                     console.print(Panel(
-                        f"[bold yellow]{content_label}:[/bold yellow] {req.command}\n"
-                        f"[bold yellow]Tool:[/bold yellow] {req.tool_name}",
+                        panel_content,
                         title="RAI STANDALONE GATEWAY - AUTHORIZATION REQUIRED",
                         border_style="red"
                     ))

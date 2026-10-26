@@ -1127,12 +1127,13 @@ class BoundedStepController(InteractionController):
                 )
 
             call_arguments = dict(arguments)
+            trusted_session_id = getattr(workflow, "session_id", None)
             if (
-                "session_id" in descriptor.input_schema.get("properties", {})
-                and "session_id" not in call_arguments
-                and getattr(workflow, "session_id", None)
+                isinstance(descriptor.input_schema, dict)
+                and "session_id" in descriptor.input_schema.get("properties", {})
+                and trusted_session_id
             ):
-                call_arguments["session_id"] = workflow.session_id
+                call_arguments["session_id"] = trusted_session_id
 
             request = normalize_request(
                 descriptor,
