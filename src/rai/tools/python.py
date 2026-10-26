@@ -108,17 +108,6 @@ def can_run_in_monty(code: str) -> Tuple[bool, str]:  # noqa: PLR0911, PLR0912
 _repl_session_locks_guard = threading.Lock()
 
 
-def clear_session_repl_locks(loop: Optional[asyncio.AbstractEventLoop] = None) -> None:
-    """Explicitly clear cached REPL session locks for an event loop."""
-    try:
-        target_loop = loop or asyncio.get_running_loop()
-    except RuntimeError:
-        return
-
-    with _repl_session_locks_guard:
-        if hasattr(target_loop, "_rai_repl_locks"):
-            target_loop._rai_repl_locks.clear()
-
 
 async def get_session_repl_lock(profile_scope: str, session_id: str) -> asyncio.Lock:
     """
