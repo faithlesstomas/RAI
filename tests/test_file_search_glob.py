@@ -607,3 +607,95 @@ async def test_bounded_step_controller_preserves_choice_frame_when_bypassing_rec
     assert cand.metadata.get("consumed_choice_frame_id") == "frame-choice-1"
     assert cand.metadata.get("action_result") is not None
 
+
+@pytest.mark.asyncio
+async def test_file_search_failure_propagates_failed_action_result(tmp_path: Path) -> None:
+    """When file.search fails (e.g. roots not configured), candidate metadata must reflect FAILED, not SUCCEEDED."""
+    registry = CapabilityRegistry()
+    handles = SQLiteHandleStore(tmp_path / "handles.db")
+    # Register file capabilities with NO allowed roots
+    register_file_capabilities(registry, (), handles, None)
+
+    service = ActionCapabilityService(registry, PolicyEngine(), InMemoryAuditLedger(), SyntheticApprovalBroker())
+    service.handles = handles
+    service.executions = SQLiteExecutionStore(tmp_path / "executions.db")
+
+    actions = AssistantActions(capabilities=service, recognizer=None, store=None, profile="default")
+    backend = ScriptedAgentBackend(
+        steps=[
+            '<tool_call>file.search {"query": "*.pdf"}</tool_call>',
+            "Nie udało się wyszukać plików.",
+        ]
+    )
+    controller = BoundedStepController(
+        capabilities=service,
+        backend=backend,
+        actions=actions,
+        bypass_intent_recognizer=True,
+    )
+
+    turn = ConversationTurn(
+        producer=ACTOR,
+        session_id="session-search-fail",
+        role="user",
+        text="Szukaj pdf",
+        data_class=DataClass.LOCAL,
+    )
+    res = await controller.process_turn(
+        turn, _make_context_package(turn), _make_budget(), CancellationToken()
+    )
+    assert isinstance(res, Success)
+    cand = res.unwrap()
+    assert "action_result" in cand.metadata
+    act_res = cand.metadata["action_result"]
+    assert act_res["capability"] == "file.search"
+    assert act_res["status"] == "FAILED"
+    assert act_res["code"] == "FILE_ROOTS_NOT_CONFIGURED"
+
+
+@pytest.mark.asyncio
+async def test_unconfirmed_raw_candidate_does_not_claim_succeeded(tmp_path: Path) -> None:
+    """When dispatch_intent returns a candidate without action_result, controller marks it FAILED, not SUCCEEDED."""
+    from unittest.mock import AsyncMock
+
+    service = ActionCapabilityService(CapabilityRegistry(), PolicyEngine(), InMemoryAuditLedger(), SyntheticApprovalBroker())
+    service.handles = SQLiteHandleStore(tmp_path / "handles.db")
+    service.executions = SQLiteExecutionStore(tmp_path / "executions.db")
+
+    # Mock actions to return raw text without action_result
+    mock_actions = AsyncMock()
+    mock_actions.dispatch_intent.return_value = AssistantCandidate(
+        text="Raw text output without action_result metadata",
+        metadata={},
+    )
+    mock_actions.handle.return_value = None
+
+    backend = ScriptedAgentBackend(
+        steps=[
+            '<tool_call>file.search {"query": "test"}</tool_call>',
+            "Koniec.",
+        ]
+    )
+    controller = BoundedStepController(
+        capabilities=service,
+        backend=backend,
+        actions=mock_actions,
+        bypass_intent_recognizer=True,
+    )
+
+    turn = ConversationTurn(
+        producer=ACTOR,
+        session_id="session-unconfirmed",
+        role="user",
+        text="Szukaj pliku test",
+        data_class=DataClass.LOCAL,
+    )
+    res = await controller.process_turn(
+        turn, _make_context_package(turn), _make_budget(), CancellationToken()
+    )
+    assert isinstance(res, Success)
+    cand = res.unwrap()
+    assert "action_result" in cand.metadata
+    act_res = cand.metadata["action_result"]
+    assert act_res["status"] == "FAILED"
+    assert act_res["code"] in {"NO_ACTION_RESULT", "UNCONFIRMED_ACTION_RESULT"}

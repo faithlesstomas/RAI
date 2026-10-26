@@ -861,16 +861,27 @@ class BoundedStepController(InteractionController):
                         if tool_cand is not None:
                             initial_action_metadata.update(tool_cand.metadata)
                             act_res_dict = tool_cand.metadata.get("action_result") or {}
-                            if isinstance(act_res_dict, dict) and "output" in act_res_dict:
+                            if (
+                                isinstance(act_res_dict, dict)
+                                and "output" in act_res_dict
+                                and act_res_dict.get("status") != "FAILED"
+                            ):
                                 raw_out = act_res_dict.get("output")
-                            elif isinstance(act_res_dict, dict) and "code" in act_res_dict:
+                            elif isinstance(act_res_dict, dict) and (
+                                "code" in act_res_dict or act_res_dict.get("status") == "FAILED"
+                            ):
                                 raw_out = {
                                     "status": "FAILED",
-                                    "code": act_res_dict.get("code"),
+                                    "code": act_res_dict.get("code", "ACTION_FAILED"),
                                     "message": act_res_dict.get("message") or tool_cand.text,
                                 }
                             else:
-                                raw_out = {"raw_text": tool_cand.text}
+                                raw_out = {
+                                    "status": "FAILED",
+                                    "code": "NO_ACTION_RESULT",
+                                    "message": tool_cand.text,
+                                    "raw_text": tool_cand.text,
+                                }
                             pre_executed_observation = _compact_observation_content(
                                 raw_out,
                                 fallback_text=tool_cand.text,
@@ -959,31 +970,45 @@ class BoundedStepController(InteractionController):
             None,
         )
         if last_tool_step is not None:
+            obs = last_tool_step.observation
+            obs_dict = obs if isinstance(obs, dict) else {}
             is_failure = (
-                isinstance(last_tool_step.observation, dict)
+                isinstance(obs, dict)
                 and (
-                    last_tool_step.observation.get("status") == "FAILED"
-                    or "code" in last_tool_step.observation
+                    obs.get("status") == "FAILED"
+                    or "code" in obs
+                    or ("raw_text" in obs and "output" not in obs and obs.get("status") != "SUCCEEDED")
+                )
+            )
+            has_confirmed_success = (
+                isinstance(obs, dict)
+                and not is_failure
+                and (
+                    obs.get("status") == "SUCCEEDED"
+                    or "output" in obs
+                    or any(k for k in obs if k not in {"raw_text", "capability", "query"})
                 )
             )
             if is_failure:
-                obs_dict = (
-                    last_tool_step.observation
-                    if isinstance(last_tool_step.observation, dict)
-                    else {}
-                )
                 synthesized_meta["action_result"] = {
                     "capability": last_tool_step.capability,
                     "code": obs_dict.get("code", "ACTION_FAILED"),
-                    "message": obs_dict.get("message", "Tool action failed"),
+                    "message": obs_dict.get("message", obs_dict.get("raw_text", "Tool action failed")),
                     "status": "FAILED",
+                }
+            elif has_confirmed_success:
+                synthesized_meta["action_result"] = {
+                    "capability": last_tool_step.capability,
+                    "output": obs_dict.get("output", last_tool_step.observation),
+                    "arguments": last_tool_step.arguments,
+                    "status": "SUCCEEDED",
                 }
             else:
                 synthesized_meta["action_result"] = {
                     "capability": last_tool_step.capability,
-                    "output": last_tool_step.observation,
-                    "arguments": last_tool_step.arguments,
-                    "status": "SUCCEEDED",
+                    "code": "UNCONFIRMED_ACTION_RESULT",
+                    "message": obs_dict.get("message", obs_dict.get("raw_text", "Tool action returned unconfirmed result")),
+                    "status": "FAILED",
                 }
 
         candidate = AssistantCandidate(

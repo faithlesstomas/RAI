@@ -194,5 +194,3 @@ def test_bypass_intent_recognizer_resolution_config_and_env(monkeypatch: pytest.
         {"assistant": {"backend": "deterministic", "enable_thinking": True}}
     )
     assert res_thinking_false.enable_thinking is False
-
-

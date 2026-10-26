@@ -989,5 +989,3 @@ async def test_bounded_step_controller_propagates_action_result_to_candidate_and
     assert tool_obs[0]["capability"] == "file.search"
     assert tool_obs[0]["content"]["total_count"] == 2
     assert len(tool_obs[0]["content"]["documents"]) == 2
-
-
