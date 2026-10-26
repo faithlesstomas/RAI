@@ -11,6 +11,8 @@ image: python:3.11
 
 variables:
   RUNNER_TAG: "thinkpad"
+  UV_CACHE_DIR: "/cache/uv"
+  PIP_CACHE_DIR: "/cache/pip"
 
 default:
   tags:
