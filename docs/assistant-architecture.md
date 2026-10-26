@@ -364,7 +364,7 @@ The assistant service exposes dedicated endpoints for interactive environments:
 - `POST /api/v1/assistant/sessions/{session_id}/repl/reset`: Clears stored variables and heap snapshot for the session.
 - `GET /api/v1/assistant/sessions/{session_id}/notebook.ipynb`: Exports conversation turns, code blocks, and execution outputs as a standard Jupyter notebook.
 
-### CLI and Notebook Workflows
+### CLI and Interactive Workflows
 
-1. **Interactive Notebook CLI (`rai assistant notebook`)**: Launches a terminal-based notebook REPL where prompts produce streaming assistant responses, code blocks are auto-executed in the session's Monty REPL, and commands `/repl`, `/repl reset`, `/history`, and `/export [path.ipynb]` provide session inspection and export.
+1. **Interactive Assistant Chat (`rai assistant chat`)**: Conversational loop with integrated REPL inspection (`/repl` to view active variables and preview values, `/repl <expr>` for inline evaluation without leaving chat, `/repl reset` to clear state) and session export (`/export [path.ipynb]`).
 2. **IPython and Jupyter Magics (`%rai`, `%%rai`)**: Integrates RAI assistant into active Jupyter notebooks. Uses isolated session identifiers per magic instance, executes coroutines cleanly even inside running event loops, and shares variables within the notebook's active profile scope.

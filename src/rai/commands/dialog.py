@@ -461,7 +461,7 @@ def _run_assistant_chat(  # noqa: PLR0913, PLR0915
                 if stripped == "/repl reset":
                     from rai.tools.python import get_session_repl_lock  # noqa: PLC0415
 
-                    lock = get_session_repl_lock(service.profile_scope, sid)
+                    lock = await get_session_repl_lock(service.profile_scope, sid)
                     async with lock:
                         await service.store.clear_repl_session(
                             sid, profile_scope=service.profile_scope
@@ -473,7 +473,7 @@ def _run_assistant_chat(  # noqa: PLR0913, PLR0915
 
                     expr = stripped[len("/repl ") :].strip()
                     if expr:
-                        lock = get_session_repl_lock(service.profile_scope, sid)
+                        lock = await get_session_repl_lock(service.profile_scope, sid)
                         async with lock:
                             saved_res = await service.store.get_repl_session(
                                 sid, profile_scope=service.profile_scope

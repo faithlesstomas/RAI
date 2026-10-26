@@ -10,7 +10,6 @@ from typer.testing import CliRunner
 from rai.cli import cli
 from rai.commands import approval
 from rai.commands.dialog import _run_assistant_ask, _run_assistant_chat
-from rai.commands.notebook import _run_assistant_notebook
 from rai.kernel.ports import CancellationToken
 from rai.kernel.records import DataClass, ProducerIdentity
 from rai.tools.security.monty import MontyExecutionResult
@@ -324,72 +323,51 @@ def test_dialog_preserves_classification_for_remote_backend(
     assert turn.data_class == data_class
 
 
-def test_notebook_command_dispatch() -> None:
-    with patch("rai.commands.assistant._run_assistant_notebook") as mock_run:
-        result = CliRunner().invoke(
-            cli,
-            [
-                "assistant",
-                "notebook",
-                "--session-id",
-                "sess-123",
-                "--data-class",
-                "PUBLIC",
-            ],
-        )
-    assert result.exit_code == 0, result.output
-    assert mock_run.call_args.args[0] == "sess-123"
-    assert mock_run.call_args.kwargs["data_class"] == DataClass.PUBLIC
-
-
-def test_notebook_interactive_loop(tmp_path: Path) -> None:
+def test_chat_repl_and_export_commands(tmp_path: Path) -> None:
     mock_container = MagicMock()
     mock_service = MagicMock()
     mock_service.profile_scope = "default"
-    mock_candidate = MagicMock(
-        text="Oto funkcja:\n```python\na = 123\n```",
-        reasoning_content=None,
-        turn_id="turn-ai-1",
-    )
-    mock_service.accept_turn = AsyncMock(return_value=Success(mock_candidate))
+    mock_service.backend.is_remote = False
     mock_service.start = AsyncMock(return_value=Success(None))
     mock_service.get_recent_turns = AsyncMock(return_value=Success(()))
-    mock_service.store.get_repl_session = AsyncMock(return_value=Success(None))
+    mock_service.store.get_latest_manifest_for_session = AsyncMock(return_value=Success(None))
+    mock_service.store.get_repl_session = AsyncMock(
+        return_value=Success((b"snapshot-bytes", {"x": "int"}))
+    )
     mock_service.store.save_repl_session = AsyncMock(return_value=Success(None))
-    mock_service.store.accept_turn = AsyncMock(return_value=Success(None))
     mock_service.store.clear_repl_session = AsyncMock(return_value=Success(None))
 
     mock_container.assistant_service = mock_service
     mock_container.monty_runner.run.return_value = Success(
-        MontyExecutionResult(output="10", session_blob=b"test-blob", variables={"x": "int"})
+        MontyExecutionResult(output="42", session_blob=b"updated-blob", variables={"x": "int"})
     )
-    mock_container.monty_runner.inspect_state.return_value = Success({"x": "int"})
+    mock_container.monty_runner.inspect_values.return_value = Success(
+        {"x": {"type": "int", "value": "42"}}
+    )
     mock_container.close = AsyncMock()
 
-    export_file = tmp_path / "test_out.ipynb"
+    export_file = tmp_path / "session_export.ipynb"
 
-    with patch("rai.commands.notebook.ApplicationContainer", return_value=mock_container):
+    with patch("rai.container.ApplicationContainer", return_value=mock_container):
         with patch("rai.commands.approval.configure_approvals"):
             with patch(
-                "rai.commands.notebook.click.prompt",
+                "rai.commands.dialog.click.prompt",
                 side_effect=[
-                    "x = 10",
-                    "? Write code assigning a = 123",
-                    "/session",
-                    "/invalid_cmd",
                     "/repl",
+                    "/repl x = 42",
                     f"/export {export_file}",
                     "/repl reset",
                     "/exit",
                 ],
             ):
-                _run_assistant_notebook(
-                    session_id="test-nb-session",
+                _run_assistant_chat(
+                    session_id="test-chat-session",
                     backend="deterministic",
                     model=None,
+                    show_context=False,
                 )
 
-    assert mock_service.accept_turn.called
+    assert mock_service.store.get_repl_session.called
     assert mock_service.store.save_repl_session.called
     assert mock_service.store.clear_repl_session.called
     assert export_file.exists()
