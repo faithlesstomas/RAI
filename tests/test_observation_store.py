@@ -175,6 +175,95 @@ async def test_prune_expired(store: SQLiteMemoryGraphStore) -> None:
     pruned = (await store.prune_expired(now=now)).unwrap()
     assert pruned == 1
 
-    remaining = (await store.list_for_session(session_id)).unwrap()
+    remaining = (await store.list_for_session(session_id, now=now)).unwrap()
     assert len(remaining) == 1
     assert remaining[0].artifact_id == "obs_fresh"
+
+
+@pytest.mark.asyncio
+async def test_get_rejects_expired_artifact(store: SQLiteMemoryGraphStore) -> None:
+    session_id = "test-session-get-expired"
+    past = _utc_now() - timedelta(minutes=5)
+    artifact = ObservationArtifact(
+        artifact_id="obs_exp",
+        session_id=session_id,
+        turn_id="turn-1",
+        capability="browser.read_page",
+        request_id="req-exp",
+        data_class=DataClass.PUBLIC,
+        content={"text": "should not be visible"},
+        schema_summary=summarize_observation_schema({"text": "should not be visible"}),
+        size_chars=30,
+        expires_at=past,
+        producer=PRODUCER,
+    )
+    await store.put(artifact)
+
+    # get should fail closed and return None because the artifact is expired
+    res = (await store.get(session_id, "obs_exp")).unwrap()
+    assert res is None
+
+
+@pytest.mark.asyncio
+async def test_get_requires_session_id(store: SQLiteMemoryGraphStore) -> None:
+    session_id = "test-session-scoped"
+    artifact = ObservationArtifact(
+        artifact_id="obs_leak",
+        session_id=session_id,
+        turn_id="turn-1",
+        capability="test",
+        request_id="req-leak",
+        data_class=DataClass.PUBLIC,
+        content={"data": "isolated"},
+        schema_summary=ObservationSchemaSummary(),
+        size_chars=10,
+        producer=PRODUCER,
+    )
+    await store.put(artifact)
+
+    # Querying without a session_id must not return session-scoped artifact
+    res = (await store.get("", "obs_leak")).unwrap()
+    assert res is None
+
+
+@pytest.mark.asyncio
+async def test_unique_alias_collision_handling(store: SQLiteMemoryGraphStore) -> None:
+    session_id = "test-session-unique-alias"
+    art1 = ObservationArtifact(
+        artifact_id="obs_1",
+        session_id=session_id,
+        turn_id="turn-1",
+        capability="test",
+        request_id="req-u1",
+        data_class=DataClass.LOCAL,
+        content={"val": 1},
+        schema_summary=ObservationSchemaSummary(),
+        size_chars=10,
+        producer=PRODUCER,
+    )
+    saved1 = (await store.put(art1)).unwrap()
+    assert saved1.artifact_id == "obs_1"
+
+    # Insert a second artifact with different record_id but intentionally conflicting artifact_id
+    art2 = ObservationArtifact(
+        artifact_id="obs_1",
+        session_id=session_id,
+        turn_id="turn-2",
+        capability="test",
+        request_id="req-u2",
+        data_class=DataClass.LOCAL,
+        content={"val": 2},
+        schema_summary=ObservationSchemaSummary(),
+        size_chars=10,
+        producer=PRODUCER,
+    )
+    saved2 = (await store.put(art2)).unwrap()
+    # Collision is safely resolved to the next free alias (obs_2)
+    assert saved2.artifact_id == "obs_2"
+
+    # Both are accessible under their distinct aliases
+    get1 = (await store.get(session_id, "obs_1")).unwrap()
+    assert get1 is not None and get1.content["val"] == 1
+    get2 = (await store.get(session_id, "obs_2")).unwrap()
+    assert get2 is not None and get2.content["val"] == 2
+

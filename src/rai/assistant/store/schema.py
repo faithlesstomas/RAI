@@ -329,13 +329,14 @@ class SchemaStoreMixin:
                     expires_at TEXT,
                     provenance_json TEXT NOT NULL,
                     derived_from_json TEXT NOT NULL,
-                    producer_json TEXT
+                    producer_json TEXT,
+                    UNIQUE(session_id, artifact_id)
                 );
                 """
             )
             conn.execute(
                 """
-                CREATE INDEX IF NOT EXISTS idx_obs_session_artifact
+                CREATE UNIQUE INDEX IF NOT EXISTS idx_obs_session_artifact
                 ON observation_artifacts(session_id, artifact_id);
                 """
             )

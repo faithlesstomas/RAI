@@ -40,16 +40,48 @@ def process_metadata(pid: str, proc: Path = Path("/proc")) -> dict | None:
         return None
 
 
-def find_processes(query: str, limit: int | None = None) -> tuple[dict, ...]:
+def find_processes_detailed(query: str, limit: int | None = None) -> tuple[tuple[dict, ...], bool, str | None]:
     max_limit = limit if limit is not None else MAX_RESULTS
     found = []
+    hit_max_proc = False
+    hit_found_limit = False
     for count, path in enumerate(Path("/proc").iterdir()):
-        if count >= MAX_PROCESSES or len(found) >= max_limit:
+        if count >= MAX_PROCESSES:
+            hit_max_proc = True
+            break
+        if len(found) >= max_limit:
+            hit_found_limit = True
             break
         entry = process_metadata(path.name)
         if entry and (query.casefold() in entry["name"].casefold() or query == str(entry["pid"])):
             found.append(entry)
-    return tuple(found)
+    if hit_found_limit or len(found) >= max_limit:
+        return tuple(found), False, f"Process listing capped at safety guard of {max_limit}"
+    if hit_max_proc:
+        return tuple(found), False, f"Process listing exceeded scan limit of {MAX_PROCESSES} inspected processes"
+    return tuple(found), True, None
+
+
+class ProcessSearchResult(tuple[dict, ...]):
+    complete: bool
+    reason: str | None
+
+    def __new__(
+        cls,
+        items: tuple[dict, ...] | list[dict],
+        complete: bool = True,
+        reason: str | None = None,
+    ) -> "ProcessSearchResult":
+        inst = super().__new__(cls, items)
+        inst.complete = complete
+        inst.reason = reason
+        return inst
+
+
+def find_processes(query: str, limit: int | None = None) -> ProcessSearchResult:
+    procs, complete, reason = find_processes_detailed(query, limit)
+    return ProcessSearchResult(procs, complete=complete, reason=reason)
+
 
 
 class ProcessInspect:
@@ -74,7 +106,12 @@ class ProcessInspect:
         if not query.strip() or len(query) > 256:  # noqa: PLR2004
             return Failure(failure(request, "INVALID_ARGUMENT"))
         found = await asyncio.to_thread(find_processes, query)
-        complete = len(found) < MAX_RESULTS
+        complete = getattr(found, "complete", len(found) < MAX_RESULTS)
+        reason = getattr(
+            found,
+            "reason",
+            None if complete else f"Process listing capped at safety guard of {MAX_RESULTS}",
+        )
         entries = []
         for process in found:
             if cancellation.cancelled:
@@ -91,7 +128,7 @@ class ProcessInspect:
         return Success(result(request, {
             "processes": entries,
             "complete": complete,
-            "reason": None if complete else f"Process listing capped at safety guard of {MAX_RESULTS}",
+            "reason": reason,
         }, {"current_user_only": True}))
 
 

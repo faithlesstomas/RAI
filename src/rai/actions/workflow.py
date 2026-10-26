@@ -1138,7 +1138,7 @@ class BoundedStepController(InteractionController):
         )
         return Success(updated)
 
-    async def execute_generic_step(  # noqa: PLR0911, PLR0913
+    async def execute_generic_step(  # noqa: PLR0911, PLR0912, PLR0913
         self,
         workflow: BoundedWorkflow,
         capabilities: CapabilityService,

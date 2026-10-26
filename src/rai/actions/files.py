@@ -69,12 +69,12 @@ def _matches_document_query(name: str, query: str) -> bool:
     return query.casefold() in name.casefold()
 
 
-def search_documents(
+def search_documents_detailed(  # noqa: PLR0912
     roots: tuple[Path, ...],
     query: str,
     directory: Path | None = None,
     limit: int | None = None,
-) -> tuple[Document, ...]:  # noqa: PLR0912
+) -> tuple[tuple[Document, ...], bool, str | None]:
     """Bound work by visited directory entries; never read document contents."""
     max_limit = limit if limit is not None else MAX_RESULTS
     query_stripped = query.strip()
@@ -83,34 +83,36 @@ def search_documents(
     # Handle exact absolute file lookup without wildcards
     if query_path.is_absolute() and not any(c in query_stripped for c in ("*", "?", "[")):
         document = inspect_document(query_path, roots, allow_directory=True)
-        return (document,) if document else ()
+        return ((document,), True, None) if document else ((), True, None)
 
     if query_path.is_absolute():
         parent_doc = inspect_document(query_path.parent, roots, allow_directory=True)
         if not parent_doc:
-            return ()
+            return (), True, None
         search_roots = (parent_doc.path,)
         pattern = query_path.name
     elif directory is not None:
         dir_doc = inspect_document(directory, roots, allow_directory=True)
         if not dir_doc:
-            return ()
+            return (), True, None
         search_roots = (dir_doc.path,)
         pattern = query_stripped
     else:
         search_roots = roots
         pattern = query_stripped
-
     found: list[Document] = []
     pending = list(search_roots)
     visited = 0
+    hit_visited_limit = False
+    hit_found_limit = False
     while pending and visited < MAX_VISITED and len(found) < max_limit:
         curr_dir = pending.pop()
         try:
             with os.scandir(curr_dir) as entries:
                 for entry in entries:
                     visited += 1
-                    if visited > MAX_VISITED:
+                    if visited >= MAX_VISITED:
+                        hit_visited_limit = True
                         break
                     if entry.is_symlink():
                         continue
@@ -121,10 +123,42 @@ def search_documents(
                         if document:
                             found.append(document)
                             if len(found) >= max_limit:
+                                hit_found_limit = True
                                 break
         except OSError:
             continue
-    return tuple(sorted(found, key=lambda item: str(item.path)))
+    sorted_docs = tuple(sorted(found, key=lambda item: str(item.path)))
+    if hit_found_limit or (pending and len(found) >= max_limit):
+        return sorted_docs, False, f"File search capped at safety guard of {max_limit}"
+    if hit_visited_limit or (pending and visited >= MAX_VISITED):
+        return sorted_docs, False, f"File search exceeded scan limit of {MAX_VISITED} visited directory entries"
+    return sorted_docs, True, None
+
+
+class DocumentSearchResult(tuple[Document, ...]):
+    complete: bool
+    reason: str | None
+
+    def __new__(
+        cls,
+        items: tuple[Document, ...] | list[Document],
+        complete: bool = True,
+        reason: str | None = None,
+    ) -> "DocumentSearchResult":
+        inst = super().__new__(cls, items)
+        inst.complete = complete
+        inst.reason = reason
+        return inst
+
+
+def search_documents(
+    roots: tuple[Path, ...],
+    query: str,
+    directory: Path | None = None,
+    limit: int | None = None,
+) -> DocumentSearchResult:
+    docs, complete, reason = search_documents_detailed(roots, query, directory, limit)
+    return DocumentSearchResult(docs, complete=complete, reason=reason)
 
 
 class DocumentBackend(Protocol):
@@ -164,6 +198,12 @@ class FileSearch:
         if not query.strip() or len(query) > MAX_QUERY or not task_id:
             return Failure(failure(request, "INVALID_ARGUMENT"))
         documents = await asyncio.to_thread(search_documents, self.roots, query, sub_dir)
+        complete = getattr(documents, "complete", len(documents) < MAX_FILE_RESULTS)
+        reason = getattr(
+            documents,
+            "reason",
+            None if complete else f"File search capped at safety guard of {MAX_FILE_RESULTS}",
+        )
         entries = []
         for document in documents:
             if cancellation.cancelled:
@@ -179,7 +219,6 @@ class FileSearch:
                 return Failure(failure(request, issued.failure()))
             entries.append({"name": document.path.name, "path": str(document.path), "handle": issued.unwrap(),
                             "expires_at": handle.expires_at.isoformat()})
-        complete = len(entries) < MAX_FILE_RESULTS
         return Success(
             result(
                 request,
@@ -188,7 +227,7 @@ class FileSearch:
                     "limit": MAX_FILE_RESULTS,
                     "total_count": len(entries),
                     "complete": complete,
-                    "reason": None if complete else f"File search capped at safety guard of {MAX_FILE_RESULTS}",
+                    "reason": reason,
                 },
                 {"allowed_roots_checked": True},
             )

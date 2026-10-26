@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 import re
 from typing import Any
@@ -31,6 +32,7 @@ PRODUCER = ProducerIdentity(
     producer_id="rai.actions.observations", kind="capability", version="1.0.0"
 )
 MAX_REGEX_PATTERN_LEN = 200
+REGEX_TIMEOUT_SECONDS = 2.0
 
 
 def _fail(request: CapabilityRequest, code: str, message: str) -> ActionFailure:
@@ -74,9 +76,9 @@ async def _get_artifact(
     ref: str,
     session_id: str | None = None,
 ) -> ObservationArtifact | None:
-    if store is None:
+    if store is None or not session_id:
         return None
-    res = await store.get(session_id or "", ref)
+    res = await store.get(session_id, ref)
     if isinstance(res, Success):
         return res.unwrap()
     return None
@@ -90,44 +92,42 @@ class ObservationSearch:
     def __init__(self, store: ObservationStore) -> None:
         self.store = store
 
-    async def invoke(  # noqa: PLR0912
+    async def invoke(  # noqa: PLR0911, PLR0912
         self, request: CapabilityRequest, cancellation: CancellationToken
     ) -> Result[ActionResult, ActionFailure]:
         if cancellation.cancelled:
             return Failure(_fail(request, "CANCELLED", "Search cancelled"))
 
+        session_id = str(request.arguments.get("session_id", "")).strip()
         ref = str(request.arguments.get("ref", "")).strip()
         pattern = str(request.arguments.get("pattern", "")).strip()
         fields = request.arguments.get("fields")
-        is_regex = bool(request.arguments.get("regex", False))
         case_sensitive = bool(request.arguments.get("case", False))
 
+        if not session_id:
+            return Failure(_fail(request, "UNAUTHORIZED", "Missing session_id"))
         if not ref or not pattern:
             return Failure(_fail(request, "INVALID_ARGUMENT", "Missing ref or pattern"))
         if len(pattern) > MAX_REGEX_PATTERN_LEN:
             return Failure(_fail(request, "PATTERN_TOO_LONG", "Pattern exceeds limit"))
 
-        artifact = await _get_artifact(self.store, ref)
+        artifact = await _get_artifact(self.store, ref, session_id=session_id)
         if artifact is None:
             return Failure(_fail(request, "ARTIFACT_NOT_FOUND", f"Artifact {ref} not found"))
 
-        # Compile matcher
-        try:
-            flags = 0 if case_sensitive else re.IGNORECASE
-            pat = pattern if is_regex else re.escape(pattern)
-            compiled = re.compile(pat, flags)
-        except re.error as exc:
-            return Failure(_fail(request, "INVALID_REGEX", str(exc)))
+        # Linear-time literal matcher immune to ReDoS
+        flags = 0 if case_sensitive else re.IGNORECASE
+        compiled = re.compile(re.escape(pattern), flags)
 
         content = artifact.content
         matched: list[Any] = []
 
-        # Check if text artifact
         if "text" in content and isinstance(content["text"], str):
             lines = content["text"].splitlines()
             for idx, line in enumerate(lines, 1):
+                if idx % 100 == 0 and cancellation.cancelled:
+                    return Failure(_fail(request, "CANCELLED", "Search cancelled"))
                 if compiled.search(line):
-                    # provide context: previous, current, next line
                     start_ctx = max(0, idx - 2)
                     end_ctx = min(len(lines), idx + 1)
                     context_snippet = "\n".join(lines[start_ctx:end_ctx])
@@ -137,8 +137,10 @@ class ObservationSearch:
                         "context": context_snippet,
                     })
         else:
-            list_key, records = _extract_primary_list(content)
-            for item in records:
+            _, records = _extract_primary_list(content)
+            for count, item in enumerate(records):
+                if count % 100 == 0 and cancellation.cancelled:
+                    return Failure(_fail(request, "CANCELLED", "Search cancelled"))
                 if isinstance(item, dict):
                     search_keys = fields if fields else list(item.keys())
                     item_matched = False
@@ -189,15 +191,18 @@ class ObservationFilter:
         if cancellation.cancelled:
             return Failure(_fail(request, "CANCELLED", "Filter cancelled"))
 
+        session_id = str(request.arguments.get("session_id", "")).strip()
         ref = str(request.arguments.get("ref", "")).strip()
         field = str(request.arguments.get("field", "")).strip()
         op = str(request.arguments.get("op", "equals")).strip().lower()
         val = request.arguments.get("value")
 
+        if not session_id:
+            return Failure(_fail(request, "UNAUTHORIZED", "Missing session_id"))
         if not ref or not field:
             return Failure(_fail(request, "INVALID_ARGUMENT", "Missing ref or field"))
 
-        artifact = await _get_artifact(self.store, ref)
+        artifact = await _get_artifact(self.store, ref, session_id=session_id)
         if artifact is None:
             return Failure(_fail(request, "ARTIFACT_NOT_FOUND", f"Artifact {ref} not found"))
 
@@ -280,14 +285,17 @@ class ObservationSlice:
         if cancellation.cancelled:
             return Failure(_fail(request, "CANCELLED", "Slice cancelled"))
 
+        session_id = str(request.arguments.get("session_id", "")).strip()
         ref = str(request.arguments.get("ref", "")).strip()
         offset = max(0, int(request.arguments.get("offset", 0)))
         limit = min(1000, max(1, int(request.arguments.get("limit", 20))))
 
+        if not session_id:
+            return Failure(_fail(request, "UNAUTHORIZED", "Missing session_id"))
         if not ref:
             return Failure(_fail(request, "INVALID_ARGUMENT", "Missing ref"))
 
-        artifact = await _get_artifact(self.store, ref)
+        artifact = await _get_artifact(self.store, ref, session_id=session_id)
         if artifact is None:
             return Failure(_fail(request, "ARTIFACT_NOT_FOUND", f"Artifact {ref} not found"))
 
@@ -336,20 +344,24 @@ class ObservationCount:
         if cancellation.cancelled:
             return Failure(_fail(request, "CANCELLED", "Count cancelled"))
 
+        session_id = str(request.arguments.get("session_id", "")).strip()
         ref = str(request.arguments.get("ref", "")).strip()
         field = request.arguments.get("field")
 
+        if not session_id:
+            return Failure(_fail(request, "UNAUTHORIZED", "Missing session_id"))
         if not ref:
             return Failure(_fail(request, "INVALID_ARGUMENT", "Missing ref"))
 
-        artifact = await _get_artifact(self.store, ref)
+        artifact = await _get_artifact(self.store, ref, session_id=session_id)
         if artifact is None:
             return Failure(_fail(request, "ARTIFACT_NOT_FOUND", f"Artifact {ref} not found"))
 
         _, records = _extract_primary_list(artifact.content)
 
+        output: dict[str, Any]
         if not field:
-            output: dict[str, Any] = {
+            output = {
                 "ref": ref,
                 "total_count": len(records),
             }
@@ -372,6 +384,19 @@ class ObservationCount:
                 "counts": dict(sorted(counts.items(), key=lambda x: x[1], reverse=True)),
             }
 
+        derived_id = await persist_observation_artifact(
+            store=self.store,
+            session_id=artifact.session_id,
+            turn_id=artifact.turn_id,
+            capability=self.name,
+            request_id=request.record_id,
+            data_class=artifact.data_class,
+            output=output,
+            derived_from=(ref,),
+        )
+        if derived_id:
+            output["artifact_id"] = derived_id
+
         return Success(_ok(request, output, {"source_artifact_id": ref}))
 
 
@@ -383,24 +408,33 @@ class ObservationGet:
     def __init__(self, store: ObservationStore) -> None:
         self.store = store
 
-    async def invoke(
+    async def invoke(  # noqa: PLR0911
         self, request: CapabilityRequest, cancellation: CancellationToken
     ) -> Result[ActionResult, ActionFailure]:
         if cancellation.cancelled:
             return Failure(_fail(request, "CANCELLED", "Get cancelled"))
 
+        session_id = str(request.arguments.get("session_id", "")).strip()
         ref = str(request.arguments.get("ref", "")).strip()
         path = str(request.arguments.get("path", "")).strip()
 
+        if not session_id:
+            return Failure(_fail(request, "UNAUTHORIZED", "Missing session_id"))
         if not ref or not path:
             return Failure(_fail(request, "INVALID_ARGUMENT", "Missing ref or path"))
+        if path == "/" or not path.strip("/"):
+            return Failure(_fail(request, "INVALID_POINTER", "JSON pointer must specify a field or index, not root '/'"))
 
-        artifact = await _get_artifact(self.store, ref)
+        artifact = await _get_artifact(self.store, ref, session_id=session_id)
         if artifact is None:
             return Failure(_fail(request, "ARTIFACT_NOT_FOUND", f"Artifact {ref} not found"))
 
-        # Navigate JSON pointer
-        segments = [s for s in path.strip("/").split("/") if s]
+        # Navigate RFC 6901 JSON pointer
+        raw_segments = path.strip("/").split("/")
+        segments = [
+            seg.replace("~1", "/").replace("~0", "~")
+            for seg in raw_segments
+        ]
         curr: Any = artifact.content
         try:
             for seg in segments:
@@ -429,52 +463,56 @@ def register_observation_capabilities(
         (
             ObservationSearch(store),
             {
+                "session_id": {"type": "string", "description": "Session identifier for session-scoped artifacts"},
                 "ref": {"type": "string", "description": "Artifact reference handle (e.g. obs_1)"},
-                "pattern": {"type": "string", "description": "Text or regex search pattern"},
+                "pattern": {"type": "string", "description": "Substring search pattern"},
                 "fields": {"type": "array", "items": {"type": "string"}, "description": "Optional fields to restrict search to"},
-                "regex": {"type": "boolean", "description": "Whether pattern is regex"},
                 "case": {"type": "boolean", "description": "Case-sensitive search"},
             },
-            ["ref", "pattern"],
+            ["session_id", "ref", "pattern"],
             "Search within a stored observation artifact without loading all data into prompt.",
         ),
         (
             ObservationFilter(store),
             {
+                "session_id": {"type": "string", "description": "Session identifier for session-scoped artifacts"},
                 "ref": {"type": "string", "description": "Artifact reference handle (e.g. obs_1)"},
                 "field": {"type": "string", "description": "Field name to filter on"},
                 "op": {"type": "string", "enum": ["contains", "equals", "startswith", "endswith", "in", "gt", "gte", "lt", "lte"]},
                 "value": {"description": "Target value to compare against"},
             },
-            ["ref", "field", "op", "value"],
+            ["session_id", "ref", "field", "op", "value"],
             "Filter records inside a stored observation artifact by structured conditions.",
         ),
         (
             ObservationSlice(store),
             {
+                "session_id": {"type": "string", "description": "Session identifier for session-scoped artifacts"},
                 "ref": {"type": "string", "description": "Artifact reference handle (e.g. obs_1)"},
                 "offset": {"type": "integer", "minimum": 0, "default": 0},
                 "limit": {"type": "integer", "minimum": 1, "maximum": 1000, "default": 20},
             },
-            ["ref"],
+            ["session_id", "ref"],
             "Retrieve a pagination slice of records or text lines from a stored artifact.",
         ),
         (
             ObservationCount(store),
             {
+                "session_id": {"type": "string", "description": "Session identifier for session-scoped artifacts"},
                 "ref": {"type": "string", "description": "Artifact reference handle (e.g. obs_1)"},
                 "field": {"type": "string", "description": "Optional field for group-by count"},
             },
-            ["ref"],
+            ["session_id", "ref"],
             "Count records or group-by frequency distribution in a stored artifact.",
         ),
         (
             ObservationGet(store),
             {
+                "session_id": {"type": "string", "description": "Session identifier for session-scoped artifacts"},
                 "ref": {"type": "string", "description": "Artifact reference handle (e.g. obs_1)"},
                 "path": {"type": "string", "description": "JSON pointer path (e.g. /applications/0/name)"},
             },
-            ["ref", "path"],
+            ["session_id", "ref", "path"],
             "Extract one field or record from a stored artifact using JSON pointer notation.",
         ),
     )

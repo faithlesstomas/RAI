@@ -3,10 +3,10 @@
 
 from __future__ import annotations
 
+import asyncio
 from pathlib import Path
-from typing import Any
 import pytest
-from returns.result import Success
+from returns.result import Failure, Success
 
 from rai.actions.observations import (
     register_observation_capabilities,
@@ -15,7 +15,7 @@ from rai.assistant.records import ObservationArtifact, summarize_observation_sch
 from rai.assistant.store import SQLiteMemoryGraphStore
 from rai.kernel.capabilities import CapabilityRegistry
 from rai.kernel.ports import CancellationToken
-from rai.kernel.records import CapabilityRequest, DataClass, ProducerIdentity
+from rai.kernel.records import ActionResult, CapabilityRequest, DataClass, ProducerIdentity
 from rai.kernel.transport import normalize_request
 
 ACTOR = ProducerIdentity(producer_id="user", kind="user", version="1.0.0")
@@ -33,7 +33,7 @@ def registry(store: SQLiteMemoryGraphStore) -> CapabilityRegistry:
     return reg
 
 
-async def _invoke(registry: CapabilityRegistry, req: CapabilityRequest) -> Any:
+async def _invoke(registry: CapabilityRegistry, req: CapabilityRequest) -> ActionResult:
     cap_res = registry.resolve(req)
     assert isinstance(cap_res, Success)
     res = await cap_res.unwrap().invoke(req, CancellationToken())
@@ -71,7 +71,7 @@ async def test_observation_search_records(
     assert desc is not None
     req = normalize_request(
         desc,
-        {"ref": "obs_apps", "pattern": "player"},
+        {"session_id": "session-1", "ref": "obs_apps", "pattern": "player"},
         actor=ACTOR,
         data_class=DataClass.LOCAL,
     )
@@ -113,7 +113,7 @@ async def test_observation_search_text_lines(
     assert desc is not None
     req = normalize_request(
         desc,
-        {"ref": "obs_page", "pattern": "treasure"},
+        {"session_id": "session-1", "ref": "obs_page", "pattern": "treasure"},
         actor=ACTOR,
         data_class=DataClass.PUBLIC,
     )
@@ -159,7 +159,7 @@ async def test_observation_filter(
     # 1. contains
     req1 = normalize_request(
         desc,
-        {"ref": "obs_files", "field": "name", "op": "contains", "value": "re"},
+        {"session_id": "session-1", "ref": "obs_files", "field": "name", "op": "contains", "value": "re"},
         actor=ACTOR,
         data_class=DataClass.LOCAL,
     )
@@ -169,7 +169,7 @@ async def test_observation_filter(
     # 2. numeric gt
     req2 = normalize_request(
         desc,
-        {"ref": "obs_files", "field": "size", "op": "gt", "value": 1000},
+        {"session_id": "session-1", "ref": "obs_files", "field": "size", "op": "gt", "value": 1000},
         actor=ACTOR,
         data_class=DataClass.LOCAL,
     )
@@ -201,7 +201,7 @@ async def test_observation_slice(
     assert desc is not None
     req = normalize_request(
         desc,
-        {"ref": "obs_seq", "offset": 10, "limit": 5},
+        {"session_id": "session-1", "ref": "obs_seq", "offset": 10, "limit": 5},
         actor=ACTOR,
         data_class=DataClass.LOCAL,
     )
@@ -243,22 +243,24 @@ async def test_observation_count(
     # Total count
     req1 = normalize_request(
         desc,
-        {"ref": "obs_procs"},
+        {"session_id": "session-1", "ref": "obs_procs"},
         actor=ACTOR,
         data_class=DataClass.LOCAL,
     )
     out1 = (await _invoke(registry, req1)).output
     assert out1["total_count"] == 5
+    assert "artifact_id" in out1
 
     # Group by field
     req2 = normalize_request(
         desc,
-        {"ref": "obs_procs", "field": "state"},
+        {"session_id": "session-1", "ref": "obs_procs", "field": "state"},
         actor=ACTOR,
         data_class=DataClass.LOCAL,
     )
     out2 = (await _invoke(registry, req2)).output
     assert out2["counts"] == {"S": 3, "R": 1, "Z": 1}
+    assert "artifact_id" in out2
 
 
 @pytest.mark.asyncio
@@ -290,12 +292,234 @@ async def test_observation_get_json_pointer(
     assert desc is not None
     req = normalize_request(
         desc,
-        {"ref": "obs_ptr", "path": "/applications/1/name"},
+        {"session_id": "session-1", "ref": "obs_ptr", "path": "/applications/1/name"},
         actor=ACTOR,
         data_class=DataClass.LOCAL,
     )
     out = (await _invoke(registry, req)).output
     assert out["value"] == "App1"
+
+
+@pytest.mark.asyncio
+async def test_observation_session_isolation_refuses_cross_session_access(
+    registry: CapabilityRegistry, store: SQLiteMemoryGraphStore
+) -> None:
+    content = {"secret_notes": ["Private user data in session A"]}
+    art = ObservationArtifact(
+        artifact_id="obs_private",
+        session_id="session-A",
+        turn_id="turn-A",
+        capability="test",
+        request_id="req-A",
+        data_class=DataClass.LOCAL,
+        content=content,
+        schema_summary=summarize_observation_schema(content),
+        size_chars=100,
+        producer=ACTOR,
+    )
+    await store.put(art)
+
+    # Attempt to read session-A artifact from session-B
+    desc = registry.descriptor("observation.search")
+    assert desc is not None
+    req = normalize_request(
+        desc,
+        {"session_id": "session-B", "ref": "obs_private", "pattern": "Private"},
+        actor=ACTOR,
+        data_class=DataClass.LOCAL,
+    )
+    cap_res = registry.resolve(req)
+    assert isinstance(cap_res, Success)
+    res = await cap_res.unwrap().invoke(req, CancellationToken())
+    assert isinstance(res, Failure)
+    assert res.failure().code == "ARTIFACT_NOT_FOUND"
+
+
+@pytest.mark.asyncio
+async def test_observation_requires_session_id(
+    registry: CapabilityRegistry, store: SQLiteMemoryGraphStore
+) -> None:
+    desc = registry.descriptor("observation.search")
+    assert desc is not None
+
+    # Missing session_id -> schema rejection
+    req1 = normalize_request(
+        desc,
+        {"ref": "obs_any", "pattern": "test"},
+        actor=ACTOR,
+        data_class=DataClass.LOCAL,
+    )
+    cap_res1 = registry.resolve(req1)
+    assert isinstance(cap_res1, Success)
+    res1 = await cap_res1.unwrap().invoke(req1, CancellationToken())
+    assert isinstance(res1, Failure)
+    assert res1.failure().code == "INVALID_ARGUMENT"
+    assert "session_id" in res1.failure().message
+
+    # Empty session_id -> capability rejection
+    req2 = normalize_request(
+        desc,
+        {"session_id": "   ", "ref": "obs_any", "pattern": "test"},
+        actor=ACTOR,
+        data_class=DataClass.LOCAL,
+    )
+    cap_res2 = registry.resolve(req2)
+    assert isinstance(cap_res2, Success)
+    res2 = await cap_res2.unwrap().invoke(req2, CancellationToken())
+    assert isinstance(res2, Failure)
+    assert res2.failure().code == "UNAUTHORIZED"
+
+
+@pytest.mark.asyncio
+async def test_observation_search_redos_safe(
+    registry: CapabilityRegistry, store: SQLiteMemoryGraphStore
+) -> None:
+    # Evil pattern is escaped and treated as safe literal substring, finishing instantly
+    evil_text = "a" * 35 + "!"
+    art = ObservationArtifact(
+        artifact_id="obs_evil",
+        session_id="session-timeout",
+        turn_id="turn-timeout",
+        capability="test",
+        request_id="req-evil",
+        data_class=DataClass.LOCAL,
+        content={"text": evil_text},
+        schema_summary=summarize_observation_schema({"text": evil_text}),
+        size_chars=len(evil_text),
+        producer=ACTOR,
+    )
+    await store.put(art)
+
+    desc = registry.descriptor("observation.search")
+    assert desc is not None
+    req = normalize_request(
+        desc,
+        {
+            "session_id": "session-timeout",
+            "ref": "obs_evil",
+            "pattern": "^(a+)+$",
+        },
+        actor=ACTOR,
+        data_class=DataClass.LOCAL,
+    )
+    res = await _invoke(registry, req)
+    assert res.output["total_matches"] == 0
+
+
+@pytest.mark.asyncio
+async def test_observation_search_cancellation(
+    registry: CapabilityRegistry, store: SQLiteMemoryGraphStore
+) -> None:
+    lines = "\n".join(f"Line {i}: test data content" for i in range(500))
+    art = ObservationArtifact(
+        artifact_id="obs_cancel",
+        session_id="session-cancel",
+        turn_id="turn-cancel",
+        capability="test",
+        request_id="req-cancel",
+        data_class=DataClass.LOCAL,
+        content={"text": lines},
+        schema_summary=summarize_observation_schema({"text": lines}),
+        size_chars=len(lines),
+        producer=ACTOR,
+    )
+    await store.put(art)
+
+    token = CancellationToken()
+    token.cancel()
+
+    desc = registry.descriptor("observation.search")
+    assert desc is not None
+    req = normalize_request(
+        desc,
+        {"session_id": "session-cancel", "ref": "obs_cancel", "pattern": "Line"},
+        actor=ACTOR,
+        data_class=DataClass.LOCAL,
+    )
+    cap_res = registry.resolve(req)
+    assert isinstance(cap_res, Success)
+    res = await cap_res.unwrap().invoke(req, token)
+    assert isinstance(res, Failure)
+    assert res.failure().code == "CANCELLED"
+
+
+@pytest.mark.asyncio
+async def test_observation_get_rfc6901_unescaping(
+    registry: CapabilityRegistry, store: SQLiteMemoryGraphStore
+) -> None:
+    content = {
+        "special/key": "slash_value",
+        "tilde~key": "tilde_value",
+    }
+    art = ObservationArtifact(
+        artifact_id="obs_rfc",
+        session_id="session-rfc",
+        turn_id="turn-rfc",
+        capability="test",
+        request_id="req-rfc",
+        data_class=DataClass.LOCAL,
+        content=content,
+        schema_summary=summarize_observation_schema(content),
+        size_chars=100,
+        producer=ACTOR,
+    )
+    await store.put(art)
+
+    desc = registry.descriptor("observation.get")
+    assert desc is not None
+
+    # Test ~1 decoding to /
+    req1 = normalize_request(
+        desc,
+        {"session_id": "session-rfc", "ref": "obs_rfc", "path": "/special~1key"},
+        actor=ACTOR,
+        data_class=DataClass.LOCAL,
+    )
+    res1 = (await _invoke(registry, req1)).output
+    assert res1["value"] == "slash_value"
+
+    # Test ~0 decoding to ~
+    req2 = normalize_request(
+        desc,
+        {"session_id": "session-rfc", "ref": "obs_rfc", "path": "/tilde~0key"},
+        actor=ACTOR,
+        data_class=DataClass.LOCAL,
+    )
+    res2 = (await _invoke(registry, req2)).output
+    assert res2["value"] == "tilde_value"
+
+
+@pytest.mark.asyncio
+async def test_observation_get_root_pointer_rejected(
+    registry: CapabilityRegistry, store: SQLiteMemoryGraphStore
+) -> None:
+    art = ObservationArtifact(
+        artifact_id="obs_root",
+        session_id="session-root",
+        turn_id="turn-root",
+        capability="test",
+        request_id="req-root",
+        data_class=DataClass.LOCAL,
+        content={"key": "val"},
+        schema_summary=summarize_observation_schema({"key": "val"}),
+        size_chars=50,
+        producer=ACTOR,
+    )
+    await store.put(art)
+
+    desc = registry.descriptor("observation.get")
+    assert desc is not None
+    req = normalize_request(
+        desc,
+        {"session_id": "session-root", "ref": "obs_root", "path": "/"},
+        actor=ACTOR,
+        data_class=DataClass.LOCAL,
+    )
+    cap_res = registry.resolve(req)
+    assert isinstance(cap_res, Success)
+    res = await cap_res.unwrap().invoke(req, CancellationToken())
+    assert isinstance(res, Failure)
+    assert res.failure().code == "INVALID_POINTER"
 
 
 def test_register_observation_capabilities(store: SQLiteMemoryGraphStore) -> None:

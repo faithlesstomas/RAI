@@ -282,7 +282,7 @@ class ObservationSchemaSummary(BaseModel):
     primitive_types: dict[str, str] = Field(default_factory=dict)
 
 
-def summarize_observation_schema(content: Any) -> ObservationSchemaSummary:
+def summarize_observation_schema(content: object) -> ObservationSchemaSummary:
     """Extract structural metadata from an observation dictionary without retaining bulky values."""
     if not isinstance(content, dict):
         return ObservationSchemaSummary()

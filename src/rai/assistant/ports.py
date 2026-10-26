@@ -252,11 +252,11 @@ class ObservationStore(Protocol):
     ) -> Result[ObservationArtifact, ActionFailure]: ...
 
     async def get(
-        self, session_id: str, artifact_id_or_stable_id: str
+        self, session_id: str, artifact_id_or_stable_id: str, now: datetime | None = None
     ) -> Result[ObservationArtifact | None, ActionFailure]: ...
 
     async def list_for_session(
-        self, session_id: str, limit: int = 100
+        self, session_id: str, limit: int = 100, now: datetime | None = None
     ) -> Result[tuple[ObservationArtifact, ...], ActionFailure]: ...
 
     async def delete_for_session(

@@ -1,8 +1,10 @@
 """File search and selection preserve allowed-root identity across user turns."""
 from pathlib import Path
+from pytest import MonkeyPatch
 
 from returns.result import Failure, Result, Success
 
+from rai.actions import files
 from rai.actions.assistant import AssistantActions
 from rai.actions.capabilities import register_application_capabilities
 from rai.actions.execution import SQLiteExecutionStore
@@ -90,7 +92,7 @@ async def test_followup_opens_selected_result_and_rejects_replacement(tmp_path: 
         await assistant.stop()
 
 
-def test_absolute_document_query_stays_within_allowed_roots(tmp_path):
+def test_absolute_document_query_stays_within_allowed_roots(tmp_path: Path) -> None:
     allowed = tmp_path / 'allowed'
     allowed.mkdir()
     document = allowed / 'note.md'
@@ -99,3 +101,47 @@ def test_absolute_document_query_stays_within_allowed_roots(tmp_path):
     outside.write_text('outside')
     assert search_documents((allowed,), str(document))[0].path == document
     assert search_documents((allowed,), str(allowed / '..' / 'outside.md')) == ()
+
+
+def test_search_documents_detailed_limits(tmp_path: Path, monkeypatch: MonkeyPatch) -> None:
+    allowed = tmp_path / "allowed"
+    allowed.mkdir()
+    for i in range(10):
+        (allowed / f"file_{i}.txt").write_text("content")
+
+    monkeypatch.setattr(files, "MAX_VISITED", 5)
+    limit = 2
+    docs, complete, reason = files.search_documents_detailed((allowed,), "file", limit=limit)
+    assert len(docs) == limit
+    assert complete is False
+    assert "capped at safety guard" in (reason or "")
+
+    monkeypatch.setattr(files, "MAX_VISITED", 3)
+    docs2, complete2, reason2 = files.search_documents_detailed((allowed,), "file_9")
+    assert complete2 is False
+    assert "scan limit" in (reason2 or "")
+
+
+async def test_file_search_reports_incomplete_when_scan_limit_exceeded(
+    tmp_path: Path, monkeypatch: MonkeyPatch
+) -> None:
+    allowed = tmp_path / "allowed"
+    allowed.mkdir()
+    for i in range(10):
+        (allowed / f"file_{i}.txt").write_text("content")
+    (allowed / "target_match.txt").write_text("content")
+
+    monkeypatch.setattr(files, "MAX_VISITED", 3)
+
+    handles = SQLiteHandleStore(tmp_path / "handles.db")
+    registry = CapabilityRegistry()
+    register_file_capabilities(registry, (allowed,), handles, backend=None)
+    descriptor = registry.descriptor("file.search")
+    implementation = files.FileSearch((allowed,), handles)
+
+    request = normalize_request(descriptor, {"task_id": "search-task", "query": "target"})
+    outcome = await implementation.invoke(request, CancellationToken())
+    res = outcome.unwrap()
+    assert res.output["complete"] is False
+    assert "scan limit" in (res.output["reason"] or "")
+
