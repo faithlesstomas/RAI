@@ -106,7 +106,6 @@ def can_run_in_monty(code: str) -> Tuple[bool, str]:  # noqa: PLR0911, PLR0912
 
 
 _repl_session_locks_guard = threading.Lock()
-_fallback_repl_locks: dict[tuple[str, str], asyncio.Lock] = {}
 
 
 def clear_session_repl_locks(loop: Optional[asyncio.AbstractEventLoop] = None) -> None:
@@ -114,14 +113,11 @@ def clear_session_repl_locks(loop: Optional[asyncio.AbstractEventLoop] = None) -
     try:
         target_loop = loop or asyncio.get_running_loop()
     except RuntimeError:
-        with _repl_session_locks_guard:
-            _fallback_repl_locks.clear()
         return
 
     with _repl_session_locks_guard:
         if hasattr(target_loop, "_rai_repl_locks"):
             target_loop._rai_repl_locks.clear()
-        _fallback_repl_locks.clear()
 
 
 async def get_session_repl_lock(profile_scope: str, session_id: str) -> asyncio.Lock:
@@ -133,12 +129,9 @@ async def get_session_repl_lock(profile_scope: str, session_id: str) -> asyncio.
     loop = asyncio.get_running_loop()
     key = (profile_scope, session_id)
     with _repl_session_locks_guard:
-        try:
-            if not hasattr(loop, "_rai_repl_locks"):
-                loop._rai_repl_locks = {}
-            locks = loop._rai_repl_locks
-        except AttributeError:
-            locks = _fallback_repl_locks
+        if not hasattr(loop, "_rai_repl_locks"):
+            loop._rai_repl_locks = {}
+        locks: dict[tuple[str, str], asyncio.Lock] = loop._rai_repl_locks
 
         if key not in locks:
             locks[key] = asyncio.Lock()

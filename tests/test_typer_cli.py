@@ -315,11 +315,12 @@ def test_dialog_preserves_classification_for_remote_backend(
                     data_class=data_class,
                 )
             else:
-                with patch("rai.commands.dialog.click.prompt", side_effect=["hello", "/exit"]):
-                    _run_assistant_chat(
-                        None, "antigravity", "gemini-3.8-flash", False,
-                        data_class=data_class,
-                    )
+                with patch("sys.stdin.isatty", return_value=False):
+                    with patch("rai.commands.dialog.click.prompt", side_effect=["hello", "/exit"]):
+                        _run_assistant_chat(
+                            None, "antigravity", "gemini-3.8-flash", False,
+                            data_class=data_class,
+                        )
     turn = mock_service.accept_turn.call_args[0][0]
     assert turn.data_class == data_class
 
