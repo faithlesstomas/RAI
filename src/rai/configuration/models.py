@@ -45,6 +45,7 @@ class ModelSettings(SettingsRecord):
     interaction_controller: Literal["direct", "bounded_step", "workspace"] = "bounded_step"
     max_iterations: int | None = Field(default=None, ge=1)
     max_full_observations: int = Field(default=3, ge=1)
+    bypass_intent_recognizer: bool = True
 
     @field_validator("max_iterations", mode="before")
     @classmethod

@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import asyncio
 from dataclasses import dataclass
+import fnmatch
 import hashlib
 import os
 from pathlib import Path
@@ -53,18 +54,51 @@ def inspect_document(path: Path, roots: tuple[Path, ...], *, allow_directory: bo
         return None
 
 
-def search_documents(roots: tuple[Path, ...], query: str) -> tuple[Document, ...]:
+def _matches_document_query(name: str, query: str) -> bool:
+    """Match document filename by glob pattern, extension, or case-insensitive substring."""
+    query = query.strip()
+    if not query:
+        return False
+    if any(char in query for char in ("*", "?", "[")):
+        return fnmatch.fnmatch(name.casefold(), query.casefold())
+    if query.startswith("."):
+        return name.casefold().endswith(query.casefold())
+    return query.casefold() in name.casefold()
+
+
+def search_documents(roots: tuple[Path, ...], query: str, directory: Path | None = None) -> tuple[Document, ...]:  # noqa: PLR0912
     """Bound work by visited directory entries; never read document contents."""
-    if Path(query).is_absolute():
-        document = inspect_document(Path(query), roots, allow_directory=True)
+    query_stripped = query.strip()
+    query_path = Path(query_stripped)
+
+    # Handle exact absolute file lookup without wildcards
+    if query_path.is_absolute() and not any(c in query_stripped for c in ("*", "?", "[")):
+        document = inspect_document(query_path, roots, allow_directory=True)
         return (document,) if document else ()
+
+    if query_path.is_absolute():
+        parent_doc = inspect_document(query_path.parent, roots, allow_directory=True)
+        if not parent_doc:
+            return ()
+        search_roots = (parent_doc.path,)
+        pattern = query_path.name
+    elif directory is not None:
+        dir_doc = inspect_document(directory, roots, allow_directory=True)
+        if not dir_doc:
+            return ()
+        search_roots = (dir_doc.path,)
+        pattern = query_stripped
+    else:
+        search_roots = roots
+        pattern = query_stripped
+
     found: list[Document] = []
-    pending = list(roots)
+    pending = list(search_roots)
     visited = 0
     while pending and visited < MAX_VISITED and len(found) < MAX_RESULTS:
-        directory = pending.pop()
+        curr_dir = pending.pop()
         try:
-            with os.scandir(directory) as entries:
+            with os.scandir(curr_dir) as entries:
                 for entry in entries:
                     visited += 1
                     if visited > MAX_VISITED:
@@ -73,7 +107,7 @@ def search_documents(roots: tuple[Path, ...], query: str) -> tuple[Document, ...
                         continue
                     if entry.is_dir(follow_symlinks=False):
                         pending.append(Path(entry.path))
-                    elif query.casefold() in entry.name.casefold():
+                    elif _matches_document_query(entry.name, pattern):
                         document = inspect_document(Path(entry.path), roots)
                         if document:
                             found.append(document)
@@ -114,11 +148,13 @@ class FileSearch:
     async def invoke(self, request: CapabilityRequest, cancellation: CancellationToken) -> Result[ActionResult, ActionFailure]:
         query = request.arguments["query"]
         task_id = request.arguments["task_id"]
+        directory_val = request.arguments.get("directory")
+        sub_dir = Path(directory_val) if directory_val else None
         if not self.roots:
             return Failure(failure(request, "FILE_ROOTS_NOT_CONFIGURED"))
         if not query.strip() or len(query) > MAX_QUERY or not task_id:
             return Failure(failure(request, "INVALID_ARGUMENT"))
-        documents = await asyncio.to_thread(search_documents, self.roots, query)
+        documents = await asyncio.to_thread(search_documents, self.roots, query, sub_dir)
         entries = []
         for document in documents:
             if cancellation.cancelled:
@@ -134,7 +170,7 @@ class FileSearch:
                 return Failure(failure(request, issued.failure()))
             entries.append({"name": document.path.name, "path": str(document.path), "handle": issued.unwrap(),
                             "expires_at": handle.expires_at.isoformat()})
-        return Success(result(request, {"documents": entries, "limit": MAX_RESULTS}, {"allowed_roots_checked": True}))
+        return Success(result(request, {"documents": entries, "limit": MAX_RESULTS, "total_count": len(entries)}, {"allowed_roots_checked": True}))
 
 
 class FileList:
@@ -239,8 +275,13 @@ def register_file_capabilities(registry: CapabilityRegistry, roots: tuple[Path, 
         properties = {name: {"type": "string"} for name in fields}
         if implementation.name == "document.open":
             properties["application_handle"] = {"type": "string"}
+        elif implementation.name == "file.search":
+            properties["directory"] = {"type": "string"}
+        description = f"Bounded {implementation.name} (v1)."
+        if implementation.name == "file.search":
+            description = "Search allowed roots for files matching name, substring, or glob pattern (e.g. *.pdf)."
         registry.register(RegisteredCapability(CapabilityDescriptor(
-            name=implementation.name, description=f"Bounded {implementation.name} (v1).",
+            name=implementation.name, description=description,
             input_schema={"type": "object", "properties": properties,
                           "required": list(fields), "additionalProperties": False},
             risk_class=risk, side_effects=effects, isolation="host-api", verification_plan=checks,

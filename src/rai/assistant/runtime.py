@@ -56,6 +56,7 @@ class AssistantRuntimeConfig:
     interaction_controller: str = "bounded_step"
     max_iterations: int | None = None
     max_full_observations: int = 3
+    bypass_intent_recognizer: bool = True
 
 
 def _discover_gguf(search_root: Path) -> Path | None:
@@ -157,6 +158,20 @@ def resolve_assistant_config(  # noqa: PLR0912, PLR0913, PLR0915
 
     resolved_max_full_obs = int(assistant.get("max_full_observations", 3))
 
+    raw_bypass = assistant.get("bypass_intent_recognizer")
+    if isinstance(raw_bypass, str):
+        resolved_bypass = raw_bypass.strip().lower() in ("true", "1", "yes", "on")
+    elif raw_bypass is not None:
+        resolved_bypass = bool(raw_bypass)
+    else:
+        resolved_bypass = True
+
+    raw_thinking = enable_thinking if enable_thinking is not None else assistant.get("enable_thinking", False)
+    if isinstance(raw_thinking, str):
+        resolved_enable_thinking = raw_thinking.strip().lower() in ("true", "1", "yes", "on")
+    else:
+        resolved_enable_thinking = bool(raw_thinking)
+
     if backend == "deterministic":
         return AssistantRuntimeConfig(
             backend=backend,
@@ -177,6 +192,17 @@ def resolve_assistant_config(  # noqa: PLR0912, PLR0913, PLR0915
             memory_sufficiency_threshold=float(
                 assistant.get("memory_sufficiency_threshold", 0.75)
             ),
+            enable_thinking=resolved_enable_thinking,
+            thinking_budget=(
+                thinking_budget
+                if thinking_budget is not None
+                else assistant.get("thinking_budget")
+            ),
+            thinking_level=(
+                thinking_level
+                if thinking_level is not None
+                else (assistant.get("thinking_level") or local_ai.get("thinking_level"))
+            ),
             interaction_controller=str(
                 assistant.get("interaction_controller")
                 or local_ai.get("interaction_controller")
@@ -185,6 +211,7 @@ def resolve_assistant_config(  # noqa: PLR0912, PLR0913, PLR0915
             ),
             max_iterations=resolved_max_iterations,
             max_full_observations=resolved_max_full_obs,
+            bypass_intent_recognizer=resolved_bypass,
         )
 
     if backend == "antigravity":
@@ -275,11 +302,7 @@ def resolve_assistant_config(  # noqa: PLR0912, PLR0913, PLR0915
         memory_sufficiency_threshold=float(
             assistant.get("memory_sufficiency_threshold", 0.75)
         ),
-        enable_thinking=bool(
-            enable_thinking
-            if enable_thinking is not None
-            else assistant.get("enable_thinking", False)
-        ),
+        enable_thinking=resolved_enable_thinking,
         thinking_budget=(
             thinking_budget
             if thinking_budget is not None
@@ -298,6 +321,7 @@ def resolve_assistant_config(  # noqa: PLR0912, PLR0913, PLR0915
         ),
         max_iterations=resolved_max_iterations,
         max_full_observations=resolved_max_full_obs,
+        bypass_intent_recognizer=resolved_bypass,
     )
 
 

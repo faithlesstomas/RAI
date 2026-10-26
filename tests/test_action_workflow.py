@@ -1,4 +1,4 @@
-# ruff: noqa: PLR2004, PLR0915
+# ruff: noqa: PLR2004, PLR0915, PLC0415
 """Unit tests for bounded research workflow and task step controller."""
 
 from pathlib import Path
@@ -809,3 +809,183 @@ def test_local_backend_deduplicates_tool_observations_in_bounded_step() -> None:
     assert "Tool and action execution results" in user_msg_normal
     assert "browser.read_page" in user_msg_normal
 
+
+async def test_bounded_step_controller_propagates_action_result_to_candidate_and_context(tmp_path: Path) -> None:
+    from typing import NoReturn
+    from rai.assistant.context import AssistantContextBuilder
+    from rai.assistant.ports import AssistantModelBackend
+    from rai.assistant.records import AssistantCandidate, AssistantContextManifest, AssistantContextPackage, ConversationTurn, InferenceRequest
+    from rai.kernel.ports import LifecycleState
+    from rai.kernel.records import InferenceBudget, _new_id, _utc_now
+
+    registry = CapabilityRegistry()
+    registry.register(
+        RegisteredCapability(
+            CapabilityDescriptor(
+                name="file.search",
+                description="Search for files matching query",
+                input_schema={"type": "object", "properties": {"query": {"type": "string"}}},
+                risk_class=RiskClass.LOW,
+                side_effects=(),
+                isolation="host-api",
+                verification_plan=("observed",),
+            ),
+            handler=lambda req: {
+                "total_count": 2,
+                "documents": [
+                    {"name": "doc1.md", "path": "/tmp/doc1.md"},
+                    {"name": "doc2.md", "path": "/tmp/doc2.md"},
+                ],
+            },
+        )
+    )
+    handles = SQLiteHandleStore(tmp_path / "handles.db")
+    audit = InMemoryAuditLedger()
+    capabilities = ActionCapabilityService(registry, PolicyEngine(), audit, SyntheticApprovalBroker())
+    capabilities.handles = handles
+    capabilities.executions = SQLiteExecutionStore(tmp_path / "executions.db")
+
+    class StepBackend(AssistantModelBackend):
+        def __init__(self) -> None:
+            self.turn_count = 0
+            self.model_name = "mock-step-model"
+
+        @property
+        def state(self) -> LifecycleState:
+            return LifecycleState.RUNNING
+
+        @property
+        def is_remote(self) -> bool:
+            return False
+
+        async def start(self) -> Result[LifecycleState, ActionFailure]:
+            return Success(LifecycleState.RUNNING)
+
+        async def stop(self) -> Result[LifecycleState, ActionFailure]:
+            return Success(LifecycleState.STOPPED)
+
+        async def generate(
+            self, request: InferenceRequest, cancellation: CancellationToken
+        ) -> Result[AssistantCandidate, ActionFailure]:
+            del cancellation, request
+            self.turn_count += 1
+            if self.turn_count == 1:
+                return Success(
+                    AssistantCandidate(
+                        text='<tool_call>call: file.search{"query": "*.md"}</tool_call>',
+                        tokens_in=20,
+                        tokens_out=10,
+                    )
+                )
+            return Success(
+                AssistantCandidate(
+                    text="Found 2 markdown documents.",
+                    tokens_in=30,
+                    tokens_out=10,
+                )
+            )
+
+        def stream(self, request: InferenceRequest, cancellation: CancellationToken) -> NoReturn:
+            del request, cancellation
+            raise NotImplementedError
+
+    backend = StepBackend()
+    ledger = SyntheticUsageLedger()
+    controller = BoundedStepController(
+        capabilities=capabilities,
+        backend=backend,
+        ledger=ledger,
+        limits=BoundedWorkflowLimits(max_steps=10, max_tool_calls=2),
+    )
+
+    producer = ProducerIdentity(producer_id="user", kind="user", version="1.0.0")
+    turn = ConversationTurn(
+        record_id="turn-1",
+        producer=producer,
+        session_id="session-1",
+        role="user",
+        text="Find all markdown files",
+        data_class=DataClass.PUBLIC,
+        domain_scope="global",
+    )
+    manifest = AssistantContextManifest(
+        record_id=_new_id(),
+        timestamp=_utc_now(),
+        producer=producer,
+        session_id="session-1",
+        turn_id="turn-1",
+    )
+    context = AssistantContextPackage(
+        record_id=_new_id(),
+        timestamp=_utc_now(),
+        producer=producer,
+        session_id="session-1",
+        turn_id="turn-1",
+        manifest=manifest,
+        content={"current_turn": {"text": turn.text}},
+    )
+    now = _utc_now()
+    budget = InferenceBudget(
+        record_id=_new_id(),
+        timestamp=now,
+        producer=producer,
+        max_input_tokens=2048,
+        max_output_tokens=256,
+        max_agent_turns=4,
+        max_tool_calls=5,
+        max_images=0,
+        max_audio_seconds=0,
+        max_latency_seconds=60,
+        max_provider_cost=0,
+        max_ram_bytes=1024 * 1024,
+        max_vram_bytes=0,
+        cancellation_deadline=now,
+    )
+
+    res = await controller.process_turn(turn, context, budget, CancellationToken())
+    assert isinstance(res, Success)
+    cand = res.unwrap()
+    assert "Found 2 markdown documents" in cand.text
+    assert "action_result" in cand.metadata
+    act_res = cand.metadata["action_result"]
+    assert act_res["capability"] == "file.search"
+    assert act_res["status"] == "SUCCEEDED"
+    assert act_res["output"]["total_count"] == 2
+    assert len(act_res["output"]["documents"]) == 2
+
+    # Verify that AssistantContextBuilder reconstructs the ToolObservation in the next turn
+    from unittest.mock import AsyncMock
+
+    asst_turn = ConversationTurn(
+        record_id="turn-2",
+        producer=ProducerIdentity(producer_id="assistant", kind="assistant", version="1.0.0"),
+        session_id="session-1",
+        role="assistant",
+        text=cand.text,
+        data_class=DataClass.PUBLIC,
+        domain_scope="global",
+        metadata={"action": cand.metadata},
+    )
+    user_turn_2 = ConversationTurn(
+        record_id="turn-3",
+        producer=producer,
+        session_id="session-1",
+        role="user",
+        text="What were those files?",
+        data_class=DataClass.PUBLIC,
+        domain_scope="global",
+    )
+    mock_store = AsyncMock()
+    mock_store.get_recent_reply_chain.return_value = Success((turn, asst_turn))
+    mock_store.retrieve_relevant_memories.return_value = Success(())
+    mock_store.retrieve_relevant_turns.return_value = Success(())
+
+    builder = AssistantContextBuilder(store=mock_store)
+    ctx_res = await builder.build_context(turn=user_turn_2)
+    assert isinstance(ctx_res, Success)
+    ctx_pkg = ctx_res.unwrap()
+    tool_obs = ctx_pkg.content.get("tool_observations", [])
+    assert len(tool_obs) == 1
+    assert tool_obs[0]["capability"] == "file.search"
+    assert tool_obs[0]["content"]["total_count"] == 2
+    assert len(tool_obs[0]["content"]["documents"]) == 2

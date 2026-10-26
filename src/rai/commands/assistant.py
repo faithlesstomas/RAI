@@ -62,8 +62,10 @@ def ask_command(  # noqa: PLR0913
         "--thinking/--no-thinking",
         help="Enable or disable model chain-of-thought thinking.",
     ),
-    show_thinking: bool = typer.Option(
-        False, "--show-thinking", help="Print model reasoning content in the output."
+    show_thinking: bool | None = typer.Option(
+        None,
+        "--show-thinking/--no-show-thinking",
+        help="Print model reasoning content in the output.",
     ),
     thinking_budget: int | None = typer.Option(
         None,
@@ -178,8 +180,10 @@ def chat_command(  # noqa: PLR0913
         "--thinking/--no-thinking",
         help="Enable or disable model chain-of-thought thinking.",
     ),
-    show_thinking: bool = typer.Option(
-        False, "--show-thinking", help="Print model reasoning content in the output."
+    show_thinking: bool | None = typer.Option(
+        None,
+        "--show-thinking/--no-show-thinking",
+        help="Print model reasoning content in the output.",
     ),
     thinking_budget: int | None = typer.Option(
         None,

@@ -478,3 +478,133 @@ def test_chat_repl_save_failure_handling() -> None:
 
     mock_container.monty_runner.run.assert_called_once()
     mock_service.store.save_repl_session.assert_called_once()
+
+
+@pytest.mark.parametrize("command", ["ask", "chat"])
+@pytest.mark.parametrize(
+    "flags,expected_thinking,expected_show_thinking",
+    [
+        (["--thinking"], True, None),
+        (["--no-thinking"], False, None),
+        (["--show-thinking"], None, True),
+        (["--no-show-thinking"], None, False),
+        (["--thinking", "--show-thinking"], True, True),
+        (["--thinking", "--no-show-thinking"], True, False),
+    ],
+)
+def test_cli_thinking_flags_propagation(
+    command: str,
+    flags: list[str],
+    expected_thinking: bool | None,
+    expected_show_thinking: bool | None,
+) -> None:
+    with patch(f"rai.commands.assistant._run_assistant_{command}") as run:
+        result = CliRunner().invoke(
+            cli,
+            ["assistant", command, *(["hello"] if command == "ask" else []), *flags],
+        )
+    assert result.exit_code == 0, result.output
+    assert run.call_args.kwargs["thinking"] is expected_thinking
+    assert run.call_args.kwargs["show_thinking"] is expected_show_thinking
+
+
+@pytest.mark.parametrize(
+    "thinking_arg,show_thinking_arg,expected_echo_thinking",
+    [
+        (True, None, True),  # --thinking defaults show to True
+        (True, False, False),  # --thinking --no-show-thinking hides thinking
+        (None, True, True),  # --show-thinking enables thinking and shows it
+        (False, None, False),  # --no-thinking disables thinking and hides it
+    ],
+)
+def test_ask_thinking_show_thinking_resolution(
+    thinking_arg: bool | None,
+    show_thinking_arg: bool | None,
+    expected_echo_thinking: bool,
+) -> None:
+    mock_container = MagicMock()
+    mock_service = MagicMock()
+    mock_candidate = MagicMock(
+        text="result text",
+        reasoning_content="internal reasoning process",
+        admitted_memory_ids=(),
+        manifest_id="m-1",
+    )
+    mock_service.accept_turn = AsyncMock(return_value=Success(mock_candidate))
+    mock_service.start = AsyncMock(return_value=Success(None))
+    mock_service.backend.enable_thinking = False
+    mock_container.assistant_service = mock_service
+    mock_container.close = AsyncMock()
+
+    with patch("rai.container.ApplicationContainer", return_value=mock_container) as container_cls:
+        with patch("rai.commands.approval.configure_approvals"):
+            with patch("rai.commands.dialog.click.secho") as mock_secho:
+                _run_assistant_ask(
+                    prompt="hello",
+                    session_id=None,
+                    backend="deterministic",
+                    model="test-model",
+                    show_context=False,
+                    thinking=thinking_arg,
+                    show_thinking=show_thinking_arg,
+                )
+
+    called_config = container_cls.call_args.kwargs["config"]
+    cli_overrides = called_config.get("_cli_overrides", {})
+    if show_thinking_arg is True and thinking_arg is None:
+        assert cli_overrides.get("enable_thinking") is True
+    elif thinking_arg is not None:
+        assert cli_overrides.get("enable_thinking") is thinking_arg
+
+    if expected_echo_thinking:
+        assert mock_secho.call_count == 1
+        assert "internal reasoning process" in mock_secho.call_args[0][0]
+    else:
+        assert mock_secho.call_count == 0
+
+
+def test_chat_slash_command_thinking_synchronization() -> None:
+    mock_container = MagicMock()
+    mock_service = MagicMock()
+    mock_candidate = MagicMock(
+        turn_id="turn-resp-1",
+        text="answer",
+        reasoning_content="step-by-step reasoning",
+        admitted_memory_ids=(),
+        manifest_id="m-1",
+    )
+    mock_service.accept_turn = AsyncMock(return_value=Success(mock_candidate))
+    mock_service.start = AsyncMock(return_value=Success(None))
+    mock_service.get_recent_turns = AsyncMock(return_value=Success(()))
+    mock_service.store.get_latest_manifest_for_session = AsyncMock(return_value=Success(None))
+    mock_service.backend.enable_thinking = False
+    mock_container.assistant_service = mock_service
+    mock_container.close = AsyncMock()
+
+    prompts = [
+        "/thinking on",
+        "question 1",
+        "/thinking hide",
+        "question 2",
+        "/thinking show",
+        "question 3",
+        "/thinking off",
+        "question 4",
+        "/exit",
+    ]
+    with patch("rai.container.ApplicationContainer", return_value=mock_container):
+        with patch("rai.commands.approval.configure_approvals"):
+            with patch("rai.commands.dialog.click.prompt", side_effect=prompts):
+                with patch("rai.commands.dialog.click.secho") as mock_secho:
+                    _run_assistant_chat(
+                        session_id=None,
+                        backend="deterministic",
+                        model="test-model",
+                        show_context=False,
+                    )
+
+    # question 1 (/thinking on -> show=True) -> secho called
+    # question 2 (/thinking hide -> show=False) -> secho not called
+    # question 3 (/thinking show -> show=True) -> secho called
+    # question 4 (/thinking off -> show=True but thinking=False -> service.backend.enable_thinking is False)
+    assert mock_secho.call_count == 2

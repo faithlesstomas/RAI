@@ -54,7 +54,12 @@ def effective_model_settings(
                             else (
                                 int(env[name])
                                 if key == "max_iterations"
-                                else env[name]
+                                else (
+                                    str(env[name]).strip().lower()
+                                    in ("true", "1", "yes", "on")
+                                    if key in ("bypass_intent_recognizer", "enable_thinking")
+                                    else env[name]
+                                )
                             )
                         )
                     )
@@ -69,6 +74,8 @@ def effective_model_settings(
                     "max_iterations": "RAI_MAX_ITERATIONS",
                     "max_full_observations": "RAI_MAX_FULL_OBSERVATIONS",
                     "max_context_characters": "RAI_MAX_CONTEXT_CHARACTERS",
+                    "bypass_intent_recognizer": "RAI_BYPASS_INTENT_RECOGNIZER",
+                    "enable_thinking": "RAI_ENABLE_THINKING",
                 }.items()
                 if env.get(name) is not None
             },

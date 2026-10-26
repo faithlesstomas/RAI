@@ -36,7 +36,7 @@ class AssistantActions:
         self.store, self.profile = store, profile
 
     async def handle(  # noqa: PLR0911, PLR0912, PLR0915
-        self, turn: ConversationTurn, cancellation: CancellationToken,
+        self, turn: ConversationTurn, cancellation: CancellationToken, *, choice_frame_only: bool = False,
     ) -> AssistantCandidate | None:
         if turn.role != "user":
             return None
@@ -106,6 +106,8 @@ class AssistantActions:
                                     ),
                                     metadata={"choice_rejected": "FRAME_INACTIVE", "frame_id": latest_frame.record_id},
                                 )
+        if choice_frame_only:
+            return None
         trace("assistant.intent.start", turn_id=turn.record_id)
         recognized = await self.recognizer.recognize(turn, cancellation)
         if isinstance(recognized, Failure):
@@ -184,7 +186,9 @@ class AssistantActions:
             from .routing import route_action  # noqa: PLC0415
             return await route_action(self.capabilities, self.store, self.profile, turn, intent, cancellation)
         query = intent.query.strip()
-        task_id = f"action:{turn.record_id}"
+        step_id = turn.metadata.get("step_id")
+        req_suffix = f":step_{step_id}" if step_id else ""
+        task_id = f"action:{turn.record_id}{req_suffix}"
         if intent.selection is not None:
             previous = await previous_action(self.store, turn, self.profile)
             choices = previous.get("action_choices", {})
@@ -197,14 +201,35 @@ class AssistantActions:
         else:
             descriptor = self.capabilities.registry.descriptor("application.list")
             if descriptor is None:
-                return AssistantCandidate(text=message("Uruchamianie aplikacji jest niedostępne.", "Application launching is unavailable."))
+                return AssistantCandidate(
+                    text=message("Uruchamianie aplikacji jest niedostępne.", "Application launching is unavailable."),
+                    metadata={
+                        "action_result": {
+                            "capability": "application.list",
+                            "code": "CAPABILITY_UNAVAILABLE",
+                            "message": "Application launching is unavailable.",
+                            "status": "FAILED",
+                        },
+                        "remote_tokens": 0,
+                    },
+                )
             listing = normalize_request(
                 descriptor, {"task_id": task_id, "query": query}, actor=turn.producer,
-                request_id=f"{turn.record_id}:applications", data_class=turn.data_class,
+                request_id=f"{turn.record_id}{req_suffix}:applications", data_class=turn.data_class,
             )
             _, listed = await self.capabilities.invoke(listing, cancellation)
             if isinstance(listed, Failure):
-                return AssistantCandidate(text=message(f"Nie mogę sprawdzić aplikacji: {listed.failure().code}.", f"Application discovery failed: {listed.failure().code}."))
+                fail = listed.failure()
+                fail_dump = fail.model_dump(mode="json") if hasattr(fail, "model_dump") else {
+                    "capability": "application.list",
+                    "code": getattr(fail, "code", "APP_LIST_FAILED"),
+                    "message": getattr(fail, "message", f"Application discovery failed: {fail.code}."),
+                    "status": "FAILED",
+                }
+                return AssistantCandidate(
+                    text=message(f"Nie mogę sprawdzić aplikacji: {fail.code}.", f"Application discovery failed: {fail.code}."),
+                    metadata={"action_result": fail_dump, "remote_tokens": 0},
+                )
             applications = listed.unwrap().output["applications"]
             exact = [app for app in applications if query.casefold() in
                      {app["name"].casefold(), app["desktop_id"].casefold()}]
@@ -255,10 +280,21 @@ class AssistantActions:
         )
         descriptor = self.capabilities.registry.descriptor(proposal.capability)
         if descriptor is None:
-            return AssistantCandidate(text=message("Uruchamianie aplikacji jest niedostępne.", "Application launching is unavailable."))
+            return AssistantCandidate(
+                text=message("Uruchamianie aplikacji jest niedostępne.", "Application launching is unavailable."),
+                metadata={
+                    "action_result": {
+                        "capability": proposal.capability,
+                        "code": "CAPABILITY_UNAVAILABLE",
+                        "message": "Application launching is unavailable.",
+                        "status": "FAILED",
+                    },
+                    "remote_tokens": 0,
+                },
+            )
         request = normalize_request(
             descriptor, {"task_id": proposal.task_id, "handle": proposal.resource_handle},
-            actor=turn.producer, request_id=f"{turn.record_id}:launch", data_class=turn.data_class,
+            actor=turn.producer, request_id=f"{turn.record_id}{req_suffix}:launch", data_class=turn.data_class,
         )
         decision, executed = await self.capabilities.invoke(request, cancellation)
         terminal = executed.failure() if isinstance(executed, Failure) else executed.unwrap()
@@ -296,11 +332,13 @@ class AssistantActions:
         if descriptor is None:
             return AssistantCandidate(text=message("Funkcja jest niedostępna.", "Capability unavailable."))
 
+        step_id = turn.metadata.get("step_id")
+        req_suffix = f":step_{step_id}" if step_id else ""
         request = normalize_request(
             descriptor,
             {"task_id": proposal.task_id, "handle": proposal.resource_handle},
             actor=turn.producer,
-            request_id=f"{turn.record_id}:{proposal.capability}",
+            request_id=f"{turn.record_id}{req_suffix}:{proposal.capability}",
             data_class=turn.data_class,
         )
         decision, executed = await self.capabilities.invoke(request, cancellation)
@@ -346,18 +384,41 @@ class AssistantActions:
 
     async def _document_intent(self, turn: ConversationTurn, intent: ActionIntent,  # noqa: PLR0911, PLR0912, PLR0915
                                cancellation: CancellationToken) -> AssistantCandidate:
-        task_id = f"action:{turn.record_id}"
+        step_id = turn.metadata.get("step_id")
+        req_suffix = f":step_{step_id}" if step_id else ""
+        task_id = f"action:{turn.record_id}{req_suffix}"
         descriptor = self.capabilities.registry.descriptor(intent.outcome)
         if descriptor is None:
-            return AssistantCandidate(text=("Obsługa dokumentów jest niedostępna."
-                                            if intent.language == "pl" else "Document actions are unavailable."))
+            return AssistantCandidate(
+                text=("Obsługa dokumentów jest niedostępna."
+                      if intent.language == "pl" else "Document actions are unavailable."),
+                metadata={
+                    "action_result": {
+                        "capability": intent.outcome,
+                        "code": "CAPABILITY_UNAVAILABLE",
+                        "message": "Document actions are unavailable.",
+                        "status": "FAILED",
+                    },
+                    "remote_tokens": 0,
+                },
+            )
         if intent.outcome == "file.access":
             request = normalize_request(descriptor, {"task_id": task_id}, actor=turn.producer,
-                                        request_id=f"{turn.record_id}:file-access", data_class=turn.data_class)
+                                        request_id=f"{turn.record_id}{req_suffix}:file-access", data_class=turn.data_class)
             _, accessed = await self.capabilities.invoke(request, cancellation)
             if isinstance(accessed, Failure):
-                return AssistantCandidate(text=("Nie mogę odczytać konfiguracji dostępu." if intent.language == "pl"
-                                                else "Could not read access configuration."))
+                fail = accessed.failure()
+                fail_dump = fail.model_dump(mode="json") if hasattr(fail, "model_dump") else {
+                    "capability": "file.access",
+                    "code": getattr(fail, "code", "ACCESS_FAILED"),
+                    "message": getattr(fail, "message", "Could not read access configuration."),
+                    "status": "FAILED",
+                }
+                return AssistantCandidate(
+                    text=("Nie mogę odczytać konfiguracji dostępu." if intent.language == "pl"
+                          else "Could not read access configuration."),
+                    metadata={"action_result": fail_dump, "remote_tokens": 0},
+                )
             roots = accessed.unwrap().output["allowed_roots"]
             if intent.language == "pl":
                 text = ("Dozwolone katalogi wyszukiwania i otwierania dokumentów:\n" + "\n".join(f"- {root}" for root in roots)
@@ -370,11 +431,21 @@ class AssistantActions:
             return AssistantCandidate(text=text, metadata={"action_result": accessed.unwrap().model_dump(mode="json"), "remote_tokens": 0})
         if intent.outcome == "file.list":
             request = normalize_request(descriptor, {"query": intent.query, "task_id": task_id},
-                                        actor=turn.producer, request_id=f"{turn.record_id}:file-list", data_class=turn.data_class)
+                                        actor=turn.producer, request_id=f"{turn.record_id}{req_suffix}:file-list", data_class=turn.data_class)
             _, listed = await self.capabilities.invoke(request, cancellation)
             if isinstance(listed, Failure):
-                return AssistantCandidate(text=(f"Nie mogę wylistować katalogu: {listed.failure().code}."
-                    if intent.language == "pl" else f"Cannot list directory: {listed.failure().code}."))
+                fail = listed.failure()
+                fail_dump = fail.model_dump(mode="json") if hasattr(fail, "model_dump") else {
+                    "capability": "file.list",
+                    "code": getattr(fail, "code", "LIST_FAILED"),
+                    "message": getattr(fail, "message", f"Cannot list directory: {fail.code}."),
+                    "status": "FAILED",
+                }
+                return AssistantCandidate(
+                    text=(f"Nie mogę wylistować katalogu: {fail.code}."
+                          if intent.language == "pl" else f"Cannot list directory: {fail.code}."),
+                    metadata={"action_result": fail_dump, "remote_tokens": 0},
+                )
             output = listed.unwrap().output
             text = "\n".join(f"- {entry['name']} ({entry['kind']})" for entry in output["entries"])
             if output["truncated"]:
@@ -383,20 +454,35 @@ class AssistantActions:
                 metadata={"action_result": listed.unwrap().model_dump(mode="json"), "remote_tokens": 0})
         if intent.outcome == "file.search":
             descriptor = self.capabilities.registry.descriptor("file.search")
-            request = normalize_request(descriptor, {"query": intent.query, "task_id": task_id},
-                                        actor=turn.producer, request_id=f"{turn.record_id}:file-search", data_class=turn.data_class)
+            search_args = {"query": intent.query, "task_id": task_id}
+            if getattr(intent, "directory", None):
+                search_args["directory"] = intent.directory
+            request = normalize_request(descriptor, search_args,
+                                        actor=turn.producer, request_id=f"{turn.record_id}{req_suffix}:file-search", data_class=turn.data_class)
             _, fetched = await self.capabilities.invoke(request, cancellation)
             if isinstance(fetched, Failure):
-                if fetched.failure().code == "FILE_ROOTS_NOT_CONFIGURED":
-                    return AssistantCandidate(text=(
+                fail = fetched.failure()
+                fail_dump = fail.model_dump(mode="json") if hasattr(fail, "model_dump") else {
+                    "capability": "file.search",
+                    "code": getattr(fail, "code", "SEARCH_FAILED"),
+                    "message": getattr(fail, "message", f"Document search failed: {fail.code}."),
+                    "status": "FAILED",
+                }
+                if fail.code == "FILE_ROOTS_NOT_CONFIGURED":
+                    text = (
                         "Nie mogę wyszukać ani otworzyć pliku: nie skonfigurowano dozwolonych katalogów. "
                         "Ustaw actions.allowed_file_roots w konfiguracji RAI, a następnie uruchom rozmowę ponownie."
                         if intent.language == "pl" else
                         "File search/open is unavailable: no directories are configured. "
-                        "Set actions.allowed_file_roots in the RAI configuration, then restart the conversation."))
-                return AssistantCandidate(text=(f"Wyszukiwanie dokumentów nie powiodło się: {fetched.failure().code}."
-                                                if intent.language == "pl" else
-                                                f"Document search failed: {fetched.failure().code}."))
+                        "Set actions.allowed_file_roots in the RAI configuration, then restart the conversation.")
+                else:
+                    text = (f"Wyszukiwanie dokumentów nie powiodło się: {fail.code}."
+                            if intent.language == "pl" else
+                            f"Document search failed: {fail.code}.")
+                return AssistantCandidate(
+                    text=text,
+                    metadata={"action_result": fail_dump, "remote_tokens": 0},
+                )
             fetched_res = fetched.unwrap()
             entries = fetched_res.output["documents"]
             text = "\n".join(f"{i}. {item['name']}" for i, item in enumerate(entries, 1))
@@ -461,12 +547,33 @@ class AssistantActions:
         if intent.application:
             app_descriptor = self.capabilities.registry.descriptor("application.list")
             if app_descriptor is None:
-                return AssistantCandidate(text="Application selection unavailable.")
+                return AssistantCandidate(
+                    text="Application selection unavailable.",
+                    metadata={
+                        "action_result": {
+                            "capability": "application.list",
+                            "code": "CAPABILITY_UNAVAILABLE",
+                            "message": "Application selection unavailable.",
+                            "status": "FAILED",
+                        },
+                        "remote_tokens": 0,
+                    },
+                )
             listing = normalize_request(app_descriptor, {"task_id": choices["task_id"], "query": intent.application},
-                actor=turn.producer, request_id=f"{turn.record_id}:document-applications", data_class=turn.data_class)
+                actor=turn.producer, request_id=f"{turn.record_id}{req_suffix}:document-applications", data_class=turn.data_class)
             _, apps = await self.capabilities.invoke(listing, cancellation)
             if isinstance(apps, Failure):
-                return AssistantCandidate(text="Nie mogę sprawdzić aplikacji." if intent.language == "pl" else "Cannot resolve application.")
+                fail = apps.failure()
+                fail_dump = fail.model_dump(mode="json") if hasattr(fail, "model_dump") else {
+                    "capability": "application.list",
+                    "code": getattr(fail, "code", "APP_LIST_FAILED"),
+                    "message": getattr(fail, "message", "Cannot resolve application."),
+                    "status": "FAILED",
+                }
+                return AssistantCandidate(
+                    text="Nie mogę sprawdzić aplikacji." if intent.language == "pl" else "Cannot resolve application.",
+                    metadata={"action_result": fail_dump, "remote_tokens": 0},
+                )
             matches = apps.unwrap().output["applications"]
             exact = [app for app in matches if intent.application.casefold() in {app["desktop_id"].casefold(), app["name"].casefold()}]
             matches = exact or matches
@@ -476,7 +583,7 @@ class AssistantActions:
                     else "Specify the application and path: ") + (names or intent.application))
             arguments["application_handle"] = matches[0]["handle"]
         request = normalize_request(descriptor, arguments,
-                                    actor=turn.producer, request_id=f"{turn.record_id}:document-open", data_class=turn.data_class)
+                                    actor=turn.producer, request_id=f"{turn.record_id}{req_suffix}:document-open", data_class=turn.data_class)
         decision, executed = await self.capabilities.invoke(request, cancellation)
         terminal = executed.failure() if isinstance(executed, Failure) else executed.unwrap()
         text = (("Otwarcie dokumentu potwierdzone." if intent.language == "pl" else "Document opening verified.")
@@ -494,25 +601,44 @@ class AssistantActions:
         descriptor = self.capabilities.registry.descriptor("application.list")
         if descriptor is None:
             return AssistantCandidate(
-                text=message("Lista aplikacji jest niedostępna.", "Application listing is unavailable.")
+                text=message("Lista aplikacji jest niedostępna.", "Application listing is unavailable."),
+                metadata={
+                    "action_result": {
+                        "capability": "application.list",
+                        "code": "CAPABILITY_UNAVAILABLE",
+                        "message": "Application listing unavailable.",
+                        "status": "FAILED",
+                    },
+                    "remote_tokens": 0,
+                },
             )
-        task_id = f"action:{turn.record_id}"
+        step_id = turn.metadata.get("step_id")
+        req_suffix = f":step_{step_id}" if step_id else ""
+        task_id = f"action:{turn.record_id}{req_suffix}"
         query_str = intent.query.strip()
         listing = normalize_request(
             descriptor, {"task_id": task_id, "query": query_str}, actor=turn.producer,
-            request_id=f"{turn.record_id}:applications", data_class=turn.data_class,
+            request_id=f"{turn.record_id}{req_suffix}:applications", data_class=turn.data_class,
         )
         _, listed = await self.capabilities.invoke(listing, cancellation)
         if isinstance(listed, Failure):
+            fail = listed.failure()
+            fail_dump = fail.model_dump(mode="json") if hasattr(fail, "model_dump") else {
+                "capability": "application.list",
+                "code": getattr(fail, "code", "APP_LIST_FAILED"),
+                "message": getattr(fail, "message", f"Application discovery failed: {fail.code}."),
+                "status": "FAILED",
+            }
             return AssistantCandidate(
-                text=message(f"Nie mogę sprawdzić aplikacji: {listed.failure().code}.",
-                             f"Application discovery failed: {listed.failure().code}.")
+                text=message(f"Nie mogę sprawdzić aplikacji: {fail.code}.",
+                             f"Application discovery failed: {fail.code}."),
+                metadata={"action_result": fail_dump, "remote_tokens": 0},
             )
         applications = listed.unwrap().output["applications"]
         if not applications and query_str:
             fallback_listing = normalize_request(
                 descriptor, {"task_id": task_id, "query": ""}, actor=turn.producer,
-                request_id=f"{turn.record_id}:applications:all", data_class=turn.data_class,
+                request_id=f"{turn.record_id}{req_suffix}:applications:all", data_class=turn.data_class,
             )
             _, fallback_listed = await self.capabilities.invoke(fallback_listing, cancellation)
             if isinstance(fallback_listed, Success):

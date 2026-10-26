@@ -46,8 +46,10 @@ the configured document roots and current editing limitations. Opening an
 absolute document path first resolves it within these roots, then uses the
 same handle and approval path as a selected search result.
 
-File search has no allowed roots by default. It searches supported document
-filenames, excludes symlinks and executable files, and bounds traversal and
+File search has no allowed roots by default. It matches supported document
+filenames using glob patterns (e.g. `*.pdf`, `*test*`, `doc?.txt`), file extensions
+(`.pdf`), or case-insensitive substrings, and optionally scopes searches to a specified
+`directory`. It excludes symlinks and executable files, and bounds traversal and
 results. It does not search document content.
 
 Browser open/read requires an explicitly configured Chromium debugging endpoint
@@ -73,7 +75,7 @@ identity/state metadata, excluding command arguments, environment and memory.
 | `application.launch` | Application handle | PID, executable and start time |
 | `file.access` | Document access scope | Runtime configuration |
 | `file.list` | Absolute allowed directory path | Direct metadata listing; no symlink traversal |
-| `file.search` | Document filename query | Allowed-root metadata |
+| `file.search` | Document filename query, glob pattern or extension; optional directory | Allowed-root metadata |
 | `document.open` | File/directory handle and optional application handle | File descriptor identity or FileManager1 location and process identity |
 | `browser.search` | Public web query | Search response, issued result handles |
 | `browser.open_result` | Search-result handle | Observed browser URL |

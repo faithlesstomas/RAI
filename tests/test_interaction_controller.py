@@ -332,6 +332,13 @@ async def test_bounded_step_controller_process_turn_agentic_loop() -> None:
     candidate = result.unwrap()
     assert "Found 2 applications in the system" in candidate.text
     assert candidate.metadata.get("tool_calls_executed") == 1
+    assert "action_result" in candidate.metadata
+    assert candidate.metadata["action_result"]["capability"] == "application.list"
+    assert tuple(candidate.metadata["action_result"]["output"]["applications"]) == (
+        "Files.desktop",
+        "Calculator.desktop",
+    )
+    assert candidate.metadata["action_result"]["status"] == "SUCCEEDED"
     min_expected_steps = 2
     assert candidate.metadata.get("steps_count") >= min_expected_steps
 
@@ -703,6 +710,7 @@ async def test_application_list_semantic_query_fallback_and_in_turn_chaining(
         capabilities=cap_service,
         backend=FilteringModelBackend(),
         actions=actions,
+        bypass_intent_recognizer=False,
     )
 
     producer = ProducerIdentity(producer_id="user", kind="user", version="1.0.0")
