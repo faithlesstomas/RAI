@@ -1,5 +1,6 @@
 """Public Typer contracts replacing removed compatibility CLI tests."""
 
+from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -11,10 +12,12 @@ from rai.commands import approval
 from rai.commands.dialog import _run_assistant_ask, _run_assistant_chat
 from rai.kernel.ports import CancellationToken
 from rai.kernel.records import DataClass, ProducerIdentity
+from rai.tools.security.monty import MontyExecutionResult
 from rai.assistant.records import (
     AssistantContextManifest,
     AssistantContextManifestItem,
     AssistantContextPackage,
+    make_assistant_failure,
 )
 
 
@@ -312,10 +315,166 @@ def test_dialog_preserves_classification_for_remote_backend(
                     data_class=data_class,
                 )
             else:
-                with patch("rai.commands.dialog.click.prompt", side_effect=["hello", "/exit"]):
-                    _run_assistant_chat(
-                        None, "antigravity", "gemini-3.8-flash", False,
-                        data_class=data_class,
-                    )
+                with patch("sys.stdin.isatty", return_value=False):
+                    with patch("rai.commands.dialog.click.prompt", side_effect=["hello", "/exit"]):
+                        _run_assistant_chat(
+                            None, "antigravity", "gemini-3.8-flash", False,
+                            data_class=data_class,
+                        )
     turn = mock_service.accept_turn.call_args[0][0]
     assert turn.data_class == data_class
+
+
+def test_chat_repl_and_export_commands(tmp_path: Path) -> None:
+    mock_container = MagicMock()
+    mock_service = MagicMock()
+    mock_service.profile_scope = "default"
+    mock_service.backend.is_remote = False
+    mock_service.start = AsyncMock(return_value=Success(None))
+    mock_service.get_recent_turns = AsyncMock(return_value=Success(()))
+    mock_service.store.get_latest_manifest_for_session = AsyncMock(return_value=Success(None))
+    mock_service.store.get_repl_session = AsyncMock(
+        return_value=Success((b"snapshot-bytes", {"x": "int"}))
+    )
+    mock_service.store.save_repl_session = AsyncMock(return_value=Success(None))
+    mock_service.store.clear_repl_session = AsyncMock(return_value=Success(None))
+
+    mock_container.assistant_service = mock_service
+    mock_container.monty_runner.run.return_value = Success(
+        MontyExecutionResult(output="42", session_blob=b"updated-blob", variables={"x": "int"})
+    )
+    mock_container.monty_runner.inspect_values.return_value = Success(
+        {"x": {"type": "int", "value": "42"}}
+    )
+    mock_container.close = AsyncMock()
+
+    export_file = tmp_path / "session_export.ipynb"
+
+    with patch("rai.container.ApplicationContainer", return_value=mock_container):
+        with patch("rai.commands.approval.configure_approvals"):
+            with patch("sys.stdin.isatty", return_value=False):
+                with patch(
+                    "rai.commands.dialog.click.prompt",
+                    side_effect=[
+                        "/repl",
+                        "/repl x = 42",
+                        f"/export {export_file}",
+                        "/repl reset",
+                        "/exit",
+                    ],
+                ):
+                    _run_assistant_chat(
+                        session_id="test-chat-session",
+                        backend="deterministic",
+                        model=None,
+                        show_context=False,
+                    )
+
+    assert mock_service.store.get_repl_session.called
+    assert mock_service.store.save_repl_session.called
+    assert mock_service.store.clear_repl_session.called
+    assert export_file.exists()
+
+
+def test_chat_repl_storage_failure_handling() -> None:
+    mock_container = MagicMock()
+    mock_service = MagicMock()
+    mock_service.profile_scope = "default"
+    mock_service.backend.is_remote = False
+    mock_service.start = AsyncMock(return_value=Success(None))
+    mock_service.get_recent_turns = AsyncMock(return_value=Success(()))
+    mock_service.store.get_latest_manifest_for_session = AsyncMock(return_value=Success(None))
+    # Transient load failure
+    mock_service.store.get_repl_session = AsyncMock(
+        return_value=Failure(
+            make_assistant_failure(
+                code="GET_REPL_FAILED",
+                message="Corrupt SQLite disk",
+                request_id="r-1",
+            )
+        )
+    )
+    mock_service.store.save_repl_session = AsyncMock()
+    mock_service.store.clear_repl_session = AsyncMock(
+        return_value=Failure(
+            make_assistant_failure(
+                code="CLEAR_REPL_FAILED",
+                message="Disk read only",
+                request_id="r-2",
+            )
+        )
+    )
+
+    mock_container.assistant_service = mock_service
+    mock_container.monty_runner.run = MagicMock()
+    mock_container.close = AsyncMock()
+
+    with patch("rai.container.ApplicationContainer", return_value=mock_container):
+        with patch("rai.commands.approval.configure_approvals"):
+            with patch("sys.stdin.isatty", return_value=False):
+                with patch(
+                    "rai.commands.dialog.click.prompt",
+                    side_effect=[
+                        "/repl",
+                        "/repl x = 1",
+                        "/repl reset",
+                        "/exit",
+                    ],
+                ):
+                    _run_assistant_chat(
+                        session_id="test-chat-fail-session",
+                        backend="deterministic",
+                        model=None,
+                        show_context=False,
+                    )
+
+    # Neither monty runner nor save_repl_session should be called on read failure
+    mock_container.monty_runner.run.assert_not_called()
+    mock_service.store.save_repl_session.assert_not_called()
+    mock_service.store.clear_repl_session.assert_called_once()
+
+
+def test_chat_repl_save_failure_handling() -> None:
+    mock_container = MagicMock()
+    mock_service = MagicMock()
+    mock_service.profile_scope = "default"
+    mock_service.backend.is_remote = False
+    mock_service.start = AsyncMock(return_value=Success(None))
+    mock_service.get_recent_turns = AsyncMock(return_value=Success(()))
+    mock_service.store.get_latest_manifest_for_session = AsyncMock(return_value=Success(None))
+    mock_service.store.get_repl_session = AsyncMock(return_value=Success(None))
+    mock_service.store.save_repl_session = AsyncMock(
+        return_value=Failure(
+            make_assistant_failure(
+                code="SAVE_REPL_FAILED",
+                message="Disk quota exceeded",
+                request_id="r-save-fail",
+            )
+        )
+    )
+
+    mock_container.assistant_service = mock_service
+    mock_container.monty_runner.run.return_value = Success(
+        MontyExecutionResult(output="42", session_blob=b"updated-blob", variables={"x": "int"})
+    )
+    mock_container.close = AsyncMock()
+
+    with patch("rai.container.ApplicationContainer", return_value=mock_container):
+        with patch("rai.commands.approval.configure_approvals"):
+            with patch("sys.stdin.isatty", return_value=False):
+                with patch(
+                    "rai.commands.dialog.click.prompt",
+                    side_effect=[
+                        "/repl x = 42",
+                        "/exit",
+                    ],
+                ):
+                    _run_assistant_chat(
+                        session_id="test-chat-save-fail-session",
+                        backend="deterministic",
+                        model=None,
+                        show_context=False,
+                    )
+
+    mock_container.monty_runner.run.assert_called_once()
+    mock_service.store.save_repl_session.assert_called_once()

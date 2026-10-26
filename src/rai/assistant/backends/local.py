@@ -133,7 +133,7 @@ class LocalAssistantBackend:
         durable_memories = request.context.content.get("durable_memories", [])
         if isinstance(durable_memories, (list, tuple)) and durable_memories:
             evidence_lines.append(
-                "Trwała pamięć grafowa (twierdzenia lub preferencje podane przez użytkownika):"
+                "Durable graph memory (user-stated claims or preferences):"
             )
             for mem in durable_memories:
                 if isinstance(mem, dict):
@@ -142,7 +142,7 @@ class LocalAssistantBackend:
         episodic_evidence = request.context.content.get("episodic_evidence", [])
         if isinstance(episodic_evidence, (list, tuple)) and episodic_evidence:
             evidence_lines.append(
-                "Wcześniejsze wypowiedzi użytkownika (materiał źródłowy, niezweryfikowane twierdzenia):"
+                "Prior user statements (source material, unverified claims):"
             )
             for item in episodic_evidence:
                 if isinstance(item, dict):
@@ -153,7 +153,7 @@ class LocalAssistantBackend:
         grounded_summaries = request.context.content.get("grounded_summaries", [])
         if isinstance(grounded_summaries, (list, tuple)) and grounded_summaries:
             evidence_lines.append(
-                "Zwięzłe projekcje pamięci (użyj tylko treści popartej wskazanymi źródłami):"
+                "Grounded memory summaries (use only content supported by cited sources):"
             )
             for item in grounded_summaries:
                 if isinstance(item, dict):
@@ -161,12 +161,12 @@ class LocalAssistantBackend:
                     if isinstance(content, dict):
                         summary = str(content.get("summary", ""))
                         source_ids = content.get("source_memory_ids", ())
-                        evidence_lines.append(f"- {summary} [źródła: {source_ids}]")
+                        evidence_lines.append(f"- {summary} [sources: {source_ids}]")
 
         external_evidence = request.context.content.get("external_evidence", [])
         if isinstance(external_evidence, (list, tuple)) and external_evidence:
             evidence_lines.append(
-                "Zatwierdzone lokalne źródła zewnętrzne (obserwacje, nie twierdzenia użytkownika):"
+                "Approved local external sources (observations, not user claims):"
             )
             for item in external_evidence[-5:]:
                 if isinstance(item, dict):
@@ -188,7 +188,7 @@ class LocalAssistantBackend:
             and not observations_in_system
         ):
             evidence_lines.append(
-                "Wyniki wykonanych narzędzi i akcji w systemie (obserwacje z bieżącej sesji):"
+                "Tool and action execution results (session observations):"
             )
             for item in tool_observations[-3:]:
                 if isinstance(item, dict):
@@ -199,6 +199,16 @@ class LocalAssistantBackend:
                         content_val, max_len=self.max_observation_characters
                     )
                     evidence_lines.append(f"- [{capability}] {summary}: {content_str}")
+
+        repl_variables = request.context.content.get("repl_variables", {})
+        if isinstance(repl_variables, dict) and repl_variables:
+            var_summary = ", ".join(
+                f"{k} ({v})" for k, v in sorted(repl_variables.items())
+            )
+            evidence_lines.append(
+                "Active Python REPL session state (variables and functions ready for immediate use in code):\n"
+                f"- {var_summary}"
+            )
 
         system_parts = [
             system_text,
@@ -217,11 +227,12 @@ class LocalAssistantBackend:
             )
         else:
             system_parts.append(
-                "\nProwadź naturalną, pomocną i uprzejmą rozmowę. Odpowiadaj zwięźle i rzeczowo. "
-                "Uważnie śledź role i treść widocznych wcześniejszych tur; pytania o przebieg "
-                "rozmowy rozstrzygaj na podstawie tej historii. "
-                "Jeśli w kontekście znajdują się preferencje lub fakty podane przez użytkownika, "
-                "uwzględniaj je w odpowiedzi."
+                "\nMaintain a natural, helpful, and polite conversation. Respond concisely and accurately. "
+                "Carefully follow the roles and content of visible earlier turns; resolve questions about the "
+                "conversation history based on that history. "
+                "If the context contains user-provided preferences or facts, take them into account in your response. "
+                "When the user asks for calculations, code, or function implementations, provide clean, executable code in ```python ... ``` blocks. "
+                "A persistent Python REPL environment is available in this session, where defined variables and functions remain active across turns."
             )
 
         messages: list[dict[str, str]] = [
@@ -320,18 +331,18 @@ class LocalAssistantBackend:
             return f"[{topic}] {content}"
         value = content.get("value")
         statements = {
-            "user.identity.name": f"Użytkownik podał, że ma na imię {value}.",
-            "user.identity.age": f"Użytkownik podał, że ma {value} lat.",
-            "user.location.home": f"Użytkownik podał, że mieszka w {value}.",
+            "user.identity.name": f"User stated their name is {value}.",
+            "user.identity.age": f"User stated their age is {value}.",
+            "user.location.home": f"User stated their home location is {value}.",
             "code_examples": (
-                "Użytkownik preferuje język "
-                f"{content.get('preference')} w przykładach kodu."
+                "User prefers "
+                f"{content.get('preference')} language for code examples."
             ),
         }
         if topic in statements:
             return statements[topic]
         if fact := content.get("fact"):
-            return f"Użytkownik poprosił o zapamiętanie: {fact}"
+            return f"User requested to remember: {fact}"
         return f"[{topic}] {content}"
 
     def _extract_proposals(

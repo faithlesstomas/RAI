@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
+import time
 from typing import AsyncGenerator
 
 from fastapi import (
@@ -10,6 +12,7 @@ from fastapi import (
     Depends,
     HTTPException,
     Query,
+    Response,
     WebSocket,
     WebSocketDisconnect,
 )
@@ -18,16 +21,18 @@ from pydantic import BaseModel, Field, ValidationError
 from returns.result import Failure, Success
 
 from rai.assistant.diagnostics import diagnose_memory
+from rai.assistant.notebook import export_turns_to_notebook
 from rai.assistant.records import (
     AssistantResponse,
     AssistantSessionId,
     ConversationTurn,
 )
 from rai.assistant.service import AssistantService
-from rai.dependencies import get_assistant_service
+from rai.dependencies import get_assistant_service, get_monty_runner
 from rai.kernel.records import DataClass, ProducerIdentity, _new_id
 from rai.kernel.ports import LifecycleState
 from rai.tools.security.auth import is_authorized
+from rai.tools.security.monty import MontyRunner
 
 router = APIRouter(prefix="/api/v1/assistant", tags=["Rich Assistant"])
 
@@ -53,6 +58,30 @@ class AssistantTurnResult(BaseModel):
     manifest_id: str
     admitted_memory_ids: tuple[str, ...] = ()
     memory_operation_ids: tuple[str, ...] = ()
+
+
+class REPLExecuteRequest(BaseModel):
+    """Execution request inside a session's persistent Monty REPL."""
+
+    code: str = Field(min_length=1, max_length=64 * 1024)
+
+
+class REPLExecuteResult(BaseModel):
+    """Result of evaluating a code cell in session REPL."""
+
+    session_id: str
+    output: str
+    variables: dict[str, str] = Field(default_factory=dict)
+    duration_ms: float = 0.0
+    status: str = "ok"
+
+
+class REPLStateResult(BaseModel):
+    """Current variable and function inventory for a session's REPL."""
+
+    session_id: str
+    variables: dict[str, str] = Field(default_factory=dict)
+    has_active_state: bool = False
 
 
 def _turn_from_request(request: AssistantTurnRequest) -> ConversationTurn:
@@ -277,6 +306,176 @@ async def get_memory_diagnostics(
             detail={"code": failure.code, "message": failure.message},
         )
     return result.unwrap().model_dump(mode="json")
+
+
+from rai.tools.python import get_session_repl_lock as _get_session_repl_lock
+
+
+@router.post("/sessions/{session_id}/repl/execute", response_model=REPLExecuteResult)
+async def execute_session_repl(
+    session_id: str,
+    request: REPLExecuteRequest,
+    service: AssistantService = Depends(get_assistant_service),
+    runner: MontyRunner = Depends(get_monty_runner),
+) -> REPLExecuteResult:
+    if not isinstance(runner, MontyRunner):
+        from rai.tools.security.monty import get_monty_runner  # noqa: PLC0415
+
+        runner = get_monty_runner()
+
+    lock = await _get_session_repl_lock(service.profile_scope, session_id)
+    async with lock:
+        saved_blob_res = await service.store.get_repl_session(
+            session_id, profile_scope=service.profile_scope
+        )
+        if isinstance(saved_blob_res, Failure):
+            failure = saved_blob_res.failure()
+            return REPLExecuteResult(
+                session_id=session_id,
+                output=f"State Load Error: {failure.message}",
+                variables={},
+                duration_ms=0.0,
+                status="error",
+            )
+        session_blob = (
+            saved_blob_res.unwrap()[0]
+            if saved_blob_res.unwrap() is not None
+            else None
+        )
+
+        start_t = time.perf_counter()
+        eval_res = await asyncio.to_thread(
+            runner.run, request.code, session_blob=session_blob
+        )
+        duration_ms = (time.perf_counter() - start_t) * 1000.0
+
+        if isinstance(eval_res, Failure):
+            return REPLExecuteResult(
+                session_id=session_id,
+                output=f"Execution error: {eval_res.failure()}",
+                variables={},
+                duration_ms=round(duration_ms, 2),
+                status="error",
+            )
+
+        res = eval_res.unwrap()
+        if res.session_blob:
+            save_res = await service.store.save_repl_session(
+                session_id,
+                res.session_blob,
+                res.variables,
+                profile_scope=service.profile_scope,
+            )
+            if isinstance(save_res, Failure):
+                failure = save_res.failure()
+                return REPLExecuteResult(
+                    session_id=session_id,
+                    output=f"{res.output}\n\n[State Persistence Error: {failure.message}]"
+                    if res.output
+                    else f"[State Persistence Error: {failure.message}]",
+                    variables=res.variables,
+                    duration_ms=round(duration_ms, 2),
+                    status="error",
+                )
+
+        return REPLExecuteResult(
+            session_id=session_id,
+            output=res.output,
+            variables=res.variables,
+            duration_ms=round(duration_ms, 2),
+            status="ok",
+        )
+
+
+@router.get("/sessions/{session_id}/repl/state", response_model=REPLStateResult)
+async def get_session_repl_state(
+    session_id: str,
+    service: AssistantService = Depends(get_assistant_service),
+    runner: MontyRunner = Depends(get_monty_runner),
+) -> REPLStateResult:
+    """Inspect variables and functions present in session's persistent REPL."""
+    if not isinstance(runner, MontyRunner):
+        from rai.tools.security.monty import get_monty_runner  # noqa: PLC0415
+
+        runner = get_monty_runner()
+
+    saved_res = await service.store.get_repl_session(
+        session_id, profile_scope=service.profile_scope
+    )
+    if isinstance(saved_res, Failure):
+        failure = saved_res.failure()
+        raise HTTPException(
+            status_code=500,
+            detail={"code": failure.code, "message": failure.message},
+        )
+    session_data = saved_res.unwrap()
+    if not session_data:
+        return REPLStateResult(
+            session_id=session_id,
+            variables={},
+            has_active_state=False,
+        )
+
+    session_blob, variables = session_data
+    if not variables and session_blob:
+        inspect_res = await asyncio.to_thread(runner.inspect_state, session_blob)
+        if isinstance(inspect_res, Success):
+            variables = inspect_res.unwrap()
+
+    return REPLStateResult(
+        session_id=session_id,
+        variables=variables,
+        has_active_state=True,
+    )
+
+
+@router.post("/sessions/{session_id}/repl/reset")
+async def reset_session_repl(
+    session_id: str,
+    service: AssistantService = Depends(get_assistant_service),
+) -> dict[str, str]:
+    """Reset persistent Monty REPL state for the session."""
+    lock = await _get_session_repl_lock(service.profile_scope, session_id)
+    async with lock:
+        clear_res = await service.store.clear_repl_session(
+            session_id, profile_scope=service.profile_scope
+        )
+        if isinstance(clear_res, Failure):
+            failure = clear_res.failure()
+            raise HTTPException(
+                status_code=500,
+                detail={"code": failure.code, "message": failure.message},
+            )
+        return {"status": "ok", "session_id": session_id}
+
+
+@router.get("/sessions/{session_id}/notebook.ipynb")
+async def export_session_notebook(
+    session_id: str,
+    service: AssistantService = Depends(get_assistant_service),
+) -> Response:
+    """Export conversation turns and code cells of a session as a Jupyter notebook (.ipynb)."""
+    turns_res = await service.get_recent_turns(session_id, limit=200)
+    if isinstance(turns_res, Failure):
+        failure = turns_res.failure()
+        raise HTTPException(
+            status_code=500,
+            detail={"code": failure.code, "message": failure.message},
+        )
+    turns = list(turns_res.unwrap())
+    notebook_dict = export_turns_to_notebook(
+        session_id=session_id,
+        turns=turns,
+        profile_scope=service.context_builder.profile_scope,
+    )
+    content = json.dumps(notebook_dict, indent=2)
+    return Response(
+        content=content,
+        media_type="application/x-ipynb+json",
+        headers={
+            "Content-Disposition": f'attachment; filename="session_{session_id}.ipynb"'
+        },
+    )
 
 
 @router.websocket("/ws")

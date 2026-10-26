@@ -62,6 +62,7 @@ def format_capabilities_instruction(
         "browser.open_result": "Open a selected result in a configured browser",
         "browser.read_page": "Read a selected public page in a configured browser",
         "activity.query": "Inspect recent system and desktop activity episodes (applications used, projects, activity types, and resources)",
+        "run_python_code": "Execute Python code with persistent session memory (isolated Python REPL nano-sandbox for pure computation, algorithms, data analysis, and scripts; escalates to container with approval for system/network operations)",
     }
     names = {descriptor.name for descriptor in registry.descriptors()} if registry else set()
     available = [f"- {name}: {description}." for name, description in descriptions.items() if name in names]
@@ -798,6 +799,17 @@ class AssistantContextBuilder:
             {"record_id": t.record_id, "role": t.role, "text": t.text}
             for t in recent_turns
         ]
+        repl_variables: dict[str, str] = {}
+        if hasattr(self.store, "get_repl_session"):
+            scope = (
+                turn.metadata.get("profile_scope", self.profile_scope)
+                if hasattr(turn, "metadata") and isinstance(turn.metadata, dict)
+                else self.profile_scope
+            )
+            repl_res = await self.store.get_repl_session(turn.session_id, profile_scope=scope)
+            if isinstance(repl_res, Success) and repl_res.unwrap():
+                _blob, repl_variables = repl_res.unwrap()
+
         content: dict[str, object] = {
             "system_instruction": self.system_instruction,
             "current_turn": {
@@ -810,6 +822,7 @@ class AssistantContextBuilder:
             "external_evidence": external_content,
             "durable_memories": durable_content,
             "tool_observations": [obs.model_dump(mode="json") for obs in tool_observations],
+            "repl_variables": repl_variables,
         }
 
         serialized = json.dumps(content, ensure_ascii=False)

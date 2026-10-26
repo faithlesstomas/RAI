@@ -41,6 +41,27 @@ class ApprovalRequest:
         }
 
 
+def sanitize_terminal_text(text: str) -> str:
+    """
+    Strip ANSI/VT escape sequences (7-bit ESC and 8-bit C1 CSI) and neutralize
+    control and format characters (C0, C1, bidi overrides) for safe terminal rendering.
+    """
+    import re  # noqa: PLC0415
+    import unicodedata  # noqa: PLC0415
+
+    # 1. Strip 7-bit ANSI escape sequences and 8-bit CSI (\x9b) sequences
+    pattern = r"(?:\x1b(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])|\x9b[0-?]*[ -/]*[@-~])"
+    stripped = re.sub(pattern, "", text)
+
+    # 2. Neutralize remaining control, format, and surrogate characters (Cc, Cf, Cs)
+    # preserving only standard whitespace (\n, \t).
+    return "".join(
+        ch if ch in ("\n", "\t") or unicodedata.category(ch) not in ("Cc", "Cf", "Cs")
+        else repr(ch)[1:-1]
+        for ch in stripped
+    )
+
+
 class ApprovalManager:
     """
     Centralized singleton to coordinate human authorization requests.
@@ -115,12 +136,14 @@ class ApprovalManager:
             return
 
         # Prepare a highly visible security warning
+        is_python = req.tool_name in ("PythonTools", "run_python_code")
+        content_label = "Script:" if is_python else "Command:"
         dialog_text = (
-            "🚨 RAI SECURITY GATEWAY DIALOG 🚨\n\n"
+            "RAI SECURITY GATEWAY DIALOG\n\n"
             f"An AI agent wants to execute a command outside the sandbox.\n"
             f"Tool: [bold]{req.tool_name}[/bold]\n\n"
-            "Command:\n"
-            f"👉 {req.command}\n\n"
+            f"{content_label}\n"
+            f"  {req.command}\n\n"
             "Do you authorize this system execution?"
         )
 
@@ -153,7 +176,7 @@ class ApprovalManager:
         except Exception as e:
             logger.error("Failed to spawn or handle Zenity desktop dialog: %s", e)
 
-    async def wait_for_approval(self, req: ApprovalRequest) -> bool:
+    async def wait_for_approval(self, req: ApprovalRequest) -> bool:  # noqa: PLR0915
         """
         Suspends the executing thread, spawns standard UI prompts,
         and waits until approval is resolved.
@@ -166,22 +189,31 @@ class ApprovalManager:
         if os.environ.get("RAI_SERVE") != "1" and sys.stdin.isatty():
             async def console_prompt() -> None:
                 try:
-                    from ...core import console
+                    from rich.text import Text  # noqa: PLC0415
+                    from ...core import console  # noqa: PLC0415
+
                     print("\n")
+                    is_python = req.tool_name in ("PythonTools", "run_python_code")
+                    content_label = "Script" if is_python else "Command"
+                    sanitized_cmd = sanitize_terminal_text(req.command)
+                    panel_content = Text()
+                    panel_content.append(f"{content_label}:\n", style="bold yellow")
+                    panel_content.append(f"{sanitized_cmd}\n")
+                    panel_content.append("Tool: ", style="bold yellow")
+                    panel_content.append(str(req.tool_name))
                     console.print(Panel(
-                        f"[bold yellow]Command:[/bold yellow] {req.command}\n"
-                        f"[bold yellow]Tool:[/bold yellow] {req.tool_name}",
-                        title="🚨 RAI STANDALONE GATEWAY - AUTHORIZATION REQUIRED 🚨",
+                        panel_content,
+                        title="RAI STANDALONE GATEWAY - AUTHORIZATION REQUIRED",
                         border_style="red"
                     ))
                     
-                    import rai.core
+                    import rai.core  # noqa: PLC0415
                     status_ref = rai.core.active_status
                     if status_ref:
                         status_ref.stop()
                         
                     try:
-                        from prompt_toolkit import PromptSession
+                        from prompt_toolkit import PromptSession  # noqa: PLC0415
                         prompt_session = PromptSession()
                         
                         async def get_user_input() -> str:

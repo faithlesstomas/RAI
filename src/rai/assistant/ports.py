@@ -225,6 +225,22 @@ class MemoryGraphStore(Protocol):
         self, profile_scope: str = "default"
     ) -> Result[tuple[str, ...], ActionFailure]: ...
 
+    async def save_repl_session(
+        self,
+        session_id: str,
+        snapshot_blob: bytes,
+        variables: dict[str, str],
+        profile_scope: str = "default",
+    ) -> Result[None, ActionFailure]: ...
+
+    async def get_repl_session(
+        self, session_id: str, profile_scope: str = "default"
+    ) -> Result[tuple[bytes, dict[str, str]] | None, ActionFailure]: ...
+
+    async def clear_repl_session(
+        self, session_id: str, profile_scope: str = "default"
+    ) -> Result[None, ActionFailure]: ...
+
 
 @runtime_checkable
 class AssistantModelBackend(Protocol):

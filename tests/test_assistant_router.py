@@ -2,24 +2,32 @@
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
+from unittest.mock import AsyncMock, patch
 
 import pytest
-from returns.result import Success
+from returns.result import Failure, Success
 
 from rai.assistant.backends.deterministic import DeterministicAssistantBackend
+from rai.assistant.records import make_assistant_failure
 from rai.assistant.service import AssistantService
 from rai.assistant.store import SQLiteMemoryGraphStore
 from rai.routers.assistant import (
     AssistantTurnRequest,
+    REPLExecuteRequest,
     accept_assistant_turn,
+    execute_session_repl,
+    export_session_notebook,
     get_chat_history,
     get_context_manifest,
     get_context_window,
     get_latest_session_context,
+    get_session_repl_state,
     list_assistant_memories,
     list_assistant_sessions,
     list_memory_operations,
+    reset_session_repl,
     stream_assistant_turn,
 )
 
@@ -106,3 +114,134 @@ async def test_assistant_inspection_api_exposes_user_visible_state(
     assert [turn["role"] for turn in history] == ["user", "assistant"]
     assert context["manifest"]["record_id"] == response.manifest_id
     assert latest_context == context
+
+
+@pytest.mark.asyncio
+async def test_assistant_repl_and_notebook_endpoints(
+    assistant_service: AssistantService,
+) -> None:
+    start = await assistant_service.start()
+    assert isinstance(start, Success)
+    session_id = "repl-test-session"
+
+    # 1. Initially state is inactive
+    init_state = await get_session_repl_state(session_id, assistant_service)
+    assert init_state.has_active_state is False
+    assert init_state.variables == {}
+
+    # 2. Execute cell 1
+    exec1 = await execute_session_repl(
+        session_id,
+        REPLExecuteRequest(code="x = 10\ny = 25\nx + y"),
+        assistant_service,
+    )
+    assert exec1.status == "ok"
+    assert exec1.output == "35"
+    assert exec1.variables.get("x") == "int"
+    assert exec1.variables.get("y") == "int"
+
+    # 3. Execute cell 2 using state from cell 1
+    exec2 = await execute_session_repl(
+        session_id,
+        REPLExecuteRequest(code="z = x * 2\nz"),
+        assistant_service,
+    )
+    assert exec2.status == "ok"
+    assert exec2.output == "20"
+    assert exec2.variables.get("z") == "int"
+
+    # 4. Check REPL state endpoint
+    state = await get_session_repl_state(session_id, assistant_service)
+    assert state.has_active_state is True
+    assert state.variables.get("x") == "int"
+    assert state.variables.get("z") == "int"
+
+    # 5. Reset REPL session
+    reset_res = await reset_session_repl(session_id, assistant_service)
+    assert reset_res == {"status": "ok", "session_id": session_id}
+
+    state_after_reset = await get_session_repl_state(session_id, assistant_service)
+    assert state_after_reset.has_active_state is False
+
+    # 6. Test notebook export
+    # Accept a turn to populate session history
+    await accept_assistant_turn(
+        AssistantTurnRequest(
+            prompt="Write a script calculating the sum:\n```python\na = 1\nb = 2\na + b\n```",
+            session_id=session_id,
+        ),
+        assistant_service,
+    )
+
+    nb_resp = await export_session_notebook(session_id, assistant_service)
+    assert nb_resp.media_type == "application/x-ipynb+json"
+    assert f'filename="session_{session_id}.ipynb"' in nb_resp.headers["Content-Disposition"]
+
+    nb_dict = json.loads(nb_resp.body.decode("utf-8"))
+    expected_nbformat = 4
+    min_cells = 2
+    assert nb_dict["nbformat"] == expected_nbformat
+    assert len(nb_dict["cells"]) >= min_cells
+
+
+@pytest.mark.asyncio
+async def test_assistant_repl_persistence_failure_handling(
+    assistant_service: AssistantService,
+) -> None:
+    """Test that failure to persist session blob results in status='error' and descriptive message."""
+    start = await assistant_service.start()
+    assert isinstance(start, Success)
+    session_id = "failing-persistence-session"
+
+    with patch.object(
+        assistant_service.store,
+        "save_repl_session",
+        new=AsyncMock(
+            return_value=Failure(
+                make_assistant_failure(
+                    code="SAVE_REPL_SESSION_FAILED",
+                    message="Database disk image is malformed",
+                    request_id="test-repl",
+                )
+            )
+        ),
+    ):
+        exec_res = await execute_session_repl(
+            session_id,
+            REPLExecuteRequest(code="x = 100"),
+            assistant_service,
+        )
+        assert exec_res.status == "error"
+        assert "State Persistence Error: Database disk image is malformed" in exec_res.output
+
+
+@pytest.mark.asyncio
+async def test_assistant_repl_load_failure_handling(
+    assistant_service: AssistantService,
+) -> None:
+    """Test that failure to load session blob results in status='error' and does not run from empty state."""
+    start = await assistant_service.start()
+    assert isinstance(start, Success)
+    session_id = "failing-load-session"
+
+    with patch.object(
+        assistant_service.store,
+        "get_repl_session",
+        new=AsyncMock(
+            return_value=Failure(
+                make_assistant_failure(
+                    code="GET_REPL_SESSION_FAILED",
+                    message="Database read failed",
+                    request_id="test-repl-load",
+                )
+            )
+        ),
+    ), patch.object(assistant_service.store, "save_repl_session") as mock_save:
+        exec_res = await execute_session_repl(
+            session_id,
+            REPLExecuteRequest(code="x = 100"),
+            assistant_service,
+        )
+        assert exec_res.status == "error"
+        assert "State Load Error: Database read failed" in exec_res.output
+        mock_save.assert_not_called()

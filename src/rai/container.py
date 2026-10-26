@@ -14,6 +14,7 @@ if TYPE_CHECKING:
     import rai.inference.supervisor
     from .assistant.ports import MemoryGraphStore
     from .assistant.service import AssistantService
+    from .tools.security.monty import MontyRunner
 
 from .assistant.backends.deterministic import DeterministicAssistantBackend
 from .assistant.context import format_capabilities_instruction
@@ -85,6 +86,7 @@ class ApplicationContainer:
     )
     _memory_graph_store: MemoryGraphStore | None = field(default=None, init=False)
     _assistant_service: AssistantService | None = field(default=None, init=False)
+    _monty_runner: MontyRunner | None = field(default=None, init=False)
 
     def __post_init__(self) -> None:
         if self.audit_ledger is None:
@@ -137,6 +139,29 @@ class ApplicationContainer:
                     return None
 
             register_activity_capabilities(self.capability_registry, _get_history_service)
+        if self.capability_registry.descriptor("run_python_code") is not None:
+            async def _container_python(arguments: dict[str, Any]) -> dict[str, Any]:
+                from .tools.python import run_secure_python_code  # noqa: PLC0415
+
+                profile_scope = (
+                    arguments.get("profile_scope")
+                    or self.active_profile
+                )
+                output = await run_secure_python_code(
+                    arguments["code"],
+                    allow_network=arguments.get("allow_network", False),
+                    session_id=arguments.get("session_id"),
+                    force_os_sandbox=arguments.get("force_os_sandbox", False),
+                    store=self.memory_graph_store,
+                    monty_runner=self.monty_runner,
+                    profile_scope=profile_scope,
+                    require_hitl=arguments.get("require_hitl", False),
+                )
+                if output.startswith(("Execution Error", "Execution Failure")):
+                    raise RuntimeError(output)
+                return {"text": output}
+
+            self.capability_registry.replace_handler("run_python_code", _container_python)
         self.capability_service.executions = SQLiteExecutionStore(
             data_dir() / "actions" / "executions.sqlite3"
         )
@@ -301,6 +326,26 @@ class ApplicationContainer:
                 )
             self._memory_graph_store = SQLiteMemoryGraphStore(path=path)
         return self._memory_graph_store
+
+    @property
+    def monty_runner(self) -> MontyRunner:
+        if self._monty_runner is None:
+            from .tools.security.monty import MontyRunner  # noqa: PLC0415
+
+            monty_config = self.config.get("monty", {})
+            config = monty_config if isinstance(monty_config, dict) else {}
+            self._monty_runner = MontyRunner(
+                max_duration_secs=float(config.get("max_duration_secs", 2.0)),
+                max_memory_bytes=int(config.get("max_memory_bytes", 32 * 1024 * 1024)),
+            )
+        return self._monty_runner
+
+    @property
+    def active_profile(self) -> str:
+        """Active profile scope for the container."""
+        if self._assistant_service is not None:
+            return self._assistant_service.profile_scope
+        return str(self.config.get("active_agent") or "default")
 
     @property
     def assistant_service(self) -> AssistantService:
@@ -485,3 +530,6 @@ class ApplicationContainer:
         elif self._memory_graph_store is not None:
             await self._memory_graph_store.stop()
             self._memory_graph_store = None
+        if self._monty_runner is not None:
+            self._monty_runner.close()
+            self._monty_runner = None

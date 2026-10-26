@@ -163,9 +163,16 @@ class WorkspaceEngine(InteractionController):
         if self.capabilities is not None:
             descriptor = self.capabilities.registry.descriptor(cap_name)
             if descriptor is not None:
+                call_args = dict(args)
+                if (
+                    turn.session_id
+                    and isinstance(descriptor.input_schema, dict)
+                    and "session_id" in descriptor.input_schema.get("properties", {})
+                ):
+                    call_args["session_id"] = turn.session_id
                 request = normalize_request(
                     descriptor,
-                    args,
+                    call_args,
                     actor=turn.producer,
                     request_id=req_id,
                     data_class=turn.data_class,

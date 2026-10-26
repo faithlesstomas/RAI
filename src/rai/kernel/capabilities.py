@@ -10,7 +10,7 @@ from collections.abc import Awaitable, Callable
 from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
-from rai.diagnostics import trace
+from rai.diagnostics import trace, trace_payload
 
 from returns.result import Failure, Result, Success
 
@@ -33,7 +33,9 @@ DEFAULT_ACTION_TIMEOUT = 30.0
 class CapabilityDescriptor(BaseModel):
     """Transport-neutral metadata and validation contract for one capability."""
 
-    model_config = ConfigDict(frozen=True, extra="forbid", use_enum_values=True)
+    model_config = ConfigDict(
+        frozen=True, extra="forbid", use_enum_values=True, arbitrary_types_allowed=True
+    )
 
     name: str = Field(pattern=r"^[a-z][a-z0-9]*(?:[._][a-z0-9]+)*$")
     description: str = Field(min_length=1)
@@ -44,12 +46,25 @@ class CapabilityDescriptor(BaseModel):
     requires_isolation: bool = False
     verification_plan: tuple[str, ...] = Field(min_length=1)
     timeout_seconds: float | None = Field(default=None, gt=0)
+    risk_evaluator: Callable[[dict[str, Any]], RiskClass] | None = Field(
+        default=None, exclude=True
+    )
 
     @field_validator("input_schema")
     @classmethod
     def freeze_schema(cls, value: dict[str, Any]) -> dict[str, Any]:
         del cls
         return freeze_json_value(value)
+
+    def effective_risk(self, arguments: dict[str, Any] | None = None) -> RiskClass:
+        """Resolve dynamic risk class for provided capability arguments if an evaluator is configured."""
+        evaluator = self.risk_evaluator
+        if callable(evaluator):
+            try:
+                return evaluator(arguments or {})
+            except Exception:
+                return self.risk_class
+        return self.risk_class
 
 
 class RegisteredCapability:
@@ -81,6 +96,12 @@ class RegisteredCapability:
     ) -> Result[ActionResult, ActionFailure]:
         started = time.monotonic()
         trace("capability.start", request_id=request.record_id, capability=self.name)
+        trace_payload(
+            "capability.request",
+            request.arguments,
+            request_id=request.record_id,
+            capability=self.name,
+        )
         try:
             executed = await self._invoke(request, cancellation)
         except asyncio.CancelledError:
@@ -91,6 +112,13 @@ class RegisteredCapability:
               status="failure" if isinstance(executed, Failure) else "success",
               code=executed.failure().code if isinstance(executed, Failure) else "OK",
               elapsed_ms=round((time.monotonic() - started) * 1000))
+        if isinstance(executed, Success):
+            trace_payload(
+                "capability.response",
+                executed.unwrap().output,
+                request_id=request.record_id,
+                capability=self.name,
+            )
         return executed
 
     async def _invoke(
@@ -147,6 +175,12 @@ class CapabilityRegistry:
         self._capabilities[capability.name] = capability
         for group in compatibility_groups:
             self._compatibility_groups.setdefault(group, []).append(capability.name)
+
+    def replace_handler(self, name: str, handler: CapabilityHandler) -> None:
+        """Replace the runtime handler of an already registered capability."""
+        if name not in self._capabilities:
+            raise KeyError(f"capability not registered: {name}")
+        self._capabilities[name]._handler = handler
 
     def descriptors(self) -> tuple[CapabilityDescriptor, ...]:
         return tuple(

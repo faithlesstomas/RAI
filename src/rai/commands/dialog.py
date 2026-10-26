@@ -257,6 +257,9 @@ def _run_assistant_chat(  # noqa: PLR0913, PLR0915
                 "/remember",
                 "/forget",
                 "/session",
+                "/repl",
+                "/repl reset",
+                "/export",
                 "/config",
                 "/config show",
             ]
@@ -329,6 +332,9 @@ def _run_assistant_chat(  # noqa: PLR0913, PLR0915
                         "/remember TEXT explicitly save a fact\n"
                         "/forget TEXT remove matching memory; use 'all' for everything\n"
                         "/session   current profile and session ID\n"
+                        "/repl [expr] inspect active variables & values, or evaluate Python expression\n"
+                        "/repl reset clear REPL session state\n"
+                        "/export [file.ipynb] export conversation as Jupyter Notebook\n"
                         "/exit      leave the chat"
                     )
                     continue
@@ -419,6 +425,131 @@ def _run_assistant_chat(  # noqa: PLR0913, PLR0915
                     continue
                 if stripped == "/session":
                     click.echo(f"Profile: {service.profile_scope} | Session ID: {sid}")
+                    continue
+                if stripped == "/repl":
+                    saved_res = await service.store.get_repl_session(
+                        sid, profile_scope=service.profile_scope
+                    )
+                    if isinstance(saved_res, Failure):
+                        click.secho(
+                            f"Failed to load REPL session state: {saved_res.failure().message}",
+                            fg="red",
+                        )
+                        continue
+                    if isinstance(saved_res, Success) and saved_res.unwrap():
+                        blob, vars_dict = saved_res.unwrap()
+                        runner = container.monty_runner
+                        detailed: dict[str, dict[str, str]] = {}
+                        if blob:
+                            inspected_vals = await asyncio.to_thread(
+                                runner.inspect_values, blob
+                            )
+                            if isinstance(inspected_vals, Success):
+                                detailed = inspected_vals.unwrap()
+                        if detailed:
+                            click.echo("Active REPL variables:")
+                            for k, info in sorted(detailed.items()):
+                                v_type = info.get("type", "unknown")
+                                v_val = info.get("value", "")
+                                if v_val:
+                                    click.secho(f"  {k} ({v_type}) = {v_val}", fg="cyan")
+                                else:
+                                    click.secho(f"  {k}: {v_type}", fg="cyan")
+                        elif vars_dict:
+                            click.echo("Active REPL variables:")
+                            for k, v in sorted(vars_dict.items()):
+                                click.secho(f"  {k}: {v}", fg="cyan")
+                        else:
+                            click.echo("REPL session has no active variables.")
+                    else:
+                        click.echo("REPL session has no active variables.")
+                    continue
+                if stripped == "/repl reset":
+                    from rai.tools.python import get_session_repl_lock  # noqa: PLC0415
+
+                    lock = await get_session_repl_lock(service.profile_scope, sid)
+                    async with lock:
+                        clear_res = await service.store.clear_repl_session(
+                            sid, profile_scope=service.profile_scope
+                        )
+                        if isinstance(clear_res, Failure):
+                            click.secho(
+                                f"Failed to reset REPL session: {clear_res.failure().message}",
+                                fg="red",
+                            )
+                        else:
+                            click.secho("REPL session reset.", fg="green")
+                    continue
+                if stripped.startswith("/repl "):
+                    from rai.tools.python import get_session_repl_lock  # noqa: PLC0415
+
+                    expr = stripped[len("/repl ") :].strip()
+                    if expr:
+                        lock = await get_session_repl_lock(service.profile_scope, sid)
+                        async with lock:
+                            saved_res = await service.store.get_repl_session(
+                                sid, profile_scope=service.profile_scope
+                            )
+                            if isinstance(saved_res, Failure):
+                                click.secho(
+                                    f"Failed to load REPL session state: {saved_res.failure().message}",
+                                    fg="red",
+                                )
+                                continue
+                            blob = (
+                                saved_res.unwrap()[0]
+                                if isinstance(saved_res, Success) and saved_res.unwrap()
+                                else None
+                            )
+                            runner = container.monty_runner
+                            eval_res = await asyncio.to_thread(
+                                runner.run, expr, session_blob=blob
+                            )
+                            if isinstance(eval_res, Success):
+                                m_res = eval_res.unwrap()
+                                if m_res.session_blob:
+                                    save_res = await service.store.save_repl_session(
+                                        sid,
+                                        m_res.session_blob,
+                                        m_res.variables,
+                                        profile_scope=service.profile_scope,
+                                    )
+                                    if isinstance(save_res, Failure):
+                                        click.secho(
+                                            f"Failed to persist REPL session state: {save_res.failure().message}",
+                                            fg="red",
+                                        )
+                                        continue
+                                if m_res.output:
+                                    click.echo(m_res.output)
+                                elif m_res.variables:
+                                    var_summary = ", ".join(
+                                        f"{k}: {v}"
+                                        for k, v in sorted(m_res.variables.items())
+                                    )
+                                    click.secho(
+                                        f"[REPL state: {var_summary}]", fg="cyan"
+                                    )
+                            else:
+                                click.secho(
+                                    f"REPL Error: {eval_res.failure()}", fg="red"
+                                )
+                    continue
+                if stripped.startswith("/export"):
+                    parts = stripped.split(maxsplit=1)
+                    target_file = parts[1] if len(parts) > 1 else f"session_{sid}.ipynb"
+                    if not target_file.endswith(".ipynb"):
+                        target_file += ".ipynb"
+                    from pathlib import Path  # noqa: PLC0415
+                    from rai.assistant.notebook import export_turns_to_notebook  # noqa: PLC0415
+
+                    turns_res = await service.get_recent_turns(sid, limit=200)
+                    if isinstance(turns_res, Success):
+                        nb = export_turns_to_notebook(sid, list(turns_res.unwrap()), service.profile_scope)
+                        Path(target_file).write_text(json.dumps(nb, indent=2), encoding="utf-8")
+                        click.secho(f"Session exported to {target_file}", fg="green")
+                    else:
+                        click.echo("Failed to fetch session history for export.", err=True)
                     continue
                 if not stripped:
                     continue

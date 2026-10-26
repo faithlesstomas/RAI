@@ -2,12 +2,13 @@
 
 from __future__ import annotations
 
-from typing import Protocol
+import inspect
+from typing import Any, Protocol
 
 from returns.result import Failure, Result, Success
 
 from .audit import AuditEntry
-from .capabilities import CapabilityRegistry
+from .capabilities import CapabilityRegistry, validate_arguments
 from .policy import PolicyEngine
 from .ports import ApprovalBroker, CancellationToken
 from .records import (
@@ -43,6 +44,30 @@ class CapabilityService:
         self.audit = audit
         self.approvals = approvals
 
+    async def _invoke_with_approval(
+        self,
+        capability: Any,  # noqa: ANN401
+        decision: PolicyDecision,
+        request: CapabilityRequest,
+        token: CancellationToken,
+    ) -> tuple[str | None, Result[ActionResult, ActionFailure]]:
+        invalid = validate_arguments(capability.descriptor.input_schema, request.arguments)
+        if invalid is not None:
+            return None, Failure(self._failure(request, "INVALID_ARGUMENT", invalid))
+        if self.approvals is None:
+            return None, Failure(
+                self._failure(request, "APPROVAL_UNAVAILABLE", "approval is required")
+            )
+        review_action: Any = getattr(self.approvals, "request_action", None)
+        if callable(review_action) and inspect.iscoroutinefunction(review_action):
+            approval = await review_action(decision, request, token)  # pylint: disable=not-callable
+        else:
+            approval = await self.approvals.request(decision, token)
+        if isinstance(approval, Failure):
+            return None, Failure(approval.failure())
+        approval_id = approval.unwrap()
+        return approval_id, await capability.invoke(request, token)
+
     async def invoke(
         self, request: CapabilityRequest, cancellation: CancellationToken | None = None
     ) -> tuple[PolicyDecision | None, Result[ActionResult, ActionFailure]]:
@@ -58,17 +83,9 @@ class CapabilityService:
 
         approval_id: str | None = None
         if decision.outcome == PolicyOutcome.ASK:
-            if self.approvals is None:
-                result: Result[ActionResult, ActionFailure] = Failure(
-                    self._failure(request, "APPROVAL_UNAVAILABLE", "approval is required")
-                )
-            else:
-                approval = await self.approvals.request(decision, token)
-                if isinstance(approval, Failure):
-                    result = Failure(approval.failure())
-                else:
-                    approval_id = approval.unwrap()
-                    result = await capability.invoke(request, token)
+            approval_id, result = await self._invoke_with_approval(
+                capability, decision, request, token
+            )
         elif decision.outcome == PolicyOutcome.ALLOW:
             result = await capability.invoke(request, token)
         else:

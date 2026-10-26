@@ -88,6 +88,42 @@ async def choose(prompt: str, token: CancellationToken, timeout: float | None = 
 async def confirm(prompt: str, token: CancellationToken) -> bool:
     return await choose(prompt + " [y/N] ", token) in {"y", "yes"}
 
+from rai.tools.security.hitl import sanitize_terminal_text
+
+_sanitize_terminal_text = sanitize_terminal_text
+
+
+def _format_action_summary(request: CapabilityRequest, decision: PolicyDecision) -> str:
+    if request.capability in BROWSER_ACTIONS:
+        return review_text(request)
+    effects_text = ", ".join(decision.requested_side_effects) or "none"
+    reasons_text = ", ".join(decision.reason_codes) or str(decision.risk_class)
+    if request.capability == "run_python_code":
+        raw_script = str(request.arguments.get("code") or "<empty script>")
+        script_body = _sanitize_terminal_text(raw_script)
+        return (
+            f"Action: run_python_code (Tier-2 Bubblewrap OS execution)\n"
+            f"Risk: {decision.risk_class} ({reasons_text})\n"
+            f"Target: {decision.target_resource}\n"
+            f"Effects: {effects_text}\n"
+            f"Script:\n{script_body}"
+        )
+    if request.capability == "run_shell_command":
+        raw_cmd = str(request.arguments.get("command") or "<empty command>")
+        cmd_body = _sanitize_terminal_text(raw_cmd)
+        return (
+            f"Action: run_shell_command\n"
+            f"Risk: {decision.risk_class} ({reasons_text})\n"
+            f"Target: {decision.target_resource}\n"
+            f"Effects: {effects_text}\n"
+            f"Command: {cmd_body}"
+        )
+    return (
+        f"Action: {request.capability}\n"
+        f"Target: {decision.target_resource}\n"
+        f"Effects: {effects_text}"
+    )
+
 
 class TerminalApprovalBroker:
     def __init__(self, profile: str | None = None, path: Path | None = None) -> None:
@@ -107,13 +143,7 @@ class TerminalApprovalBroker:
                 return Success(f"rule:{self.profile}:{rule.id}")
             return Failure(HitlApprovalBroker._failure(decision, "DENIED", "Profile rule denied action"))
 
-        if request.capability in BROWSER_ACTIONS:
-            typer.echo(review_text(request))
-        else:
-            effects_text = ", ".join(decision.requested_side_effects) or "none"
-            typer.echo(
-                f"Action: {request.capability}\nTarget: {decision.target_resource}\nEffects: {effects_text}"
-            )
+        typer.echo(_format_action_summary(request, decision))
 
         remember = bool(self.profile and request.capability == "browser.search")
         prompt = ("Approve? [y=once / N=deny / a=remember exact query / d=remember denial / s=show details] "

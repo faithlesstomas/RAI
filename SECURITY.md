@@ -244,3 +244,26 @@ contents, prompts, model reasoning and tool result bodies. Counts can still
 reveal that activity exists, so treat trace output as local operational metadata
 and manage stderr/journal access and retention accordingly. Trace mode does not
 change collection consent, capability policy or the conversation's data class.
+
+
+## Python execution and tiered sandboxing
+
+RAI implements a two-tier sandboxing architecture for Python code execution:
+
+1. **Tier-1: Pure Monty Nano-Sandbox (`pydantic-monty` / `MontyRunner`)**:
+   - Sub-millisecond execution (<1 ms overhead) of pure algorithmic code with zero host I/O, zero network access, and zero physical filesystem mounts.
+   - Enforces strict resource quotas: 32 MB heap memory quota, 2.0-second execution timeout, and worker process lifecycle management.
+   - AST validation (`can_run_in_monty`): code is parsed and verified before execution. Any unsupported AST construct, unsafe module import, dynamic import (`__import__`), reflection (`__subclasses__`, `__globals__`, etc.), or dangerous builtin (`eval`, `exec`, `open`, `compile`) is rejected.
+   - Sessions maintain serialized heap snapshots (`session_blob`) and typed variable dictionaries across conversational turns, partitioned by compound key `(profile_scope, session_id)` in `assistant_repl_sessions`.
+   - Pure Monty execution is classified as `RiskClass.LOW` by `_python_risk_evaluator` only when `MontyRunner` is operational and code satisfies all AST safety constraints, allowing unattended computation without Human-In-The-Loop (HITL) prompt fatigue.
+
+2. **Tier-2: Bubblewrap OS Namespace Container Fallback**:
+   - Executes code in standard CPython (`python3 /output/script.py`) inside an isolated Bubblewrap (`bwrap`) container with an unshared network namespace, read-only system mounts, and a temporary dedicated `/output` write mount.
+   - **Mandatory HITL Authorization and Fail-Closed Policy**: If `MontyRunner` is unavailable, if execution forces the OS environment (`force_os_sandbox=True`), if network is requested, or if AST validation fails, execution is escalated to Tier-2. All Tier-2 executions unconditionally require explicit user authorization via `ApprovalManager` and capability policy (`RiskClass.HIGH`). If approval is rejected or the approval broker is not configured, execution fails closed.
+   - Dynamic imports and obfuscated invocations (such as `__import__('os').system('id')`) are stopped by AST analysis from entering Tier-1 and require user confirmation before executing in Tier-2.
+
+### Residual risks and limitations
+
+- **Process Isolation Boundary**: Tier-2 relies on Bubblewrap user namespaces and seccomp filtering; it is not a virtual machine boundary against local Linux kernel vulnerabilities.
+- **Unencrypted REPL State**: Like other assistant store data, REPL session state blobs are stored in SQLite files protected by local Unix user permissions (`0600` mode); they are not independently field-encrypted at rest.
+- **Cooperative Timeout in Worker Pool**: `MontyRunner` terminates long-running worker processes upon timeout expiry, but cooperative GIL-bound operations could theoretically delay termination until the process pool recycles the worker.

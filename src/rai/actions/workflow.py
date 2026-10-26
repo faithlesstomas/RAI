@@ -884,6 +884,7 @@ class BoundedStepController(InteractionController):
             step_decider=step_decider,
             cancellation=token,
             limits=self.limits,
+            data_class=turn.data_class,
             actor=turn.producer,
         )
         if isinstance(loop_res, Failure):
@@ -1125,9 +1126,18 @@ class BoundedStepController(InteractionController):
                     )
                 )
 
+            call_arguments = dict(arguments)
+            trusted_session_id = getattr(workflow, "session_id", None)
+            if (
+                isinstance(descriptor.input_schema, dict)
+                and "session_id" in descriptor.input_schema.get("properties", {})
+                and trusted_session_id
+            ):
+                call_arguments["session_id"] = trusted_session_id
+
             request = normalize_request(
                 descriptor,
-                arguments,
+                call_arguments,
                 actor=workflow.producer,
                 request_id=req_id,
                 data_class=workflow.data_class,
@@ -1266,6 +1276,7 @@ class BoundedStepController(InteractionController):
         ],
         cancellation: CancellationToken,
         limits: BoundedWorkflowLimits | None = None,
+        data_class: DataClass = DataClass.PUBLIC,
         actor: ProducerIdentity | None = None,
     ) -> Result[BoundedWorkflow, ActionFailure]:
         """Run an end-to-end universal agentic loop governed by BoundedWorkflow state machine."""
@@ -1274,6 +1285,7 @@ class BoundedStepController(InteractionController):
             session_id=session_id,
             goal=goal,
             limits=limits,
+            data_class=data_class,
             actor=actor,
         )
 
