@@ -33,7 +33,11 @@ from rai.assistant.records import (
 from rai.assistant.store import SQLiteMemoryGraphStore
 from rai.assistant.tool_calling import intent_from_tool_call
 from rai.kernel.audit import InMemoryAuditLedger
-from rai.kernel.capabilities import CapabilityRegistry
+from rai.kernel.capabilities import (
+    CapabilityDescriptor,
+    CapabilityRegistry,
+    RegisteredCapability,
+)
 from rai.kernel.policy import PolicyEngine
 from rai.kernel.ports import CancellationToken, LifecycleState
 from rai.kernel.records import (
@@ -41,6 +45,7 @@ from rai.kernel.records import (
     DataClass,
     InferenceBudget,
     ProducerIdentity,
+    RiskClass,
     _new_id,
     _utc_now,
 )
@@ -222,6 +227,136 @@ async def test_multi_step_request_id_uniqueness_avoids_collision(tmp_path: Path)
     # Verify execution store recorded both distinct requests without collision
     assert cand1.metadata.get("action_result") is not None
     assert cand2.metadata.get("action_result") is not None
+
+
+async def test_multi_step_application_launch_request_id_uniqueness_avoids_collision(tmp_path: Path) -> None:
+    handles = SQLiteHandleStore(tmp_path / "handles.db")
+    now = _utc_now()
+    h1 = handles.issue(
+        ResourceHandle(
+            producer=ACTOR,
+            timestamp=now,
+            actor_id=ACTOR.producer_id,
+            task_id="action:test-1",
+            kind="application",
+            target="editor.desktop",
+            fingerprint="fp1",
+            operations=("application.launch",),
+            expires_at=now + timedelta(minutes=15),
+            data_class=DataClass.LOCAL,
+        )
+    ).unwrap()
+    h2 = handles.issue(
+        ResourceHandle(
+            producer=ACTOR,
+            timestamp=now,
+            actor_id=ACTOR.producer_id,
+            task_id="action:test-2",
+            kind="application",
+            target="terminal.desktop",
+            fingerprint="fp2",
+            operations=("application.launch",),
+            expires_at=now + timedelta(minutes=15),
+            data_class=DataClass.LOCAL,
+        )
+    ).unwrap()
+
+    registry = CapabilityRegistry()
+    registry.register(
+        RegisteredCapability(
+            CapabilityDescriptor(
+                name="application.list",
+                description="List installed applications",
+                input_schema={
+                    "type": "object",
+                    "properties": {"query": {"type": "string"}, "task_id": {"type": "string"}},
+                    "required": ["task_id"],
+                },
+                risk_class=RiskClass.LOW,
+                side_effects=(),
+                isolation="host-api",
+                verification_plan=("observed",),
+            ),
+            handler=lambda req: {
+                "applications": [
+                    {"name": "Text Editor", "desktop_id": "editor.desktop", "handle": h1},
+                    {"name": "Terminal", "desktop_id": "terminal.desktop", "handle": h2},
+                ]
+            },
+        )
+    )
+    registry.register(
+        RegisteredCapability(
+            CapabilityDescriptor(
+                name="application.launch",
+                description="Launch application",
+                input_schema={
+                    "type": "object",
+                    "properties": {"handle": {"type": "string"}, "task_id": {"type": "string"}},
+                    "required": ["handle", "task_id"],
+                },
+                risk_class=RiskClass.LOW,
+                side_effects=(),
+                isolation="host-api",
+                verification_plan=("observed",),
+            ),
+            handler=lambda req: {"pid": 4200, "status": "LAUNCHED"},
+        )
+    )
+
+    audit = InMemoryAuditLedger()
+    service = ActionCapabilityService(registry, PolicyEngine(), audit, SyntheticApprovalBroker())
+    service.handles = handles
+    executions = SQLiteExecutionStore(tmp_path / "executions.db")
+    service.executions = executions
+
+    assistant_actions = AssistantActions(service, None, None)
+
+    # Step 1: launch Text Editor in turn-app-1
+    turn_step1 = ConversationTurn(
+        record_id="turn-app-1",
+        producer=ACTOR,
+        session_id="s1",
+        role="user",
+        text="Uruchom edytor",
+        metadata={"step_id": "1"},
+    )
+    intent1 = ActionIntent(
+        source_turn_id=turn_step1.record_id,
+        outcome="application.launch",
+        language="pl",
+        query="editor.desktop",
+    )
+    cand1 = await assistant_actions.dispatch_intent(turn_step1, intent1, CancellationToken())
+    assert cand1 is not None
+    assert "Text Editor" in cand1.text
+    assert cand1.metadata.get("action_result") is not None
+
+    # Step 2: launch Terminal in SAME turn-app-1 with step_id="2"
+    turn_step2 = ConversationTurn(
+        record_id=turn_step1.record_id,
+        producer=ACTOR,
+        session_id="s1",
+        role="user",
+        text="Uruchom terminal",
+        metadata={"step_id": "2"},
+    )
+    intent2 = ActionIntent(
+        source_turn_id=turn_step2.record_id,
+        outcome="application.launch",
+        language="pl",
+        query="terminal.desktop",
+    )
+    cand2 = await assistant_actions.dispatch_intent(turn_step2, intent2, CancellationToken())
+    assert cand2 is not None
+    assert "Terminal" in cand2.text
+    assert cand2.metadata.get("action_result") is not None
+
+    # Verify both requests were registered with step isolation in execution store
+    assert executions.decision("turn-app-1:step_1:applications") is not None
+    assert executions.decision("turn-app-1:step_1:launch") is not None
+    assert executions.decision("turn-app-1:step_2:applications") is not None
+    assert executions.decision("turn-app-1:step_2:launch") is not None
 
 
 def _make_context_package(turn: ConversationTurn) -> AssistantContextPackage:

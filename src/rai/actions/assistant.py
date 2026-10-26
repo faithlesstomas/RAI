@@ -186,7 +186,9 @@ class AssistantActions:
             from .routing import route_action  # noqa: PLC0415
             return await route_action(self.capabilities, self.store, self.profile, turn, intent, cancellation)
         query = intent.query.strip()
-        task_id = f"action:{turn.record_id}"
+        step_id = turn.metadata.get("step_id")
+        req_suffix = f":step_{step_id}" if step_id else ""
+        task_id = f"action:{turn.record_id}{req_suffix}"
         if intent.selection is not None:
             previous = await previous_action(self.store, turn, self.profile)
             choices = previous.get("action_choices", {})
@@ -202,7 +204,7 @@ class AssistantActions:
                 return AssistantCandidate(text=message("Uruchamianie aplikacji jest niedostępne.", "Application launching is unavailable."))
             listing = normalize_request(
                 descriptor, {"task_id": task_id, "query": query}, actor=turn.producer,
-                request_id=f"{turn.record_id}:applications", data_class=turn.data_class,
+                request_id=f"{turn.record_id}{req_suffix}:applications", data_class=turn.data_class,
             )
             _, listed = await self.capabilities.invoke(listing, cancellation)
             if isinstance(listed, Failure):
@@ -260,7 +262,7 @@ class AssistantActions:
             return AssistantCandidate(text=message("Uruchamianie aplikacji jest niedostępne.", "Application launching is unavailable."))
         request = normalize_request(
             descriptor, {"task_id": proposal.task_id, "handle": proposal.resource_handle},
-            actor=turn.producer, request_id=f"{turn.record_id}:launch", data_class=turn.data_class,
+            actor=turn.producer, request_id=f"{turn.record_id}{req_suffix}:launch", data_class=turn.data_class,
         )
         decision, executed = await self.capabilities.invoke(request, cancellation)
         terminal = executed.failure() if isinstance(executed, Failure) else executed.unwrap()
@@ -298,11 +300,13 @@ class AssistantActions:
         if descriptor is None:
             return AssistantCandidate(text=message("Funkcja jest niedostępna.", "Capability unavailable."))
 
+        step_id = turn.metadata.get("step_id")
+        req_suffix = f":step_{step_id}" if step_id else ""
         request = normalize_request(
             descriptor,
             {"task_id": proposal.task_id, "handle": proposal.resource_handle},
             actor=turn.producer,
-            request_id=f"{turn.record_id}:{proposal.capability}",
+            request_id=f"{turn.record_id}{req_suffix}:{proposal.capability}",
             data_class=turn.data_class,
         )
         decision, executed = await self.capabilities.invoke(request, cancellation)
@@ -470,7 +474,7 @@ class AssistantActions:
             if app_descriptor is None:
                 return AssistantCandidate(text="Application selection unavailable.")
             listing = normalize_request(app_descriptor, {"task_id": choices["task_id"], "query": intent.application},
-                actor=turn.producer, request_id=f"{turn.record_id}:document-applications", data_class=turn.data_class)
+                actor=turn.producer, request_id=f"{turn.record_id}{req_suffix}:document-applications", data_class=turn.data_class)
             _, apps = await self.capabilities.invoke(listing, cancellation)
             if isinstance(apps, Failure):
                 return AssistantCandidate(text="Nie mogę sprawdzić aplikacji." if intent.language == "pl" else "Cannot resolve application.")
