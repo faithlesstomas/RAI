@@ -22,7 +22,7 @@ Reads never rewrite files, rename tools, or change model versions.
 Model-setting precedence, highest first:
 
 1. Explicit command options.
-2. `RAI_ASSISTANT_BACKEND`, `RAI_ASSISTANT_MODEL`, `LEMONADE_HOST`, `LEMONADE_API_KEY`.
+2. `RAI_ASSISTANT_BACKEND`, `RAI_ASSISTANT_MODEL`, `RAI_BYPASS_INTENT_RECOGNIZER`, `RAI_ENABLE_THINKING`, `LEMONADE_HOST`, `LEMONADE_API_KEY`.
 3. `assistant` settings.
 4. `local_ai` settings (also used by the local processor supervisor).
 5. Selected `agents` profile.
@@ -32,8 +32,16 @@ The shared defaults are 4096 output tokens, an 8192-token model context window,
 and a 32000-character context selection limit. `assistant ask` and `assistant chat`
 accept `--max-output-tokens` and `--context-window` to override these settings for
 one invocation. Both must be positive; `--thinking-budget` accepts zero or more.
+The CLI also supports `--thinking/--no-thinking` to toggle model chain-of-thought generation,
+and `--show-thinking/--no-show-thinking` to toggle reasoning display. Inside interactive chat,
+`/thinking [on|off|show|hide]` synchronizes these modes dynamically.
 The character limit is a selection bound, not an exact token count. Models with
 smaller contexts need explicit lower limits.
+
+`assistant.bypass_intent_recognizer` (override: `RAI_BYPASS_INTENT_RECOGNIZER`, default `true`)
+allows `BoundedStepController` to route turns directly into the agentic step loop
+without the latency of a separate intent classification prompt, while continuing to resolve
+deterministic `ActiveChoiceFrame` selections directly.
 
 A profile is model configuration and memory scope. `--session-id` identifies a
 conversation, independently of the profile. Explicit `false` overrides inherited
@@ -52,6 +60,7 @@ assistant:
   max_output_tokens: 4096
   context_window: 8192
   enable_thinking: false
+  bypass_intent_recognizer: true
 rich_history:
   enabled: false
 ```

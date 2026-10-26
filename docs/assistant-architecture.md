@@ -299,6 +299,9 @@ user turn
      `PLANNING` $\rightarrow$ `EVALUATING` $\rightarrow$ `EXECUTING` $\rightarrow$ `OBSERVING` $\rightarrow$ `SYNTHESIZING` $\rightarrow$ `COMPLETE`.
    - Enforces hard limits (`max_steps`, `max_tool_calls`, `timeout_seconds`) and records step-level token and latency usage in `UsageLedger`.
    - Injects declarative procedural skills from `SkillRegistry` (`SKILLS.md` format) filtered by currently registered capabilities.
+   - Bypasses generative intent recognition by default (`bypass_intent_recognizer: bool = True`) to avoid classification prompt latency and false clarifications, while preserving direct deterministic resolution of active `ActiveChoiceFrame` selections (`"1"`, `"otwórz drugą"`).
+   - Isolates in-turn tool execution request IDs using step indices (`:step_{step_id}`) to prevent idempotency collisions in `SQLiteExecutionStore`.
+   - Formats observation history with capability and query identifiers to prevent duplicate tool call loops, and propagates the last executed tool step's `action_result` to candidate metadata so `AssistantContextBuilder` can reconstruct `ToolObservation` records across subsequent turns.
    - Routes recognized desktop intents through `AssistantActionHandler.dispatch_intent` (preserving `ActiveChoiceFrame` handles) and generic capabilities through `CapabilityService.invoke`.
 2. **`DirectController` (`rai.assistant.controllers.direct`, `--controller direct`):**
    - Executes a single-turn conversational pass with deterministic action passthrough, in-turn `ToolObservation` synthesis (up to 1 follow-up tool hop), and fail-closed memory abstention.
