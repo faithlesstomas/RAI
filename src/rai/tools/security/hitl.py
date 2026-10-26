@@ -41,6 +41,27 @@ class ApprovalRequest:
         }
 
 
+def sanitize_terminal_text(text: str) -> str:
+    """
+    Strip ANSI/VT escape sequences (7-bit ESC and 8-bit C1 CSI) and neutralize
+    control and format characters (C0, C1, bidi overrides) for safe terminal rendering.
+    """
+    import re  # noqa: PLC0415
+    import unicodedata  # noqa: PLC0415
+
+    # 1. Strip 7-bit ANSI escape sequences and 8-bit CSI (\x9b) sequences
+    pattern = r"(?:\x1b(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])|\x9b[0-?]*[ -/]*[@-~])"
+    stripped = re.sub(pattern, "", text)
+
+    # 2. Neutralize remaining control, format, and surrogate characters (Cc, Cf, Cs)
+    # preserving only standard whitespace (\n, \t).
+    return "".join(
+        ch if ch in ("\n", "\t") or unicodedata.category(ch) not in ("Cc", "Cf", "Cs")
+        else repr(ch)[1:-1]
+        for ch in stripped
+    )
+
+
 class ApprovalManager:
     """
     Centralized singleton to coordinate human authorization requests.
@@ -168,14 +189,13 @@ class ApprovalManager:
         if os.environ.get("RAI_SERVE") != "1" and sys.stdin.isatty():
             async def console_prompt() -> None:
                 try:
-                    import re  # noqa: PLC0415
                     from rich.text import Text  # noqa: PLC0415
                     from ...core import console  # noqa: PLC0415
 
                     print("\n")
                     is_python = req.tool_name in ("PythonTools", "run_python_code")
                     content_label = "Script" if is_python else "Command"
-                    sanitized_cmd = re.sub(r"\x1b(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])", "", req.command)
+                    sanitized_cmd = sanitize_terminal_text(req.command)
                     panel_content = Text()
                     panel_content.append(f"{content_label}:\n", style="bold yellow")
                     panel_content.append(f"{sanitized_cmd}\n")

@@ -429,3 +429,48 @@ def test_chat_repl_storage_failure_handling() -> None:
     mock_container.monty_runner.run.assert_not_called()
     mock_service.store.save_repl_session.assert_not_called()
     mock_service.store.clear_repl_session.assert_called_once()
+
+
+def test_chat_repl_save_failure_handling() -> None:
+    mock_container = MagicMock()
+    mock_service = MagicMock()
+    mock_service.profile_scope = "default"
+    mock_service.backend.is_remote = False
+    mock_service.start = AsyncMock(return_value=Success(None))
+    mock_service.get_recent_turns = AsyncMock(return_value=Success(()))
+    mock_service.store.get_latest_manifest_for_session = AsyncMock(return_value=Success(None))
+    mock_service.store.get_repl_session = AsyncMock(return_value=Success(None))
+    mock_service.store.save_repl_session = AsyncMock(
+        return_value=Failure(
+            make_assistant_failure(
+                code="SAVE_REPL_FAILED",
+                message="Disk quota exceeded",
+                request_id="r-save-fail",
+            )
+        )
+    )
+
+    mock_container.assistant_service = mock_service
+    mock_container.monty_runner.run.return_value = Success(
+        MontyExecutionResult(output="42", session_blob=b"updated-blob", variables={"x": "int"})
+    )
+    mock_container.close = AsyncMock()
+
+    with patch("rai.container.ApplicationContainer", return_value=mock_container):
+        with patch("rai.commands.approval.configure_approvals"):
+            with patch(
+                "rai.commands.dialog.click.prompt",
+                side_effect=[
+                    "/repl x = 42",
+                    "/exit",
+                ],
+            ):
+                _run_assistant_chat(
+                    session_id="test-chat-save-fail-session",
+                    backend="deterministic",
+                    model=None,
+                    show_context=False,
+                )
+
+    mock_container.monty_runner.run.assert_called_once()
+    mock_service.store.save_repl_session.assert_called_once()

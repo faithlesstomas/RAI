@@ -88,18 +88,9 @@ async def choose(prompt: str, token: CancellationToken, timeout: float | None = 
 async def confirm(prompt: str, token: CancellationToken) -> bool:
     return await choose(prompt + " [y/N] ", token) in {"y", "yes"}
 
+from rai.tools.security.hitl import sanitize_terminal_text
 
-def _sanitize_terminal_text(text: str) -> str:
-    """Strip ANSI escape sequences and neutralize control characters for safe terminal output."""
-    import re  # noqa: PLC0415
-
-    # Strip ANSI escape sequences (\x1b[...] and OSC sequences)
-    stripped = re.sub(r"\x1b(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])", "", text)
-    # Neutralize control characters except standard newlines and tabs
-    return "".join(
-        ch if (ch in ("\n", "\t") or (ord(ch) >= 32 and ord(ch) != 127)) else repr(ch)[1:-1]
-        for ch in stripped
-    )
+_sanitize_terminal_text = sanitize_terminal_text
 
 
 def _format_action_summary(request: CapabilityRequest, decision: PolicyDecision) -> str:

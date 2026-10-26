@@ -18,7 +18,9 @@ from rai.kernel.defaults import HitlApprovalBroker, create_default_capability_re
 from rai.kernel.policy import PolicyEngine
 from rai.kernel.ports import CancellationToken
 from rai.kernel.records import (
+    ActionFailure,
     ActionResult,
+    CapabilityRequest,
     DataClass,
     PolicyDecision,
     PolicyOutcome,
@@ -611,6 +613,20 @@ def test_format_action_summary_sanitizes_escape_sequences() -> None:
     assert "print('real code')" in summary
 
 
+def test_sanitize_terminal_text_neutralizes_c1_controls() -> None:
+    """Both 7-bit ANSI and 8-bit C1 controls (e.g. U+009B) must be stripped/neutralized."""
+    from rai.tools.security.hitl import sanitize_terminal_text  # noqa: PLC0415
+
+    # \x9b is 8-bit CSI (U+009B)
+    malicious = "echo 'test'\x9b2K\r\x80\x9fmalicious\u202esverted"
+    sanitized = sanitize_terminal_text(malicious)
+    assert "\x9b" not in sanitized
+    assert "\x80" not in sanitized
+    assert "\x9f" not in sanitized
+    assert "\u202e" not in sanitized
+    assert "\\r" in sanitized or "\r" not in sanitized
+
+
 @pytest.mark.asyncio
 async def test_workflow_binds_trusted_session_id_overriding_model_input() -> None:
     """Workflow controller must always bind trusted session_id even if model passed a different one."""
@@ -621,19 +637,23 @@ async def test_workflow_binds_trusted_session_id_overriding_model_input() -> Non
     mock_service = MagicMock()
     mock_service.registry = registry
 
-    captured_requests: list[Any] = []
+    captured_requests: list[CapabilityRequest] = []
 
-    async def mock_invoke(req: Any, cancellation: Any) -> tuple[Any, Result[Any, Any]]:
+    async def mock_invoke(
+        req: CapabilityRequest, cancellation: CancellationToken
+    ) -> tuple[object, Result[ActionResult, ActionFailure]]:
         captured_requests.append(req)
-        return None, Success(ActionResult(
-            record_id="res-1",
-            timestamp=_utc_now(),
-            producer=ProducerIdentity(producer_id="p-1", kind="test", version="1.0"),
-            request_id=req.record_id,
-            capability=req.capability,
-            output={"result": "ok"},
-            verification={"status": "verified"},
-        ))
+        return None, Success(
+            ActionResult(
+                record_id="res-1",
+                timestamp=_utc_now(),
+                producer=ProducerIdentity(producer_id="p-1", kind="test", version="1.0"),
+                request_id=req.record_id,
+                capability=req.capability,
+                output={"result": "ok"},
+                verification={"status": "verified"},
+            )
+        )
 
     mock_service.invoke = mock_invoke
 

@@ -9,7 +9,9 @@ import ast
 import asyncio
 import logging
 import os
+import threading
 from typing import TYPE_CHECKING, Any, Dict, Optional, Tuple
+import weakref
 
 from returns.result import Failure, Result, Success
 
@@ -104,17 +106,24 @@ def can_run_in_monty(code: str) -> Tuple[bool, str]:  # noqa: PLR0911, PLR0912
     return True, "Compatible with pure Monty sandbox."
 
 
-_repl_session_locks: dict[tuple[str, str], asyncio.Lock] = {}
-_repl_session_locks_guard = asyncio.Lock()
+_repl_session_locks: weakref.WeakKeyDictionary[
+    asyncio.AbstractEventLoop, dict[tuple[str, str], asyncio.Lock]
+] = weakref.WeakKeyDictionary()
+_repl_session_locks_guard = threading.Lock()
 
 
 async def get_session_repl_lock(profile_scope: str, session_id: str) -> asyncio.Lock:
     """Acquire or create an asyncio lock for serializing REPL operations per (profile_scope, session_id)."""
+    loop = asyncio.get_running_loop()
     key = (profile_scope, session_id)
-    async with _repl_session_locks_guard:
-        if key not in _repl_session_locks:
-            _repl_session_locks[key] = asyncio.Lock()
-        return _repl_session_locks[key]
+    with _repl_session_locks_guard:
+        loop_locks = _repl_session_locks.get(loop)
+        if loop_locks is None:
+            loop_locks = {}
+            _repl_session_locks[loop] = loop_locks
+        if key not in loop_locks:
+            loop_locks[key] = asyncio.Lock()
+        return loop_locks[key]
 
 
 async def get_session_blob(
