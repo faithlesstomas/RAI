@@ -5,7 +5,13 @@ from pathlib import Path
 
 import pytest
 
-from rai.tools.security.auth import TOKEN_HEADER, get_api_token, is_authorized
+from rai.tools.security.auth import (
+    TOKEN_HEADER,
+    create_session_token,
+    get_api_token,
+    is_authorized,
+    verify_session_token,
+)
 from conftest import ASGITestClient
 
 MINIMUM_TOKEN_LENGTH = 32
@@ -49,3 +55,25 @@ def test_control_api_rejects_missing_token(
 
     assert response.status_code == 401  # noqa: PLR2004
     assert response.json() == {"detail": "Unauthorized"}
+
+
+def test_session_token_signing_and_expiry(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("RAI_API_TOKEN", "test-secret-token")
+    token = create_session_token("session-123", ttl_seconds=3600)
+    assert verify_session_token(token) == "session-123"
+
+    # Expired token
+    expired_token = create_session_token("session-123", ttl_seconds=-10)
+    assert verify_session_token(expired_token) is None
+
+    # Tampered token
+    parts = token.split(".")
+    tampered_sig = f"{parts[0]}.{parts[1]}.bad_signature"
+    assert verify_session_token(tampered_sig) is None
+    tampered_session = f"session-victim.{parts[1]}.{parts[2]}"
+    assert verify_session_token(tampered_session) is None
+
+    # Invalid format
+    assert verify_session_token("invalid") is None
+    assert verify_session_token("") is None
+    assert verify_session_token(None) is None

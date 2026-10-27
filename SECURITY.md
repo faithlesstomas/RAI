@@ -277,9 +277,10 @@ External tool outputs, logs, and document payloads are budgeted and stored as ty
 
 Direct capability callers, remote LLMs, and MCP clients are untrusted. To prevent malicious or accidental cross-session artifact leakage, observation capabilities (`observation.search`, `observation.filter`, `observation.slice`, `observation.count`, `observation.get`) enforce cryptographically authenticated session boundaries:
 
-1. **HMAC-SHA256 Session Tokens**:
-   - Session tokens are signed tokens formatted as `{session_id}.{signature}` computed using `hmac-sha256` over the daemon's local API token (`get_api_token()`).
-   - Tampered, expired, or mismatched signatures fail closed, returning `None`.
+1. **HMAC-SHA256 Session Tokens with Expiration**:
+   - Session tokens are signed tokens formatted as `{session_id}.{expires_at}.{signature}` computed using `hmac-sha256` over `f"{session_id}:{expires_at}"` with the daemon's local API token (`get_api_token()`).
+   - Tokens enforce a 24-hour expiration TTL by default. Expired (`time.time() > expires_at`), tampered, or mismatched signatures fail closed, returning `None`.
+   - Backward compatibility: legacy two-part tokens (`{session_id}.{signature}`) without an explicit expiration timestamp are verified against `session_id`.
 
 2. **REST Capability Invocation (`/api/v1/capabilities/invoke`)**:
    - The endpoint reads `X-Session-Token` from HTTP request headers or `session_token` from query parameters.
@@ -290,15 +291,16 @@ Direct capability callers, remote LLMs, and MCP clients are untrusted. To preven
    - An MCP client connects to `/api/v1/mcp/sse` providing an `X-Session-Token` header or `?session_token=` query parameter.
    - The transport establishes a verified session binding in `McpRuntime.transport_sessions`. If no session token is provided, a private transport-scoped session (`mcp-session-{uuid}`) is assigned.
    - Tool arguments supplied by the MCP client cannot specify or override `session_id`; capability execution uses the server-bound session context.
-   - **Connection Lifecycle and State Cleanup**: When an MCP SSE stream terminates (e.g. client disconnects or network closes), the server removes the transport session mapping in a `finally` block, preventing memory accumulation over long-running server lifecycles.
+   - **Connection Lifecycle and State Cleanup**: When an MCP SSE stream terminates (e.g. client disconnects or network closes), the server removes both the transport session mapping in `runtime.transport_sessions` and the associated stream writer in `runtime.transport._read_stream_writers` in a `finally` block, preventing memory accumulation over long-running server lifecycles.
 
 4. **Production Session Token Issuance**:
    - Assistant turn completions (`AssistantTurnResult.session_token`), streaming SSE `done` events, and the native `/api/v1/assistant/ws` handshake (`{"type": "session", "session_id": ..., "session_token": ...}`) issue verified session tokens.
    - Authorized clients can retrieve or refresh a valid session token via the authenticated endpoint `GET /api/v1/assistant/sessions/{session_id}/token`.
 
 5. **Resource and DoS Protections in Observation Capabilities**:
-   - `observation.search` and `observation.slice` lazily stream lines and collections without upfront memory materialization (`splitlines()` or list copies), bounding visited items to 10,000 and matches to 1,000 with periodic cooperative event loop yielding.
-   - `observation.get` bounds extracted payloads to 64,000 characters and 1,000 items. Requests accessing huge structures (e.g. root document `path=""`) return bounded summaries with `complete=False` rather than unconstrained memory dumps.
+   - `observation.search`, `observation.filter`, and `observation.slice` lazily stream lines (supporting universal line breaks matching `str.splitlines()`) and collections without upfront memory materialization (`splitlines()` or list copies), bounding visited items to 10,000 (`MAX_VISITED_LIMIT`) and matches to 1,000 with periodic cooperative event loop yielding (`await asyncio.sleep(0)` every 100 items).
+   - `observation.get` extracts JSON pointer values according to RFC 6901, preserving whitespace in token segments.
+   - All observation capabilities (`observation.get`, `observation.search`, `observation.filter`, `observation.slice`) enforce a strict maximum payload size of 64,000 characters (`MAX_GET_CHAR_LIMIT`), bounding outputs with `complete=False` and explanatory pagination/truncation reasons if individual lines, records, or collections exceed safe memory budgets.
 
 ### Migration requirement for capability callers
 

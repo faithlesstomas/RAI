@@ -1,9 +1,10 @@
 """Unit and integration tests for observation processing capabilities."""
-# ruff: noqa: PLR2004
+# ruff: noqa: PLR2004, PLR0915
 
 from __future__ import annotations
 
 import asyncio
+import json
 from pathlib import Path
 import socket
 import httpx
@@ -12,6 +13,7 @@ from returns.result import Failure, Success
 
 from conftest import ASGITestClient
 from rai.actions.observations import (
+    _iter_text_lines,
     register_observation_capabilities,
 )
 from rai.assistant.records import ObservationArtifact, summarize_observation_schema
@@ -982,12 +984,16 @@ async def test_observation_mcp_sse_end_to_end(tmp_path: Path) -> None:
                 assert res_att.isError is True
                 assert "ARTIFACT_NOT_FOUND" in res_att.content[0].text
 
-        # Verify transport_sessions cleanup after disconnect
+        # Verify transport_sessions and _read_stream_writers cleanup after disconnect
         for _ in range(50):
-            if len(app.state.mcp_runtime.transport_sessions) == 0:
+            if (
+                len(app.state.mcp_runtime.transport_sessions) == 0
+                and len(app.state.mcp_runtime.transport._read_stream_writers) == 0
+            ):
                 break
             await asyncio.sleep(0.02)
         assert len(app.state.mcp_runtime.transport_sessions) == 0
+        assert len(app.state.mcp_runtime.transport._read_stream_writers) == 0
 
         # 2. Legitimate client connects via SSE presenting a valid session token for session-victim
         headers["x-session-token"] = create_session_token("session-victim")
@@ -1001,12 +1007,16 @@ async def test_observation_mcp_sse_end_to_end(tmp_path: Path) -> None:
                 assert res_legit.isError is False
                 assert "victim-sse-secret" in res_legit.content[0].text
 
-        # Verify transport_sessions cleanup after disconnect
+        # Verify transport_sessions and _read_stream_writers cleanup after disconnect
         for _ in range(50):
-            if len(app.state.mcp_runtime.transport_sessions) == 0:
+            if (
+                len(app.state.mcp_runtime.transport_sessions) == 0
+                and len(app.state.mcp_runtime.transport._read_stream_writers) == 0
+            ):
                 break
             await asyncio.sleep(0.02)
         assert len(app.state.mcp_runtime.transport_sessions) == 0
+        assert len(app.state.mcp_runtime.transport._read_stream_writers) == 0
     finally:
         server.should_exit = True
         await server_task
@@ -1154,6 +1164,224 @@ async def test_observation_search_and_slice_streaming_large_text(
         data_class=DataClass.LOCAL,
     )
     res_slice = (await _invoke(registry, req_slice)).output
-    assert res_slice["total_count"] == 15000
+    assert res_slice["total_count"] == 10000
+    assert res_slice["complete"] is False
+    assert "Hit maximum slice scan limit" in (res_slice["reason"] or "")
     assert len(res_slice["items"]) == 25
     assert res_slice["items"][0] == "line_50: content data sample"
+
+
+def test_iter_text_lines_universal_line_breaks() -> None:
+    # Verify _iter_text_lines strictly matches str.splitlines() semantics across line breaks
+    test_cases = [
+        "",
+        "single line without break",
+        "line1\nline2\nline3",
+        "line1\r\nline2\r\nline3",
+        "line1\rline2\rline3",
+        "line1\x0bline2\x0cline3",
+        "line1\x1cline2\x1dline3\x1eline4",
+        "line1\x85line2\u2028line3\u2029line4",
+        "trailing newline\n",
+        "trailing crlf\r\n",
+        "trailing cr\r",
+        "\n\n\n",
+        "\r\n\r\n",
+        "mixed\r\nbreaks\ntest\rhere\u2028unicode\u2029done\n",
+    ]
+    for case in test_cases:
+        expected = case.splitlines()
+        actual = list(_iter_text_lines(case))
+        assert actual == expected, f"Mismatch for case {case!r}: {actual} != {expected}"
+
+
+@pytest.mark.asyncio
+async def test_observation_get_preserves_pointer_whitespace(
+    registry: CapabilityRegistry, store: SQLiteMemoryGraphStore
+) -> None:
+    content = {
+        "with trailing ": "val_trailing",
+        " leading": "val_leading",
+        " both ": {"nested ": "val_nested"},
+    }
+    art = ObservationArtifact(
+        artifact_id="obs_whitespace_keys",
+        session_id="session-space",
+        turn_id="turn-space",
+        capability="test",
+        request_id="req-space",
+        data_class=DataClass.LOCAL,
+        content=content,
+        schema_summary=summarize_observation_schema(content),
+        size_chars=100,
+        producer=ACTOR,
+    )
+    await store.put(art)
+
+    desc = registry.descriptor("observation.get")
+    assert desc is not None
+
+    req1 = normalize_request(
+        desc,
+        {"session_id": "session-space", "ref": "obs_whitespace_keys", "path": "/with trailing "},
+        actor=ACTOR,
+        data_class=DataClass.LOCAL,
+    )
+    res1 = (await _invoke(registry, req1)).output
+    assert res1["value"] == "val_trailing"
+
+    req2 = normalize_request(
+        desc,
+        {"session_id": "session-space", "ref": "obs_whitespace_keys", "path": "/ leading"},
+        actor=ACTOR,
+        data_class=DataClass.LOCAL,
+    )
+    res2 = (await _invoke(registry, req2)).output
+    assert res2["value"] == "val_leading"
+
+    req3 = normalize_request(
+        desc,
+        {"session_id": "session-space", "ref": "obs_whitespace_keys", "path": "/ both /nested "},
+        actor=ACTOR,
+        data_class=DataClass.LOCAL,
+    )
+    res3 = (await _invoke(registry, req3)).output
+    assert res3["value"] == "val_nested"
+
+
+@pytest.mark.asyncio
+async def test_observation_payload_bounding_search_filter_slice_and_get(
+    registry: CapabilityRegistry, store: SQLiteMemoryGraphStore
+) -> None:
+    # Test that collections with huge items do not exceed 64,000 characters
+    large_line = "A" * 5000
+    huge_records = [{"id": i, "payload": large_line} for i in range(50)]
+    content = {"items": huge_records}
+    art = ObservationArtifact(
+        artifact_id="obs_huge_records",
+        session_id="session-bound-collections",
+        turn_id="turn-bound-collections",
+        capability="test",
+        request_id="req-bound-col",
+        data_class=DataClass.LOCAL,
+        content=content,
+        schema_summary=summarize_observation_schema(content),
+        size_chars=len(large_line) * 50,
+        producer=ACTOR,
+    )
+    await store.put(art)
+
+    # 1. ObservationGet on huge list with >1000 items but payload size also bounded
+    large_list_art = ObservationArtifact(
+        artifact_id="obs_huge_list_payload",
+        session_id="session-bound-collections",
+        turn_id="turn-bound-collections",
+        capability="test",
+        request_id="req-bound-list",
+        data_class=DataClass.LOCAL,
+        content={"items": [{"data": "X" * 200} for _ in range(1200)]},
+        schema_summary=summarize_observation_schema({}),
+        size_chars=250000,
+        producer=ACTOR,
+    )
+    await store.put(large_list_art)
+
+    get_desc = registry.descriptor("observation.get")
+    assert get_desc is not None
+    req_get = normalize_request(
+        get_desc,
+        {"session_id": "session-bound-collections", "ref": "obs_huge_list_payload", "path": "/items"},
+        actor=ACTOR,
+        data_class=DataClass.LOCAL,
+    )
+    res_get = (await _invoke(registry, req_get)).output
+    assert res_get["complete"] is False
+    assert len(json.dumps(res_get["value"])) <= 64000
+    assert len(res_get["value"]) < 1000
+
+    # 2. ObservationSlice on huge records
+    slice_desc = registry.descriptor("observation.slice")
+    assert slice_desc is not None
+    req_slice = normalize_request(
+        slice_desc,
+        {"session_id": "session-bound-collections", "ref": "obs_huge_records", "offset": 0, "limit": 40},
+        actor=ACTOR,
+        data_class=DataClass.LOCAL,
+    )
+    res_slice = (await _invoke(registry, req_slice)).output
+    assert res_slice["complete"] is False
+    assert len(json.dumps(res_slice["items"])) <= 64000
+    assert len(res_slice["items"]) < 40
+    assert "exceeded maximum size limit" in res_slice["reason"]
+
+    # 3. ObservationSearch on huge records
+    search_desc = registry.descriptor("observation.search")
+    assert search_desc is not None
+    req_search = normalize_request(
+        search_desc,
+        {"session_id": "session-bound-collections", "ref": "obs_huge_records", "pattern": "AAAA", "limit": 40},
+        actor=ACTOR,
+        data_class=DataClass.LOCAL,
+    )
+    res_search = (await _invoke(registry, req_search)).output
+    assert res_search["complete"] is False
+    assert len(json.dumps(res_search["matches"])) <= 64000
+    assert len(res_search["matches"]) < 40
+    assert "exceeded maximum size limit" in res_search["reason"]
+
+    # 4. ObservationFilter on huge records
+    filter_desc = registry.descriptor("observation.filter")
+    assert filter_desc is not None
+    req_filter = normalize_request(
+        filter_desc,
+        {"session_id": "session-bound-collections", "ref": "obs_huge_records", "field": "payload", "op": "contains", "value": "AAAA", "limit": 40},
+        actor=ACTOR,
+        data_class=DataClass.LOCAL,
+    )
+    res_filter = (await _invoke(registry, req_filter)).output
+    assert res_filter["complete"] is False
+    assert len(json.dumps(res_filter["results"])) <= 64000
+    assert len(res_filter["results"]) < 40
+    assert "exceeded maximum size limit" in res_filter["reason"]
+
+
+@pytest.mark.asyncio
+async def test_observation_slice_cancellation_and_scan_limits(
+    registry: CapabilityRegistry, store: SQLiteMemoryGraphStore
+) -> None:
+    text_content = "\n".join(f"line_{i}" for i in range(20000))
+    art = ObservationArtifact(
+        artifact_id="obs_slice_cancel",
+        session_id="session-cancel",
+        turn_id="turn-cancel",
+        capability="test",
+        request_id="req-cancel",
+        data_class=DataClass.LOCAL,
+        content={"text": text_content},
+        schema_summary=summarize_observation_schema({"text": text_content}),
+        size_chars=len(text_content),
+        producer=ACTOR,
+    )
+    await store.put(art)
+
+    slice_desc = registry.descriptor("observation.slice")
+    assert slice_desc is not None
+    req = normalize_request(
+        slice_desc,
+        {"session_id": "session-cancel", "ref": "obs_slice_cancel", "offset": 12000, "limit": 20},
+        actor=ACTOR,
+        data_class=DataClass.LOCAL,
+    )
+
+    # Offset beyond MAX_VISITED_LIMIT returns empty items and hit_scan_limit
+    res = (await _invoke(registry, req)).output
+    assert res["complete"] is False
+    assert list(res["items"]) == []
+    assert "Hit maximum slice scan limit" in res["reason"]
+
+    # Cooperative cancellation
+    token = CancellationToken()
+    token.cancel()
+    res_cancel = await registry.resolve(req).unwrap().invoke(req, token)
+    assert isinstance(res_cancel, Failure)
+    assert res_cancel.failure().code == "CANCELLED"

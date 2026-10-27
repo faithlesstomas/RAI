@@ -6,6 +6,7 @@ import hashlib
 import hmac
 import os
 import secrets
+import time
 from pathlib import Path
 from typing import Mapping, Optional
 
@@ -14,6 +15,7 @@ from rai.paths import runtime_dir
 TOKEN_ENV = "RAI_API_TOKEN"  # noqa: S105 -- environment variable name
 TOKEN_HEADER = "X-RAI-Token"  # noqa: S105 -- HTTP header name
 SESSION_TOKEN_HEADER = "X-Session-Token"  # noqa: S105 -- HTTP header name
+DEFAULT_SESSION_TOKEN_TTL = 86400
 
 
 def auth_disabled() -> bool:
@@ -78,20 +80,36 @@ def is_authorized(
     return bool(supplied) and hmac.compare_digest(supplied, get_api_token())
 
 
-def create_session_token(session_id: str) -> str:
-    """Create a tamper-proof signed session token for an authorized session ID."""
+def create_session_token(
+    session_id: str, ttl_seconds: int = DEFAULT_SESSION_TOKEN_TTL
+) -> str:
+    """Create a tamper-proof signed session token for an authorized session ID with TTL."""
+    expires_at = int(time.time()) + ttl_seconds
+    payload = f"{session_id}:{expires_at}"
     secret = get_api_token().encode("utf-8")
-    sig = hmac.new(secret, session_id.encode("utf-8"), hashlib.sha256).hexdigest()
-    return f"{session_id}.{sig}"
+    sig = hmac.new(secret, payload.encode("utf-8"), hashlib.sha256).hexdigest()
+    return f"{session_id}.{expires_at}.{sig}"
 
 
 def verify_session_token(token: str | None) -> str | None:
-    """Validate a signed session token and return the verified session_id, or None if invalid."""
+    """Validate a signed session token, enforce expiration, and return verified session_id or None."""
     if not token or "." not in token:
         return None
-    session_id, sig = token.rsplit(".", 1)
+    parts = token.split(".")
     secret = get_api_token().encode("utf-8")
-    expected_sig = hmac.new(secret, session_id.encode("utf-8"), hashlib.sha256).hexdigest()
-    if hmac.compare_digest(sig, expected_sig):
-        return session_id
+    if len(parts) == 3:  # noqa: PLR2004 -- session_id.expires_at.signature
+        session_id, exp_str, sig = parts
+        try:
+            expires_at = int(exp_str)
+        except ValueError:
+            return None
+        if time.time() > expires_at:
+            return None
+        payload = f"{session_id}:{exp_str}"
+        expected_sig = hmac.new(secret, payload.encode("utf-8"), hashlib.sha256).hexdigest()
+        return session_id if hmac.compare_digest(sig, expected_sig) else None
+    if len(parts) == 2:  # noqa: PLR2004 -- legacy unexpiring token format for backwards compatibility
+        session_id, sig = parts
+        expected_sig = hmac.new(secret, session_id.encode("utf-8"), hashlib.sha256).hexdigest()
+        return session_id if hmac.compare_digest(sig, expected_sig) else None
     return None

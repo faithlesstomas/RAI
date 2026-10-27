@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import asyncio
-import itertools
 import json
 import re
 from typing import Any, Iterator, Sequence
@@ -81,19 +80,73 @@ def _extract_primary_list(content: dict[str, Any]) -> tuple[str | None, Sequence
     return None, ()
 
 
+LINE_BREAK_PATTERN = re.compile(r"\r\n|[\n\r\x0b\x0c\x1c\x1d\x1e\x85\u2028\u2029]")
+
+
 def _iter_text_lines(text: str) -> Iterator[str]:
+    """Iterate over lines lazily with semantics matching str.splitlines()."""
+    if not text:
+        return
     start = 0
-    text_len = len(text)
-    while start < text_len:
-        end = text.find("\n", start)
-        if end == -1:
-            yield text[start:]
+    for match in LINE_BREAK_PATTERN.finditer(text):
+        yield text[start : match.start()]
+        start = match.end()
+    if start < len(text):
+        yield text[start:]
+
+
+def _bound_output_collection(
+    items: Sequence[Any],
+    max_items: int = MAX_PAGE_LIMIT,
+    max_chars: int = MAX_GET_CHAR_LIMIT,
+) -> tuple[list[Any], bool, str | None]:
+    """Bound an output list/collection by both item count and serialized JSON size."""
+    bounded: list[Any] = []
+    hit_item_limit = False
+    hit_char_limit = False
+
+    cur_len = 2  # Brackets "[]"
+    for count, item in enumerate(items):
+        if count >= max_items:
+            hit_item_limit = True
             break
-        line = text[start:end]
-        if line.endswith("\r"):
-            line = line[:-1]
-        yield line
-        start = end + 1
+        try:
+            item_str = json.dumps(item)
+        except (TypeError, ValueError):
+            item_str = json.dumps(str(item))
+
+        additional_len = len(item_str) + (2 if count > 0 else 0)
+        if cur_len + additional_len > max_chars:
+            if not bounded:
+                if isinstance(item, str):
+                    cutoff = max(0, max_chars - 100)
+                    truncated_str = item[:cutoff] + f"... [truncated {len(item) - cutoff} chars]"
+                    bounded.append(truncated_str)
+                elif isinstance(item, dict):
+                    budget = max(50, max_chars - 100)
+                    preview = render_observation_payload(item, budget_chars=budget)
+                    bounded.append({"_preview": preview})
+                else:
+                    cutoff = max(0, max_chars - 100)
+                    bounded.append(str(item)[:cutoff] + "... [truncated]")
+            hit_char_limit = True
+            break
+        bounded.append(item)
+        cur_len += additional_len
+
+    complete = not hit_item_limit and not hit_char_limit and len(bounded) == len(items)
+    reason: str | None = None
+    if hit_char_limit:
+        reason = (
+            f"Output payload exceeded maximum size limit ({max_chars} chars, "
+            f"{len(bounded)} of {len(items)} items returned)"
+        )
+    elif hit_item_limit:
+        reason = (
+            f"List value exceeded maximum item limit ({max_items} of {len(items)} items returned)"
+        )
+
+    return bounded, complete, reason
 
 
 async def _get_artifact(
@@ -194,7 +247,7 @@ class ObservationSearch:
     def __init__(self, store: ObservationStore) -> None:
         self.store = store
 
-    async def invoke(  # noqa: PLR0911
+    async def invoke(  # noqa: PLR0911, PLR0912
         self, request: CapabilityRequest, cancellation: CancellationToken
     ) -> Result[ActionResult, ActionFailure]:
         if cancellation.cancelled:
@@ -239,11 +292,21 @@ class ObservationSearch:
 
         total_matches = len(matched)
         paginated = matched[offset : offset + limit]
-        complete = not hit_scan_limit and offset == 0 and total_matches <= limit
+        bounded_matches, payload_complete, payload_reason = _bound_output_collection(
+            paginated, max_items=limit, max_chars=MAX_GET_CHAR_LIMIT
+        )
+        complete = (
+            not hit_scan_limit
+            and offset == 0
+            and total_matches <= len(bounded_matches)
+            and payload_complete
+        )
         if hit_scan_limit:
             reason = f"Hit maximum search scan limit ({MAX_VISITED_LIMIT} items inspected or {MAX_SCAN_LIMIT} matches)"
+        elif not payload_complete and payload_reason:
+            reason = payload_reason
         elif not complete:
-            reason = f"Results paginated ({len(paginated)} of {total_matches} matches returned)"
+            reason = f"Results paginated ({len(bounded_matches)} of {total_matches} matches returned)"
         else:
             reason = None
 
@@ -255,7 +318,7 @@ class ObservationSearch:
             "limit": limit,
             "complete": complete,
             "reason": reason,
-            "matches": paginated,
+            "matches": bounded_matches,
         }
 
         derived_id = await persist_observation_artifact(
@@ -375,11 +438,21 @@ class ObservationFilter:
 
         total_matches = len(filtered)
         paginated = filtered[offset : offset + limit]
-        complete = not hit_scan_limit and offset == 0 and total_matches <= limit
+        bounded_results, payload_complete, payload_reason = _bound_output_collection(
+            paginated, max_items=limit, max_chars=MAX_GET_CHAR_LIMIT
+        )
+        complete = (
+            not hit_scan_limit
+            and offset == 0
+            and total_matches <= len(bounded_results)
+            and payload_complete
+        )
         if hit_scan_limit:
             reason = f"Hit maximum filter scan limit ({MAX_VISITED_LIMIT} items inspected or {MAX_SCAN_LIMIT} matches)"
+        elif not payload_complete and payload_reason:
+            reason = payload_reason
         elif not complete:
-            reason = f"Results paginated ({len(paginated)} of {total_matches} matches returned)"
+            reason = f"Results paginated ({len(bounded_results)} of {total_matches} matches returned)"
         else:
             reason = None
 
@@ -393,7 +466,7 @@ class ObservationFilter:
             "limit": limit,
             "complete": complete,
             "reason": reason,
-            "results": paginated,
+            "results": bounded_results,
         }
 
         derived_id = await persist_observation_artifact(
@@ -410,6 +483,47 @@ class ObservationFilter:
             output["artifact_id"] = derived_id
 
         return Success(_ok(request, output, {"source_artifact_id": ref}))
+
+
+async def _slice_text(
+    text: str, offset: int, limit: int, cancellation: CancellationToken
+) -> tuple[list[str] | None, int, bool]:
+    sliced_raw: list[str] = []
+    inspected = 0
+    hit_scan_limit = False
+    target_end = offset + limit
+
+    for line in _iter_text_lines(text):
+        inspected += 1
+        if inspected % YIELD_INTERVAL == 0:
+            await asyncio.sleep(0)
+            if cancellation.cancelled:
+                return None, 0, False
+        if inspected > MAX_VISITED_LIMIT:
+            hit_scan_limit = True
+            break
+        idx = inspected - 1
+        if offset <= idx < target_end:
+            sliced_raw.append(line)
+
+    total_count = inspected if not hit_scan_limit else MAX_VISITED_LIMIT
+    return sliced_raw, total_count, hit_scan_limit
+
+
+def _slice_records(
+    all_items: Sequence[Any], offset: int, limit: int
+) -> tuple[list[Any], int, bool]:
+    total_count = len(all_items)
+    hit_scan_limit = False
+    if offset > MAX_VISITED_LIMIT:
+        hit_scan_limit = True
+        sliced_raw: list[Any] = []
+    else:
+        end_idx = min(offset + limit, MAX_VISITED_LIMIT)
+        sliced_raw = list(all_items[offset:end_idx])
+        if total_count > MAX_VISITED_LIMIT and offset + limit > MAX_VISITED_LIMIT:
+            hit_scan_limit = True
+    return sliced_raw, total_count, hit_scan_limit
 
 
 class ObservationSlice:
@@ -442,20 +556,43 @@ class ObservationSlice:
 
         content = artifact.content
         if "text" in content and isinstance(content["text"], str):
-            text = content["text"]
-            total_count = text.count("\n") + (1 if text and not text.endswith("\n") else 0)
-            sliced = list(itertools.islice(_iter_text_lines(text), offset, offset + limit))
+            sliced_raw, total_count, hit_scan_limit = await _slice_text(
+                content["text"], offset, limit, cancellation
+            )
+            if sliced_raw is None:
+                return Failure(_fail(request, "CANCELLED", "Slice cancelled"))
         else:
             _, all_items = _extract_primary_list(content)
-            total_count = len(all_items)
-            sliced = list(all_items[offset : offset + limit])
+            sliced_raw, total_count, hit_scan_limit = _slice_records(
+                all_items, offset, limit
+            )
+
+        bounded_items, payload_complete, payload_reason = _bound_output_collection(
+            sliced_raw, max_items=limit, max_chars=MAX_GET_CHAR_LIMIT
+        )
+        complete = (
+            not hit_scan_limit
+            and offset == 0
+            and total_count <= len(bounded_items)
+            and payload_complete
+        )
+        if hit_scan_limit:
+            reason = f"Hit maximum slice scan limit ({MAX_VISITED_LIMIT} items inspected)"
+        elif not payload_complete and payload_reason:
+            reason = payload_reason
+        elif not complete:
+            reason = f"Results paginated ({len(bounded_items)} of {total_count} items returned)"
+        else:
+            reason = None
 
         output: dict[str, Any] = {
             "ref": ref,
             "offset": offset,
             "limit": limit,
             "total_count": total_count,
-            "items": sliced,
+            "complete": complete,
+            "reason": reason,
+            "items": bounded_items,
         }
 
         derived_id = await persist_observation_artifact(
@@ -593,29 +730,12 @@ def _bound_get_value(value: Any) -> tuple[Any, bool, str | None]:  # noqa: ANN40
         return value, True, None
 
     if isinstance(value, (list, tuple)):
-        if len(value) > MAX_PAGE_LIMIT:
-            bounded = list(value[:MAX_PAGE_LIMIT])
-            return (
-                bounded,
-                False,
-                f"List value exceeded maximum item limit ({MAX_PAGE_LIMIT} of {len(value)} items returned). Use observation.slice to paginate.",
-            )
-        serialized = json.dumps(value)
-        if len(serialized) > MAX_GET_CHAR_LIMIT:
-            bounded_items: list[Any] = []
-            cur_len = 2
-            for item in value:
-                item_str = json.dumps(item)
-                if cur_len + len(item_str) + 2 > MAX_GET_CHAR_LIMIT:
-                    break
-                bounded_items.append(item)
-                cur_len += len(item_str) + 2
-            return (
-                bounded_items,
-                False,
-                f"Serialized list exceeded payload limit ({len(bounded_items)} of {len(value)} items returned). Use observation.slice to paginate.",
-            )
-        return list(value) if isinstance(value, tuple) else value, True, None
+        bounded_items, complete, reason = _bound_output_collection(
+            value, max_items=MAX_PAGE_LIMIT, max_chars=MAX_GET_CHAR_LIMIT
+        )
+        if not complete and reason:
+            reason = f"{reason}. Use observation.slice to paginate."
+        return bounded_items, complete, reason
 
     if isinstance(value, dict):
         serialized = json.dumps(value)
@@ -649,7 +769,7 @@ class ObservationGet:
         ref = str(request.arguments.get("ref", "")).strip()
         if "path" not in request.arguments:
             return Failure(_fail(request, "INVALID_ARGUMENT", "Missing path"))
-        path = str(request.arguments.get("path", "")).strip()
+        path = str(request.arguments.get("path", ""))
 
         if not session_id:
             return Failure(_fail(request, "UNAUTHORIZED", "Missing session_id"))
