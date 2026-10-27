@@ -54,6 +54,7 @@ from rai.kernel.records import (
     UsageRecord,
     _new_id,
     _utc_now,
+    freeze_json_value,
 )
 from rai.kernel.service import CapabilityService
 from rai.kernel.transport import normalize_request
@@ -1306,7 +1307,10 @@ class BoundedStepController(InteractionController):
                 producer=action_res.producer,
             )
             if artifact_id and isinstance(action_res.output, dict):
-                action_res.output["_artifact_id"] = artifact_id
+                updated_output = {**action_res.output, "_artifact_id": artifact_id}
+                action_res = action_res.model_copy(
+                    update={"output": freeze_json_value(updated_output)}
+                )
 
         # 3. EXECUTING -> OBSERVING
         obs_tx = self.transition_generic(

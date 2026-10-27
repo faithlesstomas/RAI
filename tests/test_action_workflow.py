@@ -563,6 +563,51 @@ async def test_generic_workflow_execute_generic_step_injects_session_id(tmp_path
     assert captured_args.get("code") == "x = 42"
 
 
+async def test_generic_workflow_execute_generic_step_persists_artifact_id_without_mutating_frozen_dict(
+    tmp_path: Path,
+) -> None:
+    registry = CapabilityRegistry()
+    registry.register(
+        RegisteredCapability(
+            CapabilityDescriptor(
+                name="system.compute",
+                description="Compute output",
+                input_schema={"type": "object", "properties": {"val": {"type": "integer"}}},
+                risk_class=RiskClass.LOW,
+                side_effects=(),
+                isolation="host-api",
+                verification_plan=("observed",),
+            ),
+            handler=lambda args: {"result": args.get("val", 0) * 2},
+        )
+    )
+    capabilities = ActionCapabilityService(registry, PolicyEngine(), InMemoryAuditLedger(), SyntheticApprovalBroker())
+    capabilities.handles = SQLiteHandleStore(tmp_path / "handles.db")
+    capabilities.executions = SQLiteExecutionStore(tmp_path / "executions.db")
+
+    store = SQLiteMemoryGraphStore(tmp_path / "memory.db")
+    controller = BoundedStepController(ledger=SyntheticUsageLedger(), store=store)
+    wf = controller.create_generic_workflow(
+        task_id="task:compute-1",
+        session_id="session-art-1",
+        goal="Compute result",
+    )
+
+    res = await controller.execute_generic_step(
+        workflow=wf,
+        capabilities=capabilities,
+        capability_name="system.compute",
+        arguments={"val": 21},
+        cancellation=CancellationToken(),
+    )
+    assert isinstance(res, Success)
+    updated_wf, action_res = res.unwrap()
+    assert "_artifact_id" in action_res.output
+    assert action_res.output["result"] == 42
+    assert len(updated_wf.observations) == 1
+    assert updated_wf.observations[0]["_artifact_id"] == action_res.output["_artifact_id"]
+
+
 async def test_generic_workflow_agentic_loop_e2e(tmp_path: Path) -> None:
     registry = CapabilityRegistry()
     registry.register(
