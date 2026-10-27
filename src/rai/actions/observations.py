@@ -42,6 +42,8 @@ YIELD_INTERVAL = 100
 DEFAULT_PAGE_LIMIT = 100
 MAX_PAGE_LIMIT = 1000
 MAX_GET_CHAR_LIMIT = 64000
+MAX_ECHOED_ARG_CHAR_LIMIT = 1000
+FALLBACK_FIELD_CHAR_LIMIT = 200
 
 
 def _fail(request: CapabilityRequest, code: str, message: str) -> ActionFailure:
@@ -179,6 +181,103 @@ def _bound_output_collection(
         )
 
     return bounded, complete, reason
+
+
+def _bound_echoed_value(val: Any, max_json_chars: int = 1000) -> tuple[Any, bool]:  # noqa: ANN401
+    """Ensure caller-provided filter value echoed in output does not exceed size limit."""
+    if val is None or isinstance(val, (int, float, bool)):
+        return val, False
+    try:
+        val_json = json.dumps(val)
+    except (TypeError, ValueError):
+        val_json = json.dumps(str(val))
+        val = str(val)
+
+    if len(val_json) <= max_json_chars:
+        return val, False
+
+    if isinstance(val, str):
+        truncated_str, _, _ = _bound_string(val, max_json_chars)
+        return truncated_str, True
+
+    if isinstance(val, dict):
+        preview = render_observation_payload(val, budget_chars=max(50, max_json_chars - 30))
+        cand: dict[str, Any] = {"_preview": preview}
+        if len(json.dumps(cand)) > max_json_chars:
+            bounded_prev, _, _ = _bound_string(preview, max(50, max_json_chars - 30))
+            cand = {"_preview": bounded_prev}
+        return cand, True
+
+    if isinstance(val, (list, tuple)):
+        preview = render_observation_payload(list(val), budget_chars=max(50, max_json_chars - 30))
+        cand_list: dict[str, Any] = {"_preview": preview}
+        if len(json.dumps(cand_list)) > max_json_chars:
+            bounded_prev, _, _ = _bound_string(preview, max(50, max_json_chars - 30))
+            cand_list = {"_preview": bounded_prev}
+        return cand_list, True
+
+    truncated_str, _, _ = _bound_string(str(val), max_json_chars)
+    return truncated_str, True
+
+
+def _trim_output_value(output: dict[str, Any], max_chars: int) -> None:
+    val = output.get("value")
+    if isinstance(val, str):
+        overhead = len(json.dumps(output)) - len(json.dumps(val))
+        budget = max(50, max_chars - overhead - 20)
+        output["value"], _, _ = _bound_string(val, budget)
+    elif isinstance(val, (list, tuple)):
+        val_list = list(val)
+        while val_list and len(json.dumps(output)) > max_chars:
+            val_list.pop()
+            output["value"] = val_list
+    elif isinstance(val, dict):
+        preview = render_observation_payload(val, budget_chars=max(50, max_chars - 600))
+        cand: dict[str, Any] = {"_preview": preview}
+        if len(json.dumps(cand)) > max(50, max_chars - 600):
+            preview, _, _ = _bound_string(preview, max(50, max_chars - 630))
+            cand = {"_preview": preview}
+        output["value"] = cand
+
+
+def _enforce_final_payload_limit(
+    output: dict[str, Any],
+    list_key: str | None = None,
+    max_chars: int = MAX_GET_CHAR_LIMIT,
+) -> dict[str, Any]:
+    """Strictly guarantee that len(json.dumps(output)) <= max_chars."""
+    if len(json.dumps(output)) <= max_chars:
+        return output
+
+    output["complete"] = False
+    output["reason"] = f"Output payload exceeded maximum size limit ({max_chars} chars)"
+
+    if list_key and isinstance(output.get(list_key), list):
+        items = output[list_key]
+        while items and len(json.dumps(output)) > max_chars:
+            items.pop()
+        if not items and len(json.dumps(output)) > max_chars:
+            for k, v in list(output.items()):
+                if isinstance(v, str) and len(json.dumps(v)) > FALLBACK_FIELD_CHAR_LIMIT:
+                    output[k], _, _ = _bound_string(v, FALLBACK_FIELD_CHAR_LIMIT)
+    elif "counts" in output and isinstance(output["counts"], dict):
+        counts = output["counts"]
+        while counts and len(json.dumps(output)) > max_chars:
+            counts.popitem()
+    elif "value" in output:
+        _trim_output_value(output, max_chars)
+
+    if len(json.dumps(output)) > max_chars:
+        output_str = json.dumps(output)
+        preview, _, _ = _bound_string(output_str, max(50, max_chars - 50))
+        return {
+            "ref": output.get("ref", ""),
+            "complete": False,
+            "reason": f"Output payload exceeded maximum size limit ({max_chars} chars)",
+            "_preview": preview,
+        }
+
+    return output
 
 
 async def _get_artifact(
@@ -352,6 +451,9 @@ class ObservationSearch:
             "reason": reason,
             "matches": bounded_matches,
         }
+        output = _enforce_final_payload_limit(
+            output, list_key="matches", max_chars=MAX_GET_CHAR_LIMIT
+        )
 
         derived_id = await persist_observation_artifact(
             store=self.store,
@@ -468,6 +570,10 @@ class ObservationFilter:
             return Failure(_fail(request, "CANCELLED", "Filter cancelled"))
         filtered, hit_scan_limit = filter_res.unwrap()
 
+        bounded_val, val_truncated = _bound_echoed_value(
+            val, max_json_chars=MAX_ECHOED_ARG_CHAR_LIMIT
+        )
+
         total_matches = len(filtered)
         paginated = filtered[offset : offset + limit]
         bounded_results, payload_complete, payload_reason = _bound_output_collection(
@@ -478,11 +584,14 @@ class ObservationFilter:
             and offset == 0
             and total_matches <= len(bounded_results)
             and payload_complete
+            and not val_truncated
         )
         if hit_scan_limit:
             reason = f"Hit maximum filter scan limit ({MAX_VISITED_LIMIT} items inspected or {MAX_SCAN_LIMIT} matches)"
         elif not payload_complete and payload_reason:
             reason = payload_reason
+        elif val_truncated:
+            reason = "Echoed filter value exceeded maximum argument limit (truncated)"
         elif not complete:
             reason = f"Results paginated ({len(bounded_results)} of {total_matches} matches returned)"
         else:
@@ -492,7 +601,7 @@ class ObservationFilter:
             "ref": ref,
             "field": field,
             "op": op,
-            "value": val,
+            "value": bounded_val,
             "total_matches": total_matches,
             "offset": offset,
             "limit": limit,
@@ -500,6 +609,9 @@ class ObservationFilter:
             "reason": reason,
             "results": bounded_results,
         }
+        output = _enforce_final_payload_limit(
+            output, list_key="results", max_chars=MAX_GET_CHAR_LIMIT
+        )
 
         derived_id = await persist_observation_artifact(
             store=self.store,
@@ -626,6 +738,9 @@ class ObservationSlice:
             "reason": reason,
             "items": bounded_items,
         }
+        output = _enforce_final_payload_limit(
+            output, list_key="items", max_chars=MAX_GET_CHAR_LIMIT
+        )
 
         derived_id = await persist_observation_artifact(
             store=self.store,
@@ -647,29 +762,39 @@ async def _count_grouped_records(
     records: Sequence[Any], field: str, cancellation: CancellationToken
 ) -> tuple[dict[str, int], int, bool] | None:
     counts: dict[str, int] = {}
-    inspected = 0
+    visited = 0
     hit_scan_limit = False
 
     for rec in records:
-        inspected += 1
-        if inspected % YIELD_INTERVAL == 0:
+        visited += 1
+        if visited % YIELD_INTERVAL == 0:
             await asyncio.sleep(0)
             if cancellation.cancelled:
                 return None
-        if inspected > MAX_VISITED_LIMIT:
+        if visited > MAX_VISITED_LIMIT:
             hit_scan_limit = True
             break
         if isinstance(rec, dict):
             v = rec.get(field)
             if isinstance(v, (list, tuple)):
                 for sub_v in v:
+                    visited += 1
+                    if visited % YIELD_INTERVAL == 0:
+                        await asyncio.sleep(0)
+                        if cancellation.cancelled:
+                            return None
+                    if visited > MAX_VISITED_LIMIT:
+                        hit_scan_limit = True
+                        break
                     s = str(sub_v)
                     counts[s] = counts.get(s, 0) + 1
+                if hit_scan_limit:
+                    break
             else:
                 s = str(v) if v is not None else "null"
                 counts[s] = counts.get(s, 0) + 1
 
-    total_scanned = inspected if not hit_scan_limit else MAX_VISITED_LIMIT
+    total_scanned = min(visited, MAX_VISITED_LIMIT) if hit_scan_limit else visited
     return counts, total_scanned, hit_scan_limit
 
 
@@ -785,6 +910,10 @@ class ObservationCount:
                 "counts": bounded_counts,
             }
 
+        output = _enforce_final_payload_limit(
+            output, list_key=None, max_chars=MAX_GET_CHAR_LIMIT
+        )
+
         derived_id = await persist_observation_artifact(
             store=self.store,
             session_id=artifact.session_id,
@@ -837,16 +966,18 @@ def _traverse_json_pointer(
     return Success(curr)
 
 
-def _bound_get_value(value: Any) -> tuple[Any, bool, str | None]:  # noqa: ANN401, PLR0911
+def _bound_get_value(
+    value: Any, budget_chars: int = MAX_GET_CHAR_LIMIT - 500  # noqa: ANN401
+) -> tuple[Any, bool, str | None]:  # noqa: ANN401, PLR0911
     """Ensure observation.get output is safely bounded and report truncation."""
     if isinstance(value, str):
-        if len(json.dumps(value)) > MAX_GET_CHAR_LIMIT:
-            return _bound_string(value, MAX_GET_CHAR_LIMIT)
+        if len(json.dumps(value)) > budget_chars:
+            return _bound_string(value, budget_chars)
         return value, True, None
 
     if isinstance(value, (list, tuple)):
         bounded_items, complete, reason = _bound_output_collection(
-            value, max_items=MAX_PAGE_LIMIT, max_chars=MAX_GET_CHAR_LIMIT
+            value, max_items=MAX_PAGE_LIMIT, max_chars=budget_chars
         )
         if not complete and reason:
             reason = f"{reason}. Use observation.slice to paginate."
@@ -854,11 +985,11 @@ def _bound_get_value(value: Any) -> tuple[Any, bool, str | None]:  # noqa: ANN40
 
     if isinstance(value, dict):
         serialized = json.dumps(value)
-        if len(serialized) > MAX_GET_CHAR_LIMIT:
-            reduced_text = render_observation_payload(value, budget_chars=MAX_GET_CHAR_LIMIT - 30)
+        if len(serialized) > budget_chars:
+            reduced_text = render_observation_payload(value, budget_chars=max(50, budget_chars - 30))
             cand_dict = {"_preview": reduced_text}
-            if len(json.dumps(cand_dict)) > MAX_GET_CHAR_LIMIT:
-                bounded_prev, _, _ = _bound_string(reduced_text, MAX_GET_CHAR_LIMIT - 30)
+            if len(json.dumps(cand_dict)) > budget_chars:
+                bounded_prev, _, _ = _bound_string(reduced_text, max(50, budget_chars - 30))
                 cand_dict = {"_preview": bounded_prev}
             return (
                 cand_dict,
@@ -917,6 +1048,9 @@ class ObservationGet:
             "complete": complete,
             "reason": reason,
         }
+        output = _enforce_final_payload_limit(
+            output, list_key=None, max_chars=MAX_GET_CHAR_LIMIT
+        )
         return Success(_ok(request, output, {"source_artifact_id": ref}))
 
 

@@ -1517,3 +1517,116 @@ async def test_observation_count_scan_limits_and_payload_bounding(
     assert len(res3["counts"]) <= 1000
     assert len(json.dumps(res3["counts"])) <= 64000
     assert "maximum" in res3["reason"]
+
+
+@pytest.mark.asyncio
+async def test_observation_count_bounds_inner_grouped_list_elements(
+    registry: CapabilityRegistry, store: SQLiteMemoryGraphStore
+) -> None:
+    # 1. Single record containing 15,000 list items in the grouped field
+    single_record_huge_list = [{"id": 1, "tags": [f"tag_{i}" for i in range(15000)]}]
+    art = ObservationArtifact(
+        artifact_id="obs_huge_inner_list",
+        session_id="session-inner-count",
+        turn_id="turn-inner-count",
+        capability="test",
+        request_id="req-inner-count-1",
+        data_class=DataClass.LOCAL,
+        content={"records": single_record_huge_list},
+        schema_summary=summarize_observation_schema({}),
+        size_chars=20000,
+        producer=ACTOR,
+    )
+    await store.put(art)
+
+    count_desc = registry.descriptor("observation.count")
+    assert count_desc is not None
+
+    req = normalize_request(
+        count_desc,
+        {"session_id": "session-inner-count", "ref": "obs_huge_inner_list", "field": "tags"},
+        actor=ACTOR,
+        data_class=DataClass.LOCAL,
+    )
+    res = (await _invoke(registry, req)).output
+    assert res["complete"] is False
+    assert "Hit maximum count scan limit" in (res["reason"] or "")
+    assert res["total_records"] <= 10000
+    assert sum(res["counts"].values()) <= 10000
+    assert len(json.dumps(res)) <= 64000
+
+    # 2. Cooperative cancellation during inner list traversal
+    token = CancellationToken()
+    token.cancel()
+    res_cancel = await registry.resolve(req).unwrap().invoke(req, token)
+    assert isinstance(res_cancel, Failure)
+    assert res_cancel.failure().code == "CANCELLED"
+
+
+@pytest.mark.asyncio
+async def test_observation_filter_bounds_echoed_value_and_final_payload(
+    registry: CapabilityRegistry, store: SQLiteMemoryGraphStore
+) -> None:
+    records = [{"id": i, "name": f"item_{i}"} for i in range(5)]
+    art = ObservationArtifact(
+        artifact_id="obs_filter_echo",
+        session_id="session-filter-echo",
+        turn_id="turn-filter-echo",
+        capability="test",
+        request_id="req-filter-echo-1",
+        data_class=DataClass.LOCAL,
+        content={"items": records},
+        schema_summary=summarize_observation_schema({}),
+        size_chars=500,
+        producer=ACTOR,
+    )
+    await store.put(art)
+
+    filter_desc = registry.descriptor("observation.filter")
+    assert filter_desc is not None
+
+    # 1. Giant string passed as value (100,000 characters), matching 0 records
+    huge_val = "A" * 100000
+    req1 = normalize_request(
+        filter_desc,
+        {
+            "session_id": "session-filter-echo",
+            "ref": "obs_filter_echo",
+            "field": "name",
+            "op": "equals",
+            "value": huge_val,
+        },
+        actor=ACTOR,
+        data_class=DataClass.LOCAL,
+    )
+    res1 = (await _invoke(registry, req1)).output
+    assert res1["complete"] is False
+    assert res1["total_matches"] == 0
+    assert len(res1["results"]) == 0
+    assert "truncated" in str(res1["value"])
+    assert len(json.dumps(res1["value"])) <= 1000
+    assert len(json.dumps(res1)) <= 64000
+
+    # Verify persisted derived artifact also fits within 64,000 characters
+    derived_art = (await store.get("session-filter-echo", res1["artifact_id"])).unwrap()
+    assert len(json.dumps(derived_art.content)) <= 64000
+
+    # 2. Giant list passed as value for 'in' operator
+    huge_list_val = [f"nonexistent_val_{i}" for i in range(5000)]
+    req2 = normalize_request(
+        filter_desc,
+        {
+            "session_id": "session-filter-echo",
+            "ref": "obs_filter_echo",
+            "field": "name",
+            "op": "in",
+            "value": huge_list_val,
+        },
+        actor=ACTOR,
+        data_class=DataClass.LOCAL,
+    )
+    res2 = (await _invoke(registry, req2)).output
+    assert res2["complete"] is False
+    assert "_preview" in res2["value"]
+    assert len(json.dumps(res2["value"])) <= 1000
+    assert len(json.dumps(res2)) <= 64000

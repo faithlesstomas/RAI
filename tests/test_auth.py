@@ -107,3 +107,23 @@ def test_session_token_with_dots_in_session_id(monkeypatch: pytest.MonkeyPatch) 
     # 4. Expired token for session ID with dots
     expired = create_session_token("work.v2", ttl_seconds=-5)
     assert verify_session_token(expired) is None
+
+
+def test_session_token_rejects_malformed_unicode_expiry(monkeypatch: pytest.MonkeyPatch) -> None:
+    secret = "test-secret-token"
+    monkeypatch.setenv("RAI_API_TOKEN", secret)
+
+    # 1. Superscript two: '²' (str.isdigit() == True, int('²') raises ValueError)
+    assert verify_session_token("session.².signature") is None
+    assert verify_session_token("session.123²45.signature") is None
+
+    # 2. Arabic-Indic digits ('١٢٣' - isdigit() == True, non-ascii)
+    assert verify_session_token("session.١٢٣.signature") is None
+
+    # 3. Non-numeric / letters in expiry
+    assert verify_session_token("session.not_a_number.signature") is None
+    assert verify_session_token("session.123abc.signature") is None
+
+    # 4. Overly long integer (>4300 digits that would exceed Python integer conversion limit)
+    huge_exp = "9" * 5000
+    assert verify_session_token(f"session.{huge_exp}.signature") is None

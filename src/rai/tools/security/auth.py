@@ -100,9 +100,12 @@ def verify_session_token(token: str | None) -> str | None:
     # 1. Try 3-part format: {session_id}.{expires_at}.{signature}
     # Using rsplit(".", 2) safely preserves dots in session_id (e.g. "work.v2")
     parts3 = token.rsplit(".", 2)
-    if len(parts3) == 3 and parts3[1].isdigit():  # noqa: PLR2004
+    if len(parts3) == 3 and parts3[1].isascii() and parts3[1].isdigit():  # noqa: PLR2004
         session_id, exp_str, sig = parts3
-        expires_at = int(exp_str)
+        try:
+            expires_at = int(exp_str)
+        except ValueError:
+            return None
         if time.time() > expires_at:
             return None
         payload = f"{session_id}:{exp_str}"
