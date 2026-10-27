@@ -212,3 +212,22 @@ def test_chat_config_uses_same_effective_settings(settings_dir):
     values = yaml.safe_load(shown.output)["effective_assistant"]
     assert f'"backend": "{values["backend"]}"' in chat.output
     assert '"enable_thinking": false' in chat.output
+
+
+def test_monty_configuration_settings(settings_dir: Path) -> None:
+    expected_duration = 60.0
+    expected_memory = 67108864
+    path = settings_dir / "config.yaml"
+    path.write_text(
+        "monty:\n"
+        "  max_duration_secs: 60.0\n"
+        "  max_memory_bytes: 67108864\n"
+    )
+    settings = load_settings(str(path))
+    assert settings.monty.max_duration_secs == expected_duration
+    assert settings.monty.max_memory_bytes == expected_memory
+    runtime_cfg = settings.runtime_mapping()
+    assert runtime_cfg["monty"]["max_duration_secs"] == expected_duration
+    assert runtime_cfg["monty"]["max_memory_bytes"] == expected_memory
+
+

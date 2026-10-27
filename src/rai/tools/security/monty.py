@@ -43,7 +43,7 @@ class MontyRunner:
 
     def __init__(
         self,
-        max_memory_bytes: int = 32 * 1024 * 1024,
+        max_memory_bytes: int = 64 * 1024 * 1024,
         max_duration_secs: float = 2.0,
     ) -> None:
         self.max_memory_bytes = max_memory_bytes
@@ -215,7 +215,7 @@ class MontyRunner:
 
 def get_monty_runner(
     max_duration_secs: float = 2.0,
-    max_memory_bytes: int = 32 * 1024 * 1024,
+    max_memory_bytes: int = 64 * 1024 * 1024,
 ) -> MontyRunner:
     """Factory returning an instance of MontyRunner configured with the specified limits."""
     return MontyRunner(
