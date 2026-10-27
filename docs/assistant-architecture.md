@@ -403,7 +403,8 @@ Action / Tool Execution
 
 1. **Cryptographic Session Scoping**: Observation artifacts and aliases (`obs_1`, etc.) are partitioned per session. To prevent unauthorized cross-session access by untrusted model tool calls or external callers, capabilities require an authenticated session context.
 2. **Session Token Issuance**:
-   - `AssistantTurnResult.session_token` and the WebSocket session handshake include an HMAC-SHA256 signed session token (`{session_id}.{sig}`).
+   - `AssistantTurnResult.session_token` and the WebSocket session handshake include an HMAC-SHA256 signed session token (`{session_id}.{expires_at}.{signature}`).
+   - Tokens enforce a 24-hour expiration TTL by default; legacy unexpired tokens (`{session_id}.{signature}`) remain supported for backward compatibility.
    - Dedicated endpoint `GET /api/v1/assistant/sessions/{session_id}/token` provides token generation for authorized clients.
 3. **Capability and MCP Transports**:
    - `POST /api/v1/capabilities/invoke` extracts `X-Session-Token` / `session_token` and binds the verified session ID, overriding any untrusted body arguments.

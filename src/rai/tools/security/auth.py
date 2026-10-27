@@ -95,21 +95,27 @@ def verify_session_token(token: str | None) -> str | None:
     """Validate a signed session token, enforce expiration, and return verified session_id or None."""
     if not token or "." not in token:
         return None
-    parts = token.split(".")
     secret = get_api_token().encode("utf-8")
-    if len(parts) == 3:  # noqa: PLR2004 -- session_id.expires_at.signature
-        session_id, exp_str, sig = parts
-        try:
-            expires_at = int(exp_str)
-        except ValueError:
-            return None
+
+    # 1. Try 3-part format: {session_id}.{expires_at}.{signature}
+    # Using rsplit(".", 2) safely preserves dots in session_id (e.g. "work.v2")
+    parts3 = token.rsplit(".", 2)
+    if len(parts3) == 3 and parts3[1].isdigit():  # noqa: PLR2004
+        session_id, exp_str, sig = parts3
+        expires_at = int(exp_str)
         if time.time() > expires_at:
             return None
         payload = f"{session_id}:{exp_str}"
         expected_sig = hmac.new(secret, payload.encode("utf-8"), hashlib.sha256).hexdigest()
-        return session_id if hmac.compare_digest(sig, expected_sig) else None
-    if len(parts) == 2:  # noqa: PLR2004 -- legacy unexpiring token format for backwards compatibility
-        session_id, sig = parts
+        if hmac.compare_digest(sig, expected_sig):
+            return session_id
+
+    # 2. Try legacy 2-part format: {session_id}.{signature}
+    parts2 = token.rsplit(".", 1)
+    if len(parts2) == 2:  # noqa: PLR2004
+        session_id, sig = parts2
         expected_sig = hmac.new(secret, session_id.encode("utf-8"), hashlib.sha256).hexdigest()
-        return session_id if hmac.compare_digest(sig, expected_sig) else None
+        if hmac.compare_digest(sig, expected_sig):
+            return session_id
+
     return None

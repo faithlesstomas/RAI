@@ -1,5 +1,7 @@
 """Security boundary tests for the local control API."""
 
+import hashlib
+import hmac
 import stat
 from pathlib import Path
 
@@ -77,3 +79,31 @@ def test_session_token_signing_and_expiry(monkeypatch: pytest.MonkeyPatch) -> No
     assert verify_session_token("invalid") is None
     assert verify_session_token("") is None
     assert verify_session_token(None) is None
+
+
+def test_session_token_with_dots_in_session_id(monkeypatch: pytest.MonkeyPatch) -> None:
+    secret = "test-secret-token"
+    monkeypatch.setenv("RAI_API_TOKEN", secret)
+
+    # 1. 3-part token for session ID with dots
+    token_dotted = create_session_token("work.v2", ttl_seconds=3600)
+    assert verify_session_token(token_dotted) == "work.v2"
+
+    token_multi_dot = create_session_token("corp.project.sub.session-1", ttl_seconds=3600)
+    assert verify_session_token(token_multi_dot) == "corp.project.sub.session-1"
+
+    # 2. Legacy 2-part token for session ID with dots
+    legacy_sig = hmac.new(
+        secret.encode("utf-8"), "work.v2".encode("utf-8"), hashlib.sha256
+    ).hexdigest()
+    legacy_token = f"work.v2.{legacy_sig}"
+    assert verify_session_token(legacy_token) == "work.v2"
+
+    # 3. Tampered token for session ID with dots
+    parts = token_dotted.rsplit(".", 2)
+    tampered = f"evil.session.{parts[1]}.{parts[2]}"
+    assert verify_session_token(tampered) is None
+
+    # 4. Expired token for session ID with dots
+    expired = create_session_token("work.v2", ttl_seconds=-5)
+    assert verify_session_token(expired) is None

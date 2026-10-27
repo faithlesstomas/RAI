@@ -1385,3 +1385,135 @@ async def test_observation_slice_cancellation_and_scan_limits(
     res_cancel = await registry.resolve(req).unwrap().invoke(req, token)
     assert isinstance(res_cancel, Failure)
     assert res_cancel.failure().code == "CANCELLED"
+
+
+@pytest.mark.asyncio
+async def test_observation_unicode_and_control_char_payload_bounding(
+    registry: CapabilityRegistry, store: SQLiteMemoryGraphStore
+) -> None:
+    # 25,000 null bytes: raw length 25,000 (< 64,000), but in JSON each becomes \u0000 (150,000 chars)
+    escaped_str = "\u0000" * 25000
+    art = ObservationArtifact(
+        artifact_id="obs_unicode_escapes",
+        session_id="session-unicode",
+        turn_id="turn-unicode",
+        capability="test",
+        request_id="req-unicode",
+        data_class=DataClass.LOCAL,
+        content={"escaped_text": escaped_str, "items": [escaped_str]},
+        schema_summary=summarize_observation_schema({}),
+        size_chars=len(escaped_str),
+        producer=ACTOR,
+    )
+    await store.put(art)
+
+    # 1. ObservationGet: raw length < 64KB, but json.dumps > 150KB -> must be bounded in JSON
+    get_desc = registry.descriptor("observation.get")
+    assert get_desc is not None
+    req_get = normalize_request(
+        get_desc,
+        {"session_id": "session-unicode", "ref": "obs_unicode_escapes", "path": "/escaped_text"},
+        actor=ACTOR,
+        data_class=DataClass.LOCAL,
+    )
+    res_get = (await _invoke(registry, req_get)).output
+    assert res_get["complete"] is False
+    assert len(json.dumps(res_get["value"])) <= 64000
+    assert "truncated" in str(res_get["value"])
+
+    # 2. ObservationSlice with single huge escaped string
+    slice_desc = registry.descriptor("observation.slice")
+    assert slice_desc is not None
+    req_slice = normalize_request(
+        slice_desc,
+        {"session_id": "session-unicode", "ref": "obs_unicode_escapes", "offset": 0, "limit": 10},
+        actor=ACTOR,
+        data_class=DataClass.LOCAL,
+    )
+    res_slice = (await _invoke(registry, req_slice)).output
+    assert res_slice["complete"] is False
+    assert len(json.dumps(res_slice["items"])) <= 64000
+
+
+@pytest.mark.asyncio
+async def test_observation_count_scan_limits_and_payload_bounding(
+    registry: CapabilityRegistry, store: SQLiteMemoryGraphStore
+) -> None:
+    # 1. Test scan limit with 15,000 records
+    large_records = [{"category": f"cat_{i % 5}"} for i in range(15000)]
+    art = ObservationArtifact(
+        artifact_id="obs_count_scan",
+        session_id="session-count-test",
+        turn_id="turn-count-test",
+        capability="test",
+        request_id="req-count-scan",
+        data_class=DataClass.LOCAL,
+        content={"records": large_records},
+        schema_summary=summarize_observation_schema({}),
+        size_chars=10000,
+        producer=ACTOR,
+    )
+    await store.put(art)
+
+    count_desc = registry.descriptor("observation.count")
+    assert count_desc is not None
+
+    # Total count without field
+    req1 = normalize_request(
+        count_desc,
+        {"session_id": "session-count-test", "ref": "obs_count_scan"},
+        actor=ACTOR,
+        data_class=DataClass.LOCAL,
+    )
+    res1 = (await _invoke(registry, req1)).output
+    assert res1["complete"] is False
+    assert res1["total_count"] == 10000
+    assert "Hit maximum count scan limit" in res1["reason"]
+
+    # Grouped count with field
+    req2 = normalize_request(
+        count_desc,
+        {"session_id": "session-count-test", "ref": "obs_count_scan", "field": "category"},
+        actor=ACTOR,
+        data_class=DataClass.LOCAL,
+    )
+    res2 = (await _invoke(registry, req2)).output
+    assert res2["complete"] is False
+    assert res2["total_records"] == 10000
+    assert "Hit maximum count scan limit" in res2["reason"]
+    assert sum(res2["counts"].values()) == 10000
+
+    # 2. Cooperative cancellation
+    token = CancellationToken()
+    token.cancel()
+    res_cancel = await registry.resolve(req2).unwrap().invoke(req2, token)
+    assert isinstance(res_cancel, Failure)
+    assert res_cancel.failure().code == "CANCELLED"
+
+    # 3. Test payload and group limit with 1,500 unique groups
+    many_groups_records = [{"grp": f"unique_group_key_{i}"} for i in range(1500)]
+    art_groups = ObservationArtifact(
+        artifact_id="obs_many_groups",
+        session_id="session-count-test",
+        turn_id="turn-count-test",
+        capability="test",
+        request_id="req-count-groups",
+        data_class=DataClass.LOCAL,
+        content={"records": many_groups_records},
+        schema_summary=summarize_observation_schema({}),
+        size_chars=20000,
+        producer=ACTOR,
+    )
+    await store.put(art_groups)
+
+    req3 = normalize_request(
+        count_desc,
+        {"session_id": "session-count-test", "ref": "obs_many_groups", "field": "grp"},
+        actor=ACTOR,
+        data_class=DataClass.LOCAL,
+    )
+    res3 = (await _invoke(registry, req3)).output
+    assert res3["complete"] is False
+    assert len(res3["counts"]) <= 1000
+    assert len(json.dumps(res3["counts"])) <= 64000
+    assert "maximum" in res3["reason"]

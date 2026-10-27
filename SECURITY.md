@@ -278,7 +278,7 @@ External tool outputs, logs, and document payloads are budgeted and stored as ty
 Direct capability callers, remote LLMs, and MCP clients are untrusted. To prevent malicious or accidental cross-session artifact leakage, observation capabilities (`observation.search`, `observation.filter`, `observation.slice`, `observation.count`, `observation.get`) enforce cryptographically authenticated session boundaries:
 
 1. **HMAC-SHA256 Session Tokens with Expiration**:
-   - Session tokens are signed tokens formatted as `{session_id}.{expires_at}.{signature}` computed using `hmac-sha256` over `f"{session_id}:{expires_at}"` with the daemon's local API token (`get_api_token()`).
+   - Session tokens are signed tokens formatted as `{session_id}.{expires_at}.{signature}` computed using `hmac-sha256` over `f"{session_id}:{expires_at}"` with the daemon's local API token (`get_api_token()`). Session IDs containing dots (such as `work.v2`, allowed by `AssistantSessionId`) are parsed safely from the right.
    - Tokens enforce a 24-hour expiration TTL by default. Expired (`time.time() > expires_at`), tampered, or mismatched signatures fail closed, returning `None`.
    - Backward compatibility: legacy two-part tokens (`{session_id}.{signature}`) without an explicit expiration timestamp are verified against `session_id`.
 
@@ -298,9 +298,10 @@ Direct capability callers, remote LLMs, and MCP clients are untrusted. To preven
    - Authorized clients can retrieve or refresh a valid session token via the authenticated endpoint `GET /api/v1/assistant/sessions/{session_id}/token`.
 
 5. **Resource and DoS Protections in Observation Capabilities**:
-   - `observation.search`, `observation.filter`, and `observation.slice` lazily stream lines (supporting universal line breaks matching `str.splitlines()`) and collections without upfront memory materialization (`splitlines()` or list copies), bounding visited items to 10,000 (`MAX_VISITED_LIMIT`) and matches to 1,000 with periodic cooperative event loop yielding (`await asyncio.sleep(0)` every 100 items).
+   - `observation.search`, `observation.filter`, `observation.slice`, and `observation.count` lazily stream lines (supporting universal line breaks matching `str.splitlines()`) and collections without upfront memory materialization (`splitlines()` or list copies), bounding visited items to 10,000 (`MAX_VISITED_LIMIT`) with periodic cooperative event loop yielding (`await asyncio.sleep(0)` every 100 items) and cancellation checks.
+   - `observation.count` bounds group-by frequency output to 1,000 groups (`MAX_PAGE_LIMIT`) and 64,000 serialized JSON characters (`MAX_GET_CHAR_LIMIT`).
    - `observation.get` extracts JSON pointer values according to RFC 6901, preserving whitespace in token segments.
-   - All observation capabilities (`observation.get`, `observation.search`, `observation.filter`, `observation.slice`) enforce a strict maximum payload size of 64,000 characters (`MAX_GET_CHAR_LIMIT`), bounding outputs with `complete=False` and explanatory pagination/truncation reasons if individual lines, records, or collections exceed safe memory budgets.
+   - All observation capabilities (`observation.get`, `observation.search`, `observation.filter`, `observation.slice`, `observation.count`) enforce a strict maximum payload size of 64,000 characters (`MAX_GET_CHAR_LIMIT`) computed over the serialized JSON representation, strictly preventing payload blowup from Unicode or control character escaping. Outputs exceeding the budget return `complete=False` and explanatory pagination/truncation reasons.
 
 ### Migration requirement for capability callers
 

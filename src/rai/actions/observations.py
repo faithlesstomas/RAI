@@ -95,6 +95,35 @@ def _iter_text_lines(text: str) -> Iterator[str]:
         yield text[start:]
 
 
+def _bound_string(
+    s: str, max_json_chars: int = MAX_GET_CHAR_LIMIT
+) -> tuple[str, bool, str | None]:
+    """Ensure a string's JSON-serialized representation strictly does not exceed max_json_chars."""
+    if len(json.dumps(s)) <= max_json_chars:
+        return s, True, None
+
+    low = 0
+    high = len(s)
+    best_p = 0
+    while low <= high:
+        mid = (low + high) // 2
+        omitted = len(s) - mid
+        candidate = s[:mid] + f"... [truncated {omitted} chars]"
+        if len(json.dumps(candidate)) <= max_json_chars:
+            best_p = mid
+            low = mid + 1
+        else:
+            high = mid - 1
+
+    omitted = len(s) - best_p
+    truncated = s[:best_p] + f"... [truncated {omitted} chars]"
+    reason = (
+        f"Value exceeded maximum character limit ({max_json_chars} of {len(s)} chars returned). "
+        "Use observation.slice or observation.search."
+    )
+    return truncated, False, reason
+
+
 def _bound_output_collection(
     items: Sequence[Any],
     max_items: int = MAX_PAGE_LIMIT,
@@ -118,17 +147,20 @@ def _bound_output_collection(
         additional_len = len(item_str) + (2 if count > 0 else 0)
         if cur_len + additional_len > max_chars:
             if not bounded:
+                budget = max(50, max_chars - 2)
                 if isinstance(item, str):
-                    cutoff = max(0, max_chars - 100)
-                    truncated_str = item[:cutoff] + f"... [truncated {len(item) - cutoff} chars]"
+                    truncated_str, _, _ = _bound_string(item, budget)
                     bounded.append(truncated_str)
                 elif isinstance(item, dict):
-                    budget = max(50, max_chars - 100)
-                    preview = render_observation_payload(item, budget_chars=budget)
-                    bounded.append({"_preview": preview})
+                    preview = render_observation_payload(item, budget_chars=budget - 20)
+                    cand_dict = {"_preview": preview}
+                    if len(json.dumps(cand_dict)) > budget:
+                        bounded_prev, _, _ = _bound_string(preview, budget - 30)
+                        cand_dict = {"_preview": bounded_prev}
+                    bounded.append(cand_dict)
                 else:
-                    cutoff = max(0, max_chars - 100)
-                    bounded.append(str(item)[:cutoff] + "... [truncated]")
+                    truncated_str, _, _ = _bound_string(str(item), budget)
+                    bounded.append(truncated_str)
             hit_char_limit = True
             break
         bounded.append(item)
@@ -611,6 +643,65 @@ class ObservationSlice:
         return Success(_ok(request, output, {"source_artifact_id": ref}))
 
 
+async def _count_grouped_records(
+    records: Sequence[Any], field: str, cancellation: CancellationToken
+) -> tuple[dict[str, int], int, bool] | None:
+    counts: dict[str, int] = {}
+    inspected = 0
+    hit_scan_limit = False
+
+    for rec in records:
+        inspected += 1
+        if inspected % YIELD_INTERVAL == 0:
+            await asyncio.sleep(0)
+            if cancellation.cancelled:
+                return None
+        if inspected > MAX_VISITED_LIMIT:
+            hit_scan_limit = True
+            break
+        if isinstance(rec, dict):
+            v = rec.get(field)
+            if isinstance(v, (list, tuple)):
+                for sub_v in v:
+                    s = str(sub_v)
+                    counts[s] = counts.get(s, 0) + 1
+            else:
+                s = str(v) if v is not None else "null"
+                counts[s] = counts.get(s, 0) + 1
+
+    total_scanned = inspected if not hit_scan_limit else MAX_VISITED_LIMIT
+    return counts, total_scanned, hit_scan_limit
+
+
+def _bound_counts_dictionary(
+    counts: dict[str, int],
+    max_groups: int = MAX_PAGE_LIMIT,
+    max_chars: int = MAX_GET_CHAR_LIMIT,
+) -> tuple[dict[str, int], bool, bool]:
+    sorted_counts = dict(sorted(counts.items(), key=lambda x: x[1], reverse=True))
+    bounded_counts: dict[str, int] = {}
+    hit_group_limit = False
+    hit_payload_limit = False
+
+    cur_len = 2  # "{}"
+    for g_idx, (k, cnt) in enumerate(sorted_counts.items()):
+        if g_idx >= max_groups:
+            hit_group_limit = True
+            break
+        k_json = json.dumps(k)
+        add_len = len(k_json) + 2 + len(str(cnt)) + (2 if g_idx > 0 else 0)
+        if cur_len + add_len > max_chars:
+            if not bounded_counts:
+                truncated_k, _, _ = _bound_string(k, max(50, max_chars - 30))
+                bounded_counts[truncated_k] = cnt
+            hit_payload_limit = True
+            break
+        bounded_counts[k] = cnt
+        cur_len += add_len
+
+    return bounded_counts, hit_group_limit, hit_payload_limit
+
+
 class ObservationCount:
     """Count records or calculate group-by frequencies in an artifact."""
 
@@ -642,27 +733,56 @@ class ObservationCount:
 
         output: dict[str, Any]
         if not field:
+            total_records = len(records)
+            hit_scan_limit = total_records > MAX_VISITED_LIMIT
+            reported_count = min(total_records, MAX_VISITED_LIMIT) if hit_scan_limit else total_records
+            complete = not hit_scan_limit
+            reason = (
+                f"Hit maximum count scan limit ({MAX_VISITED_LIMIT} records inspected)"
+                if hit_scan_limit
+                else None
+            )
             output = {
                 "ref": ref,
-                "total_count": len(records),
+                "total_count": reported_count,
+                "complete": complete,
+                "reason": reason,
             }
         else:
-            counts: dict[str, int] = {}
-            for rec in records:
-                if isinstance(rec, dict):
-                    v = rec.get(str(field))
-                    if isinstance(v, (list, tuple)):
-                        for sub_v in v:
-                            s = str(sub_v)
-                            counts[s] = counts.get(s, 0) + 1
-                    else:
-                        s = str(v) if v is not None else "null"
-                        counts[s] = counts.get(s, 0) + 1
+            count_res = await _count_grouped_records(records, str(field), cancellation)
+            if count_res is None:
+                return Failure(_fail(request, "CANCELLED", "Count cancelled"))
+            raw_counts, total_scanned, hit_scan_limit = count_res
+            bounded_counts, hit_group_limit, hit_payload_limit = _bound_counts_dictionary(raw_counts)
+
+            complete = (
+                not hit_scan_limit
+                and not hit_group_limit
+                and not hit_payload_limit
+                and len(bounded_counts) == len(raw_counts)
+            )
+            if hit_scan_limit:
+                reason = f"Hit maximum count scan limit ({MAX_VISITED_LIMIT} records inspected)"
+            elif hit_payload_limit:
+                reason = (
+                    f"Count results exceeded maximum payload limit "
+                    f"({MAX_GET_CHAR_LIMIT} chars, {len(bounded_counts)} of {len(raw_counts)} groups returned)"
+                )
+            elif hit_group_limit:
+                reason = (
+                    f"Count results exceeded maximum group limit "
+                    f"({MAX_PAGE_LIMIT} of {len(raw_counts)} groups returned)"
+                )
+            else:
+                reason = None
+
             output = {
                 "ref": ref,
                 "field": str(field),
-                "total_records": len(records),
-                "counts": dict(sorted(counts.items(), key=lambda x: x[1], reverse=True)),
+                "total_records": total_scanned,
+                "complete": complete,
+                "reason": reason,
+                "counts": bounded_counts,
             }
 
         derived_id = await persist_observation_artifact(
@@ -720,13 +840,8 @@ def _traverse_json_pointer(
 def _bound_get_value(value: Any) -> tuple[Any, bool, str | None]:  # noqa: ANN401, PLR0911
     """Ensure observation.get output is safely bounded and report truncation."""
     if isinstance(value, str):
-        if len(value) > MAX_GET_CHAR_LIMIT:
-            truncated = value[:MAX_GET_CHAR_LIMIT] + f"... [truncated {len(value) - MAX_GET_CHAR_LIMIT} chars]"
-            return (
-                truncated,
-                False,
-                f"Value exceeded maximum character limit ({MAX_GET_CHAR_LIMIT} of {len(value)} chars returned). Use observation.slice or observation.search.",
-            )
+        if len(json.dumps(value)) > MAX_GET_CHAR_LIMIT:
+            return _bound_string(value, MAX_GET_CHAR_LIMIT)
         return value, True, None
 
     if isinstance(value, (list, tuple)):
@@ -740,9 +855,13 @@ def _bound_get_value(value: Any) -> tuple[Any, bool, str | None]:  # noqa: ANN40
     if isinstance(value, dict):
         serialized = json.dumps(value)
         if len(serialized) > MAX_GET_CHAR_LIMIT:
-            reduced_text = render_observation_payload(value, budget_chars=MAX_GET_CHAR_LIMIT)
+            reduced_text = render_observation_payload(value, budget_chars=MAX_GET_CHAR_LIMIT - 30)
+            cand_dict = {"_preview": reduced_text}
+            if len(json.dumps(cand_dict)) > MAX_GET_CHAR_LIMIT:
+                bounded_prev, _, _ = _bound_string(reduced_text, MAX_GET_CHAR_LIMIT - 30)
+                cand_dict = {"_preview": bounded_prev}
             return (
-                {"_preview": reduced_text},
+                cand_dict,
                 False,
                 f"Object payload exceeded maximum size limit ({len(serialized)} bytes > {MAX_GET_CHAR_LIMIT}). Use a specific JSON pointer path, observation.slice, or observation.filter.",
             )
