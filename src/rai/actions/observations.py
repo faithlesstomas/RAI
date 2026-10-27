@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+from dataclasses import dataclass
 import json
 import re
 from typing import Any, Iterator, Sequence
@@ -44,6 +45,7 @@ MAX_PAGE_LIMIT = 1000
 MAX_GET_CHAR_LIMIT = 64000
 MAX_ECHOED_ARG_CHAR_LIMIT = 1000
 FALLBACK_FIELD_CHAR_LIMIT = 200
+ARTIFACT_ID_RESERVE_CHARS = 100
 
 
 def _fail(request: CapabilityRequest, code: str, message: str) -> ActionFailure:
@@ -280,6 +282,39 @@ def _enforce_final_payload_limit(
     return output
 
 
+async def _persist_derived_output(
+    store: ObservationStore,
+    artifact: ObservationArtifact,
+    request: CapabilityRequest,
+    output: dict[str, Any],
+    list_key: str | None = None,
+) -> dict[str, Any]:
+    """Bound output reserving space for artifact_id, persist artifact, and re-bound if needed."""
+    output = _enforce_final_payload_limit(
+        output,
+        list_key=list_key,
+        max_chars=MAX_GET_CHAR_LIMIT - ARTIFACT_ID_RESERVE_CHARS,
+    )
+    derived_from = (str(output.get("ref", "")),) if output.get("ref") else ()
+    derived_id = await persist_observation_artifact(
+        store=store,
+        session_id=artifact.session_id,
+        turn_id=artifact.turn_id,
+        capability=request.capability,
+        request_id=request.record_id,
+        data_class=artifact.data_class,
+        output=output,
+        derived_from=derived_from,
+    )
+    if derived_id:
+        output["artifact_id"] = derived_id
+        if len(json.dumps(output)) > MAX_GET_CHAR_LIMIT:
+            output = _enforce_final_payload_limit(
+                output, list_key=list_key, max_chars=MAX_GET_CHAR_LIMIT
+            )
+    return output
+
+
 async def _get_artifact(
     store: ObservationStore | None,
     ref: str,
@@ -451,68 +486,89 @@ class ObservationSearch:
             "reason": reason,
             "matches": bounded_matches,
         }
-        output = _enforce_final_payload_limit(
-            output, list_key="matches", max_chars=MAX_GET_CHAR_LIMIT
+        output = await _persist_derived_output(
+            self.store, artifact, request, output, list_key="matches"
         )
-
-        derived_id = await persist_observation_artifact(
-            store=self.store,
-            session_id=artifact.session_id,
-            turn_id=artifact.turn_id,
-            capability=self.name,
-            request_id=request.record_id,
-            data_class=artifact.data_class,
-            output=output,
-            derived_from=(ref,),
-        )
-        if derived_id:
-            output["artifact_id"] = derived_id
-
         return Success(_ok(request, output, {"source_artifact_id": ref}))
 
 
-def _evaluate_filter_condition(item_val: Any, op: str, val: Any) -> bool:  # noqa: ANN401, PLR0911, PLR0912
+@dataclass(frozen=True, slots=True)
+class _FilterCriteria:
+    field: str
+    op: str
+    val: Any  # noqa: ANN401
+    in_lookup_set: set[str] | None = None
+
+
+def _evaluate_numeric_condition(item_val: Any, op: str, val: Any) -> bool:  # noqa: ANN401
+    try:
+        num_item = float(item_val)
+        num_val = float(val)
+    except (ValueError, TypeError):
+        return False
+    if op == "gt":
+        return num_item > num_val
+    if op == "gte":
+        return num_item >= num_val
+    if op == "lt":
+        return num_item < num_val
+    if op == "lte":
+        return num_item <= num_val
+    return False
+
+
+def _evaluate_in_condition(item_val: Any, criteria: _FilterCriteria) -> bool:  # noqa: ANN401
+    if criteria.in_lookup_set is not None:
+        return str(item_val).casefold() in criteria.in_lookup_set
+    val = criteria.val
+    if isinstance(val, (list, tuple, set)):
+        target_item = str(item_val).casefold()
+        for idx, v in enumerate(val):
+            if idx >= MAX_PAGE_LIMIT:
+                break
+            if target_item == str(v).casefold():
+                return True
+        return False
+    return str(item_val).casefold() in str(val).casefold()
+
+
+def _evaluate_filter_condition(  # noqa: PLR0911
+    item_val: Any,  # noqa: ANN401
+    criteria: _FilterCriteria,
+) -> bool:
     if item_val is None:
         return False
+    op = criteria.op
+    val = criteria.val
     if op == "equals":
         return str(item_val).casefold() == str(val).casefold()
     if op == "contains":
         if isinstance(item_val, (list, tuple)):
-            return any(str(val).casefold() in str(x).casefold() for x in item_val)
+            target = str(val).casefold()
+            for idx, x in enumerate(item_val):
+                if idx >= MAX_PAGE_LIMIT:
+                    break
+                if target in str(x).casefold():
+                    return True
+            return False
         return str(val).casefold() in str(item_val).casefold()
     if op == "startswith":
         return str(item_val).casefold().startswith(str(val).casefold())
     if op == "endswith":
         return str(item_val).casefold().endswith(str(val).casefold())
     if op == "in":
-        if isinstance(val, (list, tuple)):
-            return any(str(item_val).casefold() == str(v).casefold() for v in val)
-        return str(item_val).casefold() in str(val).casefold()
-    try:
-        num_item = float(item_val)
-        num_val = float(val)
-        if op == "gt":
-            return num_item > num_val
-        if op == "gte":
-            return num_item >= num_val
-        if op == "lt":
-            return num_item < num_val
-        if op == "lte":
-            return num_item <= num_val
-    except (ValueError, TypeError):
-        return False
-    return False
+        return _evaluate_in_condition(item_val, criteria)
+    return _evaluate_numeric_condition(item_val, op, val)
 
 
 async def _filter_records(
     records: Sequence[Any],
-    field: str,
-    op: str,
-    val: Any,  # noqa: ANN401
+    criteria: _FilterCriteria,
     cancellation: CancellationToken,
 ) -> Result[tuple[list[Any], bool], None]:
     filtered: list[Any] = []
     hit_scan_limit = False
+    field = criteria.field
     for count, rec in enumerate(records, 1):
         if count % YIELD_INTERVAL == 0:
             await asyncio.sleep(0)
@@ -521,12 +577,55 @@ async def _filter_records(
         if count > MAX_VISITED_LIMIT:
             hit_scan_limit = True
             break
-        if isinstance(rec, dict) and _evaluate_filter_condition(rec.get(field), op, val):
+        if isinstance(rec, dict) and _evaluate_filter_condition(rec.get(field), criteria):
             filtered.append(rec)
             if len(filtered) >= MAX_SCAN_LIMIT:
                 hit_scan_limit = True
                 break
     return Success((filtered, hit_scan_limit))
+
+
+def _prepare_filter_operand(
+    op: str, val: Any  # noqa: ANN401
+) -> tuple[Any, Any, set[str] | None, bool]:
+    """Prepare filter operand: bound values upfront, precompute lookup set for 'in'."""
+    val_truncated = False
+    in_lookup_set: set[str] | None = None
+    eval_val = val
+
+    if op == "in" and isinstance(val, (list, tuple, set)):
+        val_list = list(val)
+        if len(val_list) > MAX_PAGE_LIMIT:
+            val_list = val_list[:MAX_PAGE_LIMIT]
+            val_truncated = True
+        in_lookup_set = {str(x).casefold() for x in val_list}
+        eval_val = val_list
+    elif isinstance(val, str) and len(val) > MAX_ECHOED_ARG_CHAR_LIMIT:
+        eval_val = val[:MAX_ECHOED_ARG_CHAR_LIMIT]
+        val_truncated = True
+
+    bounded_val, echo_truncated = _bound_echoed_value(
+        eval_val, max_json_chars=MAX_ECHOED_ARG_CHAR_LIMIT
+    )
+    val_truncated = val_truncated or echo_truncated
+    return eval_val, bounded_val, in_lookup_set, val_truncated
+
+
+def _get_filter_reason(
+    hit_scan_limit: bool,
+    payload_reason: str | None,
+    val_truncated: bool,
+    pagination_info: tuple[int, int] | None = None,
+) -> str | None:
+    if hit_scan_limit:
+        return f"Hit maximum filter scan limit ({MAX_VISITED_LIMIT} items inspected or {MAX_SCAN_LIMIT} matches)"
+    if payload_reason:
+        return payload_reason
+    if val_truncated:
+        return "Echoed filter value exceeded maximum argument limit (truncated)"
+    if pagination_info is not None:
+        return f"Results paginated ({pagination_info[0]} of {pagination_info[1]} matches returned)"
+    return None
 
 
 class ObservationFilter:
@@ -564,15 +663,14 @@ class ObservationFilter:
         if artifact is None:
             return Failure(_fail(request, "ARTIFACT_NOT_FOUND", f"Artifact {ref} not found"))
 
+        eval_val, bounded_val, in_lookup_set, val_truncated = _prepare_filter_operand(op, val)
+        criteria = _FilterCriteria(field=field, op=op, val=eval_val, in_lookup_set=in_lookup_set)
+
         _, records = _extract_primary_list(artifact.content)
-        filter_res = await _filter_records(records, field, op, val, cancellation)
+        filter_res = await _filter_records(records, criteria, cancellation)
         if isinstance(filter_res, Failure):
             return Failure(_fail(request, "CANCELLED", "Filter cancelled"))
         filtered, hit_scan_limit = filter_res.unwrap()
-
-        bounded_val, val_truncated = _bound_echoed_value(
-            val, max_json_chars=MAX_ECHOED_ARG_CHAR_LIMIT
-        )
 
         total_matches = len(filtered)
         paginated = filtered[offset : offset + limit]
@@ -586,16 +684,12 @@ class ObservationFilter:
             and payload_complete
             and not val_truncated
         )
-        if hit_scan_limit:
-            reason = f"Hit maximum filter scan limit ({MAX_VISITED_LIMIT} items inspected or {MAX_SCAN_LIMIT} matches)"
-        elif not payload_complete and payload_reason:
-            reason = payload_reason
-        elif val_truncated:
-            reason = "Echoed filter value exceeded maximum argument limit (truncated)"
-        elif not complete:
-            reason = f"Results paginated ({len(bounded_results)} of {total_matches} matches returned)"
-        else:
-            reason = None
+        reason = _get_filter_reason(
+            hit_scan_limit=hit_scan_limit,
+            payload_reason=payload_reason if not payload_complete else None,
+            val_truncated=val_truncated,
+            pagination_info=(len(bounded_results), total_matches) if not complete else None,
+        )
 
         output: dict[str, Any] = {
             "ref": ref,
@@ -609,24 +703,13 @@ class ObservationFilter:
             "reason": reason,
             "results": bounded_results,
         }
-        output = _enforce_final_payload_limit(
-            output, list_key="results", max_chars=MAX_GET_CHAR_LIMIT
+        output = await _persist_derived_output(
+            self.store, artifact, request, output, list_key="results"
         )
-
-        derived_id = await persist_observation_artifact(
-            store=self.store,
-            session_id=artifact.session_id,
-            turn_id=artifact.turn_id,
-            capability=self.name,
-            request_id=request.record_id,
-            data_class=artifact.data_class,
-            output=output,
-            derived_from=(ref,),
-        )
-        if derived_id:
-            output["artifact_id"] = derived_id
-
         return Success(_ok(request, output, {"source_artifact_id": ref}))
+
+
+
 
 
 async def _slice_text(
@@ -738,54 +821,42 @@ class ObservationSlice:
             "reason": reason,
             "items": bounded_items,
         }
-        output = _enforce_final_payload_limit(
-            output, list_key="items", max_chars=MAX_GET_CHAR_LIMIT
+        output = await _persist_derived_output(
+            self.store, artifact, request, output, list_key="items"
         )
-
-        derived_id = await persist_observation_artifact(
-            store=self.store,
-            session_id=artifact.session_id,
-            turn_id=artifact.turn_id,
-            capability=self.name,
-            request_id=request.record_id,
-            data_class=artifact.data_class,
-            output=output,
-            derived_from=(ref,),
-        )
-        if derived_id:
-            output["artifact_id"] = derived_id
-
         return Success(_ok(request, output, {"source_artifact_id": ref}))
 
 
 async def _count_grouped_records(
     records: Sequence[Any], field: str, cancellation: CancellationToken
-) -> tuple[dict[str, int], int, bool] | None:
+) -> tuple[dict[str, int], int, int, bool] | None:
     counts: dict[str, int] = {}
+    inspected_records = 0
     visited = 0
     hit_scan_limit = False
 
     for rec in records:
+        if visited >= MAX_VISITED_LIMIT:
+            hit_scan_limit = True
+            break
+        inspected_records += 1
         visited += 1
         if visited % YIELD_INTERVAL == 0:
             await asyncio.sleep(0)
             if cancellation.cancelled:
                 return None
-        if visited > MAX_VISITED_LIMIT:
-            hit_scan_limit = True
-            break
         if isinstance(rec, dict):
             v = rec.get(field)
             if isinstance(v, (list, tuple)):
                 for sub_v in v:
+                    if visited >= MAX_VISITED_LIMIT:
+                        hit_scan_limit = True
+                        break
                     visited += 1
                     if visited % YIELD_INTERVAL == 0:
                         await asyncio.sleep(0)
                         if cancellation.cancelled:
                             return None
-                    if visited > MAX_VISITED_LIMIT:
-                        hit_scan_limit = True
-                        break
                     s = str(sub_v)
                     counts[s] = counts.get(s, 0) + 1
                 if hit_scan_limit:
@@ -794,8 +865,7 @@ async def _count_grouped_records(
                 s = str(v) if v is not None else "null"
                 counts[s] = counts.get(s, 0) + 1
 
-    total_scanned = min(visited, MAX_VISITED_LIMIT) if hit_scan_limit else visited
-    return counts, total_scanned, hit_scan_limit
+    return counts, inspected_records, visited, hit_scan_limit
 
 
 def _bound_counts_dictionary(
@@ -877,7 +947,7 @@ class ObservationCount:
             count_res = await _count_grouped_records(records, str(field), cancellation)
             if count_res is None:
                 return Failure(_fail(request, "CANCELLED", "Count cancelled"))
-            raw_counts, total_scanned, hit_scan_limit = count_res
+            raw_counts, inspected_records, _total_visited, hit_scan_limit = count_res
             bounded_counts, hit_group_limit, hit_payload_limit = _bound_counts_dictionary(raw_counts)
 
             complete = (
@@ -887,7 +957,9 @@ class ObservationCount:
                 and len(bounded_counts) == len(raw_counts)
             )
             if hit_scan_limit:
-                reason = f"Hit maximum count scan limit ({MAX_VISITED_LIMIT} records inspected)"
+                reason = (
+                    f"Hit maximum count scan limit ({MAX_VISITED_LIMIT} records/values inspected)"
+                )
             elif hit_payload_limit:
                 reason = (
                     f"Count results exceeded maximum payload limit "
@@ -904,30 +976,17 @@ class ObservationCount:
             output = {
                 "ref": ref,
                 "field": str(field),
-                "total_records": total_scanned,
+                "total_records": inspected_records,
                 "complete": complete,
                 "reason": reason,
                 "counts": bounded_counts,
             }
 
-        output = _enforce_final_payload_limit(
-            output, list_key=None, max_chars=MAX_GET_CHAR_LIMIT
+        output = await _persist_derived_output(
+            self.store, artifact, request, output, list_key=None
         )
-
-        derived_id = await persist_observation_artifact(
-            store=self.store,
-            session_id=artifact.session_id,
-            turn_id=artifact.turn_id,
-            capability=self.name,
-            request_id=request.record_id,
-            data_class=artifact.data_class,
-            output=output,
-            derived_from=(ref,),
-        )
-        if derived_id:
-            output["artifact_id"] = derived_id
-
         return Success(_ok(request, output, {"source_artifact_id": ref}))
+
 
 
 def _parse_json_pointer(path: str) -> Result[list[str], str]:

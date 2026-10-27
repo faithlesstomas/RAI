@@ -1551,7 +1551,7 @@ async def test_observation_count_bounds_inner_grouped_list_elements(
     res = (await _invoke(registry, req)).output
     assert res["complete"] is False
     assert "Hit maximum count scan limit" in (res["reason"] or "")
-    assert res["total_records"] <= 10000
+    assert res["total_records"] == 1
     assert sum(res["counts"].values()) <= 10000
     assert len(json.dumps(res)) <= 64000
 
@@ -1611,7 +1611,7 @@ async def test_observation_filter_bounds_echoed_value_and_final_payload(
     derived_art = (await store.get("session-filter-echo", res1["artifact_id"])).unwrap()
     assert len(json.dumps(derived_art.content)) <= 64000
 
-    # 2. Giant list passed as value for 'in' operator
+    # 2. Giant list passed as value for 'in' operator (5,000 items)
     huge_list_val = [f"nonexistent_val_{i}" for i in range(5000)]
     req2 = normalize_request(
         filter_desc,
@@ -1630,3 +1630,59 @@ async def test_observation_filter_bounds_echoed_value_and_final_payload(
     assert "_preview" in res2["value"]
     assert len(json.dumps(res2["value"])) <= 1000
     assert len(json.dumps(res2)) <= 64000
+
+    # 3. Giant list for 'in' matching an existing item within the first 1,000 capped elements
+    matching_huge_list = ["item_2"] + [f"dummy_{i}" for i in range(2500)]
+    req3 = normalize_request(
+        filter_desc,
+        {
+            "session_id": "session-filter-echo",
+            "ref": "obs_filter_echo",
+            "field": "name",
+            "op": "in",
+            "value": matching_huge_list,
+        },
+        actor=ACTOR,
+        data_class=DataClass.LOCAL,
+    )
+    res3 = (await _invoke(registry, req3)).output
+    assert res3["complete"] is False
+    assert res3["total_matches"] == 1
+    assert len(res3["results"]) == 1
+    assert res3["results"][0]["id"] == 2
+    assert "truncated" in (res3["reason"] or "")
+
+
+@pytest.mark.asyncio
+async def test_observation_payload_bounds_strictly_with_artifact_id(
+    registry: CapabilityRegistry, store: SQLiteMemoryGraphStore
+) -> None:
+    # Construct 100 records with large texts (~1,000 chars each) that will hit the 64KB cap
+    large_records = [{"id": i, "data": "x" * 1000} for i in range(100)]
+    art = ObservationArtifact(
+        artifact_id="obs_large_items",
+        session_id="session-large-headroom",
+        turn_id="turn-large-headroom",
+        capability="test",
+        request_id="req-large-headroom-1",
+        data_class=DataClass.LOCAL,
+        content={"records": large_records},
+        schema_summary=summarize_observation_schema({}),
+        size_chars=110000,
+        producer=ACTOR,
+    )
+    await store.put(art)
+
+    slice_desc = registry.descriptor("observation.slice")
+    assert slice_desc is not None
+
+    req = normalize_request(
+        slice_desc,
+        {"session_id": "session-large-headroom", "ref": "obs_large_items", "offset": 0, "limit": 100},
+        actor=ACTOR,
+        data_class=DataClass.LOCAL,
+    )
+    res = (await _invoke(registry, req)).output
+    assert "artifact_id" in res
+    assert res["complete"] is False
+    assert len(json.dumps(res)) <= 64000
