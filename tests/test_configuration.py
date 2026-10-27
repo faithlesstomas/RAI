@@ -229,5 +229,3 @@ def test_monty_configuration_settings(settings_dir: Path) -> None:
     runtime_cfg = settings.runtime_mapping()
     assert runtime_cfg["monty"]["max_duration_secs"] == expected_duration
     assert runtime_cfg["monty"]["max_memory_bytes"] == expected_memory
-
-

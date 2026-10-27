@@ -1769,3 +1769,88 @@ async def test_observation_filter_in_operand_bounds_element_and_aggregate_size(
     assert res3["complete"] is False
     assert "truncated" in (res3["reason"] or "")
     assert len(json.dumps(res3)) <= 64000
+
+
+@pytest.mark.asyncio
+async def test_observation_filter_in_operand_rejects_nested_complex_values_and_guards_records(
+    registry: CapabilityRegistry, store: SQLiteMemoryGraphStore
+) -> None:
+    records = [
+        {"id": 1, "config": {"huge": "a" * 100000}, "name": "item_1"},
+        {"id": 2, "config": [f"val_{i}" for i in range(50000)], "name": "item_2"},
+        {"id": 3, "config": "target_config", "name": "item_3"},
+    ]
+    art = ObservationArtifact(
+        artifact_id="obs_filter_nested",
+        session_id="session-filter-nested",
+        turn_id="turn-filter-nested",
+        capability="test",
+        request_id="req-filter-nested-1",
+        data_class=DataClass.LOCAL,
+        content={"items": records},
+        schema_summary=summarize_observation_schema({}),
+        size_chars=1000,
+        producer=ACTOR,
+    )
+    await store.put(art)
+
+    filter_desc = registry.descriptor("observation.filter")
+    assert filter_desc is not None
+
+    # 1. 'in' candidate value containing large nested dict and list alongside scalar
+    nested_candidates = [{"huge_dict": [1] * 50000}, ["nested_list"] * 50000, "item_3"]
+    req1 = normalize_request(
+        filter_desc,
+        {
+            "session_id": "session-filter-nested",
+            "ref": "obs_filter_nested",
+            "field": "name",
+            "op": "in",
+            "value": nested_candidates,
+        },
+        actor=ACTOR,
+        data_class=DataClass.LOCAL,
+    )
+    res1 = (await _invoke(registry, req1)).output
+    assert res1["complete"] is False
+    assert res1["total_matches"] == 1
+    assert res1["results"][0]["id"] == 3
+    assert "truncated" in (res1["reason"] or "")
+    assert list(res1["value"]) == ["item_3"]
+
+    # 2. Entirely complex candidate collection (e.g. dict or list of dicts)
+    req2 = normalize_request(
+        filter_desc,
+        {
+            "session_id": "session-filter-nested",
+            "ref": "obs_filter_nested",
+            "field": "name",
+            "op": "in",
+            "value": [{"nested_only": True}],
+        },
+        actor=ACTOR,
+        data_class=DataClass.LOCAL,
+    )
+    res2 = (await _invoke(registry, req2)).output
+    assert res2["complete"] is False
+    assert res2["total_matches"] == 0
+    assert "truncated" in (res2["reason"] or "")
+    assert list(res2["value"]) == []
+
+    # 3. Guard record-side complex values: records with huge dict/list in filtered field do not stringify
+    req3 = normalize_request(
+        filter_desc,
+        {
+            "session_id": "session-filter-nested",
+            "ref": "obs_filter_nested",
+            "field": "config",
+            "op": "in",
+            "value": ["target_config"],
+        },
+        actor=ACTOR,
+        data_class=DataClass.LOCAL,
+    )
+    res3 = (await _invoke(registry, req3)).output
+    assert res3["complete"] is True
+    assert res3["total_matches"] == 1
+    assert res3["results"][0]["id"] == 3

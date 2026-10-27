@@ -519,22 +519,40 @@ def _evaluate_numeric_condition(item_val: Any, op: str, val: Any) -> bool:  # no
     return False
 
 
+def _extract_scalar_for_evaluation(
+    val: Any,  # noqa: ANN401
+    max_chars: int = MAX_IN_ELEMENT_CHAR_LIMIT * 3,
+) -> str | None:
+    if val is None:
+        return None
+    if isinstance(val, str):
+        return val if len(val) <= max_chars else None
+    if isinstance(val, (int, float, bool)):
+        return str(val)
+    return None
+
+
 def _evaluate_in_condition(item_val: Any, criteria: _FilterCriteria) -> bool:  # noqa: ANN401
+    target = _extract_scalar_for_evaluation(item_val)
+    if target is None:
+        return False
+    target_item = target.casefold()
+
     if criteria.in_lookup_set is not None:
-        s = str(item_val)
-        if len(s) > MAX_IN_ELEMENT_CHAR_LIMIT * 3:
-            return False
-        return s.casefold() in criteria.in_lookup_set
+        return target_item in criteria.in_lookup_set
+
     val = criteria.val
     if isinstance(val, (list, tuple, set)):
-        target_item = str(item_val).casefold()
         for idx, v in enumerate(val):
             if idx >= MAX_PAGE_LIMIT:
                 break
-            if target_item == str(v).casefold():
+            v_s = _extract_scalar_for_evaluation(v)
+            if v_s is not None and target_item == v_s.casefold():
                 return True
         return False
-    return str(item_val).casefold() in str(val).casefold()
+
+    val_s = _extract_scalar_for_evaluation(val)
+    return target_item in val_s.casefold() if val_s is not None else False
 
 
 def _evaluate_filter_condition(  # noqa: PLR0911
@@ -590,6 +608,31 @@ async def _filter_records(
     return Success((filtered, hit_scan_limit))
 
 
+def _process_in_candidate(
+    item: Any,  # noqa: ANN401
+    max_element_chars: int,
+) -> tuple[Any, str, int, bool] | None:
+    if isinstance(item, str):
+        truncated = len(item) > max_element_chars
+        item_s = item[:max_element_chars] if truncated else item
+        try:
+            serialized_len = len(json.dumps(item_s))
+        except (TypeError, ValueError):
+            serialized_len = len(item_s) + 2
+        return item_s, item_s, serialized_len, truncated
+
+    if isinstance(item, (int, float, bool)) or item is None:
+        if isinstance(item, int) and item.bit_length() > max_element_chars * 4:
+            return None
+        item_s = "null" if item is None else str(item)
+        truncated = len(item_s) > max_element_chars
+        elem_val: Any = item_s[:max_element_chars] if truncated else item
+        item_s = item_s[:max_element_chars] if truncated else item_s
+        return elem_val, item_s, len(item_s), truncated
+
+    return None
+
+
 def _bound_in_operand(
     val: Any,  # noqa: ANN401
     max_items: int = MAX_PAGE_LIMIT,
@@ -601,6 +644,7 @@ def _bound_in_operand(
     Enforces:
     - At most max_items elements inspected
     - Each element bounded to max_element_chars
+    - Complex/nested candidates rejected without full materialization
     - Total aggregate JSON-serialized characters across all elements bounded to max_aggregate_chars
     """
     bounded_list: list[Any] = []
@@ -616,31 +660,13 @@ def _bound_in_operand(
             truncated = True
             break
 
-        if isinstance(item, str):
-            if len(item) > max_element_chars:
-                item_s = item[:max_element_chars]
-                truncated = True
-            else:
-                item_s = item
-            elem_val: Any = item_s
-            try:
-                serialized_len = len(json.dumps(item_s))
-            except (TypeError, ValueError):
-                serialized_len = len(item_s) + 2
-        else:
-            try:
-                serialized = json.dumps(item)
-            except (TypeError, ValueError):
-                serialized = json.dumps(str(item))
-            if len(serialized) > max_element_chars:
-                item_s = str(item)[:max_element_chars]
-                elem_val = item_s
-                serialized_len = len(json.dumps(item_s))
-                truncated = True
-            else:
-                item_s = str(item)
-                elem_val = item
-                serialized_len = len(serialized)
+        cand = _process_in_candidate(item, max_element_chars)
+        if cand is None:
+            truncated = True
+            continue
+
+        elem_val, item_s, serialized_len, elem_truncated = cand
+        truncated = truncated or elem_truncated
 
         additional_len = serialized_len + (2 if bounded_list else 0)
         if cur_aggregate_chars + additional_len > max_aggregate_chars:
@@ -662,11 +688,16 @@ def _prepare_filter_operand(
     in_lookup_set: set[str] | None = None
     eval_val = val
 
-    if op == "in" and (
-        isinstance(val, (list, tuple, set))
-        or (isinstance(val, Iterable) and not isinstance(val, (str, bytes, dict)))
-    ):
-        eval_val, in_lookup_set, val_truncated = _bound_in_operand(val)
+    if op == "in":
+        if isinstance(val, (list, tuple, set)) or (
+            isinstance(val, Iterable) and not isinstance(val, (str, bytes, dict))
+        ):
+            eval_val, in_lookup_set, val_truncated = _bound_in_operand(val)
+        else:
+            # Non-collection or complex operand (e.g. dict, bytes) passed as 'in' operand
+            eval_val = []
+            in_lookup_set = set()
+            val_truncated = True
     elif isinstance(val, str) and len(val) > MAX_ECHOED_ARG_CHAR_LIMIT:
         eval_val = val[:MAX_ECHOED_ARG_CHAR_LIMIT]
         val_truncated = True
