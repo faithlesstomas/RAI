@@ -31,7 +31,7 @@ from rai.assistant.service import AssistantService
 from rai.dependencies import get_assistant_service, get_monty_runner
 from rai.kernel.records import DataClass, ProducerIdentity, _new_id
 from rai.kernel.ports import LifecycleState
-from rai.tools.security.auth import is_authorized
+from rai.tools.security.auth import create_session_token, is_authorized
 from rai.tools.security.monty import MontyRunner
 
 router = APIRouter(prefix="/api/v1/assistant", tags=["Rich Assistant"])
@@ -51,6 +51,7 @@ class AssistantTurnResult(BaseModel):
     """Terminal assistant response with reproducibility references."""
 
     session_id: AssistantSessionId
+    session_token: str | None = None
     request_id: str
     turn_id: str
     content: str
@@ -58,6 +59,13 @@ class AssistantTurnResult(BaseModel):
     manifest_id: str
     admitted_memory_ids: tuple[str, ...] = ()
     memory_operation_ids: tuple[str, ...] = ()
+
+
+class SessionTokenResult(BaseModel):
+    """Authenticated session token descriptor."""
+
+    session_id: str
+    session_token: str
 
 
 class REPLExecuteRequest(BaseModel):
@@ -119,6 +127,7 @@ async def accept_assistant_turn(
 def _turn_result(response: AssistantResponse) -> AssistantTurnResult:
     return AssistantTurnResult(
         session_id=response.session_id,
+        session_token=create_session_token(response.session_id),
         request_id=response.request_id,
         turn_id=response.turn_id,
         content=response.text,
@@ -147,7 +156,7 @@ async def stream_assistant_turn(
                 yield f"event: error\ndata: {json.dumps(payload)}\n\n"
                 return
             yield f"data: {json.dumps({'content': chunk.unwrap()})}\n\n"
-        yield f"event: done\ndata: {json.dumps({'session_id': turn.session_id})}\n\n"
+        yield f"event: done\ndata: {json.dumps({'session_id': turn.session_id, 'session_token': create_session_token(turn.session_id)})}\n\n"
 
     return StreamingResponse(events(), media_type="text/event-stream")
 
@@ -250,6 +259,15 @@ async def get_latest_session_context(
     if manifest is None:
         raise HTTPException(status_code=404, detail="Context manifest not found")
     return await get_context_window(manifest.record_id, service)
+
+
+@router.get("/sessions/{session_id}/token", response_model=SessionTokenResult)
+async def get_session_token(session_id: str) -> SessionTokenResult:
+    """Return an authenticated session token for binding capabilities and MCP."""
+    return SessionTokenResult(
+        session_id=session_id,
+        session_token=create_session_token(session_id),
+    )
 
 
 @router.get("/memories")
@@ -500,7 +518,13 @@ async def assistant_websocket(websocket: WebSocket) -> None:  # noqa: PLR0912
                 )
                 await websocket.close(code=1011)
                 return
-        await websocket.send_json({"type": "session", "session_id": default_session_id})
+        await websocket.send_json(
+            {
+                "type": "session",
+                "session_id": default_session_id,
+                "session_token": create_session_token(default_session_id),
+            }
+        )
         reply_by_session: dict[str, str] = {}
         while True:
             try:

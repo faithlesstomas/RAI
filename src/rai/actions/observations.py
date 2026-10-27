@@ -3,13 +3,17 @@
 from __future__ import annotations
 
 import asyncio
+import itertools
 import json
 import re
-from typing import Any
+from typing import Any, Iterator, Sequence
 
 from returns.result import Failure, Result, Success
 
-from rai.assistant.observation_budget import persist_observation_artifact
+from rai.assistant.observation_budget import (
+    persist_observation_artifact,
+    render_observation_payload,
+)
 from rai.assistant.ports import ObservationStore
 from rai.assistant.records import ObservationArtifact
 from rai.kernel.capabilities import (
@@ -38,6 +42,7 @@ MAX_VISITED_LIMIT = 10000
 YIELD_INTERVAL = 100
 DEFAULT_PAGE_LIMIT = 100
 MAX_PAGE_LIMIT = 1000
+MAX_GET_CHAR_LIMIT = 64000
 
 
 def _fail(request: CapabilityRequest, code: str, message: str) -> ActionFailure:
@@ -66,14 +71,29 @@ def _ok(
     )
 
 
-def _extract_primary_list(content: dict[str, Any]) -> tuple[str | None, list[Any]]:
+def _extract_primary_list(content: dict[str, Any]) -> tuple[str | None, Sequence[Any]]:
     for key in ("applications", "results", "documents", "entries", "processes", "items", "episodes"):
         if key in content and isinstance(content[key], (list, tuple)):
-            return key, list(content[key])
+            return key, content[key]
     for k, v in content.items():
         if isinstance(v, (list, tuple)):
-            return str(k), list(v)
-    return None, []
+            return str(k), v
+    return None, ()
+
+
+def _iter_text_lines(text: str) -> Iterator[str]:
+    start = 0
+    text_len = len(text)
+    while start < text_len:
+        end = text.find("\n", start)
+        if end == -1:
+            yield text[start:]
+            break
+        line = text[start:end]
+        if line.endswith("\r"):
+            line = line[:-1]
+        yield line
+        start = end + 1
 
 
 async def _get_artifact(
@@ -89,14 +109,21 @@ async def _get_artifact(
     return None
 
 
-async def _search_text_lines(
-    lines: list[str],
+async def _search_text(
+    text: str,
     compiled: re.Pattern[str],
     cancellation: CancellationToken,
 ) -> Result[tuple[list[dict[str, Any]], bool], None]:
     matched: list[dict[str, Any]] = []
     hit_scan_limit = False
-    for idx, line in enumerate(lines, 1):
+    lines_iter = _iter_text_lines(text)
+    curr_line = next(lines_iter, None)
+    if curr_line is None:
+        return Success((matched, hit_scan_limit))
+
+    prev_line: str | None = None
+    idx = 1
+    while curr_line is not None:
         if idx % YIELD_INTERVAL == 0:
             await asyncio.sleep(0)
             if cancellation.cancelled:
@@ -104,23 +131,29 @@ async def _search_text_lines(
         if idx > MAX_VISITED_LIMIT:
             hit_scan_limit = True
             break
-        if compiled.search(line):
-            start_ctx = max(0, idx - 2)
-            end_ctx = min(len(lines), idx + 1)
-            context_snippet = "\n".join(lines[start_ctx:end_ctx])
+
+        next_line = next(lines_iter, None)
+        if compiled.search(curr_line):
+            ctx = [line for line in (prev_line, curr_line, next_line) if line is not None]
+            context_snippet = "\n".join(ctx)
             matched.append({
                 "line_number": idx,
-                "line": line.strip(),
+                "line": curr_line.strip(),
                 "context": context_snippet,
             })
             if len(matched) >= MAX_SCAN_LIMIT:
                 hit_scan_limit = True
                 break
+
+        prev_line = curr_line
+        curr_line = next_line
+        idx += 1
+
     return Success((matched, hit_scan_limit))
 
 
 async def _search_records(
-    records: list[Any],
+    records: Sequence[Any],
     compiled: re.Pattern[str],
     fields: list[str] | None,
     cancellation: CancellationToken,
@@ -195,8 +228,7 @@ class ObservationSearch:
 
         content = artifact.content
         if "text" in content and isinstance(content["text"], str):
-            lines = content["text"].splitlines()
-            search_res = await _search_text_lines(lines, compiled, cancellation)
+            search_res = await _search_text(content["text"], compiled, cancellation)
         else:
             _, records = _extract_primary_list(content)
             search_res = await _search_records(records, compiled, fields, cancellation)
@@ -276,7 +308,7 @@ def _evaluate_filter_condition(item_val: Any, op: str, val: Any) -> bool:  # noq
 
 
 async def _filter_records(
-    records: list[Any],
+    records: Sequence[Any],
     field: str,
     op: str,
     val: Any,  # noqa: ANN401
@@ -410,16 +442,19 @@ class ObservationSlice:
 
         content = artifact.content
         if "text" in content and isinstance(content["text"], str):
-            all_items = content["text"].splitlines()
+            text = content["text"]
+            total_count = text.count("\n") + (1 if text and not text.endswith("\n") else 0)
+            sliced = list(itertools.islice(_iter_text_lines(text), offset, offset + limit))
         else:
             _, all_items = _extract_primary_list(content)
+            total_count = len(all_items)
+            sliced = list(all_items[offset : offset + limit])
 
-        sliced = all_items[offset : offset + limit]
         output: dict[str, Any] = {
             "ref": ref,
             "offset": offset,
             "limit": limit,
-            "total_count": len(all_items),
+            "total_count": total_count,
             "items": sliced,
         }
 
@@ -545,6 +580,57 @@ def _traverse_json_pointer(
     return Success(curr)
 
 
+def _bound_get_value(value: Any) -> tuple[Any, bool, str | None]:  # noqa: ANN401, PLR0911
+    """Ensure observation.get output is safely bounded and report truncation."""
+    if isinstance(value, str):
+        if len(value) > MAX_GET_CHAR_LIMIT:
+            truncated = value[:MAX_GET_CHAR_LIMIT] + f"... [truncated {len(value) - MAX_GET_CHAR_LIMIT} chars]"
+            return (
+                truncated,
+                False,
+                f"Value exceeded maximum character limit ({MAX_GET_CHAR_LIMIT} of {len(value)} chars returned). Use observation.slice or observation.search.",
+            )
+        return value, True, None
+
+    if isinstance(value, (list, tuple)):
+        if len(value) > MAX_PAGE_LIMIT:
+            bounded = list(value[:MAX_PAGE_LIMIT])
+            return (
+                bounded,
+                False,
+                f"List value exceeded maximum item limit ({MAX_PAGE_LIMIT} of {len(value)} items returned). Use observation.slice to paginate.",
+            )
+        serialized = json.dumps(value)
+        if len(serialized) > MAX_GET_CHAR_LIMIT:
+            bounded_items: list[Any] = []
+            cur_len = 2
+            for item in value:
+                item_str = json.dumps(item)
+                if cur_len + len(item_str) + 2 > MAX_GET_CHAR_LIMIT:
+                    break
+                bounded_items.append(item)
+                cur_len += len(item_str) + 2
+            return (
+                bounded_items,
+                False,
+                f"Serialized list exceeded payload limit ({len(bounded_items)} of {len(value)} items returned). Use observation.slice to paginate.",
+            )
+        return list(value) if isinstance(value, tuple) else value, True, None
+
+    if isinstance(value, dict):
+        serialized = json.dumps(value)
+        if len(serialized) > MAX_GET_CHAR_LIMIT:
+            reduced_text = render_observation_payload(value, budget_chars=MAX_GET_CHAR_LIMIT)
+            return (
+                {"_preview": reduced_text},
+                False,
+                f"Object payload exceeded maximum size limit ({len(serialized)} bytes > {MAX_GET_CHAR_LIMIT}). Use a specific JSON pointer path, observation.slice, or observation.filter.",
+            )
+        return value, True, None
+
+    return value, True, None
+
+
 class ObservationGet:
     """Extract a single field or nested path using JSON pointer notation."""
 
@@ -584,10 +670,13 @@ class ObservationGet:
             err_code, err_msg = trav_res.failure()
             return Failure(_fail(request, err_code, err_msg))
 
-        output = {
+        bounded_val, complete, reason = _bound_get_value(trav_res.unwrap())
+        output: dict[str, Any] = {
             "ref": ref,
             "path": path,
-            "value": trav_res.unwrap(),
+            "value": bounded_val,
+            "complete": complete,
+            "reason": reason,
         }
         return Success(_ok(request, output, {"source_artifact_id": ref}))
 

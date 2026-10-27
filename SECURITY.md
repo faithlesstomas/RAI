@@ -267,3 +267,39 @@ RAI implements a two-tier sandboxing architecture for Python code execution:
 - **Process Isolation Boundary**: Tier-2 relies on Bubblewrap user namespaces and seccomp filtering; it is not a virtual machine boundary against local Linux kernel vulnerabilities.
 - **Unencrypted REPL State**: Like other assistant store data, REPL session state blobs are stored in SQLite files protected by local Unix user permissions (`0600` mode); they are not independently field-encrypted at rest.
 - **Cooperative Timeout in Worker Pool**: `MontyRunner` terminates long-running worker processes upon timeout expiry, but cooperative GIL-bound operations could theoretically delay termination until the process pool recycles the worker.
+
+
+## Observation storage, session tokens, and MCP capabilities isolation
+
+External tool outputs, logs, and document payloads are budgeted and stored as typed `ObservationArtifact` records in `ObservationStore`. Observations are strictly session-scoped: each session maintains independent alias sequences (`obs_1`, `obs_2`, etc.) and data retention cascades with turn deletion.
+
+### Session tokens and trust boundaries
+
+Direct capability callers, remote LLMs, and MCP clients are untrusted. To prevent malicious or accidental cross-session artifact leakage, observation capabilities (`observation.search`, `observation.filter`, `observation.slice`, `observation.count`, `observation.get`) enforce cryptographically authenticated session boundaries:
+
+1. **HMAC-SHA256 Session Tokens**:
+   - Session tokens are signed tokens formatted as `{session_id}.{signature}` computed using `hmac-sha256` over the daemon's local API token (`get_api_token()`).
+   - Tampered, expired, or mismatched signatures fail closed, returning `None`.
+
+2. **REST Capability Invocation (`/api/v1/capabilities/invoke`)**:
+   - The endpoint reads `X-Session-Token` from HTTP request headers or `session_token` from query parameters.
+   - Any untrusted `session_id` provided directly in the JSON request body or capability arguments is overridden by the cryptographically verified session identity.
+   - If no valid session token is provided, session-scoped observation capabilities reject invocation with `UNAUTHORIZED`.
+
+3. **MCP SSE Transport (`/api/v1/mcp/sse`)**:
+   - An MCP client connects to `/api/v1/mcp/sse` providing an `X-Session-Token` header or `?session_token=` query parameter.
+   - The transport establishes a verified session binding in `McpRuntime.transport_sessions`. If no session token is provided, a private transport-scoped session (`mcp-session-{uuid}`) is assigned.
+   - Tool arguments supplied by the MCP client cannot specify or override `session_id`; capability execution uses the server-bound session context.
+   - **Connection Lifecycle and State Cleanup**: When an MCP SSE stream terminates (e.g. client disconnects or network closes), the server removes the transport session mapping in a `finally` block, preventing memory accumulation over long-running server lifecycles.
+
+4. **Production Session Token Issuance**:
+   - Assistant turn completions (`AssistantTurnResult.session_token`), streaming SSE `done` events, and the native `/api/v1/assistant/ws` handshake (`{"type": "session", "session_id": ..., "session_token": ...}`) issue verified session tokens.
+   - Authorized clients can retrieve or refresh a valid session token via the authenticated endpoint `GET /api/v1/assistant/sessions/{session_id}/token`.
+
+5. **Resource and DoS Protections in Observation Capabilities**:
+   - `observation.search` and `observation.slice` lazily stream lines and collections without upfront memory materialization (`splitlines()` or list copies), bounding visited items to 10,000 and matches to 1,000 with periodic cooperative event loop yielding.
+   - `observation.get` bounds extracted payloads to 64,000 characters and 1,000 items. Requests accessing huge structures (e.g. root document `path=""`) return bounded summaries with `complete=False` rather than unconstrained memory dumps.
+
+### Migration requirement for capability callers
+
+BREAKING CHANGE: Direct invocation of observation capabilities (`observation.search`, `observation.filter`, `observation.slice`, `observation.count`, `observation.get`) no longer accepts unauthenticated `session_id` in request payloads. Clients must obtain a session token from `GET /api/v1/assistant/sessions/{session_id}/token` or from an assistant turn/handshake response, and pass it in the `X-Session-Token` header or `session_token` query parameter.

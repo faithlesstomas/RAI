@@ -5,6 +5,8 @@ from __future__ import annotations
 
 import asyncio
 from pathlib import Path
+import socket
+import httpx
 import pytest
 from returns.result import Failure, Success
 
@@ -941,16 +943,35 @@ async def test_observation_mcp_sse_end_to_end(tmp_path: Path) -> None:
     )
     await container.memory_graph_store.put(art)
 
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+        sock.bind(("127.0.0.1", 0))
+        port = sock.getsockname()[1]
+
     app = create_app(container)
-    config = uvicorn.Config(app, host="127.0.0.1", port=8991, log_level="warning")
+    config = uvicorn.Config(app, host="127.0.0.1", port=port, log_level="warning")
     server = uvicorn.Server(config)
     server_task = asyncio.create_task(server.serve())
-    await asyncio.sleep(0.5)
+
+    base_url = f"http://127.0.0.1:{port}"
+    async with httpx.AsyncClient() as client:
+        for _ in range(50):
+            if server.started:
+                try:
+                    resp = await client.get(f"{base_url}/health")
+                    if resp.status_code == 200:
+                        break
+                except httpx.ConnectError:
+                    pass
+            await asyncio.sleep(0.05)
+        else:
+            server.should_exit = True
+            await server_task
+            pytest.fail("Uvicorn test server failed to start within timeout")
 
     try:
         # 1. Attacker connects via SSE without session token, attempts to access victim's artifact
         headers = dict(authorization_headers())
-        async with sse_client("http://127.0.0.1:8991/api/v1/mcp/sse", headers=headers) as (r1, w1):
+        async with sse_client(f"{base_url}/api/v1/mcp/sse", headers=headers) as (r1, w1):
             async with ClientSession(r1, w1) as session1:
                 await session1.initialize()
                 # Attacker passes session_id="session-victim" in arguments
@@ -961,9 +982,16 @@ async def test_observation_mcp_sse_end_to_end(tmp_path: Path) -> None:
                 assert res_att.isError is True
                 assert "ARTIFACT_NOT_FOUND" in res_att.content[0].text
 
+        # Verify transport_sessions cleanup after disconnect
+        for _ in range(50):
+            if len(app.state.mcp_runtime.transport_sessions) == 0:
+                break
+            await asyncio.sleep(0.02)
+        assert len(app.state.mcp_runtime.transport_sessions) == 0
+
         # 2. Legitimate client connects via SSE presenting a valid session token for session-victim
         headers["x-session-token"] = create_session_token("session-victim")
-        async with sse_client("http://127.0.0.1:8991/api/v1/mcp/sse", headers=headers) as (r2, w2):
+        async with sse_client(f"{base_url}/api/v1/mcp/sse", headers=headers) as (r2, w2):
             async with ClientSession(r2, w2) as session2:
                 await session2.initialize()
                 res_legit = await session2.call_tool(
@@ -972,6 +1000,13 @@ async def test_observation_mcp_sse_end_to_end(tmp_path: Path) -> None:
                 )
                 assert res_legit.isError is False
                 assert "victim-sse-secret" in res_legit.content[0].text
+
+        # Verify transport_sessions cleanup after disconnect
+        for _ in range(50):
+            if len(app.state.mcp_runtime.transport_sessions) == 0:
+                break
+            await asyncio.sleep(0.02)
+        assert len(app.state.mcp_runtime.transport_sessions) == 0
     finally:
         server.should_exit = True
         await server_task
@@ -985,3 +1020,140 @@ def test_register_observation_capabilities(store: SQLiteMemoryGraphStore) -> Non
     assert registry.descriptor("observation.slice") is not None
     assert registry.descriptor("observation.count") is not None
     assert registry.descriptor("observation.get") is not None
+
+
+@pytest.mark.asyncio
+async def test_observation_get_payload_bounding(
+    registry: CapabilityRegistry, store: SQLiteMemoryGraphStore
+) -> None:
+    desc = registry.descriptor("observation.get")
+    assert desc is not None
+
+    # 1. Bounded string
+    huge_str = "x" * 100000
+    art_str = ObservationArtifact(
+        artifact_id="obs_huge_str",
+        session_id="session-bound",
+        turn_id="turn-bound",
+        capability="test",
+        request_id="req-bound-1",
+        data_class=DataClass.LOCAL,
+        content={"long_text": huge_str},
+        schema_summary=summarize_observation_schema({"long_text": huge_str}),
+        size_chars=len(huge_str),
+        producer=ACTOR,
+    )
+    await store.put(art_str)
+
+    req1 = normalize_request(
+        desc,
+        {"session_id": "session-bound", "ref": "obs_huge_str", "path": "/long_text"},
+        actor=ACTOR,
+        data_class=DataClass.LOCAL,
+    )
+    res1 = (await _invoke(registry, req1)).output
+    assert res1["complete"] is False
+    assert "truncated" in str(res1["value"])
+    assert res1["reason"] is not None
+
+    # 2. Bounded list (>1000 items)
+    huge_list = list(range(2500))
+    art_list = ObservationArtifact(
+        artifact_id="obs_huge_list",
+        session_id="session-bound",
+        turn_id="turn-bound",
+        capability="test",
+        request_id="req-bound-2",
+        data_class=DataClass.LOCAL,
+        content={"items": huge_list},
+        schema_summary=summarize_observation_schema({"items": huge_list}),
+        size_chars=10000,
+        producer=ACTOR,
+    )
+    await store.put(art_list)
+
+    req2 = normalize_request(
+        desc,
+        {"session_id": "session-bound", "ref": "obs_huge_list", "path": "/items"},
+        actor=ACTOR,
+        data_class=DataClass.LOCAL,
+    )
+    res2 = (await _invoke(registry, req2)).output
+    assert res2["complete"] is False
+    assert len(res2["value"]) == 1000
+    assert "exceeded maximum item limit" in res2["reason"]
+
+    # 3. Bounded dict / root pointer on huge object
+    huge_dict = {f"key_{i}": f"value_number_{i}_with_lots_of_padding_to_exceed_limits" for i in range(2000)}
+    art_dict = ObservationArtifact(
+        artifact_id="obs_huge_dict",
+        session_id="session-bound",
+        turn_id="turn-bound",
+        capability="test",
+        request_id="req-bound-3",
+        data_class=DataClass.LOCAL,
+        content=huge_dict,
+        schema_summary=summarize_observation_schema(huge_dict),
+        size_chars=120000,
+        producer=ACTOR,
+    )
+    await store.put(art_dict)
+
+    req3 = normalize_request(
+        desc,
+        {"session_id": "session-bound", "ref": "obs_huge_dict", "path": ""},
+        actor=ACTOR,
+        data_class=DataClass.LOCAL,
+    )
+    res3 = (await _invoke(registry, req3)).output
+    assert res3["complete"] is False
+    assert "_preview" in res3["value"]
+    assert "exceeded maximum size limit" in res3["reason"]
+
+
+@pytest.mark.asyncio
+async def test_observation_search_and_slice_streaming_large_text(
+    registry: CapabilityRegistry, store: SQLiteMemoryGraphStore
+) -> None:
+    # 15,000 lines
+    text_content = "\n".join(f"line_{i}: content data sample" for i in range(15000))
+    art = ObservationArtifact(
+        artifact_id="obs_large_text",
+        session_id="session-stream",
+        turn_id="turn-stream",
+        capability="test",
+        request_id="req-stream",
+        data_class=DataClass.LOCAL,
+        content={"text": text_content},
+        schema_summary=summarize_observation_schema({"text": text_content}),
+        size_chars=len(text_content),
+        producer=ACTOR,
+    )
+    await store.put(art)
+
+    # Search should hit scan limit at 10,000 lines
+    search_desc = registry.descriptor("observation.search")
+    assert search_desc is not None
+    req_search = normalize_request(
+        search_desc,
+        {"session_id": "session-stream", "ref": "obs_large_text", "pattern": "line_"},
+        actor=ACTOR,
+        data_class=DataClass.LOCAL,
+    )
+    res_search = (await _invoke(registry, req_search)).output
+    assert res_search["complete"] is False
+    assert "Hit maximum search scan limit" in res_search["reason"]
+
+    # Slice should lazily slice without issues
+    slice_desc = registry.descriptor("observation.slice")
+    assert slice_desc is not None
+    req_slice = normalize_request(
+        slice_desc,
+        {"session_id": "session-stream", "ref": "obs_large_text", "offset": 50, "limit": 25},
+        actor=ACTOR,
+        data_class=DataClass.LOCAL,
+    )
+    res_slice = (await _invoke(registry, req_slice)).output
+    assert res_slice["total_count"] == 15000
+    assert len(res_slice["items"]) == 25
+    assert res_slice["items"][0] == "line_50: content data sample"

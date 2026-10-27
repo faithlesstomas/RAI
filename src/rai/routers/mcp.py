@@ -228,19 +228,24 @@ async def mcp_sse(request: Request) -> Response:
     )
     verified_session = verify_session_token(session_token) if session_token else None
     writers_before = set(runtime.transport._read_stream_writers.keys())
-    async with runtime.transport.connect_sse(
-        request.scope, request.receive, request._send
-    ) as (read_stream, write_stream):
-        new_writers = set(runtime.transport._read_stream_writers.keys()) - writers_before
-        if new_writers:
-            transport_uuid = next(iter(new_writers)).hex
-            assigned_session = verified_session or f"mcp-session-{transport_uuid}"
-            runtime.transport_sessions[transport_uuid] = assigned_session
-        await runtime.server.run(
-            read_stream,
-            write_stream,
-            runtime.server.create_initialization_options(),
-        )
+    transport_uuid: str | None = None
+    try:
+        async with runtime.transport.connect_sse(
+            request.scope, request.receive, request._send
+        ) as (read_stream, write_stream):
+            new_writers = set(runtime.transport._read_stream_writers.keys()) - writers_before
+            if new_writers:
+                transport_uuid = next(iter(new_writers)).hex
+                assigned_session = verified_session or f"mcp-session-{transport_uuid}"
+                runtime.transport_sessions[transport_uuid] = assigned_session
+            await runtime.server.run(
+                read_stream,
+                write_stream,
+                runtime.server.create_initialization_options(),
+            )
+    finally:
+        if transport_uuid is not None:
+            runtime.transport_sessions.pop(transport_uuid, None)
     return EmptyResponse()
 
 

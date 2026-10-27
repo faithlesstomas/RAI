@@ -45,6 +45,7 @@ control endpoints. The assistant surface is:
 | `GET` | `/api/v1/assistant/sessions` | discover resumable sessions |
 | `GET` | `/api/v1/assistant/sessions/{id}/turns` | inspect chat history |
 | `GET` | `/api/v1/assistant/sessions/{id}/context` | inspect latest exact context |
+| `GET` | `/api/v1/assistant/sessions/{id}/token` | retrieve signed session token for capabilities/MCP |
 | `GET` | `/api/v1/assistant/contexts/{manifest_id}` | inspect context by manifest |
 | `GET` | `/api/v1/assistant/memories` | inspect active memory |
 | `GET` | `/api/v1/assistant/memory-operations` | inspect mutation/admission trace |
@@ -62,7 +63,7 @@ A turn request is provider-neutral:
 ```
 
 Reuse a `request_id` only to retry that exact request. The terminal result
-contains the assistant turn, context manifest, admitted memory IDs and memory
+contains the assistant turn, session token (`session_token`), context manifest, admitted memory IDs and memory
 operation IDs.
 
 ## Native WebSocket
@@ -72,7 +73,7 @@ authorization header or `?token=` query parameter. Optional `?session_id=work`
 resumes a known session. The server first sends:
 
 ```json
-{"type": "session", "session_id": "work"}
+{"type": "session", "session_id": "work", "session_token": "work.<signature>"}
 ```
 
 Send the same JSON object accepted by `POST /turn`. A successful reply is:

@@ -327,7 +327,9 @@ async def test_native_websocket_uses_the_same_memory_committing_service(
 
     await assistant_websocket(websocket)  # type: ignore[arg-type]
 
-    assert websocket.sent[0] == {"type": "session", "session_id": "native-ws"}
+    assert websocket.sent[0]["type"] == "session"
+    assert websocket.sent[0]["session_id"] == "native-ws"
+    assert "session_token" in websocket.sent[0]
     response = websocket.sent[1]
     assert response["type"] == "response"
     assert response["payload"]["session_id"] == "native-ws"  # type: ignore[index]
@@ -370,6 +372,12 @@ def test_authenticated_rest_surface_supports_external_clients(tmp_path: Path) ->
     payload = turn.json()
     assert payload["admitted_memory_ids"]
     assert payload["memory_operation_ids"]
+    assert payload["session_token"]
+
+    token_resp = client.get("/api/v1/assistant/sessions/rest-client/token")
+    assert token_resp.status_code == HTTP_OK
+    assert token_resp.json()["session_id"] == "rest-client"
+    assert token_resp.json()["session_token"] == payload["session_token"]
 
     memories = client.get("/api/v1/assistant/memories")
     history = client.get("/api/v1/assistant/sessions/rest-client/turns")

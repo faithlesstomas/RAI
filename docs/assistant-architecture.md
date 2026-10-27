@@ -371,3 +371,40 @@ The assistant service exposes dedicated endpoints for interactive environments:
 
 1. **Interactive Assistant Chat (`rai assistant chat`)**: Conversational loop with integrated REPL inspection (`/repl` to view active variables and preview values, `/repl <expr>` for inline evaluation without leaving chat, `/repl reset` to clear state) and session export (`/export [path.ipynb]`).
 2. **IPython and Jupyter Magics (`%rai`, `%%rai`)**: Integrates RAI assistant into active Jupyter notebooks. Uses isolated session identifiers per magic instance, executes coroutines cleanly even inside running event loops, and shares variables within the notebook's active profile scope.
+
+
+## Observation Storage, Budgeting, and Capabilities Isolation
+
+Assistant interactions and tool execution chains produce variable-sized outputs (e.g. process lists, shell command outputs, web pages, or database records). Rather than dumping unbounded raw tool payloads into LLM context prompts, RAI uses an observation pipeline:
+
+```text
+Action / Tool Execution
+  │
+  ├─► ObservationBudgeter (Phase 2)
+  │     ├─► Strip technical capability metadata (handles, fingerprints, verifications)
+  │     ├─► Truncate long individual strings (explicit in-string truncation notices)
+  │     ├─► Slice large record collections (_meta shown/total items)
+  │     └─► Exceeds budget? Produce schema-only preview + footer affordance
+  │
+  ├─► ObservationStore (Phase 1 SQLite persistence)
+  │     ├─► Persist full unreduced ObservationArtifact
+  │     ├─► Allocate session-scoped alias handle (e.g. obs_1, obs_2)
+  │     └─► Turn deletion cascades remove associated observation artifacts
+  │
+  └─► Pure-Python Observation Capabilities (Phase 3)
+        ├─► observation.search: Streaming grep-like pattern search over text or records
+        ├─► observation.filter: Structured record filtering (equals, contains, comparisons)
+        ├─► observation.slice: Windowed pagination over artifact records or text lines
+        ├─► observation.count: Record count and group-by frequency aggregation
+        └─► observation.get: Safe JSON pointer (RFC 6901) field extraction with payload bounds
+```
+
+### Session Tokens and MCP Binding
+
+1. **Cryptographic Session Scoping**: Observation artifacts and aliases (`obs_1`, etc.) are partitioned per session. To prevent unauthorized cross-session access by untrusted model tool calls or external callers, capabilities require an authenticated session context.
+2. **Session Token Issuance**:
+   - `AssistantTurnResult.session_token` and the WebSocket session handshake include an HMAC-SHA256 signed session token (`{session_id}.{sig}`).
+   - Dedicated endpoint `GET /api/v1/assistant/sessions/{session_id}/token` provides token generation for authorized clients.
+3. **Capability and MCP Transports**:
+   - `POST /api/v1/capabilities/invoke` extracts `X-Session-Token` / `session_token` and binds the verified session ID, overriding any untrusted body arguments.
+   - MCP SSE streams (`GET /api/v1/mcp/sse`) bind connection transport sessions with `X-Session-Token` or fallback to isolated transport sessions (`mcp-session-{uuid}`), with automatic cleanup on stream disconnect.
