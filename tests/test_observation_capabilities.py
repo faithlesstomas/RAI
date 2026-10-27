@@ -1686,3 +1686,86 @@ async def test_observation_payload_bounds_strictly_with_artifact_id(
     assert "artifact_id" in res
     assert res["complete"] is False
     assert len(json.dumps(res)) <= 64000
+
+
+@pytest.mark.asyncio
+async def test_observation_filter_in_operand_bounds_element_and_aggregate_size(
+    registry: CapabilityRegistry, store: SQLiteMemoryGraphStore
+) -> None:
+    records = [{"id": i, "name": f"item_{i}"} for i in range(10)]
+    art = ObservationArtifact(
+        artifact_id="obs_filter_in_bounds",
+        session_id="session-filter-in-bounds",
+        turn_id="turn-filter-in-bounds",
+        capability="test",
+        request_id="req-filter-in-bounds-1",
+        data_class=DataClass.LOCAL,
+        content={"items": records},
+        schema_summary=summarize_observation_schema({}),
+        size_chars=1000,
+        producer=ACTOR,
+    )
+    await store.put(art)
+
+    filter_desc = registry.descriptor("observation.filter")
+    assert filter_desc is not None
+
+    # 1. Generator operand with 100,000 items (not copied upfront, capped to 1,000 items)
+    gen_val = (f"item_{i}" for i in range(100000))
+    req1 = normalize_request(
+        filter_desc,
+        {
+            "session_id": "session-filter-in-bounds",
+            "ref": "obs_filter_in_bounds",
+            "field": "name",
+            "op": "in",
+            "value": gen_val,
+        },
+        actor=ACTOR,
+        data_class=DataClass.LOCAL,
+    )
+    res1 = (await _invoke(registry, req1)).output
+    assert res1["complete"] is False
+    assert res1["total_matches"] == 10
+    assert "truncated" in (res1["reason"] or "")
+    assert len(json.dumps(res1)) <= 64000
+
+    # 2. Operand containing oversized elements (each 50,000 characters)
+    oversized_elements = ["item_1", "B" * 50000, "C" * 50000]
+    req2 = normalize_request(
+        filter_desc,
+        {
+            "session_id": "session-filter-in-bounds",
+            "ref": "obs_filter_in_bounds",
+            "field": "name",
+            "op": "in",
+            "value": oversized_elements,
+        },
+        actor=ACTOR,
+        data_class=DataClass.LOCAL,
+    )
+    res2 = (await _invoke(registry, req2)).output
+    assert res2["complete"] is False
+    assert res2["total_matches"] == 1
+    assert res2["results"][0]["id"] == 1
+    assert "truncated" in (res2["reason"] or "")
+    assert len(json.dumps(res2)) <= 64000
+
+    # 3. Aggregate size cap (100 strings of 900 characters each -> exceeds 64KB aggregate limit)
+    large_strings = [f"item_3_{'x' * 890}"] + [f"dummy_{i}_{'y' * 890}" for i in range(99)]
+    req3 = normalize_request(
+        filter_desc,
+        {
+            "session_id": "session-filter-in-bounds",
+            "ref": "obs_filter_in_bounds",
+            "field": "name",
+            "op": "in",
+            "value": large_strings,
+        },
+        actor=ACTOR,
+        data_class=DataClass.LOCAL,
+    )
+    res3 = (await _invoke(registry, req3)).output
+    assert res3["complete"] is False
+    assert "truncated" in (res3["reason"] or "")
+    assert len(json.dumps(res3)) <= 64000

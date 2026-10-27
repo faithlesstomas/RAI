@@ -6,7 +6,7 @@ import asyncio
 from dataclasses import dataclass
 import json
 import re
-from typing import Any, Iterator, Sequence
+from typing import Any, Iterable, Iterator, Sequence
 
 from returns.result import Failure, Result, Success
 
@@ -46,6 +46,8 @@ MAX_GET_CHAR_LIMIT = 64000
 MAX_ECHOED_ARG_CHAR_LIMIT = 1000
 FALLBACK_FIELD_CHAR_LIMIT = 200
 ARTIFACT_ID_RESERVE_CHARS = 100
+MAX_IN_ELEMENT_CHAR_LIMIT = 1000
+MAX_IN_AGGREGATE_CHAR_LIMIT = 64000
 
 
 def _fail(request: CapabilityRequest, code: str, message: str) -> ActionFailure:
@@ -519,7 +521,10 @@ def _evaluate_numeric_condition(item_val: Any, op: str, val: Any) -> bool:  # no
 
 def _evaluate_in_condition(item_val: Any, criteria: _FilterCriteria) -> bool:  # noqa: ANN401
     if criteria.in_lookup_set is not None:
-        return str(item_val).casefold() in criteria.in_lookup_set
+        s = str(item_val)
+        if len(s) > MAX_IN_ELEMENT_CHAR_LIMIT * 3:
+            return False
+        return s.casefold() in criteria.in_lookup_set
     val = criteria.val
     if isinstance(val, (list, tuple, set)):
         target_item = str(item_val).casefold()
@@ -585,6 +590,70 @@ async def _filter_records(
     return Success((filtered, hit_scan_limit))
 
 
+def _bound_in_operand(
+    val: Any,  # noqa: ANN401
+    max_items: int = MAX_PAGE_LIMIT,
+    max_element_chars: int = MAX_IN_ELEMENT_CHAR_LIMIT,
+    max_aggregate_chars: int = MAX_IN_AGGREGATE_CHAR_LIMIT,
+) -> tuple[list[Any], set[str], bool]:
+    """Bound an 'in' operand collection without copying upfront.
+
+    Enforces:
+    - At most max_items elements inspected
+    - Each element bounded to max_element_chars
+    - Total aggregate JSON-serialized characters across all elements bounded to max_aggregate_chars
+    """
+    bounded_list: list[Any] = []
+    in_lookup_set: set[str] = set()
+    truncated = False
+    cur_aggregate_chars = 2  # "[]"
+
+    if hasattr(val, "__len__") and len(val) > max_items:
+        truncated = True
+
+    for count, item in enumerate(val, 1):
+        if count > max_items:
+            truncated = True
+            break
+
+        if isinstance(item, str):
+            if len(item) > max_element_chars:
+                item_s = item[:max_element_chars]
+                truncated = True
+            else:
+                item_s = item
+            elem_val: Any = item_s
+            try:
+                serialized_len = len(json.dumps(item_s))
+            except (TypeError, ValueError):
+                serialized_len = len(item_s) + 2
+        else:
+            try:
+                serialized = json.dumps(item)
+            except (TypeError, ValueError):
+                serialized = json.dumps(str(item))
+            if len(serialized) > max_element_chars:
+                item_s = str(item)[:max_element_chars]
+                elem_val = item_s
+                serialized_len = len(json.dumps(item_s))
+                truncated = True
+            else:
+                item_s = str(item)
+                elem_val = item
+                serialized_len = len(serialized)
+
+        additional_len = serialized_len + (2 if bounded_list else 0)
+        if cur_aggregate_chars + additional_len > max_aggregate_chars:
+            truncated = True
+            break
+
+        cur_aggregate_chars += additional_len
+        bounded_list.append(elem_val)
+        in_lookup_set.add(item_s.casefold())
+
+    return bounded_list, in_lookup_set, truncated
+
+
 def _prepare_filter_operand(
     op: str, val: Any  # noqa: ANN401
 ) -> tuple[Any, Any, set[str] | None, bool]:
@@ -593,13 +662,11 @@ def _prepare_filter_operand(
     in_lookup_set: set[str] | None = None
     eval_val = val
 
-    if op == "in" and isinstance(val, (list, tuple, set)):
-        val_list = list(val)
-        if len(val_list) > MAX_PAGE_LIMIT:
-            val_list = val_list[:MAX_PAGE_LIMIT]
-            val_truncated = True
-        in_lookup_set = {str(x).casefold() for x in val_list}
-        eval_val = val_list
+    if op == "in" and (
+        isinstance(val, (list, tuple, set))
+        or (isinstance(val, Iterable) and not isinstance(val, (str, bytes, dict)))
+    ):
+        eval_val, in_lookup_set, val_truncated = _bound_in_operand(val)
     elif isinstance(val, str) and len(val) > MAX_ECHOED_ARG_CHAR_LIMIT:
         eval_val = val[:MAX_ECHOED_ARG_CHAR_LIMIT]
         val_truncated = True
