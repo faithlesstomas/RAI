@@ -403,26 +403,39 @@ def test_model_settings_max_observation_characters_validation() -> None:
 
 def test_resolve_assistant_config_max_observation_characters() -> None:
     # 1. Default config
-    cfg1 = {"backend": "deterministic", "max_output_tokens": 100, "context_window": 1000}
+    cfg1 = {
+        "assistant": {
+            "backend": "deterministic",
+            "model": "mock",
+            "max_output_tokens": 100,
+            "context_window": 1000,
+        }
+    }
     res1 = resolve_assistant_config(cfg1)
     assert res1.max_observation_characters == "auto"
 
     # 2. Explicit integer
     cfg2 = {
-        "backend": "deterministic",
-        "max_output_tokens": 100,
-        "context_window": 1000,
-        "assistant": {"max_observation_characters": 8000},
+        "assistant": {
+            "backend": "deterministic",
+            "model": "mock",
+            "max_output_tokens": 100,
+            "context_window": 1000,
+            "max_observation_characters": 8000,
+        }
     }
     res2 = resolve_assistant_config(cfg2)
     assert res2.max_observation_characters == 8000
 
     # 3. Explicit inf
     cfg3 = {
-        "backend": "deterministic",
-        "max_output_tokens": 100,
-        "context_window": 1000,
-        "assistant": {"max_observation_characters": "inf"},
+        "assistant": {
+            "backend": "deterministic",
+            "model": "mock",
+            "max_output_tokens": 100,
+            "context_window": 1000,
+            "max_observation_characters": "inf",
+        }
     }
     res3 = resolve_assistant_config(cfg3)
     assert res3.max_observation_characters == "inf"
