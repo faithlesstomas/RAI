@@ -42,11 +42,21 @@ def normalize_request(  # noqa: PLR0913
     timestamp: datetime | None = None,
     data_class: DataClass = DataClass.LOCAL,
     target_resource: str | None = None,
+    session_id: str | None = None,
 ) -> CapabilityRequest:
     arg_dc = arguments.get("__data_class") or arguments.get("_data_class")
     effective_data_class = max_data_class(data_class, arg_dc)
+    resolved_session_id = session_id or arguments.get("session_id")
+    schema_properties = (
+        descriptor.input_schema.get("properties", {})
+        if isinstance(descriptor.input_schema, dict)
+        else {}
+    )
     clean_arguments = {
-        k: v for k, v in arguments.items() if k not in {"__data_class", "_data_class"}
+        k: v
+        for k, v in arguments.items()
+        if k not in {"__data_class", "_data_class"}
+        and (k != "session_id" or "session_id" in schema_properties)
     }
     values: dict[str, Any] = {
         "producer": actor,
@@ -59,6 +69,7 @@ def normalize_request(  # noqa: PLR0913
         "requested_side_effects": descriptor.side_effects,
         "isolation": descriptor.isolation,
         "verification_plan": descriptor.verification_plan,
+        "session_id": str(resolved_session_id) if resolved_session_id else None,
     }
     if request_id is not None:
         values["record_id"] = request_id

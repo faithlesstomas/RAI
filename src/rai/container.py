@@ -100,6 +100,7 @@ class ApplicationContainer:
             self.policy_engine,
             self.audit_ledger,
             HitlApprovalBroker(),
+            observation_store=lambda: self.memory_graph_store,
         )
         self.capability_service.handles = SQLiteHandleStore(
             data_dir() / "actions" / "handles.sqlite3"

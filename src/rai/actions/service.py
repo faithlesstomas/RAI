@@ -11,6 +11,11 @@ from rai.kernel.audit import AuditEntry
 from rai.kernel.capabilities import validate_arguments
 from rai.kernel.ports import CancellationToken
 from rai.kernel.records import ActionFailure, ActionResult, CapabilityRequest, PolicyDecision, PolicyOutcome
+from rai.kernel.references import (
+    make_provenance_references,
+    preflight_scan_references,
+    resolve_arguments,
+)
 from rai.kernel.service import CapabilityService
 
 from rai.diagnostics import trace
@@ -82,6 +87,7 @@ class ActionCapabilityService(CapabilityService):
         approval_id = None
         started = False
         acquired = False
+        scan = None
         try:
             if self._active_actions >= MAX_CONCURRENT_ACTIONS:
                 raise ActionCapacityError
@@ -91,8 +97,28 @@ class ActionCapabilityService(CapabilityService):
             if descriptor is None:
                 terminal = failure(request, "CAPABILITY_NOT_FOUND")
             else:
-                invalid = validate_arguments(descriptor.input_schema, request.arguments)
-                preflight = "INVALID_ARGUMENT" if invalid else None
+                session_id = (
+                    getattr(request, "session_id", None)
+                    or request.arguments.get("session_id")
+                    or ""
+                )
+                store = self.observation_store
+                preflight = None
+                if store is not None:
+                    scan_res = await preflight_scan_references(
+                        request.arguments, store, session_id, request.data_class
+                    )
+                    if isinstance(scan_res, Failure):
+                        err_code, _err_msg = scan_res.failure()
+                        preflight = err_code
+                    else:
+                        scan = scan_res.unwrap()
+                        if scan.has_references:
+                            request = request.model_copy(update={"data_class": scan.effective_data_class})
+
+                if not preflight:
+                    invalid = validate_arguments(descriptor.input_schema, request.arguments)
+                    preflight = "INVALID_ARGUMENT" if invalid else None
                 if not preflight and "handle" in request.arguments:
                     resolved = self.handles.resolve(
                         request.arguments["handle"], actor_id=request.actor.producer_id,
@@ -126,7 +152,13 @@ class ActionCapabilityService(CapabilityService):
                     decision = decision.model_copy(update={
                         "outcome": PolicyOutcome.DENY, "reason_codes": (preflight,),
                     })
-                audited = await self.audit.append(AuditEntry(stage="DECISION", decision=decision))
+                audited = await self.audit.append(
+                    AuditEntry(
+                        stage="DECISION",
+                        decision=decision,
+                        referenced_artifact_ids=scan.referenced_ids if scan else (),
+                    )
+                )
                 if isinstance(audited, Failure):
                     terminal = failure(request, "AUDIT_UNAVAILABLE")
                 elif preflight:
@@ -161,6 +193,19 @@ class ActionCapabilityService(CapabilityService):
                         terminal = failure(request, "ESCALATION_REQUIRED")
                     if permitted:
                         started = True
+                        if scan and scan.has_references:
+                            resolve_res = resolve_arguments(request.arguments, scan.referenced_artifacts)
+                            if isinstance(resolve_res, Failure):
+                                err_code, _err_msg = resolve_res.failure()
+                                terminal = failure(request, err_code)
+                                permitted = False
+                            else:
+                                request = request.model_copy(update={"arguments": resolve_res.unwrap()})
+                                invalid = validate_arguments(descriptor.input_schema, request.arguments)
+                                if invalid:
+                                    terminal = failure(request, "INVALID_ARGUMENT")
+                                    permitted = False
+                    if permitted:
                         capability = self.registry.resolve(request).unwrap()
                         # Consent is task-local and bound to the exact immutable request.
                         # Classification and handle labels remain PRIVATE.
@@ -173,6 +218,11 @@ class ActionCapabilityService(CapabilityService):
                             invoked = await bounded(capability.invoke(request, token), token, action_timeout)
                         if isinstance(invoked, Success):
                             terminal = invoked.unwrap()
+                            if scan and scan.has_references and isinstance(terminal, ActionResult):
+                                prov_refs = make_provenance_references(list(scan.referenced_artifacts.values()))
+                                terminal = terminal.model_copy(
+                                    update={"provenance": tuple(list(terminal.provenance) + list(prov_refs))}
+                                )
                         elif invoked.failure().code == "CAPABILITY_FAILED":
                             terminal = failure(request, "UNKNOWN")
                         else:
@@ -189,7 +239,13 @@ class ActionCapabilityService(CapabilityService):
             if acquired:
                 self._active_actions -= 1
         # Store first so even an audit I/O failure cannot replay the OS effect.
-        saved = self.executions.finish(original, terminal, decision, approval_id)
+        saved = self.executions.finish(
+            original,
+            terminal,
+            decision,
+            approval_id,
+            referenced_artifact_ids=scan.referenced_ids if scan else (),
+        )
         if isinstance(saved, Failure):
             return decision, Failure(failure(original, "EXECUTION_STORE_UNAVAILABLE"))
         delivered = await self._deliver_audit(original.record_id)

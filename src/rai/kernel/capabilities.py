@@ -261,6 +261,10 @@ def validate_arguments(schema: dict[str, Any], arguments: dict[str, Any]) -> str
         property_schema = properties.get(name)
         if property_schema is None:
             continue
+        from .references import is_artifact_reference  # noqa: PLC0415
+
+        if is_artifact_reference(value):
+            continue
         expected = expected_types.get(property_schema.get("type"))
         if expected is not None and (
             not isinstance(value, expected)
