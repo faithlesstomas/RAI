@@ -35,6 +35,9 @@ TECHNICAL_FIELDS = frozenset(
     }
 )
 
+MIN_TRUNCATION_MARKER_BUDGET = 30
+MIN_SCHEMA_PRUNING_THRESHOLD = 5
+
 
 class RenderedObservation(BaseModel):
     """Budgeted representation of an observation ready for model context injection."""
@@ -97,7 +100,18 @@ def render_observation_payload(content: object, budget_chars: int = 64000) -> st
     if isinstance(content, str):
         if len(content) <= budget_chars:
             return content
-        return content[:budget_chars] + f"... [truncated {len(content) - budget_chars} chars]"
+        if budget_chars <= MIN_TRUNCATION_MARKER_BUDGET:
+            return content[:budget_chars]
+        digits = len(str(len(content)))
+        marker_template = "... [truncated {n} chars]"
+        est_marker_len = len(marker_template.format(n="9" * digits))
+        available = max(0, budget_chars - est_marker_len)
+        truncated_chars = len(content) - available
+        marker = f"... [truncated {truncated_chars} chars]"
+        res = content[:available] + marker
+        if len(res) > budget_chars:
+            res = res[:budget_chars]
+        return res
 
     cleaned = _clean_technical_fields(content)
     if isinstance(cleaned, dict):
@@ -301,21 +315,51 @@ def render_observation(  # noqa: PLR0912, PLR0915
 
     # Step 3: Schema-only preview fallback
     item_fields = (
-        schema.item_fields.get(list_field_name, ())
+        list(schema.item_fields.get(list_field_name, ()))
         if list_field_name
-        else ()
+        else []
     )
+    keys_list = list(schema.top_level_keys)
     schema_preview: dict[str, Any] = {
         "_schema_preview": {
-            "top_level_keys": list(schema.top_level_keys),
+            "top_level_keys": keys_list,
             "total_count": total_records or max_list_len,
-            "fields": list(item_fields),
+            "fields": item_fields,
             "truncated": True,
         }
     }
     if artifact_id:
         schema_preview["_schema_preview"]["artifact_id"] = artifact_id
     schema_json = json.dumps(schema_preview, ensure_ascii=False)
+
+    if len(schema_json) > budget_chars:
+        while len(schema_json) > budget_chars and (keys_list or item_fields):
+            if len(item_fields) > MIN_SCHEMA_PRUNING_THRESHOLD:
+                item_fields = item_fields[: len(item_fields) // 2]
+            elif item_fields:
+                item_fields = []
+            elif len(keys_list) > MIN_SCHEMA_PRUNING_THRESHOLD:
+                keys_list = keys_list[: len(keys_list) // 2]
+            else:
+                keys_list = []
+            schema_preview["_schema_preview"]["top_level_keys"] = keys_list
+            schema_preview["_schema_preview"]["fields"] = item_fields
+            schema_json = json.dumps(schema_preview, ensure_ascii=False)
+
+        if len(schema_json) > budget_chars:
+            minimal: dict[str, Any] = {
+                "_schema_preview": {
+                    "total_count": total_records or max_list_len,
+                    "truncated": True,
+                }
+            }
+            if artifact_id:
+                minimal["_schema_preview"]["artifact_id"] = artifact_id
+            schema_json = json.dumps(minimal, ensure_ascii=False)
+            if len(schema_json) > budget_chars:
+                schema_json = schema_json[:budget_chars]
+            schema_preview = minimal
+
     footer = _build_footer(
         artifact_id, capability, schema, 0, total_records or max_list_len
     )

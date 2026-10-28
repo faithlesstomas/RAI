@@ -1017,6 +1017,43 @@ async def test_observation_mcp_sse_end_to_end(tmp_path: Path) -> None:
             await asyncio.sleep(0.02)
         assert len(app.state.mcp_runtime.transport_sessions) == 0
         assert len(app.state.mcp_runtime.transport._read_stream_writers) == 0
+
+        # 3. Concurrent SSE connections with different tokens: verify isolation and cleanup
+        headers_a = dict(authorization_headers())
+        headers_a["x-session-token"] = create_session_token("session-victim")
+        headers_b = dict(authorization_headers())
+        headers_b["x-session-token"] = create_session_token("session-other")
+
+        async with sse_client(f"{base_url}/api/v1/mcp/sse", headers=headers_a) as (ra, wa):
+            async with ClientSession(ra, wa) as session_a:
+                await session_a.initialize()
+                async with sse_client(f"{base_url}/api/v1/mcp/sse", headers=headers_b) as (rb, wb):
+                    async with ClientSession(rb, wb) as session_b:
+                        await session_b.initialize()
+                        # Verify session_a can access victim artifact while session_b cannot
+                        res_a = await session_a.call_tool(
+                            "observation.get",
+                            {"ref": "obs_victim_sse", "path": "/secret"},
+                        )
+                        assert res_a.isError is False
+                        assert "victim-sse-secret" in res_a.content[0].text
+
+                        res_b = await session_b.call_tool(
+                            "observation.get",
+                            {"ref": "obs_victim_sse", "path": "/secret"},
+                        )
+                        assert res_b.isError is True
+                        assert "ARTIFACT_NOT_FOUND" in res_b.content[0].text
+
+        for _ in range(50):
+            if (
+                len(app.state.mcp_runtime.transport_sessions) == 0
+                and len(app.state.mcp_runtime.transport._read_stream_writers) == 0
+            ):
+                break
+            await asyncio.sleep(0.02)
+        assert len(app.state.mcp_runtime.transport_sessions) == 0
+        assert len(app.state.mcp_runtime.transport._read_stream_writers) == 0
     finally:
         server.should_exit = True
         await server_task
@@ -1854,3 +1891,81 @@ async def test_observation_filter_in_operand_rejects_nested_complex_values_and_g
     assert res3["complete"] is True
     assert res3["total_matches"] == 1
     assert res3["results"][0]["id"] == 3
+
+
+@pytest.mark.asyncio
+async def test_observation_filter_string_operators_restrict_complex_values_and_limit_length(
+    registry: CapabilityRegistry, store: SQLiteMemoryGraphStore
+) -> None:
+    records = [
+        {"id": 1, "config": {"nested": "value", "items": [1, 2, 3]}, "name": "item_1"},
+        {"id": 2, "config": [f"item_{i}" for i in range(100)], "name": "item_2"},
+        {"id": 3, "config": "exact_scalar", "name": "item_3"},
+    ]
+    art = ObservationArtifact(
+        artifact_id="obs_filter_string_ops",
+        session_id="session-string-ops",
+        turn_id="turn-string-ops",
+        capability="test",
+        request_id="req-string-ops-1",
+        data_class=DataClass.LOCAL,
+        content={"items": records},
+        schema_summary=summarize_observation_schema({}),
+        size_chars=2000,
+        producer=ACTOR,
+    )
+    await store.put(art)
+
+    filter_desc = registry.descriptor("observation.filter")
+    assert filter_desc is not None
+
+    # 1. equals: complex candidate operand (dict) does not match scalar or stringify
+    req1 = normalize_request(
+        filter_desc,
+        {"session_id": "session-string-ops", "ref": "obs_filter_string_ops", "field": "config", "op": "equals", "value": {"nested": "value"}},
+        actor=ACTOR,
+        data_class=DataClass.LOCAL,
+    )
+    res1 = (await _invoke(registry, req1)).output
+    assert res1["total_matches"] == 0
+
+    # 2. equals: matching scalar
+    req2 = normalize_request(
+        filter_desc,
+        {"session_id": "session-string-ops", "ref": "obs_filter_string_ops", "field": "config", "op": "equals", "value": "exact_scalar"},
+        actor=ACTOR,
+        data_class=DataClass.LOCAL,
+    )
+    res2 = (await _invoke(registry, req2)).output
+    assert res2["total_matches"] == 1
+    assert res2["results"][0]["id"] == 3
+
+    # 3. contains: record field with dict does not stringify or match substring
+    req3 = normalize_request(
+        filter_desc,
+        {"session_id": "session-string-ops", "ref": "obs_filter_string_ops", "field": "config", "op": "contains", "value": "nested"},
+        actor=ACTOR,
+        data_class=DataClass.LOCAL,
+    )
+    res3 = (await _invoke(registry, req3)).output
+    assert res3["total_matches"] == 0
+
+    # 4. startswith and endswith: record field with dict or list does not stringify
+    req4 = normalize_request(
+        filter_desc,
+        {"session_id": "session-string-ops", "ref": "obs_filter_string_ops", "field": "config", "op": "startswith", "value": "{"},
+        actor=ACTOR,
+        data_class=DataClass.LOCAL,
+    )
+    res4 = (await _invoke(registry, req4)).output
+    assert res4["total_matches"] == 0
+
+    req5 = normalize_request(
+        filter_desc,
+        {"session_id": "session-string-ops", "ref": "obs_filter_string_ops", "field": "config", "op": "endswith", "value": "scalar"},
+        actor=ACTOR,
+        data_class=DataClass.LOCAL,
+    )
+    res5 = (await _invoke(registry, req5)).output
+    assert res5["total_matches"] == 1
+    assert res5["results"][0]["id"] == 3

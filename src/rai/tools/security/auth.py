@@ -106,11 +106,11 @@ def verify_session_token(token: str | None) -> str | None:
             expires_at = int(exp_str)
         except ValueError:
             return None
-        if time.time() > expires_at:
-            return None
         payload = f"{session_id}:{exp_str}"
         expected_sig = hmac.new(secret, payload.encode("utf-8"), hashlib.sha256).hexdigest()
         if hmac.compare_digest(sig, expected_sig):
+            if time.time() > expires_at:
+                return None
             return session_id
 
     # 2. Try legacy 2-part format: {session_id}.{signature}

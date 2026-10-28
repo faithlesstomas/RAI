@@ -227,16 +227,18 @@ async def mcp_sse(request: Request) -> Response:
         or request.query_params.get("session_token")
     )
     verified_session = verify_session_token(session_token) if session_token else None
-    writers_before = set(runtime.transport._read_stream_writers.keys())
     transport_uuid: str | None = None
     writer_key: Any = None
     try:
         async with runtime.transport.connect_sse(
             request.scope, request.receive, request._send
         ) as (read_stream, write_stream):
-            new_writers = set(runtime.transport._read_stream_writers.keys()) - writers_before
-            if new_writers:
-                writer_key = next(iter(new_writers))
+            read_state = getattr(read_stream, "_state", None)
+            for key, writer in list(runtime.transport._read_stream_writers.items()):
+                if read_state is not None and getattr(writer, "_state", None) is read_state:
+                    writer_key = key
+                    break
+            if writer_key is not None:
                 transport_uuid = (
                     writer_key.hex if hasattr(writer_key, "hex") else str(writer_key)
                 )

@@ -108,6 +108,13 @@ def test_session_token_with_dots_in_session_id(monkeypatch: pytest.MonkeyPatch) 
     expired = create_session_token("work.v2", ttl_seconds=-5)
     assert verify_session_token(expired) is None
 
+    # 5. Legacy 2-part token ending with numeric segment (e.g. "work.123")
+    sig_num_legacy = hmac.new(
+        secret.encode("utf-8"), "work.123".encode("utf-8"), hashlib.sha256
+    ).hexdigest()
+    legacy_numeric_token = f"work.123.{sig_num_legacy}"
+    assert verify_session_token(legacy_numeric_token) == "work.123"
+
 
 def test_session_token_rejects_malformed_unicode_expiry(monkeypatch: pytest.MonkeyPatch) -> None:
     secret = "test-secret-token"

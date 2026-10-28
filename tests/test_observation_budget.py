@@ -112,9 +112,10 @@ def test_render_observation_with_123_applications() -> None:
 
     # 5. Preview footer affordance provides handle and operations
     assert rendered.preview_footer is not None
-    assert "obs_1: 123 records" in rendered.preview_footer
-    assert f"{rendered.shown_count} shown" in rendered.preview_footer
-    assert "observation.search/filter on obs_1" in rendered.preview_footer
+    footer = rendered.preview_footer or ""
+    assert "obs_1: 123 records" in footer
+    assert f"{rendered.shown_count} shown" in footer
+    assert "observation.search/filter on obs_1" in footer
 
 
 def test_render_observation_schema_only_fallback() -> None:
@@ -140,11 +141,41 @@ def test_render_observation_schema_only_fallback() -> None:
     parsed = json.loads(rendered.rendered_text)
     assert "_schema_preview" in parsed
     assert parsed["_schema_preview"]["total_count"] == 50
-    assert "obs_tight" in rendered.preview_footer
+    assert rendered.preview_footer is not None
+    footer = rendered.preview_footer or ""
+    assert "obs_tight" in footer
 
 
 def test_render_observation_payload_string_length_cap() -> None:
     long_str = "a" * 1000
     res = render_observation_payload(long_str, budget_chars=100)
-    assert len(res) <= 150
+    assert len(res) <= 100
     assert "[truncated" in res
+
+
+def test_render_observation_payload_string_length_strictly_respects_budget() -> None:
+    for long_len in (500, 2000, 10000):
+        long_str = "x" * long_len
+        for budget in (20, 45, 100, 250):
+            res = render_observation_payload(long_str, budget_chars=budget)
+            assert len(res) <= budget
+
+
+def test_render_observation_schema_only_fallback_strictly_respects_budget() -> None:
+    large_keys_dict = {f"key_{i}": f"val_{i}" for i in range(200)}
+    content = {"items": [{"field": 1}], **large_keys_dict}
+    artifact = ObservationArtifact(
+        artifact_id="obs_huge_keys",
+        session_id="session-test",
+        turn_id="turn-test",
+        capability="test",
+        request_id="req-test",
+        data_class=DataClass.LOCAL,
+        content=content,
+        schema_summary=summarize_observation_schema(content),
+        size_chars=50000,
+        producer=PRODUCER,
+    )
+    for tight_budget in (250, 180, 120, 80):
+        rendered = render_observation(artifact, budget_chars=tight_budget)
+        assert len(rendered.rendered_text) <= tight_budget

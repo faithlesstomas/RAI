@@ -521,7 +521,7 @@ def _evaluate_numeric_condition(item_val: Any, op: str, val: Any) -> bool:  # no
 
 def _extract_scalar_for_evaluation(
     val: Any,  # noqa: ANN401
-    max_chars: int = MAX_IN_ELEMENT_CHAR_LIMIT * 3,
+    max_chars: int = MAX_GET_CHAR_LIMIT,
 ) -> str | None:
     if val is None:
         return None
@@ -533,7 +533,8 @@ def _extract_scalar_for_evaluation(
 
 
 def _evaluate_in_condition(item_val: Any, criteria: _FilterCriteria) -> bool:  # noqa: ANN401
-    target = _extract_scalar_for_evaluation(item_val)
+    max_chars = MAX_IN_ELEMENT_CHAR_LIMIT * 3
+    target = _extract_scalar_for_evaluation(item_val, max_chars=max_chars)
     if target is None:
         return False
     target_item = target.casefold()
@@ -546,12 +547,12 @@ def _evaluate_in_condition(item_val: Any, criteria: _FilterCriteria) -> bool:  #
         for idx, v in enumerate(val):
             if idx >= MAX_PAGE_LIMIT:
                 break
-            v_s = _extract_scalar_for_evaluation(v)
+            v_s = _extract_scalar_for_evaluation(v, max_chars=max_chars)
             if v_s is not None and target_item == v_s.casefold():
                 return True
         return False
 
-    val_s = _extract_scalar_for_evaluation(val)
+    val_s = _extract_scalar_for_evaluation(val, max_chars=max_chars)
     return target_item in val_s.casefold() if val_s is not None else False
 
 
@@ -563,25 +564,37 @@ def _evaluate_filter_condition(  # noqa: PLR0911
         return False
     op = criteria.op
     val = criteria.val
+    if op == "in":
+        return _evaluate_in_condition(item_val, criteria)
+    if op in ("gt", "gte", "lt", "lte"):
+        return _evaluate_numeric_condition(item_val, op, val)
+
+    target_s = _extract_scalar_for_evaluation(val)
+    if target_s is None:
+        return False
+    target = target_s.casefold()
+
     if op == "equals":
-        return str(item_val).casefold() == str(val).casefold()
+        item_s = _extract_scalar_for_evaluation(item_val)
+        return item_s.casefold() == target if item_s is not None else False
     if op == "contains":
         if isinstance(item_val, (list, tuple)):
-            target = str(val).casefold()
             for idx, x in enumerate(item_val):
                 if idx >= MAX_PAGE_LIMIT:
                     break
-                if target in str(x).casefold():
+                x_s = _extract_scalar_for_evaluation(x)
+                if x_s is not None and target in x_s.casefold():
                     return True
             return False
-        return str(val).casefold() in str(item_val).casefold()
+        item_s = _extract_scalar_for_evaluation(item_val)
+        return target in item_s.casefold() if item_s is not None else False
     if op == "startswith":
-        return str(item_val).casefold().startswith(str(val).casefold())
+        item_s = _extract_scalar_for_evaluation(item_val)
+        return item_s.casefold().startswith(target) if item_s is not None else False
     if op == "endswith":
-        return str(item_val).casefold().endswith(str(val).casefold())
-    if op == "in":
-        return _evaluate_in_condition(item_val, criteria)
-    return _evaluate_numeric_condition(item_val, op, val)
+        item_s = _extract_scalar_for_evaluation(item_val)
+        return item_s.casefold().endswith(target) if item_s is not None else False
+    return False
 
 
 async def _filter_records(
