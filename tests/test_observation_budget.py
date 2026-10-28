@@ -176,6 +176,8 @@ def test_render_observation_schema_only_fallback_strictly_respects_budget() -> N
         size_chars=50000,
         producer=PRODUCER,
     )
-    for tight_budget in (250, 180, 120, 80):
+    for tight_budget in (250, 180, 120, 80, 40, 15, 2):
         rendered = render_observation(artifact, budget_chars=tight_budget)
         assert len(rendered.rendered_text) <= tight_budget
+        parsed = json.loads(rendered.rendered_text)
+        assert isinstance(parsed, dict)

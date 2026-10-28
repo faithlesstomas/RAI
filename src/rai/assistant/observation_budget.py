@@ -37,6 +37,7 @@ TECHNICAL_FIELDS = frozenset(
 
 MIN_TRUNCATION_MARKER_BUDGET = 30
 MIN_SCHEMA_PRUNING_THRESHOLD = 5
+MIN_VALID_JSON_BUDGET = 2
 
 
 class RenderedObservation(BaseModel):
@@ -357,8 +358,10 @@ def render_observation(  # noqa: PLR0912, PLR0915
                 minimal["_schema_preview"]["artifact_id"] = artifact_id
             schema_json = json.dumps(minimal, ensure_ascii=False)
             if len(schema_json) > budget_chars:
-                schema_json = schema_json[:budget_chars]
-            schema_preview = minimal
+                schema_preview = {}
+                schema_json = "{}" if budget_chars >= MIN_VALID_JSON_BUDGET else ""
+            else:
+                schema_preview = minimal
 
     footer = _build_footer(
         artifact_id, capability, schema, 0, total_records or max_list_len
