@@ -215,7 +215,8 @@ class ApplicationContainer:
     def history_service(self) -> HistoryService:
         if self._history_service is None:
             self._history_service = HistoryService(
-                str(self.history_path) if self.history_path is not None else None
+                str(self.history_path) if self.history_path is not None else None,
+                observation_store=self.memory_graph_store,
             )
         return self._history_service
 
@@ -484,6 +485,7 @@ class ApplicationContainer:
                 max_full_observations=runtime.max_full_observations,
                 bypass_intent_recognizer=runtime.bypass_intent_recognizer,
                 store=self.memory_graph_store,
+                max_observation_characters=runtime.max_observation_characters,
             )
             from .assistant.controllers.direct import DirectController  # noqa: PLC0415
 
@@ -499,6 +501,7 @@ class ApplicationContainer:
                     skills=skills_registry,
                     context_builder=context_builder,
                     max_cycles=runtime.max_iterations,
+                    store=self.memory_graph_store,
                 )
             else:
                 active_controller = DirectController(

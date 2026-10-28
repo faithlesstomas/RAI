@@ -56,6 +56,7 @@ class AssistantRuntimeConfig:
     interaction_controller: str = "bounded_step"
     max_iterations: int | None = None
     max_full_observations: int = 3
+    max_observation_characters: int | str = "auto"
     bypass_intent_recognizer: bool = True
 
 
@@ -158,6 +159,26 @@ def resolve_assistant_config(  # noqa: PLR0912, PLR0913, PLR0915
 
     resolved_max_full_obs = int(assistant.get("max_full_observations", 3))
 
+    raw_obs_chars = assistant.get("max_observation_characters", "auto")
+    if isinstance(raw_obs_chars, str):
+        clean_obs = raw_obs_chars.strip().lower()
+        if clean_obs in ("auto",):
+            resolved_obs_chars: int | str = "auto"
+        elif clean_obs in ("none", "null", "inf", "infinity", "unlimited"):
+            resolved_obs_chars = "inf"
+        else:
+            try:
+                resolved_obs_chars = max(1, int(clean_obs))
+            except ValueError:
+                resolved_obs_chars = "auto"
+    elif isinstance(raw_obs_chars, (int, float)):
+        if raw_obs_chars == float("inf"):
+            resolved_obs_chars = "inf"
+        else:
+            resolved_obs_chars = max(1, int(raw_obs_chars))
+    else:
+        resolved_obs_chars = "auto"
+
     raw_bypass = assistant.get("bypass_intent_recognizer")
     if isinstance(raw_bypass, str):
         resolved_bypass = raw_bypass.strip().lower() in ("true", "1", "yes", "on")
@@ -211,6 +232,7 @@ def resolve_assistant_config(  # noqa: PLR0912, PLR0913, PLR0915
             ),
             max_iterations=resolved_max_iterations,
             max_full_observations=resolved_max_full_obs,
+            max_observation_characters=resolved_obs_chars,
             bypass_intent_recognizer=resolved_bypass,
         )
 
@@ -321,6 +343,7 @@ def resolve_assistant_config(  # noqa: PLR0912, PLR0913, PLR0915
         ),
         max_iterations=resolved_max_iterations,
         max_full_observations=resolved_max_full_obs,
+        max_observation_characters=resolved_obs_chars,
         bypass_intent_recognizer=resolved_bypass,
     )
 
@@ -364,5 +387,5 @@ def build_assistant_backend(runtime: AssistantRuntimeConfig) -> AssistantModelBa
         enable_thinking=runtime.enable_thinking,
         thinking_budget=runtime.thinking_budget,
         thinking_level=runtime.thinking_level,
-        max_observation_characters=max(64000, runtime.max_context_characters),
+        max_observation_characters=runtime.max_observation_characters,
     )

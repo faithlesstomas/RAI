@@ -50,7 +50,7 @@ class LocalAssistantBackend:
         enable_thinking: bool = False,
         thinking_budget: int | None = None,
         thinking_level: str | None = None,
-        max_observation_characters: int = 64000,
+        max_observation_characters: int | str = "auto",
     ) -> None:
         self.engine = engine
         self.model_name = model_name or "local-model"
@@ -190,13 +190,28 @@ class LocalAssistantBackend:
             evidence_lines.append(
                 "Tool and action execution results (session observations):"
             )
+            if isinstance(self.max_observation_characters, int):
+                obs_budget = self.max_observation_characters
+            elif self.max_observation_characters == "inf":
+                obs_budget = 10_000_000
+            else:
+                total_budget = (
+                    getattr(manifest, "evidence_character_budget", 0)
+                    or (getattr(request.budget, "max_input_tokens", 0) * 3 if getattr(request, "budget", None) else 0)
+                    or 32_000
+                )
+                used = sum(len(line) for line in evidence_lines)
+                remaining = max(1_500, total_budget - used)
+                obs_count = max(1, min(3, len(tool_observations)))
+                obs_budget = max(500, min(64_000, remaining // obs_count))
+
             for item in tool_observations[-3:]:
                 if isinstance(item, dict):
                     capability = str(item.get("capability", "tool"))
                     summary = str(item.get("summary", ""))
                     content_val = item.get("content", {})
                     content_str = self._bound_content_repr(
-                        content_val, max_len=self.max_observation_characters
+                        content_val, max_len=obs_budget
                     )
                     evidence_lines.append(f"- [{capability}] {summary}: {content_str}")
 
@@ -289,11 +304,17 @@ class LocalAssistantBackend:
         return "\n".join(rendered)
 
     @staticmethod
-    def _bound_content_repr(content: object, max_len: int = 64000) -> str:
+    def _bound_content_repr(content: object, max_len: int | str = 64000) -> str:
         """Serialize and bound content to avoid context window explosion."""
         from ..observation_budget import render_observation_payload  # noqa: PLC0415
 
-        return render_observation_payload(content, budget_chars=max_len)
+        if isinstance(max_len, int):
+            budget = max_len
+        elif max_len == "inf":
+            budget = 10_000_000
+        else:
+            budget = 64000
+        return render_observation_payload(content, budget_chars=budget)
 
     @staticmethod
     def _format_memory(memory: dict[object, object]) -> str:

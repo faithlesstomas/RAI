@@ -1,8 +1,10 @@
 """Unit tests for WorkspaceEngine, specialists competition, and GWT blackboard deliberation."""
+# ruff: noqa: PLR2004, ANN401, PLC0415
 
 from __future__ import annotations
 
 from datetime import timedelta
+from pathlib import Path
 from typing import Any, NoReturn
 
 import pytest
@@ -660,3 +662,88 @@ async def test_workspace_engine_binds_trusted_session_id_overriding_model_input(
     assert captured_requests[0].arguments["session_id"] == "trusted-workspace-session-id"
 
 
+@pytest.mark.asyncio
+async def test_workspace_engine_persists_observation_artifact_when_store_provided(
+    tmp_path: Path,
+) -> None:
+    from rai.assistant.store import SQLiteMemoryGraphStore  # noqa: PLC0415
+
+    db_path = tmp_path / "obs_workspace.sqlite3"
+    store = SQLiteMemoryGraphStore(path=db_path)
+
+    backend = MockModelBackend(
+        responses=[
+            "<tool_call>call: application.list{}</tool_call>",
+            "Found applications.",
+        ]
+    )
+
+    class MockAppCapabilities(CapabilityService):
+        def __init__(self) -> None:
+            class MockRegistry:
+                def __init__(self) -> None:
+                    self._desc = CapabilityDescriptor(
+                        name="application.list",
+                        description="List applications",
+                        input_schema={"type": "object", "properties": {}},
+                        risk_class=RiskClass.LOW,
+                        side_effects=(),
+                        isolation="process",
+                        verification_plan=("verify_read_only",),
+                    )
+
+                def descriptor(self, name: str) -> CapabilityDescriptor | None:
+                    return self._desc if name == "application.list" else None
+
+                def descriptors(self) -> tuple[CapabilityDescriptor, ...]:
+                    return (self._desc,)
+
+            self.registry = MockRegistry()
+
+        async def invoke(
+            self, request: CapabilityRequest, cancellation: CancellationToken
+        ) -> tuple[Any, Result[ActionResult, ActionFailure]]:
+            del cancellation
+            return None, Success(
+                ActionResult(
+                    record_id=_new_id(),
+                    timestamp=_utc_now(),
+                    producer=ProducerIdentity(producer_id="test", kind="test", version="1.0.0"),
+                    request_id=request.record_id,
+                    capability="application.list",
+                    output={"apps": ["Files.desktop", "Terminal.desktop"]},
+                    verification={"status": "verified"},
+                )
+            )
+
+    engine = WorkspaceEngine(
+        backend=backend,
+        capabilities=MockAppCapabilities(),
+        skills=create_default_skill_registry(),
+        store=store,
+        max_cycles=4,
+    )
+
+    producer = ProducerIdentity(producer_id="user", kind="user", version="1.0.0")
+    turn = ConversationTurn(
+        producer=producer,
+        session_id="session-ws-store-test",
+        role="user",
+        text="List apps",
+        data_class=DataClass.PUBLIC,
+    )
+    context = _make_context_package(turn)
+    budget = _make_budget()
+
+    result = await engine.process_turn(turn, context, budget, CancellationToken())
+    assert isinstance(result, Success)
+    candidate = result.unwrap()
+    assert candidate.metadata.get("observations_count") == 1
+
+    stored_list_res = await store.list_for_session("session-ws-store-test")
+    assert isinstance(stored_list_res, Success)
+    stored_list = stored_list_res.unwrap()
+    assert len(stored_list) == 1
+    assert stored_list[0].artifact_id == "obs_1"
+    assert stored_list[0].capability == "application.list"
+    assert list(stored_list[0].content["apps"]) == ["Files.desktop", "Terminal.desktop"]

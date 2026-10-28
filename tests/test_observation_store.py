@@ -266,3 +266,40 @@ async def test_unique_alias_collision_handling(store: SQLiteMemoryGraphStore) ->
     assert get1 is not None and get1.content["val"] == 1
     get2 = (await store.get(session_id, "obs_2")).unwrap()
     assert get2 is not None and get2.content["val"] == 2
+
+
+@pytest.mark.asyncio
+async def test_history_service_cascades_observation_cleanup(
+    tmp_path: Path, store: SQLiteMemoryGraphStore
+) -> None:
+    from returns.result import Success  # noqa: PLC0415
+    from rai.services.history import HistoryService  # noqa: PLC0415
+
+    session_id = "session-cascade-test"
+    art = ObservationArtifact(
+        artifact_id="obs_cascade",
+        session_id=session_id,
+        turn_id="turn-cascade",
+        capability="test",
+        request_id="req-c1",
+        data_class=DataClass.LOCAL,
+        content={"data": "to-be-deleted"},
+        schema_summary=ObservationSchemaSummary(),
+        size_chars=20,
+        producer=PRODUCER,
+    )
+    await store.put(art)
+
+    # Verify it exists in store
+    pre_list = (await store.list_for_session(session_id)).unwrap()
+    assert len(pre_list) == 1
+
+    # Create history service with observation_store=store
+    hist_db = str(tmp_path / "hist.db")
+    service = HistoryService(db_path=hist_db, observation_store=store)
+    clear_res = await service.clear_history(session_id)
+    assert isinstance(clear_res, Success)
+
+    # Verify observations for the session were purged
+    post_list = (await store.list_for_session(session_id)).unwrap()
+    assert len(post_list) == 0

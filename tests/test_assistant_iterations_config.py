@@ -8,7 +8,7 @@ import asyncio
 from datetime import datetime, timezone, timedelta
 from typing import Any
 import pytest
-from returns.result import Failure, Success
+from returns.result import Failure, Result, Success
 
 from rai.actions.workflow import (
     BoundedStepController,
@@ -375,3 +375,151 @@ def test_workspace_state_unbounded_max_cycles() -> None:
         turn_id="t1",
     )
     assert ws.max_cycles is None
+
+
+def test_model_settings_max_observation_characters_validation() -> None:
+    # Default is auto
+    s = ModelSettings()
+    assert s.max_observation_characters == "auto"
+
+    # None and 'auto' resolve to 'auto'
+    assert ModelSettings(max_observation_characters=None).max_observation_characters == "auto"
+    assert ModelSettings(max_observation_characters="auto").max_observation_characters == "auto"
+    assert ModelSettings(max_observation_characters="AUTO").max_observation_characters == "auto"
+
+    # Invariants for infinity/unlimited
+    for inf_cand in ("inf", "infinity", "unlimited", "none", "null", float("inf")):
+        assert ModelSettings(max_observation_characters=inf_cand).max_observation_characters == "inf"
+
+    # Valid positive integers
+    assert ModelSettings(max_observation_characters=5000).max_observation_characters == 5000
+    assert ModelSettings(max_observation_characters="12000").max_observation_characters == 12000
+
+    # Invalid values raise ValueError
+    for bad in (0, -100, "0", "-5", "invalid", "xyz"):
+        with pytest.raises(ValueError):
+            ModelSettings(max_observation_characters=bad)
+
+
+def test_resolve_assistant_config_max_observation_characters() -> None:
+    # 1. Default config
+    cfg1 = {"backend": "deterministic", "max_output_tokens": 100, "context_window": 1000}
+    res1 = resolve_assistant_config(cfg1)
+    assert res1.max_observation_characters == "auto"
+
+    # 2. Explicit integer
+    cfg2 = {
+        "backend": "deterministic",
+        "max_output_tokens": 100,
+        "context_window": 1000,
+        "assistant": {"max_observation_characters": 8000},
+    }
+    res2 = resolve_assistant_config(cfg2)
+    assert res2.max_observation_characters == 8000
+
+    # 3. Explicit inf
+    cfg3 = {
+        "backend": "deterministic",
+        "max_output_tokens": 100,
+        "context_window": 1000,
+        "assistant": {"max_observation_characters": "inf"},
+    }
+    res3 = resolve_assistant_config(cfg3)
+    assert res3.max_observation_characters == "inf"
+
+
+@pytest.mark.asyncio
+async def test_bounded_step_controller_dynamic_observation_budgeting() -> None:
+    from rai.actions.workflow import BoundedStepController  # noqa: PLC0415
+    from rai.assistant.ports import AssistantModelBackend  # noqa: PLC0415
+    from rai.assistant.records import AssistantContextManifest, AssistantContextPackage  # noqa: PLC0415
+    from rai.kernel.records import InferenceBudget  # noqa: PLC0415
+
+    class SmallContextBuilder:
+        max_context_characters = 2000
+
+    observed_prompts: list[str] = []
+
+    class CapturingBackend(AssistantModelBackend):
+        model_name = "capturing-backend"
+
+        async def generate(self, request: Any, token: CancellationToken) -> Result[AssistantCandidate, Any]:
+            del token
+            observed_prompts.append(str(request.system_instruction or ""))
+            return Success(
+                AssistantCandidate(
+                    text="Completed after observing.",
+                    tokens_in=50,
+                    tokens_out=20,
+                )
+            )
+
+    class MockCapService:
+        class Registry:
+            def descriptors(self) -> list[Any]:
+                return []
+
+            def descriptor(self, name: str) -> Any:
+                return None
+
+        registry = Registry()
+
+        async def invoke(self, req: Any, cancellation: Any) -> Any:
+            return req, Success(None)
+
+    ctrl = BoundedStepController(
+        capabilities=MockCapService(),  # type: ignore[arg-type]
+        backend=CapturingBackend(),
+        context_builder=SmallContextBuilder(),
+        max_observation_characters="auto",
+    )
+
+    turn = ConversationTurn(
+        record_id=_new_id(),
+        session_id="session-dyn-budget",
+        producer=ProducerIdentity(producer_id="user", kind="user", version="1.0.0"),
+        role="user",
+        text="Task needing observation",
+    )
+
+    # Initial observations with large content (e.g. 100 items)
+    large_obs = {
+        "items": [{"id": i, "name": f"Item {i} with long description to expand payload"} for i in range(100)],
+        "_artifact_id": "obs_1",
+    }
+    manifest = AssistantContextManifest(
+        producer=turn.producer,
+        session_id=turn.session_id,
+        turn_id=turn.record_id,
+        evidence_character_budget=2000,
+    )
+    ctx = AssistantContextPackage(
+        producer=turn.producer,
+        session_id=turn.session_id,
+        turn_id=turn.record_id,
+        manifest=manifest,
+        content={"tool_observations": [large_obs]},
+    )
+    budget = InferenceBudget(
+        record_id=_new_id(),
+        producer=turn.producer,
+        max_input_tokens=500,
+        max_output_tokens=100,
+        max_agent_turns=0,
+        max_tool_calls=0,
+        max_images=0,
+        max_audio_seconds=0,
+        max_latency_seconds=30,
+        max_provider_cost=0,
+        max_ram_bytes=0,
+        max_vram_bytes=0,
+        cancellation_deadline=datetime.now(timezone.utc) + timedelta(seconds=30),
+    )
+
+    res = await ctrl.process_turn(turn, ctx, budget, CancellationToken())
+    assert isinstance(res, Success)
+    assert len(observed_prompts) == 1
+    # Verify that observation in prompt was reduced to fit within small budget
+    prompt = observed_prompts[0]
+    assert len(prompt) < 2000
+    assert "Tool Observations:" in prompt

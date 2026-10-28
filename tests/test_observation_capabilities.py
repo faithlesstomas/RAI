@@ -1969,3 +1969,150 @@ async def test_observation_filter_string_operators_restrict_complex_values_and_l
     res5 = (await _invoke(registry, req5)).output
     assert res5["total_matches"] == 1
     assert res5["results"][0]["id"] == 3
+
+
+@pytest.mark.asyncio
+async def test_observation_search_regex(
+    registry: CapabilityRegistry, store: SQLiteMemoryGraphStore
+) -> None:
+    content = {
+        "results": [
+            {"title": "Quantum Algorithm Overview", "category": "physics", "score": 95},
+            {"title": "Classical Computing in 2024", "category": "computing", "score": 80},
+            {"title": "Quantum Error Correction", "category": "physics", "score": 90},
+            {"title": "Post-Quantum Cryptography", "category": "security", "score": 85},
+        ]
+    }
+    art = ObservationArtifact(
+        artifact_id="obs_regex_search",
+        session_id="session-regex",
+        turn_id="turn-1",
+        capability="test",
+        request_id="req-regex-1",
+        data_class=DataClass.LOCAL,
+        content=content,
+        schema_summary=summarize_observation_schema(content),
+        size_chars=500,
+        producer=ACTOR,
+    )
+    await store.put(art)
+
+    search_desc = registry.descriptor("observation.search")
+    assert search_desc is not None
+
+    # 1. Regex pattern matching
+    req1 = normalize_request(
+        search_desc,
+        {"session_id": "session-regex", "ref": "obs_regex_search", "pattern": r"^Quantum\s+(Algorithm|Error)", "regex": True},
+        actor=ACTOR,
+        data_class=DataClass.LOCAL,
+    )
+    res1 = (await _invoke(registry, req1)).output
+    assert res1["total_matches"] == 2
+    assert {m["title"] for m in res1["matches"]} == {"Quantum Algorithm Overview", "Quantum Error Correction"}
+
+    # 2. Case sensitive regex
+    req2 = normalize_request(
+        search_desc,
+        {"session_id": "session-regex", "ref": "obs_regex_search", "pattern": r"quantum", "regex": True, "case": True},
+        actor=ACTOR,
+        data_class=DataClass.LOCAL,
+    )
+    res2 = (await _invoke(registry, req2)).output
+    assert res2["total_matches"] == 0
+
+    # 3. Case insensitive regex
+    req3 = normalize_request(
+        search_desc,
+        {"session_id": "session-regex", "ref": "obs_regex_search", "pattern": r"quantum", "regex": True, "case": False},
+        actor=ACTOR,
+        data_class=DataClass.LOCAL,
+    )
+    res3 = (await _invoke(registry, req3)).output
+    assert res3["total_matches"] == 3
+
+    # 4. Invalid regex syntax returns failure closed
+    req_bad = normalize_request(
+        search_desc,
+        {"session_id": "session-regex", "ref": "obs_regex_search", "pattern": r"[unclosed-bracket", "regex": True},
+        actor=ACTOR,
+        data_class=DataClass.LOCAL,
+    )
+    cap_res = registry.resolve(req_bad)
+    assert isinstance(cap_res, Success)
+    res_bad = await cap_res.unwrap().invoke(req_bad, CancellationToken())
+    assert isinstance(res_bad, Failure)
+    assert res_bad.failure().code == "INVALID_REGEX"
+
+    # 5. Overly long regex pattern (> 200 chars) rejected
+    req_long = normalize_request(
+        search_desc,
+        {"session_id": "session-regex", "ref": "obs_regex_search", "pattern": "a" * 201, "regex": True},
+        actor=ACTOR,
+        data_class=DataClass.LOCAL,
+    )
+    cap_res_long = registry.resolve(req_long)
+    assert isinstance(cap_res_long, Success)
+    res_long = await cap_res_long.unwrap().invoke(req_long, CancellationToken())
+    assert isinstance(res_long, Failure)
+    assert res_long.failure().code == "PATTERN_TOO_LONG"
+
+
+@pytest.mark.asyncio
+async def test_observation_filter_compound_conditions(
+    registry: CapabilityRegistry, store: SQLiteMemoryGraphStore
+) -> None:
+    records = [
+        {"id": 1, "status": "active", "priority": "high", "score": 90, "tags": ["prod", "web"]},
+        {"id": 2, "status": "active", "priority": "low", "score": 45, "tags": ["dev"]},
+        {"id": 3, "status": "inactive", "priority": "high", "score": 85, "tags": ["prod"]},
+        {"id": 4, "status": "active", "priority": "high", "score": 75, "tags": ["staging"]},
+    ]
+    art = ObservationArtifact(
+        artifact_id="obs_compound_filter",
+        session_id="session-compound",
+        turn_id="turn-1",
+        capability="test",
+        request_id="req-comp-1",
+        data_class=DataClass.LOCAL,
+        content={"items": records},
+        schema_summary=summarize_observation_schema({}),
+        size_chars=500,
+        producer=ACTOR,
+    )
+    await store.put(art)
+
+    filter_desc = registry.descriptor("observation.filter")
+    assert filter_desc is not None
+
+    # Compound AND filter: status == "active" AND priority == "high" AND score >= 80
+    conditions = [
+        {"field": "status", "op": "equals", "value": "active"},
+        {"field": "priority", "op": "equals", "value": "high"},
+        {"field": "score", "op": "gte", "value": 80},
+    ]
+    req = normalize_request(
+        filter_desc,
+        {"session_id": "session-compound", "ref": "obs_compound_filter", "conditions": conditions},
+        actor=ACTOR,
+        data_class=DataClass.LOCAL,
+    )
+    res = (await _invoke(registry, req)).output
+    assert res["total_matches"] == 1
+    assert res["results"][0]["id"] == 1
+    assert "conditions" in res
+
+    # Compound filter with 'in' operator: status == "active" AND priority IN ["high", "medium"]
+    cond_in = [
+        {"field": "status", "op": "equals", "value": "active"},
+        {"field": "priority", "op": "in", "value": ["high", "medium"]},
+    ]
+    req_in = normalize_request(
+        filter_desc,
+        {"session_id": "session-compound", "ref": "obs_compound_filter", "conditions": cond_in},
+        actor=ACTOR,
+        data_class=DataClass.LOCAL,
+    )
+    res_in = (await _invoke(registry, req_in)).output
+    assert res_in["total_matches"] == 2
+    assert {r["id"] for r in res_in["results"]} == {1, 4}

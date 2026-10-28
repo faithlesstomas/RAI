@@ -17,7 +17,12 @@ logger = logging.getLogger(__name__)
 class HistoryService:
     """Persist short conversation records independently of any model backend."""
 
-    def __init__(self, db_path: Optional[str] = None) -> None:
+    def __init__(
+        self,
+        db_path: Optional[str] = None,
+        observation_store: object = None,
+    ) -> None:
+        self.observation_store = observation_store
         if db_path:
             self.db_path = db_path
         else:
@@ -107,6 +112,10 @@ class HistoryService:
                 database.execute(
                     "DELETE FROM messages WHERE session_id = ?", (session_id,)
                 )
+            if self.observation_store is not None and hasattr(
+                self.observation_store, "delete_for_session"
+            ):
+                await self.observation_store.delete_for_session(session_id)
             return Success(None)
         except Exception as error:  # pylint: disable=broad-exception-caught
             return Failure(error)

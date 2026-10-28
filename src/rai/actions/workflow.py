@@ -423,7 +423,7 @@ class BoundedStepController(InteractionController):
         max_full_observations: int = 3,
         bypass_intent_recognizer: bool = True,
         store: object = None,
-        max_observation_characters: int = 64000,
+        max_observation_characters: int | str = "auto",
     ) -> None:
         self.ledger = ledger
         self.capabilities = capabilities
@@ -678,6 +678,26 @@ class BoundedStepController(InteractionController):
                         if isinstance(obs, dict)
                         else None
                     )
+                    if isinstance(self.max_observation_characters, int):
+                        effective_budget = self.max_observation_characters
+                    elif self.max_observation_characters == "inf":
+                        effective_budget = 10_000_000
+                    else:
+                        max_ctx = (
+                            getattr(self.context_builder, "max_context_characters", None)
+                            or getattr(manifest, "evidence_character_budget", 0)
+                            or (budget.max_input_tokens * 3 if getattr(budget, "max_input_tokens", 0) else 0)
+                            or 32_000
+                        )
+                        base_chars = (
+                            len(workflow.goal)
+                            + len(str(context.content.get("current_turn", {}).get("text", "")))
+                            + sum(len(line) for line in obs_lines)
+                        )
+                        remaining = max(1_500, max_ctx - base_chars)
+                        num_full = max(1, min(self.max_full_observations, len(all_obs) - cutoff))
+                        effective_budget = max(500, min(64_000, remaining // num_full))
+
                     rendered = render_observation(
                         {
                             "content": compacted_obs,
@@ -685,7 +705,7 @@ class BoundedStepController(InteractionController):
                             "summary": "",
                             "artifact_id": art_id,
                         },
-                        budget_chars=self.max_observation_characters,
+                        budget_chars=effective_budget,
                     )
                     obs_summary = rendered.rendered_text
                     obs_lines.append(f"Observation {i}: {obs_summary}")

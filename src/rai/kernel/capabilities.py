@@ -253,7 +253,7 @@ def validate_arguments(schema: dict[str, Any], arguments: dict[str, Any]) -> str
         "integer": int,
         "number": (int, float),
         "object": dict,
-        "array": list,
+        "array": (list, tuple),
     }
     for name, value in arguments.items():
         if value is None and name not in required:

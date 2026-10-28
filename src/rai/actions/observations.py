@@ -444,15 +444,28 @@ class ObservationSearch:
         if artifact is None:
             return Failure(_fail(request, "ARTIFACT_NOT_FOUND", f"Artifact {ref} not found"))
 
+        is_regex = bool(request.arguments.get("regex", False))
         flags = 0 if case_sensitive else re.IGNORECASE
-        compiled = re.compile(re.escape(pattern), flags)
+        if is_regex:
+            try:
+                compiled = re.compile(pattern, flags)
+            except re.error as err:
+                return Failure(_fail(request, "INVALID_REGEX", f"Invalid regex pattern: {err}"))
+        else:
+            compiled = re.compile(re.escape(pattern), flags)
 
         content = artifact.content
-        if "text" in content and isinstance(content["text"], str):
-            search_res = await _search_text(content["text"], compiled, cancellation)
-        else:
-            _, records = _extract_primary_list(content)
-            search_res = await _search_records(records, compiled, fields, cancellation)
+        search_coro = (
+            _search_text(content["text"], compiled, cancellation)
+            if "text" in content and isinstance(content["text"], str)
+            else _search_records(
+                _extract_primary_list(content)[1], compiled, fields, cancellation
+            )
+        )
+        try:
+            search_res = await asyncio.wait_for(search_coro, timeout=2.0)
+        except (asyncio.TimeoutError, TimeoutError):
+            return Failure(_fail(request, "SEARCH_TIMEOUT", "Search exceeded execution timeout"))
 
         if isinstance(search_res, Failure):
             return Failure(_fail(request, "CANCELLED", "Search cancelled"))
@@ -599,12 +612,12 @@ def _evaluate_filter_condition(  # noqa: PLR0911
 
 async def _filter_records(
     records: Sequence[Any],
-    criteria: _FilterCriteria,
+    criteria: _FilterCriteria | Sequence[_FilterCriteria],
     cancellation: CancellationToken,
 ) -> Result[tuple[list[Any], bool], None]:
     filtered: list[Any] = []
     hit_scan_limit = False
-    field = criteria.field
+    is_single = isinstance(criteria, _FilterCriteria)
     for count, rec in enumerate(records, 1):
         if count % YIELD_INTERVAL == 0:
             await asyncio.sleep(0)
@@ -613,11 +626,18 @@ async def _filter_records(
         if count > MAX_VISITED_LIMIT:
             hit_scan_limit = True
             break
-        if isinstance(rec, dict) and _evaluate_filter_condition(rec.get(field), criteria):
-            filtered.append(rec)
-            if len(filtered) >= MAX_SCAN_LIMIT:
-                hit_scan_limit = True
-                break
+        if isinstance(rec, dict):
+            if is_single:
+                matched = _evaluate_filter_condition(rec.get(criteria.field), criteria)
+            else:
+                matched = all(
+                    _evaluate_filter_condition(rec.get(c.field), c) for c in criteria
+                )
+            if matched:
+                filtered.append(rec)
+                if len(filtered) >= MAX_SCAN_LIMIT:
+                    hit_scan_limit = True
+                    break
     return Success((filtered, hit_scan_limit))
 
 
@@ -739,6 +759,43 @@ def _get_filter_reason(
     return None
 
 
+def _extract_filter_criteria(
+    raw_conditions: object,
+    field: str,
+    op: str,
+    val: object,
+) -> Result[tuple[list[_FilterCriteria], list[object], bool], str]:
+    criteria_list: list[_FilterCriteria] = []
+    bounded_vals: list[object] = []
+    val_truncated = False
+
+    if isinstance(raw_conditions, (list, tuple)) and raw_conditions:
+        for cond in raw_conditions:
+            if not isinstance(cond, dict):
+                continue
+            c_field = str(cond.get("field", "")).strip()
+            c_op = str(cond.get("op", "equals")).strip().lower()
+            c_val = cond.get("value")
+            if not c_field:
+                continue
+            eval_val, b_val, lookup_set, v_trunc = _prepare_filter_operand(c_op, c_val)
+            criteria_list.append(
+                _FilterCriteria(field=c_field, op=c_op, val=eval_val, in_lookup_set=lookup_set)
+            )
+            bounded_vals.append(b_val)
+            val_truncated = val_truncated or v_trunc
+        if not criteria_list:
+            return Failure("Invalid conditions list")
+    elif field:
+        eval_val, bounded_val, in_lookup_set, val_truncated = _prepare_filter_operand(op, val)
+        criteria_list.append(_FilterCriteria(field=field, op=op, val=eval_val, in_lookup_set=in_lookup_set))
+        bounded_vals.append(bounded_val)
+    else:
+        return Failure("Missing field or conditions")
+
+    return Success((criteria_list, bounded_vals, val_truncated))
+
+
 class ObservationFilter:
     """Filter records by structured field comparisons (contains, equals, numeric)."""
 
@@ -747,7 +804,7 @@ class ObservationFilter:
     def __init__(self, store: ObservationStore) -> None:
         self.store = store
 
-    async def invoke(
+    async def invoke(  # noqa: PLR0911
         self, request: CapabilityRequest, cancellation: CancellationToken
     ) -> Result[ActionResult, ActionFailure]:
         if cancellation.cancelled:
@@ -755,6 +812,7 @@ class ObservationFilter:
 
         session_id = str(request.arguments.get("session_id", "")).strip()
         ref = str(request.arguments.get("ref", "")).strip()
+        raw_conditions = request.arguments.get("conditions")
         field = str(request.arguments.get("field", "")).strip()
         op = str(request.arguments.get("op", "equals")).strip().lower()
         val = request.arguments.get("value")
@@ -767,18 +825,20 @@ class ObservationFilter:
 
         if not session_id:
             return Failure(_fail(request, "UNAUTHORIZED", "Missing session_id"))
-        if not ref or not field:
-            return Failure(_fail(request, "INVALID_ARGUMENT", "Missing ref or field"))
+        if not ref:
+            return Failure(_fail(request, "INVALID_ARGUMENT", "Missing ref"))
+
+        crit_res = _extract_filter_criteria(raw_conditions, field, op, val)
+        if isinstance(crit_res, Failure):
+            return Failure(_fail(request, "INVALID_ARGUMENT", crit_res.failure()))
+        criteria_list, bounded_vals, val_truncated = crit_res.unwrap()
 
         artifact = await _get_artifact(self.store, ref, session_id=session_id)
         if artifact is None:
             return Failure(_fail(request, "ARTIFACT_NOT_FOUND", f"Artifact {ref} not found"))
 
-        eval_val, bounded_val, in_lookup_set, val_truncated = _prepare_filter_operand(op, val)
-        criteria = _FilterCriteria(field=field, op=op, val=eval_val, in_lookup_set=in_lookup_set)
-
         _, records = _extract_primary_list(artifact.content)
-        filter_res = await _filter_records(records, criteria, cancellation)
+        filter_res = await _filter_records(records, criteria_list, cancellation)
         if isinstance(filter_res, Failure):
             return Failure(_fail(request, "CANCELLED", "Filter cancelled"))
         filtered, hit_scan_limit = filter_res.unwrap()
@@ -804,9 +864,6 @@ class ObservationFilter:
 
         output: dict[str, Any] = {
             "ref": ref,
-            "field": field,
-            "op": op,
-            "value": bounded_val,
             "total_matches": total_matches,
             "offset": offset,
             "limit": limit,
@@ -814,6 +871,15 @@ class ObservationFilter:
             "reason": reason,
             "results": bounded_results,
         }
+        if len(criteria_list) == 1 and not raw_conditions:
+            output["field"] = criteria_list[0].field
+            output["op"] = criteria_list[0].op
+            output["value"] = bounded_vals[0]
+        else:
+            output["conditions"] = [
+                {"field": c.field, "op": c.op, "value": b}
+                for c, b in zip(criteria_list, bounded_vals)
+            ]
         output = await _persist_derived_output(
             self.store, artifact, request, output, list_key="results"
         )
@@ -1235,6 +1301,7 @@ def register_observation_capabilities(
                 "session_id": {"type": "string", "description": "Session identifier for session-scoped artifacts"},
                 "ref": {"type": "string", "description": "Artifact reference handle (e.g. obs_1)"},
                 "pattern": {"type": "string", "description": "Substring search pattern"},
+                "regex": {"type": "boolean", "description": "Whether to treat pattern as a regular expression", "default": False},
                 "fields": {"type": "array", "items": {"type": "string"}, "description": "Optional fields to restrict search to"},
                 "case": {"type": "boolean", "description": "Case-sensitive search"},
                 "offset": {"type": "integer", "minimum": 0, "default": 0},
@@ -1251,10 +1318,23 @@ def register_observation_capabilities(
                 "field": {"type": "string", "description": "Field name to filter on"},
                 "op": {"type": "string", "enum": ["contains", "equals", "startswith", "endswith", "in", "gt", "gte", "lt", "lte"]},
                 "value": {"description": "Target value to compare against"},
+                "conditions": {
+                    "type": "array",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "field": {"type": "string"},
+                            "op": {"type": "string", "enum": ["contains", "equals", "startswith", "endswith", "in", "gt", "gte", "lt", "lte"]},
+                            "value": {},
+                        },
+                        "required": ["field", "op", "value"],
+                    },
+                    "description": "Optional list of conditions evaluated with conjunction (AND)",
+                },
                 "offset": {"type": "integer", "minimum": 0, "default": 0},
                 "limit": {"type": "integer", "minimum": 1, "maximum": 1000, "default": 100},
             },
-            ["ref", "field", "op", "value"],
+            ["ref"],
             "Filter records inside a stored observation artifact by structured conditions.",
         ),
         (
