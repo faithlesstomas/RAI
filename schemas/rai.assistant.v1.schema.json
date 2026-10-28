@@ -1692,6 +1692,188 @@
       "title": "MemoryRelationKind",
       "type": "string"
     },
+    "ObservationArtifact": {
+      "additionalProperties": false,
+      "description": "Durable, session-scoped artifact preserving complete capability outputs.",
+      "properties": {
+        "record_type": {
+          "const": "observation_artifact",
+          "default": "observation_artifact",
+          "title": "Record Type",
+          "type": "string"
+        },
+        "schema_version": {
+          "default": "1.0.0",
+          "pattern": "^1\\.(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)(?:[-+][0-9A-Za-z.-]+)?$",
+          "title": "Schema Version",
+          "type": "string"
+        },
+        "record_id": {
+          "minLength": 1,
+          "title": "Record Id",
+          "type": "string"
+        },
+        "timestamp": {
+          "format": "date-time",
+          "title": "Timestamp",
+          "type": "string"
+        },
+        "producer": {
+          "$ref": "#/$defs/ProducerIdentity"
+        },
+        "correlation_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Correlation Id"
+        },
+        "artifact_id": {
+          "minLength": 1,
+          "title": "Artifact Id",
+          "type": "string"
+        },
+        "session_id": {
+          "$ref": "#/$defs/AssistantSessionId"
+        },
+        "turn_id": {
+          "minLength": 1,
+          "title": "Turn Id",
+          "type": "string"
+        },
+        "capability": {
+          "minLength": 1,
+          "title": "Capability",
+          "type": "string"
+        },
+        "request_id": {
+          "minLength": 1,
+          "title": "Request Id",
+          "type": "string"
+        },
+        "data_class": {
+          "$ref": "#/$defs/DataClass",
+          "default": "LOCAL"
+        },
+        "content": {
+          "additionalProperties": true,
+          "title": "Content",
+          "type": "object"
+        },
+        "schema_summary": {
+          "$ref": "#/$defs/ObservationSchemaSummary"
+        },
+        "size_chars": {
+          "minimum": 0,
+          "title": "Size Chars",
+          "type": "integer"
+        },
+        "created_at": {
+          "format": "date-time",
+          "title": "Created At",
+          "type": "string"
+        },
+        "expires_at": {
+          "anyOf": [
+            {
+              "format": "date-time",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Expires At"
+        },
+        "provenance": {
+          "default": [],
+          "items": {
+            "$ref": "#/$defs/ProvenanceReference"
+          },
+          "title": "Provenance",
+          "type": "array"
+        },
+        "derived_from": {
+          "default": [],
+          "items": {
+            "type": "string"
+          },
+          "title": "Derived From",
+          "type": "array"
+        }
+      },
+      "required": [
+        "producer",
+        "artifact_id",
+        "session_id",
+        "turn_id",
+        "capability",
+        "request_id",
+        "content",
+        "schema_summary",
+        "size_chars"
+      ],
+      "title": "ObservationArtifact",
+      "type": "object"
+    },
+    "ObservationSchemaSummary": {
+      "additionalProperties": false,
+      "description": "Structural summary of stored observation payload without full content.",
+      "properties": {
+        "top_level_keys": {
+          "default": [],
+          "items": {
+            "type": "string"
+          },
+          "title": "Top Level Keys",
+          "type": "array"
+        },
+        "list_fields": {
+          "additionalProperties": {
+            "type": "integer"
+          },
+          "title": "List Fields",
+          "type": "object"
+        },
+        "item_fields": {
+          "additionalProperties": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "title": "Item Fields",
+          "type": "object"
+        },
+        "total_count": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Total Count"
+        },
+        "primitive_types": {
+          "additionalProperties": {
+            "type": "string"
+          },
+          "title": "Primitive Types",
+          "type": "object"
+        }
+      },
+      "title": "ObservationSchemaSummary",
+      "type": "object"
+    },
     "PolicyOutcome": {
       "description": "Machine-readable policy outcomes.",
       "enum": [
@@ -1791,7 +1973,8 @@
       "conversation_turn": "#/$defs/ConversationTurn",
       "memory_operation": "#/$defs/MemoryOperation",
       "memory_proposal": "#/$defs/MemoryProposal",
-      "memory_record": "#/$defs/MemoryRecord"
+      "memory_record": "#/$defs/MemoryRecord",
+      "observation_artifact": "#/$defs/ObservationArtifact"
     },
     "propertyName": "record_type"
   },
@@ -1819,6 +2002,9 @@
     },
     {
       "$ref": "#/$defs/AssistantResponse"
+    },
+    {
+      "$ref": "#/$defs/ObservationArtifact"
     }
   ],
   "$id": "https://tk-lab1.gitlab.io/ai/rai/schemas/rai.assistant.v1.schema.json",

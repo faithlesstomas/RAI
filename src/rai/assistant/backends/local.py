@@ -291,36 +291,9 @@ class LocalAssistantBackend:
     @staticmethod
     def _bound_content_repr(content: object, max_len: int = 64000) -> str:
         """Serialize and bound content to avoid context window explosion."""
-        if isinstance(content, dict):
-            limits_by_key = {
-                "results": _MAX_SEARCH_ITEMS_IN_CONTENT,
-                "capabilities": 50,
-                "application_names": 1024,
-                "applications": 1024,
-                "documents": 100,
-                "entries": 100,
-                "processes": 100,
-            }
-            bounded_dict = {}
-            for k, v in content.items():
-                limit = limits_by_key.get(str(k), _MAX_LIST_ITEMS_IN_CONTENT)
-                if isinstance(v, (list, tuple)) and len(v) > limit:
-                    bounded_dict[k] = list(v[:limit]) + [
-                        f"... (+{len(v) - limit} more items truncated)"
-                    ]
-                else:
-                    bounded_dict[k] = v
-            dumped = json.dumps(bounded_dict, ensure_ascii=False)
-        elif isinstance(content, str):
-            dumped = content
-        else:
-            try:
-                dumped = json.dumps(content, ensure_ascii=False)
-            except Exception:  # noqa: BLE001
-                dumped = str(content)
-        if len(dumped) > max_len:
-            dumped = dumped[:max_len] + f"... [truncated {len(dumped) - max_len} chars]"
-        return dumped
+        from ..observation_budget import render_observation_payload  # noqa: PLC0415
+
+        return render_observation_payload(content, budget_chars=max_len)
 
     @staticmethod
     def _format_memory(memory: dict[object, object]) -> str:

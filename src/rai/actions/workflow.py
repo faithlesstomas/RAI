@@ -54,6 +54,7 @@ from rai.kernel.records import (
     UsageRecord,
     _new_id,
     _utc_now,
+    freeze_json_value,
 )
 from rai.kernel.service import CapabilityService
 from rai.kernel.transport import normalize_request
@@ -421,6 +422,8 @@ class BoundedStepController(InteractionController):
         context_builder: object = None,
         max_full_observations: int = 3,
         bypass_intent_recognizer: bool = True,
+        store: object = None,
+        max_observation_characters: int = 64000,
     ) -> None:
         self.ledger = ledger
         self.capabilities = capabilities
@@ -431,6 +434,8 @@ class BoundedStepController(InteractionController):
         self.context_builder = context_builder
         self.max_full_observations = max_full_observations
         self.bypass_intent_recognizer = bypass_intent_recognizer
+        self.store = store or getattr(context_builder, "store", None)
+        self.max_observation_characters = max_observation_characters
 
     async def process_turn(  # noqa: PLR0911, PLR0912, PLR0915
         self,
@@ -506,11 +511,28 @@ class BoundedStepController(InteractionController):
                     or (action_cand.text.splitlines()[0] if action_cand.text else "")
                     or str(capability)
                 )
+                from rai.assistant.observation_budget import persist_observation_artifact  # noqa: PLC0415
+
+                artifact_id = await persist_observation_artifact(
+                    store=self.store,
+                    session_id=turn.session_id,
+                    turn_id=turn.record_id,
+                    capability=str(capability),
+                    request_id=(
+                        (act_res.get("request_id") if isinstance(act_res, dict) else None)
+                        or _new_id()
+                    ),
+                    data_class=turn.data_class,
+                    output=output if isinstance(output, dict) else {"output": output},
+                    producer=turn.producer,
+                )
                 obs_content = _compact_observation_content(
                     output,
                     fallback_text=action_cand.text,
                     capability=str(capability),
                 )
+                if artifact_id:
+                    obs_content["_artifact_id"] = artifact_id
                 obs = ToolObservation(
                     source_id=(
                         (act_res.get("request_id") if isinstance(act_res, dict) else None)
@@ -524,6 +546,7 @@ class BoundedStepController(InteractionController):
                         action_cand.metadata.get("untrusted_content", False)
                     ),
                     content=obs_content,
+                    artifact_id=artifact_id,
                 )
                 initial_observations.append(obs_content)
                 initial_obs_records.append(obs.model_dump(mode="json"))
@@ -647,10 +670,27 @@ class BoundedStepController(InteractionController):
                             compacted_obs = {"capability": cap_name, **compacted_obs}
                         if clean_args and "query" in clean_args and "query" not in compacted_obs:
                             compacted_obs["query"] = clean_args["query"]
-                    obs_summary = json.dumps(compacted_obs, ensure_ascii=False)
-                    if len(obs_summary) > _MAX_OBSERVATION_CHARS:
-                        obs_summary = obs_summary[:_MAX_OBSERVATION_CHARS] + "... (truncated)"
+
+                    from rai.assistant.observation_budget import render_observation  # noqa: PLC0415
+
+                    art_id = (
+                        obs.get("_artifact_id")
+                        if isinstance(obs, dict)
+                        else None
+                    )
+                    rendered = render_observation(
+                        {
+                            "content": compacted_obs,
+                            "capability": cap_name or "workflow_step",
+                            "summary": "",
+                            "artifact_id": art_id,
+                        },
+                        budget_chars=self.max_observation_characters,
+                    )
+                    obs_summary = rendered.rendered_text
                     obs_lines.append(f"Observation {i}: {obs_summary}")
+                    if rendered.preview_footer:
+                        obs_lines.append(f"  Note: {rendered.preview_footer}")
                     if i > len(initial_observations):
                         step_obs_idx = i - len(initial_observations)
                         obs_id = f"{workflow.task_id}:obs:{step_obs_idx}"
@@ -668,6 +708,7 @@ class BoundedStepController(InteractionController):
                                     if isinstance(compacted_obs, dict)
                                     else {"value": compacted_obs}
                                 ),
+                                artifact_id=art_id,
                             ).model_dump(mode="json")
                         )
             obs_text = "\n".join(obs_lines) if obs_lines else "None yet."
@@ -1098,7 +1139,7 @@ class BoundedStepController(InteractionController):
         )
         return Success(updated)
 
-    async def execute_generic_step(  # noqa: PLR0911, PLR0913
+    async def execute_generic_step(  # noqa: PLR0911, PLR0912, PLR0913
         self,
         workflow: BoundedWorkflow,
         capabilities: CapabilityService,
@@ -1248,6 +1289,28 @@ class BoundedStepController(InteractionController):
                 return Failure(executed.failure())
 
             action_res = executed.unwrap()
+            from rai.assistant.observation_budget import persist_observation_artifact  # noqa: PLC0415
+
+            turn_id = (
+                workflow.task_id[5:]
+                if workflow.task_id.startswith("task:")
+                else workflow.task_id
+            )
+            artifact_id = await persist_observation_artifact(
+                store=self.store,
+                session_id=workflow.session_id,
+                turn_id=turn_id,
+                capability=capability_name,
+                request_id=action_res.request_id,
+                data_class=workflow.data_class,
+                output=action_res.output,
+                producer=action_res.producer,
+            )
+            if artifact_id and isinstance(action_res.output, dict):
+                updated_output = {**action_res.output, "_artifact_id": artifact_id}
+                action_res = action_res.model_copy(
+                    update={"output": freeze_json_value(updated_output)}
+                )
 
         # 3. EXECUTING -> OBSERVING
         obs_tx = self.transition_generic(

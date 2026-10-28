@@ -1,11 +1,19 @@
 """Security boundary tests for the local control API."""
 
+import hashlib
+import hmac
 import stat
 from pathlib import Path
 
 import pytest
 
-from rai.tools.security.auth import TOKEN_HEADER, get_api_token, is_authorized
+from rai.tools.security.auth import (
+    TOKEN_HEADER,
+    create_session_token,
+    get_api_token,
+    is_authorized,
+    verify_session_token,
+)
 from conftest import ASGITestClient
 
 MINIMUM_TOKEN_LENGTH = 32
@@ -49,3 +57,80 @@ def test_control_api_rejects_missing_token(
 
     assert response.status_code == 401  # noqa: PLR2004
     assert response.json() == {"detail": "Unauthorized"}
+
+
+def test_session_token_signing_and_expiry(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("RAI_API_TOKEN", "test-secret-token")
+    token = create_session_token("session-123", ttl_seconds=3600)
+    assert verify_session_token(token) == "session-123"
+
+    # Expired token
+    expired_token = create_session_token("session-123", ttl_seconds=-10)
+    assert verify_session_token(expired_token) is None
+
+    # Tampered token
+    parts = token.split(".")
+    tampered_sig = f"{parts[0]}.{parts[1]}.bad_signature"
+    assert verify_session_token(tampered_sig) is None
+    tampered_session = f"session-victim.{parts[1]}.{parts[2]}"
+    assert verify_session_token(tampered_session) is None
+
+    # Invalid format
+    assert verify_session_token("invalid") is None
+    assert verify_session_token("") is None
+    assert verify_session_token(None) is None
+
+
+def test_session_token_with_dots_in_session_id(monkeypatch: pytest.MonkeyPatch) -> None:
+    secret = "test-secret-token"
+    monkeypatch.setenv("RAI_API_TOKEN", secret)
+
+    # 1. 3-part token for session ID with dots
+    token_dotted = create_session_token("work.v2", ttl_seconds=3600)
+    assert verify_session_token(token_dotted) == "work.v2"
+
+    token_multi_dot = create_session_token("corp.project.sub.session-1", ttl_seconds=3600)
+    assert verify_session_token(token_multi_dot) == "corp.project.sub.session-1"
+
+    # 2. Legacy 2-part token for session ID with dots
+    legacy_sig = hmac.new(
+        secret.encode("utf-8"), "work.v2".encode("utf-8"), hashlib.sha256
+    ).hexdigest()
+    legacy_token = f"work.v2.{legacy_sig}"
+    assert verify_session_token(legacy_token) == "work.v2"
+
+    # 3. Tampered token for session ID with dots
+    parts = token_dotted.rsplit(".", 2)
+    tampered = f"evil.session.{parts[1]}.{parts[2]}"
+    assert verify_session_token(tampered) is None
+
+    # 4. Expired token for session ID with dots
+    expired = create_session_token("work.v2", ttl_seconds=-5)
+    assert verify_session_token(expired) is None
+
+    # 5. Legacy 2-part token ending with numeric segment (e.g. "work.123")
+    sig_num_legacy = hmac.new(
+        secret.encode("utf-8"), "work.123".encode("utf-8"), hashlib.sha256
+    ).hexdigest()
+    legacy_numeric_token = f"work.123.{sig_num_legacy}"
+    assert verify_session_token(legacy_numeric_token) == "work.123"
+
+
+def test_session_token_rejects_malformed_unicode_expiry(monkeypatch: pytest.MonkeyPatch) -> None:
+    secret = "test-secret-token"
+    monkeypatch.setenv("RAI_API_TOKEN", secret)
+
+    # 1. Superscript two: '²' (str.isdigit() == True, int('²') raises ValueError)
+    assert verify_session_token("session.².signature") is None
+    assert verify_session_token("session.123²45.signature") is None
+
+    # 2. Arabic-Indic digits ('١٢٣' - isdigit() == True, non-ascii)
+    assert verify_session_token("session.١٢٣.signature") is None
+
+    # 3. Non-numeric / letters in expiry
+    assert verify_session_token("session.not_a_number.signature") is None
+    assert verify_session_token("session.123abc.signature") is None
+
+    # 4. Overly long integer (>4300 digits that would exceed Python integer conversion limit)
+    huge_exp = "9" * 5000
+    assert verify_session_token(f"session.{huge_exp}.signature") is None

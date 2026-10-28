@@ -25,6 +25,8 @@ from ..records import (
     MemoryRecord,
     MemoryRelation,
     MemoryRelationKind,
+    ObservationArtifact,
+    ObservationSchemaSummary,
 )
 
 
@@ -193,6 +195,46 @@ def response_from_row(row: sqlite3.Row) -> AssistantResponse:
         admitted_memory_ids=admitted,
         memory_operation_ids=operation_ids,
         provenance=provenance,
+    )
+
+
+def observation_artifact_from_row(row: sqlite3.Row) -> ObservationArtifact:
+    """Restore an observation artifact from its authoritative store row."""
+    provenance = tuple(
+        ProvenanceReference.model_validate(item)
+        for item in json.loads(row["provenance_json"])
+    )
+    derived_from = tuple(json.loads(row["derived_from_json"] or "[]"))
+    schema_summary = ObservationSchemaSummary.model_validate_json(
+        row["schema_summary_json"]
+    )
+    producer = (
+        ProducerIdentity.model_validate_json(row["producer_json"])
+        if ("producer_json" in row.keys() and row["producer_json"])
+        else ProducerIdentity(
+            producer_id="assistant-store", kind="store", version="1.0.0"
+        )
+    )
+    return ObservationArtifact(
+        record_id=row["record_id"],
+        artifact_id=row["artifact_id"],
+        session_id=row["session_id"],
+        turn_id=row["turn_id"],
+        capability=row["capability"],
+        request_id=row["request_id"],
+        data_class=DataClass(row["data_class"]),
+        content=json.loads(row["content_json"]),
+        schema_summary=schema_summary,
+        size_chars=int(row["size_chars"]),
+        created_at=datetime.fromisoformat(row["created_at"]),
+        expires_at=(
+            datetime.fromisoformat(row["expires_at"])
+            if row["expires_at"]
+            else None
+        ),
+        provenance=provenance,
+        derived_from=derived_from,
+        producer=producer,
     )
 
 

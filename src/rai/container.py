@@ -162,6 +162,15 @@ class ApplicationContainer:
                 return {"text": output}
 
             self.capability_registry.replace_handler("run_python_code", _container_python)
+
+        if self.capability_registry.descriptor("observation.search") is None:
+            from .actions.observations import (  # noqa: PLC0415
+                register_observation_capabilities,
+            )
+
+            register_observation_capabilities(
+                self.capability_registry, self.memory_graph_store
+            )
         self.capability_service.executions = SQLiteExecutionStore(
             data_dir() / "actions" / "executions.sqlite3"
         )
@@ -333,10 +342,15 @@ class ApplicationContainer:
             from .tools.security.monty import MontyRunner  # noqa: PLC0415
 
             monty_config = self.config.get("monty", {})
-            config = monty_config if isinstance(monty_config, dict) else {}
+            if hasattr(monty_config, "model_dump"):
+                config = monty_config.model_dump()
+            elif isinstance(monty_config, dict):
+                config = monty_config
+            else:
+                config = {}
             self._monty_runner = MontyRunner(
                 max_duration_secs=float(config.get("max_duration_secs", 2.0)),
-                max_memory_bytes=int(config.get("max_memory_bytes", 32 * 1024 * 1024)),
+                max_memory_bytes=int(config.get("max_memory_bytes", 64 * 1024 * 1024)),
             )
         return self._monty_runner
 
@@ -469,6 +483,7 @@ class ApplicationContainer:
                 limits=step_limits,
                 max_full_observations=runtime.max_full_observations,
                 bypass_intent_recognizer=runtime.bypass_intent_recognizer,
+                store=self.memory_graph_store,
             )
             from .assistant.controllers.direct import DirectController  # noqa: PLC0415
 

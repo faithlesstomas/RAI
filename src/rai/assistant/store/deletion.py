@@ -149,6 +149,7 @@ class DeletionStoreMixin:
                     )
 
                 conn.execute("DELETE FROM turns_fts WHERE turn_id = ?", (turn_id,))
+                conn.execute("DELETE FROM observation_artifacts WHERE turn_id = ?", (turn_id,))
                 conn.execute("DELETE FROM nodes WHERE node_id = ?", (turn_id,))
 
             return Success(1)
@@ -225,6 +226,7 @@ class DeletionStoreMixin:
 
                 if exists:
                     conn.execute("DELETE FROM turns_fts WHERE turn_id = ?", (turn_id,))
+                    conn.execute("DELETE FROM observation_artifacts WHERE turn_id = ?", (turn_id,))
                     conn.execute("DELETE FROM nodes WHERE node_id = ?", (turn_id,))
 
             return Success(1 if exists else 0)

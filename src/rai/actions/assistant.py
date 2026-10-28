@@ -685,13 +685,28 @@ class AssistantActions:
         }
         if query_str:
             output_dict["requested_filter"] = query_str
+        from rai.assistant.observation_budget import persist_observation_artifact  # noqa: PLC0415
+
+        artifact_id = await persist_observation_artifact(
+            store=self.store,
+            session_id=turn.session_id,
+            turn_id=turn.record_id,
+            capability="application.list",
+            request_id=f"act:{turn.record_id}",
+            data_class=turn.data_class,
+            output=output_dict,
+            producer=turn.producer,
+        )
+        act_res_dict: dict[str, Any] = {
+            "capability": "application.list",
+            "status": "SUCCEEDED",
+            "output": output_dict,
+        }
+        if artifact_id:
+            act_res_dict["artifact_id"] = artifact_id
         metadata = {
             "action_choices": {"kind": "application", "task_id": task_id, "entries": applications},
-            "action_result": {
-                "capability": "application.list",
-                "status": "SUCCEEDED",
-                "output": output_dict,
-            },
+            "action_result": act_res_dict,
         }
         return AssistantCandidate(
             text=reply,

@@ -160,11 +160,13 @@ def targets(*items: dict) -> Callable[[httpx.Request], httpx.Response]:
 
 
 async def test_read_returns_bounded_untrusted_snapshot(monkeypatch: pytest.MonkeyPatch) -> None:
-    install_cdp(monkeypatch, lambda *_: snapshot(text="x" * 20000), targets(tab(), tab(kind="service_worker")))
+    install_cdp(monkeypatch, lambda *_: snapshot(text="x" * (browser.MAX_PAGE_CHARACTERS + 2000)), targets(tab(), tab(kind="service_worker")))
     read = await CdpBrowserBackend(ENDPOINT).read(URL, CancellationToken())
     content = read.unwrap()
     assert content["untrusted_content"] is True and content["observed_url"] == URL
     assert len(content["title"]) == 256 and len(content["text"]) == browser.MAX_PAGE_CHARACTERS
+    assert content["complete"] is False
+    assert content["reason"] is not None
 
 
 async def test_read_requires_exactly_one_matching_current_tab(monkeypatch: pytest.MonkeyPatch) -> None:

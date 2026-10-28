@@ -363,6 +363,7 @@ class AnswerDraftSpecialist:
                         summary=json.dumps(obs, ensure_ascii=False)[:120],
                         untrusted_content=True,
                         content=obs if isinstance(obs, dict) else {"value": obs},
+                        artifact_id=obs.get("_artifact_id") if isinstance(obs, dict) else None,
                     ).model_dump(mode="json")
                 )
             req_context = req_context.model_copy(

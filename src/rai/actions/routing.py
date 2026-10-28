@@ -155,6 +155,20 @@ async def route_action(  # noqa: PLR0911, PLR0912, PLR0913, PLR0915
         text = f"Nie potwierdzam wykonania: {terminal.code}." if polish else f"Execution not verified: {terminal.code}."
     else:
         output = executed.unwrap().output
+        from rai.assistant.observation_budget import persist_observation_artifact  # noqa: PLC0415
+
+        artifact_id = await persist_observation_artifact(
+            store=store,
+            session_id=turn.session_id,
+            turn_id=turn.record_id,
+            capability=name,
+            request_id=terminal.request_id,
+            data_class=getattr(terminal, "data_class", turn.data_class),
+            output=output,
+            producer=getattr(terminal, "producer", turn.producer),
+        )
+        if artifact_id:
+            metadata["action_result"]["artifact_id"] = artifact_id
         if name in {"browser.search", "process.inspect"}:
             entries = output["results" if name == "browser.search" else "processes"]
             choices = {"kind": "url" if name == "browser.search" else "process", "task_id": task_id, "entries": entries}

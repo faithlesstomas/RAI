@@ -24,7 +24,7 @@ from .handles import SQLiteHandleStore
 from .records import ResourceHandle
 
 MAX_URL_CHARACTERS = 4096
-MAX_PAGE_CHARACTERS = 16000
+MAX_PAGE_CHARACTERS = 500_000
 MAX_SEARCH_RESULTS = 5
 
 
@@ -173,7 +173,7 @@ class CdpBrowserBackend:
         except Exception:  # pylint: disable=broad-exception-caught
             return Failure("BROWSER_SEARCH_UNAVAILABLE")
 
-    async def open(self, url: str, token: CancellationToken) -> Result[dict, str]:
+    async def open(self, url: str, token: CancellationToken) -> Result[dict, str]:  # noqa: PLR0911
         if not self.endpoint:
             return Failure("BROWSER_NOT_CONFIGURED")
         if not web_url(url):
@@ -204,7 +204,7 @@ class CdpBrowserBackend:
         except Exception:  # pylint: disable=broad-exception-caught
             return Failure("BROWSER_UNAVAILABLE")
 
-    async def read(self, url: str, token: CancellationToken) -> Result[dict, str]:
+    async def read(self, url: str, token: CancellationToken) -> Result[dict, str]:  # noqa: PLR0911
         if not self.endpoint:
             return Failure("BROWSER_NOT_CONFIGURED")
         if not web_url(url):
@@ -221,14 +221,23 @@ class CdpBrowserBackend:
                 return Failure("CANCELLED")
             page = pages[0]
             snapshot = await self._command(page["webSocketDebuggerUrl"], "Runtime.evaluate", {
-                "expression": "JSON.stringify({url:location.href,title:document.title,text:(document.body?.innerText||'').slice(0,16000)})",
+                "expression": f"JSON.stringify({{url:location.href,title:document.title,text:(document.body?.innerText||'').slice(0,{MAX_PAGE_CHARACTERS})}})",
                 "returnByValue": True,
             })
             content = json.loads(snapshot["result"]["value"])
             if content["url"] != url:
                 return Failure("STALE_RESOURCE")
-            return Success({"target_id": page["id"], "observed_url": url, "title": content["title"][:256],
-                            "text": content["text"][:MAX_PAGE_CHARACTERS], "untrusted_content": True})
+            raw_text = content.get("text", "")
+            is_complete = len(raw_text) < MAX_PAGE_CHARACTERS
+            return Success({
+                "target_id": page["id"],
+                "observed_url": url,
+                "title": content["title"][:256],
+                "text": raw_text[:MAX_PAGE_CHARACTERS],
+                "untrusted_content": True,
+                "complete": is_complete,
+                "reason": None if is_complete else f"Page truncated at {MAX_PAGE_CHARACTERS} characters",
+            })
         except Exception:  # pylint: disable=broad-exception-caught
             return Failure("BROWSER_READ_FAILED")
 
@@ -257,7 +266,7 @@ class SafeNetworkBackend(httpcore.AnyIOBackend):
         port: int,
         timeout: float | None = None,
         local_address: str | None = None,
-        socket_options: Any = None,
+        socket_options: Any = None,  # noqa: ANN401
     ) -> httpcore.AsyncNetworkStream:
         try:
             ip = ipaddress.ip_address(host.strip("[]"))
@@ -285,7 +294,7 @@ class SafeNetworkBackend(httpcore.AnyIOBackend):
 class SafeAsyncHTTPTransport(httpx.AsyncHTTPTransport):
     """HTTP transport with post-connect TCP socket verification against SSRF and DNS rebinding."""
 
-    def __init__(self, *args: Any, **kwargs: Any) -> None:
+    def __init__(self, *args: Any, **kwargs: Any) -> None:  # noqa: ANN401
         super().__init__(*args, **kwargs)
         self._pool._network_backend = SafeNetworkBackend()
 
@@ -336,7 +345,7 @@ async def _fetch_http_page_snapshot(  # noqa: PLR0911, PLR0912
                         if token.cancelled:
                             return Failure("CANCELLED")
                         raw_bytes.extend(chunk)
-                        if len(raw_bytes) >= 512 * 1024:
+                        if len(raw_bytes) >= 2 * 1024 * 1024:
                             break
                     encoding = response.encoding or "utf-8"
                     raw_html = raw_bytes.decode(encoding, errors="replace")
@@ -347,12 +356,15 @@ async def _fetch_http_page_snapshot(  # noqa: PLR0911, PLR0912
         title, text = _clean_html_to_text(raw_html, fallback_title=url)
         if not text:
             return Failure("BROWSER_READ_FAILED")
+        is_complete = len(text) < MAX_PAGE_CHARACTERS and len(raw_bytes) < 2 * 1024 * 1024
         return Success({
             "target_id": f"http:{hashlib.sha256(url.encode()).hexdigest()[:12]}",
             "observed_url": url,
             "title": title,
-            "text": text,
+            "text": text[:MAX_PAGE_CHARACTERS],
             "untrusted_content": True,
+            "complete": is_complete,
+            "reason": None if is_complete else f"Page truncated at {MAX_PAGE_CHARACTERS} characters",
         })
     except (httpx.ConnectError, httpcore.ConnectError):
         return Failure("STALE_RESOURCE")
@@ -395,7 +407,19 @@ class BrowserCapability:
                 if "snippet" in item and item["snippet"]:
                     entry["snippet"] = str(item["snippet"])[:250]
                 entries.append(entry)
-            return Success(result(request, {"results": entries, "untrusted_content": True}, {"search_response_received": True}))
+            is_complete = len(entries) < MAX_SEARCH_RESULTS
+            return Success(
+                result(
+                    request,
+                    {
+                        "results": entries,
+                        "untrusted_content": True,
+                        "complete": is_complete,
+                        "reason": None if is_complete else f"Search results capped at limit of {MAX_SEARCH_RESULTS}",
+                    },
+                    {"search_response_received": True},
+                )
+            )
         resolved = self.handles.resolve(request.arguments["handle"], actor_id=request.actor.producer_id,
                                         task_id=request.arguments["task_id"], operation=self.name)
         if isinstance(resolved, Failure):

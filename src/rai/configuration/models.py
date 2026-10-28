@@ -170,6 +170,11 @@ class LegacySettings(SettingsRecord):
     enabled: bool = False
 
 
+class MontySettings(SettingsRecord):
+    max_duration_secs: float = Field(default=2.0, gt=0)
+    max_memory_bytes: int = Field(default=64 * 1024 * 1024, gt=0)
+
+
 class AppSettings(SettingsRecord):
     schema_version: Literal[1] = 1
     active_agent: str = "default"
@@ -180,6 +185,7 @@ class AppSettings(SettingsRecord):
     local_ai: LocalSettings = Field(default_factory=LocalSettings)
     actions: ActionSettings = Field(default_factory=ActionSettings)
     tts: TtsSettings = Field(default_factory=TtsSettings)
+    monty: MontySettings = Field(default_factory=MontySettings)
     rich_history: HistorySettings = Field(default_factory=HistorySettings)
     legacy_chat: LegacySettings = Field(default_factory=LegacySettings)
 

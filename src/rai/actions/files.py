@@ -23,6 +23,9 @@ from .applications import ApplicationBackend
 
 MAX_VISITED = 10000
 MAX_QUERY = 256
+MAX_DIRECTORY_ENTRIES = 5000
+MAX_FILE_RESULTS = 1000
+MAX_RESULTS = MAX_FILE_RESULTS
 SAFE_DOCUMENT_SUFFIXES = frozenset({".txt", ".md", ".pdf", ".odt", ".ods", ".odp", ".docx", ".xlsx", ".pptx", ".csv", ".rtf"})
 
 
@@ -66,42 +69,50 @@ def _matches_document_query(name: str, query: str) -> bool:
     return query.casefold() in name.casefold()
 
 
-def search_documents(roots: tuple[Path, ...], query: str, directory: Path | None = None) -> tuple[Document, ...]:  # noqa: PLR0912
+def search_documents_detailed(  # noqa: PLR0912
+    roots: tuple[Path, ...],
+    query: str,
+    directory: Path | None = None,
+    limit: int | None = None,
+) -> tuple[tuple[Document, ...], bool, str | None]:
     """Bound work by visited directory entries; never read document contents."""
+    max_limit = limit if limit is not None else MAX_RESULTS
     query_stripped = query.strip()
     query_path = Path(query_stripped)
 
     # Handle exact absolute file lookup without wildcards
     if query_path.is_absolute() and not any(c in query_stripped for c in ("*", "?", "[")):
         document = inspect_document(query_path, roots, allow_directory=True)
-        return (document,) if document else ()
+        return ((document,), True, None) if document else ((), True, None)
 
     if query_path.is_absolute():
         parent_doc = inspect_document(query_path.parent, roots, allow_directory=True)
         if not parent_doc:
-            return ()
+            return (), True, None
         search_roots = (parent_doc.path,)
         pattern = query_path.name
     elif directory is not None:
         dir_doc = inspect_document(directory, roots, allow_directory=True)
         if not dir_doc:
-            return ()
+            return (), True, None
         search_roots = (dir_doc.path,)
         pattern = query_stripped
     else:
         search_roots = roots
         pattern = query_stripped
-
     found: list[Document] = []
     pending = list(search_roots)
     visited = 0
-    while pending and visited < MAX_VISITED and len(found) < MAX_RESULTS:
+    hit_visited_limit = False
+    hit_found_limit = False
+    while pending and visited < MAX_VISITED and len(found) < max_limit:
         curr_dir = pending.pop()
         try:
             with os.scandir(curr_dir) as entries:
                 for entry in entries:
                     visited += 1
-                    if visited > MAX_VISITED:
+                    if visited >= MAX_VISITED:
+                        hit_visited_limit = True
                         break
                     if entry.is_symlink():
                         continue
@@ -111,11 +122,43 @@ def search_documents(roots: tuple[Path, ...], query: str, directory: Path | None
                         document = inspect_document(Path(entry.path), roots)
                         if document:
                             found.append(document)
-                            if len(found) >= MAX_RESULTS:
+                            if len(found) >= max_limit:
+                                hit_found_limit = True
                                 break
         except OSError:
             continue
-    return tuple(sorted(found, key=lambda item: str(item.path)))
+    sorted_docs = tuple(sorted(found, key=lambda item: str(item.path)))
+    if hit_found_limit or (pending and len(found) >= max_limit):
+        return sorted_docs, False, f"File search capped at safety guard of {max_limit}"
+    if hit_visited_limit or (pending and visited >= MAX_VISITED):
+        return sorted_docs, False, f"File search exceeded scan limit of {MAX_VISITED} visited directory entries"
+    return sorted_docs, True, None
+
+
+class DocumentSearchResult(tuple[Document, ...]):
+    complete: bool
+    reason: str | None
+
+    def __new__(
+        cls,
+        items: tuple[Document, ...] | list[Document],
+        complete: bool = True,
+        reason: str | None = None,
+    ) -> "DocumentSearchResult":
+        inst = super().__new__(cls, items)
+        inst.complete = complete
+        inst.reason = reason
+        return inst
+
+
+def search_documents(
+    roots: tuple[Path, ...],
+    query: str,
+    directory: Path | None = None,
+    limit: int | None = None,
+) -> DocumentSearchResult:
+    docs, complete, reason = search_documents_detailed(roots, query, directory, limit)
+    return DocumentSearchResult(docs, complete=complete, reason=reason)
 
 
 class DocumentBackend(Protocol):
@@ -155,6 +198,12 @@ class FileSearch:
         if not query.strip() or len(query) > MAX_QUERY or not task_id:
             return Failure(failure(request, "INVALID_ARGUMENT"))
         documents = await asyncio.to_thread(search_documents, self.roots, query, sub_dir)
+        complete = getattr(documents, "complete", len(documents) < MAX_FILE_RESULTS)
+        reason = getattr(
+            documents,
+            "reason",
+            None if complete else f"File search capped at safety guard of {MAX_FILE_RESULTS}",
+        )
         entries = []
         for document in documents:
             if cancellation.cancelled:
@@ -170,7 +219,19 @@ class FileSearch:
                 return Failure(failure(request, issued.failure()))
             entries.append({"name": document.path.name, "path": str(document.path), "handle": issued.unwrap(),
                             "expires_at": handle.expires_at.isoformat()})
-        return Success(result(request, {"documents": entries, "limit": MAX_RESULTS, "total_count": len(entries)}, {"allowed_roots_checked": True}))
+        return Success(
+            result(
+                request,
+                {
+                    "documents": entries,
+                    "limit": MAX_FILE_RESULTS,
+                    "total_count": len(entries),
+                    "complete": complete,
+                    "reason": reason,
+                },
+                {"allowed_roots_checked": True},
+            )
+        )
 
 
 class FileList:
@@ -203,12 +264,18 @@ class FileList:
                 truncated = False
                 with os.scandir(descriptor) as children:
                     for index, entry in enumerate(children):
-                        if index >= MAX_RESULTS:
+                        if index >= MAX_DIRECTORY_ENTRIES:
                             truncated = True
                             break
                         kind = "symlink" if entry.is_symlink() else "directory" if entry.is_dir(follow_symlinks=False) else "file"
                         entries.append({"name": entry.name, "path": str(path / entry.name), "kind": kind})
-                return {"entries": sorted(entries, key=lambda item: item["name"]), "truncated": truncated}
+                complete = not truncated
+                return {
+                    "entries": sorted(entries, key=lambda item: item["name"]),
+                    "complete": complete,
+                    "reason": None if complete else f"Directory listing exceeded safety guard of {MAX_DIRECTORY_ENTRIES} entries",
+                    "truncated": truncated,
+                }
             finally:
                 os.close(descriptor)
 

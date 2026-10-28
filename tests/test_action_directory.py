@@ -12,7 +12,10 @@ from rai.kernel.ports import CancellationToken
 from rai.kernel.transport import normalize_request
 
 
-async def test_directory_listing_is_bounded_and_does_not_follow_links(tmp_path):
+async def test_directory_listing_is_bounded_and_does_not_follow_links(tmp_path, monkeypatch):
+    import rai.actions.files as files
+    monkeypatch.setattr(files, "MAX_DIRECTORY_ENTRIES", 30)
+
     allowed = tmp_path / "allowed"
     allowed.mkdir()
     (allowed / "subdirectory").mkdir()
@@ -29,12 +32,16 @@ async def test_directory_listing_is_bounded_and_does_not_follow_links(tmp_path):
     listed = (await invoke(allowed)).unwrap().output
     assert {entry["kind"] for entry in listed["entries"]} == {"directory", "file", "symlink"}
     assert "private content" not in str(listed)
+    assert listed["complete"] is True
+    assert listed["reason"] is None
     assert isinstance(await invoke(allowed / "link"), Failure)
     assert isinstance(await invoke(tmp_path), Failure)
     for index in range(40):
         (allowed / f"note-{index}.txt").touch()
     limited = (await invoke(allowed)).unwrap().output
     assert limited["truncated"]
+    assert limited["complete"] is False
+    assert limited["reason"] is not None
     assert len(limited["entries"]) <= 30
 
 

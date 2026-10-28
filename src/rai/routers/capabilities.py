@@ -2,12 +2,13 @@
 
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Request
 
 from ..dependencies import get_capability_service
 from ..kernel.records import CapabilityRequest
 from ..kernel.service import CapabilityService
 from ..kernel.transport import InvocationEnvelope, invoke_envelope
+from ..tools.security.auth import verify_session_token
 
 router = APIRouter(prefix="/api/v1/capabilities", tags=["Capabilities"])
 
@@ -26,7 +27,21 @@ async def list_capabilities(
 
 @router.post("/invoke", response_model=InvocationEnvelope)
 async def invoke_capability(
+    http_request: Request,
     request: CapabilityRequest,
     service: CapabilityService = Depends(get_capability_service),
 ) -> InvocationEnvelope:
+    session_token = (
+        http_request.headers.get("x-session-token")
+        or http_request.query_params.get("session_token")
+    )
+    trusted_session_id = verify_session_token(session_token) or ""
+    descriptor = service.registry.descriptor(request.capability)
+    expects_session = bool(
+        descriptor and "session_id" in descriptor.input_schema.get("properties", {})
+    )
+    if expects_session or "session_id" in request.arguments:
+        arguments = dict(request.arguments)
+        arguments["session_id"] = trusted_session_id
+        request = request.model_copy(update={"arguments": arguments})
     return await invoke_envelope(service, request)
