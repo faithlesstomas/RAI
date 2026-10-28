@@ -21,6 +21,7 @@ from rai.kernel.capabilities import (
     CapabilityRegistry,
     RegisteredCapability,
 )
+from rai.kernel.references import parse_json_pointer, traverse_json_pointer
 from rai.kernel.ports import CancellationToken
 from rai.kernel.records import (
     ActionFailure,
@@ -1166,40 +1167,8 @@ class ObservationCount:
 
 
 
-def _parse_json_pointer(path: str) -> Result[list[str], str]:
-    if path == "":
-        return Success([])
-    if not path.startswith("/"):
-        return Failure("JSON pointer must be empty or start with '/'")
-    segments: list[str] = []
-    for raw_seg in path[1:].split("/"):
-        if re.search(r"~(?![01])", raw_seg) or raw_seg.endswith("~"):
-            return Failure(f"Invalid escape sequence in segment '{raw_seg}'")
-        segments.append(raw_seg.replace("~1", "/").replace("~0", "~"))
-    return Success(segments)
-
-
-def _traverse_json_pointer(
-    curr: Any,  # noqa: ANN401
-    segments: list[str],
-) -> Result[Any, tuple[str, str]]:
-    for seg in segments:
-        if isinstance(curr, dict):
-            if seg not in curr:
-                return Failure(("PATH_NOT_FOUND", f"Key '{seg}' not found in object"))
-            curr = curr[seg]
-        elif isinstance(curr, (list, tuple)):
-            if not seg.isdigit() or (len(seg) > 1 and seg.startswith("0")):
-                return Failure(("INVALID_POINTER", f"Invalid array index '{seg}'"))
-            idx = int(seg)
-            if idx >= len(curr):
-                return Failure(("PATH_NOT_FOUND", f"Index {idx} out of range"))
-            curr = curr[idx]
-        else:
-            return Failure(
-                ("INVALID_POINTER", f"Cannot index into {type(curr).__name__} with '{seg}'")
-            )
-    return Success(curr)
+_parse_json_pointer = parse_json_pointer
+_traverse_json_pointer = traverse_json_pointer
 
 
 def _bound_get_value(

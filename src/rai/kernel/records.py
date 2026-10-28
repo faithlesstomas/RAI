@@ -296,6 +296,7 @@ class CapabilityRequest(KernelRecord):
     isolation: str = Field(min_length=1)
     budget: InferenceBudget | None = None
     verification_plan: tuple[str, ...] = Field(min_length=1)
+    session_id: str | None = None
 
 
 class ActionResult(KernelRecord):

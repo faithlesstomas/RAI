@@ -30,6 +30,7 @@ class AuditEntry(BaseModel):
     decision: PolicyDecision
     approval_id: str | None = None
     result: ActionResult | ActionFailure | None = None
+    referenced_artifact_ids: tuple[str, ...] = ()
 
 
 class InMemoryAuditLedger:

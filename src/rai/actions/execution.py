@@ -85,6 +85,7 @@ class SQLiteExecutionStore:
     def finish(
         self, request: CapabilityRequest, terminal: ActionResult | ActionFailure,
         decision: PolicyDecision | None = None, approval_id: str | None = None,
+        referenced_artifact_ids: tuple[str, ...] = (),
     ) -> Result[None, str]:
         """A completed reservation cannot be overwritten with another outcome."""
         if terminal.request_id != request.record_id or terminal.capability != request.capability:
@@ -102,7 +103,13 @@ class SQLiteExecutionStore:
                 if changed != 1:
                     return Failure("TERMINAL_CONFLICT")
                 if decision is not None:
-                    entry = AuditEntry(stage="TERMINAL", decision=decision, approval_id=approval_id, result=terminal)
+                    entry = AuditEntry(
+                        stage="TERMINAL",
+                        decision=decision,
+                        approval_id=approval_id,
+                        result=terminal,
+                        referenced_artifact_ids=referenced_artifact_ids,
+                    )
                     connection.execute("INSERT INTO audit_outbox (id, payload) VALUES (?, ?)",
                                        (request.record_id, entry.model_dump_json()))
             return Success(None)
