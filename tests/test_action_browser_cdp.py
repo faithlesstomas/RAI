@@ -1,4 +1,5 @@
 """Chromium debugging adapter and browser capabilities against hermetic CDP/HTTP doubles."""
+# ruff: noqa: PLR2004, ANN401, PLR0402
 from __future__ import annotations
 
 import asyncio
@@ -193,7 +194,8 @@ async def test_read_detects_cancellation_navigation_and_oversized_target_list(mo
 def install_ddgs(monkeypatch: pytest.MonkeyPatch, items: list[dict] | Exception) -> None:
     class DDGS:
         def __init__(self, **_: Any) -> None: ...
-        def __enter__(self) -> DDGS: return self
+        def __enter__(self) -> DDGS:  # type: ignore[name-defined] # pylint: disable=undefined-variable
+            return self
         def __exit__(self, *_: Any) -> None: ...
 
         def text(self, query: str, max_results: int) -> list[dict]:
@@ -207,8 +209,11 @@ def install_ddgs(monkeypatch: pytest.MonkeyPatch, items: list[dict] | Exception)
 
 
 async def test_search_keeps_only_bounded_public_web_results(monkeypatch: pytest.MonkeyPatch) -> None:
-    install_ddgs(monkeypatch, [{"title": "A" * 400, "href": URL}, {"title": "Local", "href": "file:///etc/passwd"},
-                               {"title": "Bad"}] + [{"title": f"R{i}", "href": f"https://r{i}.example/"} for i in range(8)])
+    install_ddgs(
+        monkeypatch,
+        [{"title": "A" * 400, "href": URL}, {"title": "Local", "href": "file:///etc/passwd"}, {"title": "Bad"}]
+        + [{"title": f"R{i}", "href": f"https://r{i}.example/"} for i in range(browser.MAX_SEARCH_RESULTS + 5)],
+    )
     found = (await CdpBrowserBackend().search("query", CancellationToken())).unwrap()
     assert len(found) == browser.MAX_SEARCH_RESULTS
     assert len(found[0]["name"]) == 256 and all(browser.web_url(item["url"]) for item in found)

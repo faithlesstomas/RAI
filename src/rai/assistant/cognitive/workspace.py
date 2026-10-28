@@ -72,6 +72,7 @@ class WorkspaceEngine(InteractionController):
         probe: JLensProbe | None = None,
         context_builder: object = None,
         max_cycles: int | None = _DEFAULT_MAX_CYCLES,
+        store: object = None,
     ) -> None:
         self.capabilities = capabilities
         self.actions = actions
@@ -81,6 +82,7 @@ class WorkspaceEngine(InteractionController):
         self.context_builder = context_builder
         self.max_cycles = max_cycles
         self.arbiter = arbiter or SalienceArbiter()
+        self.store = store or getattr(context_builder, "store", None)
 
         if specialists is not None:
             self.specialists = specialists
@@ -142,6 +144,25 @@ class WorkspaceEngine(InteractionController):
                         if isinstance(act_res_dict, dict)
                         else {"raw_text": tool_cand.text}
                     )
+                    from rai.assistant.observation_budget import persist_observation_artifact  # noqa: PLC0415
+                    artifact_id = (
+                        act_res_dict.get("_artifact_id")
+                        if isinstance(act_res_dict, dict)
+                        else None
+                    )
+                    if not artifact_id and self.store is not None:
+                        artifact_id = await persist_observation_artifact(
+                            store=self.store,
+                            session_id=turn.session_id,
+                            turn_id=turn.turn_id,
+                            capability=cap_name,
+                            request_id=str(req_id),
+                            data_class=turn.data_class,
+                            output=raw_out,
+                            producer=PRODUCER,
+                        )
+                    if artifact_id and isinstance(raw_out, dict):
+                        raw_out = {**raw_out, "_artifact_id": artifact_id}
                     obs_out = _compact_observation_content(
                         raw_out,
                         fallback_text=tool_cand.text,
@@ -181,8 +202,22 @@ class WorkspaceEngine(InteractionController):
                 obs_ids.append(req_id)
                 if isinstance(executed, Success):
                     act_res = executed.unwrap()
+                    from rai.assistant.observation_budget import persist_observation_artifact  # noqa: PLC0415
+                    artifact_id = await persist_observation_artifact(
+                        store=self.store,
+                        session_id=turn.session_id,
+                        turn_id=getattr(turn, "turn_id", getattr(turn, "record_id", "")),
+                        capability=cap_name,
+                        request_id=act_res.request_id,
+                        data_class=turn.data_class,
+                        output=act_res.output,
+                        producer=act_res.producer,
+                    )
+                    out_for_compact = act_res.output
+                    if artifact_id and isinstance(out_for_compact, dict):
+                        out_for_compact = {**out_for_compact, "_artifact_id": artifact_id}
                     compacted = _compact_observation_content(
-                        act_res.output,
+                        out_for_compact,
                         capability=cap_name,
                     )
                     return workspace.model_copy(

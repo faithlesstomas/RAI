@@ -25,7 +25,8 @@ from .records import ResourceHandle
 
 MAX_URL_CHARACTERS = 4096
 MAX_PAGE_CHARACTERS = 500_000
-MAX_SEARCH_RESULTS = 5
+DEFAULT_SEARCH_RESULTS = 25
+MAX_SEARCH_RESULTS = 50
 
 
 def _is_forbidden_ip(ip: ipaddress.IPv4Address | ipaddress.IPv6Address) -> bool:
@@ -387,11 +388,19 @@ class BrowserCapability:
             query = request.arguments["query"]
             if not query.strip() or len(query) > 256:  # noqa: PLR2004
                 return Failure(failure(request, "INVALID_ARGUMENT"))
+            limit_arg = request.arguments.get("limit") or request.arguments.get("max_results")
+            try:
+                requested_limit = int(limit_arg) if limit_arg is not None else DEFAULT_SEARCH_RESULTS
+            except (ValueError, TypeError):
+                requested_limit = DEFAULT_SEARCH_RESULTS
+            search_limit = max(1, min(requested_limit, MAX_SEARCH_RESULTS))
+
             found = await self.backend.search(query, cancellation)
             if isinstance(found, Failure):
                 return Failure(failure(request, found.failure()))
+            raw_items = found.unwrap()
             entries = []
-            for item in found.unwrap()[:MAX_SEARCH_RESULTS]:
+            for item in raw_items[:search_limit]:
                 if not web_url(item["url"]):
                     continue
                 now = _utc_now()
@@ -407,7 +416,7 @@ class BrowserCapability:
                 if "snippet" in item and item["snippet"]:
                     entry["snippet"] = str(item["snippet"])[:250]
                 entries.append(entry)
-            is_complete = len(entries) < MAX_SEARCH_RESULTS
+            is_complete = len(raw_items) <= search_limit
             return Success(
                 result(
                     request,
@@ -415,7 +424,7 @@ class BrowserCapability:
                         "results": entries,
                         "untrusted_content": True,
                         "complete": is_complete,
-                        "reason": None if is_complete else f"Search results capped at limit of {MAX_SEARCH_RESULTS}",
+                        "reason": None if is_complete else f"Search results capped at limit of {search_limit}",
                     },
                     {"search_response_received": True},
                 )
@@ -454,11 +463,32 @@ class BrowserCapability:
 
 def register_browser_capabilities(registry: CapabilityRegistry, handles: SQLiteHandleStore, backend: BrowserBackend) -> None:
     for name in ("browser.search", "browser.open_result", "browser.read_page"):
-        fields = ("task_id", "query" if name == "browser.search" else "handle")
+        if name == "browser.search":
+            input_schema: dict[str, Any] = {
+                "type": "object",
+                "properties": {
+                    "task_id": {"type": "string"},
+                    "query": {"type": "string"},
+                    "limit": {
+                        "type": "integer",
+                        "description": "Maximum number of results to return (1-50)",
+                        "default": DEFAULT_SEARCH_RESULTS,
+                    },
+                },
+                "required": ["task_id", "query"],
+                "additionalProperties": False,
+            }
+        else:
+            fields = ("task_id", "handle")
+            input_schema = {
+                "type": "object",
+                "properties": {key: {"type": "string"} for key in fields},
+                "required": list(fields),
+                "additionalProperties": False,
+            }
         registry.register(RegisteredCapability(CapabilityDescriptor(
             name=name, description=f"Bounded {name} in an explicitly configured browser (v1).",
-            input_schema={"type": "object", "properties": {key: {"type": "string"} for key in fields},
-                          "required": list(fields), "additionalProperties": False},
+            input_schema=input_schema,
             risk_class=RiskClass.MODERATE, side_effects=("network", "browser") if name == "browser.open_result" else ("network",),
             isolation="host-api", verification_plan=("browser-url-identity",),
             timeout_seconds=60.0,

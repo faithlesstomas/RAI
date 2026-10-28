@@ -45,6 +45,7 @@ class ModelSettings(SettingsRecord):
     interaction_controller: Literal["direct", "bounded_step", "workspace"] = "bounded_step"
     max_iterations: int | None = Field(default=None, ge=1)
     max_full_observations: int = Field(default=3, ge=1)
+    max_observation_characters: int | str = Field(default="auto")
     bypass_intent_recognizer: bool = True
 
     @field_validator("max_iterations", mode="before")
@@ -69,6 +70,37 @@ class ModelSettings(SettingsRecord):
         if isinstance(v, str):
             return int(v.strip())
         return int(v)  # type: ignore[arg-type]
+
+    @field_validator("max_observation_characters", mode="before")
+    @classmethod
+    def _validate_max_observation_characters(cls, v: object) -> int | str:
+        if v is None:
+            return "auto"
+        if isinstance(v, str):
+            clean = v.strip().lower()
+            if clean in ("auto",):
+                return "auto"
+            if clean in ("none", "null", "inf", "infinity", "unlimited"):
+                return "inf"
+            try:
+                val = int(clean)
+                if val <= 0:
+                    raise ValueError("max_observation_characters must be positive")
+                return val
+            except ValueError as exc:
+                raise ValueError(
+                    f"Invalid max_observation_characters: {v!r}. Must be 'auto', 'inf', or a positive integer."
+                ) from exc
+        if isinstance(v, (int, float)):
+            if v == float("inf"):
+                return "inf"
+            val = int(v)
+            if val <= 0:
+                raise ValueError("max_observation_characters must be positive")
+            return val
+        raise ValueError(
+            f"Invalid max_observation_characters: {v!r}. Must be 'auto', 'inf', or a positive integer."
+        )
 
 
 class TtsSettings(SettingsRecord):
