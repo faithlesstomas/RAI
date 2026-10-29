@@ -106,16 +106,27 @@ class HistoryService:
             return Failure(error)
 
     async def clear_history(self, session_id: str) -> Result[None, Exception]:
-        """Remove all messages belonging to a conversation session."""
+        """Remove all messages, artifacts, and repl sessions belonging to a conversation session."""
         try:
             with self._connect() as database:
                 database.execute(
                     "DELETE FROM messages WHERE session_id = ?", (session_id,)
                 )
-            if self.observation_store is not None and hasattr(
-                self.observation_store, "delete_for_session"
-            ):
-                await self.observation_store.delete_for_session(session_id)
+            if self.observation_store is not None:
+                if hasattr(self.observation_store, "delete_for_session"):
+                    del_res = await self.observation_store.delete_for_session(session_id)
+                    if isinstance(del_res, Failure):
+                        raise RuntimeError(
+                            f"Failed to delete observation artifacts: {del_res.failure()}"
+                        )
+                if hasattr(self.observation_store, "clear_repl_session"):
+                    repl_res = await self.observation_store.clear_repl_session(
+                        session_id, profile_scope=None
+                    )
+                    if isinstance(repl_res, Failure):
+                        raise RuntimeError(
+                            f"Failed to clear repl session: {repl_res.failure()}"
+                        )
             return Success(None)
         except Exception as error:  # pylint: disable=broad-exception-caught
             return Failure(error)

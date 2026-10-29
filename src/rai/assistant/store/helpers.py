@@ -6,7 +6,7 @@ from datetime import datetime
 import json
 import re
 import sqlite3
-from typing import Any
+from typing import Any, Callable
 import unicodedata
 
 from rai.kernel.records import (
@@ -198,7 +198,10 @@ def response_from_row(row: sqlite3.Row) -> AssistantResponse:
     )
 
 
-def observation_artifact_from_row(row: sqlite3.Row) -> ObservationArtifact:
+def observation_artifact_from_row(
+    row: sqlite3.Row,
+    decryptor: Callable[[str, str], dict[str, Any]] | None = None,
+) -> ObservationArtifact:
     """Restore an observation artifact from its authoritative store row."""
     provenance = tuple(
         ProvenanceReference.model_validate(item)
@@ -215,6 +218,14 @@ def observation_artifact_from_row(row: sqlite3.Row) -> ObservationArtifact:
             producer_id="assistant-store", kind="store", version="1.0.0"
         )
     )
+    content_raw = row["content_json"]
+    if decryptor is not None:
+        content = decryptor(content_raw, row["record_id"])
+    elif content_raw.startswith("enc:"):
+        content = {"_encrypted": content_raw}
+    else:
+        content = json.loads(content_raw)
+
     return ObservationArtifact(
         record_id=row["record_id"],
         artifact_id=row["artifact_id"],
@@ -223,7 +234,7 @@ def observation_artifact_from_row(row: sqlite3.Row) -> ObservationArtifact:
         capability=row["capability"],
         request_id=row["request_id"],
         data_class=DataClass(row["data_class"]),
-        content=json.loads(row["content_json"]),
+        content=content,
         schema_summary=schema_summary,
         size_chars=int(row["size_chars"]),
         created_at=datetime.fromisoformat(row["created_at"]),

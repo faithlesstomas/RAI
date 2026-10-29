@@ -190,22 +190,25 @@ class LocalAssistantBackend:
             evidence_lines.append(
                 "Tool and action execution results (session observations):"
             )
+            total_budget = (
+                getattr(manifest, "evidence_character_budget", 0)
+                or (getattr(request.budget, "max_input_tokens", 0) * 3 if getattr(request, "budget", None) else 0)
+                or 32_000
+            )
+            used = sum(len(line) for line in evidence_lines)
+            remaining_total = max(1_500, total_budget - used)
+
             if isinstance(self.max_observation_characters, int):
                 obs_budget = self.max_observation_characters
             elif self.max_observation_characters == "inf":
                 obs_budget = 10_000_000
             else:
-                total_budget = (
-                    getattr(manifest, "evidence_character_budget", 0)
-                    or (getattr(request.budget, "max_input_tokens", 0) * 3 if getattr(request, "budget", None) else 0)
-                    or 32_000
-                )
-                used = sum(len(line) for line in evidence_lines)
-                remaining = max(1_500, total_budget - used)
-                obs_count = max(1, min(3, len(tool_observations)))
-                obs_budget = max(500, min(64_000, remaining // obs_count))
+                obs_count = max(1, min(10, len(tool_observations)))
+                obs_budget = max(500, min(64_000, remaining_total // obs_count))
 
-            for item in tool_observations[-3:]:
+            obs_lines: list[str] = []
+            accumulated_chars = 0
+            for item in reversed(tool_observations):
                 if isinstance(item, dict):
                     capability = str(item.get("capability", "tool"))
                     summary = str(item.get("summary", ""))
@@ -213,7 +216,13 @@ class LocalAssistantBackend:
                     content_str = self._bound_content_repr(
                         content_val, max_len=obs_budget
                     )
-                    evidence_lines.append(f"- [{capability}] {summary}: {content_str}")
+                    line_candidate = f"- [{capability}] {summary}: {content_str}"
+                    if obs_lines and (accumulated_chars + len(line_candidate) > remaining_total):
+                        break
+                    obs_lines.append(line_candidate)
+                    accumulated_chars += len(line_candidate)
+            for line in reversed(obs_lines):
+                evidence_lines.append(line)
 
         repl_variables = request.context.content.get("repl_variables", {})
         if isinstance(repl_variables, dict) and repl_variables:

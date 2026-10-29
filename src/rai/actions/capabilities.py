@@ -122,8 +122,17 @@ class ApplicationList:
             if getattr(app, "comment", ""):
                 app_entry["comment"] = app.comment
             output.append(app_entry)
-        return Success(result(request, {"total_count": len(output), "applications": output, "truncated": len(matches) > MAX_APPLICATION_RESULTS},
-                              {"source": "installed-desktop-entries"}))
+        is_truncated = len(matches) > MAX_APPLICATION_RESULTS
+        result_payload: dict[str, Any] = {
+            "total_count": len(output),
+            "applications": output,
+            "complete": not is_truncated,
+            "truncated": is_truncated,
+        }
+        if is_truncated:
+            result_payload["reason"] = "max_results_exceeded"
+        return Success(result(request, result_payload, {"source": "installed-desktop-entries"}))
+
 
 
 class ApplicationLaunch:

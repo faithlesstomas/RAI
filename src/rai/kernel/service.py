@@ -89,7 +89,7 @@ class CapabilityService:
         approval_id = approval.unwrap()
         return approval_id, await capability.invoke(request, token)
 
-    async def invoke(
+    async def invoke(  # noqa: PLR0911, PLR0912
         self, request: CapabilityRequest, cancellation: CancellationToken | None = None
     ) -> tuple[PolicyDecision | None, Result[ActionResult, ActionFailure]]:
         token = cancellation or CancellationToken()
@@ -152,11 +152,14 @@ class CapabilityService:
             )
             result = Failure(self._failure(request, code, decision.reason_codes[0]))
 
-        if scan and scan.has_references and isinstance(result, Success):
+        if isinstance(result, Success):
             act_res = result.unwrap()
-            prov_refs = make_provenance_references(list(scan.referenced_artifacts.values()))
-            combined_prov = tuple(list(act_res.provenance) + list(prov_refs))
-            result = Success(act_res.model_copy(update={"provenance": combined_prov}))
+            updates: dict[str, Any] = {"data_class": request.data_class}
+            if scan and scan.has_references:
+                prov_refs = make_provenance_references(list(scan.referenced_artifacts.values()))
+                combined_prov = tuple(list(act_res.provenance) + list(prov_refs))
+                updates["provenance"] = combined_prov
+            result = Success(act_res.model_copy(update=updates))
 
         terminal = result.unwrap() if isinstance(result, Success) else result.failure()
         terminal_audit = await self.audit.append(

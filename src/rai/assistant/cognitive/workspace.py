@@ -198,20 +198,31 @@ class WorkspaceEngine(InteractionController):
                     request_id=req_id,
                     data_class=turn.data_class,
                 )
-                _, executed = await self.capabilities.invoke(request, token)
+                decision, executed = await self.capabilities.invoke(request, token)
                 obs_ids.append(req_id)
                 if isinstance(executed, Success):
                     act_res = executed.unwrap()
                     from rai.assistant.observation_budget import persist_observation_artifact  # noqa: PLC0415
+                    from rai.kernel.records import max_data_class  # noqa: PLC0415
+
+                    effective_dc = max_data_class(
+                        turn.data_class,
+                        getattr(decision, "data_class", None),
+                        getattr(act_res, "data_class", None),
+                    )
+                    derived_from = tuple(
+                        p.source_id for p in act_res.provenance if hasattr(p, "source_id")
+                    )
                     artifact_id = await persist_observation_artifact(
                         store=self.store,
                         session_id=turn.session_id,
                         turn_id=getattr(turn, "turn_id", getattr(turn, "record_id", "")),
                         capability=cap_name,
                         request_id=act_res.request_id,
-                        data_class=turn.data_class,
+                        data_class=effective_dc,
                         output=act_res.output,
                         producer=act_res.producer,
+                        derived_from=derived_from,
                     )
                     out_for_compact = act_res.output
                     if artifact_id and isinstance(out_for_compact, dict):

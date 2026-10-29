@@ -117,7 +117,7 @@ class ReplStoreMixin:
             conn.close()
 
     async def clear_repl_session(
-        self, session_id: str, profile_scope: str = "default"
+        self, session_id: str, profile_scope: str | None = "default"
     ) -> Result[None, ActionFailure]:
         async with self._lock:
             return await asyncio.to_thread(
@@ -125,16 +125,22 @@ class ReplStoreMixin:
             )
 
     def _sync_clear_repl_session(
-        self, session_id: str, profile_scope: str
+        self, session_id: str, profile_scope: str | None
     ) -> Result[None, ActionFailure]:
         conn = self._connect()
         try:
             self._init_db(conn)
             cur = conn.cursor()
-            cur.execute(
-                "DELETE FROM assistant_repl_sessions WHERE profile_scope = ? AND session_id = ?",
-                (profile_scope, session_id),
-            )
+            if profile_scope is None:
+                cur.execute(
+                    "DELETE FROM assistant_repl_sessions WHERE session_id = ?",
+                    (session_id,),
+                )
+            else:
+                cur.execute(
+                    "DELETE FROM assistant_repl_sessions WHERE profile_scope = ? AND session_id = ?",
+                    (profile_scope, session_id),
+                )
             conn.commit()
             return Success(None)
         except Exception as exc:  # noqa: BLE001
@@ -142,7 +148,7 @@ class ReplStoreMixin:
                 make_assistant_failure(
                     code="CLEAR_REPL_SESSION_FAILED",
                     message=str(exc),
-                    request_id=f"{profile_scope}:{session_id}",
+                    request_id=f"{profile_scope or '*'}:{session_id}",
                 )
             )
         finally:

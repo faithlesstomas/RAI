@@ -3,10 +3,19 @@
 from __future__ import annotations
 
 import asyncio
+import base64
 from datetime import datetime
 import json
+import logging
+import os
+from pathlib import Path
 import sqlite3
+import time
+from typing import Any
 
+logger = logging.getLogger(__name__)
+
+from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 from returns.result import Failure, Result, Success
 
 from rai.kernel.records import (
@@ -25,16 +34,102 @@ from .helpers import (
 )
 
 
+AES_KEY_BYTES = 32
+AUTO_PRUNE_INTERVAL_SECONDS = 60.0
+
+
 class StoreObservationsMixin:
     """Observation artifact persistence, lookup, and lifecycle management."""
 
     _lock: asyncio.Lock
+    _last_prune_ts: float = 0.0
 
     def _connect(self) -> sqlite3.Connection:
         raise NotImplementedError
 
     def _init_db(self, conn: sqlite3.Connection) -> None:
         raise NotImplementedError
+
+    def _get_cipher(self) -> AESGCM:
+        if getattr(self, "_observation_cipher", None) is not None:
+            return self._observation_cipher
+        key = getattr(self, "_encryption_key", None)
+        if key is None:
+            key = self._get_or_create_key()
+            self._encryption_key = key
+        cipher = AESGCM(key)
+        self._observation_cipher = cipher
+        return cipher
+
+    def _get_or_create_key(self) -> bytes:
+        provider = getattr(self, "key_provider", None)
+        if provider is not None:
+            return provider.get_or_create()
+        try:
+            from rai.history.storage import SecretServiceKeyProvider  # noqa: PLC0415
+
+            return SecretServiceKeyProvider().get_or_create()
+        except Exception as e:
+            logger.debug("Failed to obtain key from SecretServiceKeyProvider: %s", e)
+        db_path = getattr(self, "path", None)
+        if db_path is not None and str(db_path) != ":memory:":
+            key_file = Path(db_path).parent / ".memory_graph_key"
+            try:
+                if key_file.exists():
+                    data = key_file.read_bytes()
+                    if len(data) == AES_KEY_BYTES:
+                        return data
+                new_key = os.urandom(AES_KEY_BYTES)
+                key_file.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+                key_file.write_bytes(new_key)
+                try:
+                    key_file.chmod(0o600)
+                except OSError:
+                    pass
+                return new_key
+            except Exception as e:
+                logger.debug("Failed to read/write key file: %s", e)
+        if not hasattr(self, "_fallback_memory_key"):
+            self._fallback_memory_key = os.urandom(AES_KEY_BYTES)
+        return self._fallback_memory_key
+
+    def _encrypt_content(self, content: dict[str, Any], record_id: str) -> str:
+        plaintext = json.dumps(
+            content, ensure_ascii=False, sort_keys=True, separators=(",", ":")
+        ).encode("utf-8")
+        nonce = os.urandom(12)
+        cipher = self._get_cipher()
+        ciphertext = cipher.encrypt(nonce, plaintext, record_id.encode("utf-8"))
+        encoded = base64.b64encode(nonce + ciphertext).decode("ascii")
+        return f"enc:{encoded}"
+
+    def _decrypt_content(self, content_str: str, record_id: str) -> dict[str, Any]:
+        if not content_str.startswith("enc:"):
+            try:
+                return json.loads(content_str)
+            except Exception:
+                return {"text": content_str}
+        raw_bytes = base64.b64decode(content_str[4:])
+        nonce = raw_bytes[:12]
+        ciphertext = raw_bytes[12:]
+        cipher = self._get_cipher()
+        decrypted = cipher.decrypt(nonce, ciphertext, record_id.encode("utf-8"))
+        return json.loads(decrypted.decode("utf-8"))
+
+    def _maybe_auto_prune(self, conn: sqlite3.Connection) -> None:
+        now_ts = time.time()
+        if now_ts - getattr(self, "_last_prune_ts", 0.0) > AUTO_PRUNE_INTERVAL_SECONDS:
+            self._last_prune_ts = now_ts
+            try:
+                now_iso = _utc_now().isoformat()
+                conn.execute(
+                    "DELETE FROM observation_artifacts WHERE expires_at IS NOT NULL AND expires_at < ?",
+                    (now_iso,),
+                )
+            except Exception as e:
+                logger.debug("Failed to auto-prune expired observation artifacts: %s", e)
+
+
 
     async def allocate_artifact_id(
         self, session_id: str
@@ -102,6 +197,7 @@ class StoreObservationsMixin:
         conn = self._connect()
         try:
             self._init_db(conn)
+            self._maybe_auto_prune(conn)
             with conn:
                 try:
                     self._execute_put_artifact(conn, artifact)
@@ -165,7 +261,7 @@ class StoreObservationsMixin:
                 artifact.capability,
                 artifact.request_id,
                 to_data_class_str(artifact.data_class),
-                json.dumps(artifact.content, ensure_ascii=False),
+                self._encrypt_content(artifact.content, artifact.record_id),
                 artifact.schema_summary.model_dump_json(),
                 artifact.size_chars,
                 artifact.created_at.isoformat(),
@@ -195,6 +291,7 @@ class StoreObservationsMixin:
         conn = self._connect()
         try:
             self._init_db(conn)
+            self._maybe_auto_prune(conn)
             cur = conn.cursor()
             now_iso = (now or _utc_now()).isoformat()
             cur.execute(
@@ -211,7 +308,7 @@ class StoreObservationsMixin:
             row = cur.fetchone()
             if row is None:
                 return Success(None)
-            return Success(observation_artifact_from_row(row))
+            return Success(observation_artifact_from_row(row, decryptor=self._decrypt_content))
         except Exception as exc:  # noqa: BLE001
             return Failure(
                 make_assistant_failure(
@@ -238,6 +335,7 @@ class StoreObservationsMixin:
         conn = self._connect()
         try:
             self._init_db(conn)
+            self._maybe_auto_prune(conn)
             cur = conn.cursor()
             now_iso = (now or _utc_now()).isoformat()
             cur.execute(
@@ -251,7 +349,12 @@ class StoreObservationsMixin:
                 (session_id, now_iso, limit),
             )
             rows = cur.fetchall()
-            return Success(tuple(observation_artifact_from_row(row) for row in rows))
+            return Success(
+                tuple(
+                    observation_artifact_from_row(row, decryptor=self._decrypt_content)
+                    for row in rows
+                )
+            )
         except Exception as exc:  # noqa: BLE001
             return Failure(
                 make_assistant_failure(

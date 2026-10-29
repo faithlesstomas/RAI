@@ -163,6 +163,17 @@
           },
           "title": "Provenance",
           "type": "array"
+        },
+        "data_class": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/DataClass"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
         }
       },
       "required": [

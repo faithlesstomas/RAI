@@ -2116,3 +2116,41 @@ async def test_observation_filter_compound_conditions(
     res_in = (await _invoke(registry, req_in)).output
     assert res_in["total_matches"] == 2
     assert {r["id"] for r in res_in["results"]} == {1, 4}
+
+
+@pytest.mark.asyncio
+async def test_observation_search_redos_safe(store: SQLiteMemoryGraphStore) -> None:
+    registry = CapabilityRegistry()
+    register_observation_capabilities(registry, store)
+
+    # Insert text that would cause catastrophic backtracking with python's re
+    long_string = "a" * 50 + "!"
+    artifact = ObservationArtifact(
+        artifact_id="obs_redos",
+        session_id="session-redos",
+        turn_id="turn-1",
+        capability="browser.read_page",
+        request_id="req-redos",
+        data_class=DataClass.PUBLIC,
+        content={"text": long_string},
+        schema_summary=summarize_observation_schema({"text": long_string}),
+        size_chars=len(long_string),
+        producer=ACTOR,
+    )
+    await store.put(artifact)
+
+    search_desc = registry.descriptor("observation.search")
+    assert search_desc is not None
+    req = normalize_request(
+        search_desc,
+        {
+            "session_id": "session-redos",
+            "ref": "obs_redos",
+            "pattern": "(a+)+$",
+            "regex": True,
+        },
+        actor=ACTOR,
+        data_class=DataClass.LOCAL,
+    )
+    res = (await _invoke(registry, req)).output
+    assert res["total_matches"] == 0

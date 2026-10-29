@@ -47,18 +47,23 @@ def effective_model_settings(
                         int(env[name])
                         if key in ("max_full_observations", "max_context_characters")
                         else (
-                            None
-                            if key == "max_iterations"
-                            and str(env[name]).strip().lower()
-                            in ("none", "null", "inf", "infinity", "0", "unlimited")
+                            int(env[name])
+                            if key == "max_observation_characters"
+                            and str(env[name]).strip().isdigit()
                             else (
-                                int(env[name])
+                                None
                                 if key == "max_iterations"
+                                and str(env[name]).strip().lower()
+                                in ("none", "null", "inf", "infinity", "0", "unlimited")
                                 else (
-                                    str(env[name]).strip().lower()
-                                    in ("true", "1", "yes", "on")
-                                    if key in ("bypass_intent_recognizer", "enable_thinking")
-                                    else env[name]
+                                    int(env[name])
+                                    if key == "max_iterations"
+                                    else (
+                                        str(env[name]).strip().lower()
+                                        in ("true", "1", "yes", "on")
+                                        if key in ("bypass_intent_recognizer", "enable_thinking")
+                                        else env[name]
+                                    )
                                 )
                             )
                         )
@@ -74,6 +79,8 @@ def effective_model_settings(
                     "max_iterations": "RAI_MAX_ITERATIONS",
                     "max_full_observations": "RAI_MAX_FULL_OBSERVATIONS",
                     "max_context_characters": "RAI_MAX_CONTEXT_CHARACTERS",
+                    "max_observation_characters": "RAI_MAX_OBSERVATION_CHARACTERS",
+                    "observation_retention": "RAI_OBSERVATION_RETENTION",
                     "bypass_intent_recognizer": "RAI_BYPASS_INTENT_RECOGNIZER",
                     "enable_thinking": "RAI_ENABLE_THINKING",
                 }.items()

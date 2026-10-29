@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+from datetime import datetime, timedelta
 import json
+import re
 from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field
@@ -126,14 +128,16 @@ def render_observation_payload(content: object, budget_chars: int = 64000) -> st
             "processes": 100,
         }
         bounded_dict: dict[str, Any] = {}
+        was_truncated = False
         for k, v in cleaned.items():
             limit = limits_by_key.get(str(k), 3)
             if isinstance(v, (list, tuple)) and len(v) > limit:
-                bounded_dict[k] = list(v[:limit]) + [
-                    f"... (+{len(v) - limit} more items truncated)"
-                ]
+                bounded_dict[k] = list(v[:limit])
+                was_truncated = True
             else:
                 bounded_dict[k] = v
+        if was_truncated and "_meta" not in bounded_dict:
+            bounded_dict["_meta"] = {"truncated": True}
         try:
             dumped = json.dumps(bounded_dict, ensure_ascii=False)
         except Exception:  # noqa: BLE001
@@ -404,21 +408,57 @@ def _build_footer(
     )
 
 
+UNIT_MULTIPLIERS: dict[str, float] = {
+    "": 1.0,
+    "s": 1.0,
+    "m": 60.0,
+    "h": 3600.0,
+    "d": 86400.0,
+    "w": 604800.0,
+}
+
+
+def parse_retention_ttl(retention: str | int | float | None) -> timedelta | None:
+    if retention is None:
+        return None
+    if isinstance(retention, (int, float)):
+        return timedelta(seconds=float(retention))
+    s = str(retention).strip().lower()
+    if s in ("", "session", "profile", "none", "null", "inf", "infinity", "forever"):
+        return None
+    match = re.match(r"^(\d+(?:\.\d+)?)\s*([smhdw]?)$", s)
+    if not match:
+        return None
+    val = float(match.group(1))
+    unit = match.group(2)
+    return timedelta(seconds=val * UNIT_MULTIPLIERS.get(unit, 1.0))
+
+
 async def persist_observation_artifact(  # noqa: PLR0913
     store: ObservationStore | None,
     session_id: str,
     turn_id: str,
     capability: str,
     request_id: str,
-    data_class: DataClass | str,
-    output: dict[str, Any],
+    data_class: DataClass | str | None = None,
+    output: dict[str, Any] | None = None,
     producer: ProducerIdentity | None = None,
     derived_from: tuple[str, ...] = (),
+    expires_at: datetime | None = None,
+    retention: str | int | float | None = None,
 ) -> str | None:
     """Persist a complete execution output into ObservationStore if available and permitted."""
-    if store is None or not hasattr(store, "put"):
+    if store is None or not hasattr(store, "put") or output is None:
         return None
-    dc = DataClass(data_class) if isinstance(data_class, str) else data_class
+    if isinstance(data_class, str):
+        try:
+            dc = DataClass(data_class)
+        except ValueError:
+            dc = DataClass.LOCAL
+    elif data_class is not None:
+        dc = data_class
+    else:
+        dc = DataClass.LOCAL
     if dc in (DataClass.SECRET, DataClass.BLOCKED):
         return None
 
@@ -431,6 +471,12 @@ async def persist_observation_artifact(  # noqa: PLR0913
             artifact_id = f"obs_{_new_id()[:8]}"
     else:
         artifact_id = f"obs_{_new_id()[:8]}"
+
+    calculated_expires_at = expires_at
+    if calculated_expires_at is None and retention is not None:
+        ttl = parse_retention_ttl(retention)
+        if ttl is not None:
+            calculated_expires_at = _utc_now() + ttl
 
     json_str = json.dumps(output, ensure_ascii=False)
     prod = producer or ProducerIdentity(
@@ -448,6 +494,7 @@ async def persist_observation_artifact(  # noqa: PLR0913
         schema_summary=summarize_observation_schema(output),
         size_chars=len(json_str),
         created_at=_utc_now(),
+        expires_at=calculated_expires_at,
         provenance=(
             ProvenanceReference(
                 source_id=request_id,
