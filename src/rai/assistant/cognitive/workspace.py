@@ -73,6 +73,7 @@ class WorkspaceEngine(InteractionController):
         context_builder: object = None,
         max_cycles: int | None = _DEFAULT_MAX_CYCLES,
         store: object = None,
+        observation_retention: str = "session",
     ) -> None:
         self.capabilities = capabilities
         self.actions = actions
@@ -83,6 +84,7 @@ class WorkspaceEngine(InteractionController):
         self.max_cycles = max_cycles
         self.arbiter = arbiter or SalienceArbiter()
         self.store = store or getattr(context_builder, "store", None)
+        self.observation_retention = observation_retention
 
         if specialists is not None:
             self.specialists = specialists
@@ -160,6 +162,7 @@ class WorkspaceEngine(InteractionController):
                             data_class=turn.data_class,
                             output=raw_out,
                             producer=PRODUCER,
+                            retention=self.observation_retention,
                         )
                     if artifact_id and isinstance(raw_out, dict):
                         raw_out = {**raw_out, "_artifact_id": artifact_id}
@@ -223,6 +226,7 @@ class WorkspaceEngine(InteractionController):
                         output=act_res.output,
                         producer=act_res.producer,
                         derived_from=derived_from,
+                        retention=self.observation_retention,
                     )
                     out_for_compact = act_res.output
                     if artifact_id and isinstance(out_for_compact, dict):

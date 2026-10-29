@@ -58,6 +58,7 @@ class AssistantRuntimeConfig:
     max_full_observations: int = 3
     max_observation_characters: int | str = "auto"
     bypass_intent_recognizer: bool = True
+    observation_retention: str = "session"
 
 
 def _discover_gguf(search_root: Path) -> Path | None:
@@ -193,6 +194,14 @@ def resolve_assistant_config(  # noqa: PLR0912, PLR0913, PLR0915
     else:
         resolved_enable_thinking = bool(raw_thinking)
 
+    raw_retention = (
+        assistant.get("observation_retention")
+        or local_ai.get("observation_retention")
+        or os.environ.get("RAI_OBSERVATION_RETENTION")
+        or "session"
+    )
+    resolved_observation_retention = str(raw_retention).strip()
+
     if backend == "deterministic":
         return AssistantRuntimeConfig(
             backend=backend,
@@ -234,6 +243,7 @@ def resolve_assistant_config(  # noqa: PLR0912, PLR0913, PLR0915
             max_full_observations=resolved_max_full_obs,
             max_observation_characters=resolved_obs_chars,
             bypass_intent_recognizer=resolved_bypass,
+            observation_retention=resolved_observation_retention,
         )
 
     if backend == "antigravity":
@@ -345,6 +355,7 @@ def resolve_assistant_config(  # noqa: PLR0912, PLR0913, PLR0915
         max_full_observations=resolved_max_full_obs,
         max_observation_characters=resolved_obs_chars,
         bypass_intent_recognizer=resolved_bypass,
+        observation_retention=resolved_observation_retention,
     )
 
 

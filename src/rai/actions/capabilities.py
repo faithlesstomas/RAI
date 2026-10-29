@@ -124,7 +124,7 @@ class ApplicationList:
             output.append(app_entry)
         is_truncated = len(matches) > MAX_APPLICATION_RESULTS
         result_payload: dict[str, Any] = {
-            "total_count": len(output),
+            "total_count": len(matches),
             "applications": output,
             "complete": not is_truncated,
             "truncated": is_truncated,

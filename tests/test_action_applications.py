@@ -292,4 +292,5 @@ async def test_application_list_truncation_fields(tmp_path: Path, monkeypatch: p
     assert out["truncated"] is True
     assert out["complete"] is False
     assert out["reason"] == "max_results_exceeded"
+    assert out["total_count"] == MAX_APPLICATION_RESULTS + 5
     assert len(out["applications"]) == MAX_APPLICATION_RESULTS

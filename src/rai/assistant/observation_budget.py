@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta
 import json
+import os
 import re
 from typing import Any
 
@@ -473,8 +474,16 @@ async def persist_observation_artifact(  # noqa: PLR0913
         artifact_id = f"obs_{_new_id()[:8]}"
 
     calculated_expires_at = expires_at
-    if calculated_expires_at is None and retention is not None:
-        ttl = parse_retention_ttl(retention)
+    effective_retention = (
+        retention
+        if retention is not None
+        else (
+            getattr(store, "observation_retention", None)
+            or os.environ.get("RAI_OBSERVATION_RETENTION")
+        )
+    )
+    if calculated_expires_at is None and effective_retention is not None:
+        ttl = parse_retention_ttl(effective_retention)
         if ttl is not None:
             calculated_expires_at = _utc_now() + ttl
 

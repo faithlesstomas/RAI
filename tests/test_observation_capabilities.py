@@ -2154,3 +2154,52 @@ async def test_observation_search_redos_safe(store: SQLiteMemoryGraphStore) -> N
     )
     res = (await _invoke(registry, req)).output
     assert res["total_matches"] == 0
+
+
+@pytest.mark.asyncio
+async def test_observation_derived_artifact_preserves_elevated_request_data_class(
+    store: SQLiteMemoryGraphStore,
+) -> None:
+    registry = CapabilityRegistry()
+    register_observation_capabilities(registry, store)
+
+    from rai.assistant.observation_budget import persist_observation_artifact
+
+    art_id = await persist_observation_artifact(
+        store=store,
+        session_id="session-taint",
+        turn_id="turn-1",
+        capability="browser.read_page",
+        request_id="req-1",
+        data_class=DataClass.LOCAL,
+        output={"items": [{"id": 1, "secret": "abc"}, {"id": 2, "secret": "def"}]},
+        producer=ACTOR,
+    )
+    assert art_id is not None
+
+    # CapabilityRequest arrives with elevated PRIVATE data_class
+    filter_desc = registry.descriptor("observation.filter")
+    assert filter_desc is not None
+    req = normalize_request(
+        filter_desc,
+        {
+            "session_id": "session-taint",
+            "ref": art_id,
+            "field": "secret",
+            "op": "equals",
+            "value": "abc",
+        },
+        actor=ACTOR,
+        data_class=DataClass.PRIVATE,
+    )
+    cap_res = registry.resolve(req)
+    assert isinstance(cap_res, Success)
+    action_res = (await cap_res.unwrap().invoke(req, CancellationToken())).unwrap()
+
+    assert action_res.data_class == DataClass.PRIVATE
+    derived_art_id = action_res.output.get("artifact_id")
+    assert derived_art_id is not None
+
+    stored_derived = (await store.get("session-taint", derived_art_id)).unwrap()
+    assert stored_derived is not None
+    assert stored_derived.data_class == DataClass.PRIVATE

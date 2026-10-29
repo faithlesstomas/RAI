@@ -424,6 +424,7 @@ class BoundedStepController(InteractionController):
         bypass_intent_recognizer: bool = True,
         store: object = None,
         max_observation_characters: int | str = "auto",
+        observation_retention: str = "session",
     ) -> None:
         self.ledger = ledger
         self.capabilities = capabilities
@@ -436,6 +437,7 @@ class BoundedStepController(InteractionController):
         self.bypass_intent_recognizer = bypass_intent_recognizer
         self.store = store or getattr(context_builder, "store", None)
         self.max_observation_characters = max_observation_characters
+        self.observation_retention = observation_retention
 
     async def process_turn(  # noqa: PLR0911, PLR0912, PLR0915
         self,
@@ -528,6 +530,7 @@ class BoundedStepController(InteractionController):
                     data_class=effective_dc,
                     output=output if isinstance(output, dict) else {"output": output},
                     producer=turn.producer,
+                    retention=self.observation_retention,
                 )
                 obs_content = _compact_observation_content(
                     output,
@@ -1339,6 +1342,7 @@ class BoundedStepController(InteractionController):
                 output=action_res.output,
                 producer=action_res.producer,
                 derived_from=derived_from,
+                retention=self.observation_retention,
             )
             if artifact_id and isinstance(action_res.output, dict):
                 updated_output = {**action_res.output, "_artifact_id": artifact_id}
