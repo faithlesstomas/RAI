@@ -132,7 +132,7 @@ class MontyRunner:
                         excluded = (
                             set((inputs or {}).keys())
                             | set((external_lookup or {}).keys())
-                            | {"obs", "publish"}
+                            | {"obs", "publish", "chunks", "llm_query", "map_reduce"}
                         )
                         variables_dict = {
                             str(k): str(v)

@@ -33,6 +33,7 @@ class BoundedTaskKind(str, Enum):
     SALIENCE_ESTIMATION = "salience_estimation"
     PRIVACY_RISK_ELEVATION = "privacy_risk_elevation"
     ROUTING_HINT = "routing_hint"
+    SEMANTIC_QUERY = "semantic_query"
 
 
 @runtime_checkable
@@ -246,6 +247,21 @@ class RoutingHintOutput(BoundedTaskOutput):
         return f"Routing hint: {self.decision.value}. Rationale: {self.rationale}"
 
 
+class SemanticQueryOutput(BoundedTaskOutput):
+    """Validated output for a semantic query/extraction over text chunks."""
+
+    answer: str = Field(min_length=0, max_length=2000)
+    relevant: bool = True
+
+    def claim_statement(self) -> str:
+        return self.answer
+
+    @classmethod
+    def from_raw_text(cls, raw: str) -> "SemanticQueryOutput":
+        cleaned = raw.strip()
+        return cls(confidence=0.8, answer=cleaned, relevant=bool(cleaned))
+
+
 @dataclass(frozen=True)
 class BoundedTaskLimits:
     """Hard upper bounds applied in addition to the caller's inference budget."""
@@ -352,16 +368,24 @@ class BoundedTaskContract:
         try:
             output = self.output_model.model_validate_json(raw_output)
         except (ValidationError, ValueError, TypeError):
-            return Failure(
-                BoundedTaskValidationFailure(
-                    code=self.failure_policy.invalid_output_code,
-                    message=(
-                        f"Model output did not satisfy the {self.kind.value} "
-                        f"contract version {self.version}"
-                    ),
-                    retryable=self.failure_policy.retryable,
+            if hasattr(self.output_model, "from_raw_text"):
+                try:
+                    output = self.output_model.from_raw_text(raw_output)
+                except Exception:  # noqa: BLE001
+                    output = None
+            else:
+                output = None
+            if output is None:
+                return Failure(
+                    BoundedTaskValidationFailure(
+                        code=self.failure_policy.invalid_output_code,
+                        message=(
+                            f"Model output did not satisfy the {self.kind.value} "
+                            f"contract version {self.version}"
+                        ),
+                        retryable=self.failure_policy.retryable,
+                    )
                 )
-            )
 
         if output.confidence < self.failure_policy.minimum_confidence:
             return Failure(
@@ -491,6 +515,23 @@ BOUNDED_TASK_CONTRACTS: dict[BoundedTaskKind, BoundedTaskContract] = {
             max_vram_bytes=2 * 1024**3,
         ),
         failure_policy=BoundedTaskFailurePolicy(minimum_confidence=0.55),
+    ),
+    BoundedTaskKind.SEMANTIC_QUERY: BoundedTaskContract(
+        kind=BoundedTaskKind.SEMANTIC_QUERY,
+        version="1.0.0",
+        output_model=SemanticQueryOutput,
+        instruction=(
+            "Answer the objective question concisely based only on the provided context. "
+            "If the context does not contain the answer, set relevant=False and return an empty answer."
+        ),
+        limits=BoundedTaskLimits(
+            max_input_tokens=2048,
+            max_output_tokens=512,
+            max_latency_seconds=20.0,
+            max_ram_bytes=8 * 1024**3,
+            max_vram_bytes=4 * 1024**3,
+        ),
+        failure_policy=BoundedTaskFailurePolicy(minimum_confidence=0.3),
     ),
 }
 

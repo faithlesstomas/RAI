@@ -366,6 +366,7 @@ async def execute_session_repl(
             session_id=session_id,
             store=service.store,
             default_data_class=DataClass.PUBLIC,
+            supervisor=getattr(service, "supervisor", None),
         )
 
         start_t = time.perf_counter()
