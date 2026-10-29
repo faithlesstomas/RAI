@@ -633,5 +633,96 @@ async def test_observation_retention_propagation_and_fallback(tmp_path: Path) ->
         assert art2 is not None
         assert art2.expires_at is not None
         diff2 = (art2.expires_at - _utc_now()).total_seconds()
-        # Should be approximately 3 days (259200s)
         assert 258000 < diff2 < 260000
+
+
+@pytest.mark.asyncio
+async def test_record_key_source_atomic_and_fails_closed(tmp_path: Path) -> None:
+    """_record_key_source raises on failure and _get_or_create_key does not return an unrecorded key."""
+    import sqlite3
+    from unittest.mock import patch
+
+    db_path = tmp_path / "key_source_fail.sqlite3"
+    st = SQLiteMemoryGraphStore(path=db_path)
+
+    # 1. Mock conn where execute fails on INSERT
+    mock_conn = sqlite3.connect(":memory:")
+    mock_conn.execute("CREATE TABLE assistant_schema_metadata (key TEXT PRIMARY KEY, value TEXT NOT NULL)")
+    mock_conn.execute("CREATE TRIGGER block_insert BEFORE INSERT ON assistant_schema_metadata BEGIN SELECT RAISE(FAIL, 'disk full'); END;")
+
+    with pytest.raises(RuntimeError, match="Failed to record observation encryption source"):
+        st._record_key_source("key_file", conn=mock_conn)
+
+    # 2. _get_or_create_key must abort if recording source fails
+    st2 = SQLiteMemoryGraphStore(path=db_path)
+    with patch.object(st2, "_record_key_source", side_effect=RuntimeError("Cannot record key source")):
+        with patch("rai.history.storage.SecretServiceKeyProvider.get_or_create", side_effect=RuntimeError("No keyring")):
+            with pytest.raises(RuntimeError, match="Cannot record key source"):
+                st2._get_or_create_key()
+
+    # 3. Database corruption on reading metadata raises RuntimeError instead of returning None
+    st3 = SQLiteMemoryGraphStore(path=db_path)
+    from unittest.mock import MagicMock
+    mock_corrupt_conn = MagicMock()
+    mock_corrupt_conn.cursor.side_effect = sqlite3.DatabaseError("Corrupt database")
+    with pytest.raises(RuntimeError, match="Database error while reading observation encryption source"):
+        st3._get_recorded_key_source(conn=mock_corrupt_conn)
+
+
+@pytest.mark.asyncio
+async def test_schema_migration_fails_closed_on_encryption_error(tmp_path: Path) -> None:
+    """_migrate_schema aborts and fails store start if any plaintext artifact fails to encrypt."""
+    import sqlite3
+    from unittest.mock import patch
+    from rai.kernel.ports import LifecycleState
+
+    db_path = tmp_path / "migration_fail.sqlite3"
+    conn = sqlite3.connect(str(db_path))
+    conn.execute("PRAGMA foreign_keys = ON;")
+    # Minimal schema setup with unencrypted record
+    conn.execute(
+        """
+        CREATE TABLE observation_artifacts (
+            record_id TEXT PRIMARY KEY,
+            artifact_id TEXT NOT NULL,
+            session_id TEXT NOT NULL,
+            turn_id TEXT NOT NULL,
+            capability TEXT NOT NULL,
+            request_id TEXT NOT NULL,
+            data_class TEXT NOT NULL,
+            content_json TEXT NOT NULL,
+            schema_summary_json TEXT NOT NULL,
+            size_chars INTEGER NOT NULL,
+            created_at TEXT NOT NULL,
+            expires_at TEXT,
+            provenance_json TEXT NOT NULL,
+            derived_from_json TEXT NOT NULL,
+            producer_json TEXT NOT NULL
+        )
+        """
+    )
+    conn.execute(
+        """
+        INSERT INTO observation_artifacts VALUES (
+            'rec_plain', 'obs_plain', 'sess_1', 'turn_1', 'test', 'req_1', 'LOCAL',
+            '{"unencrypted": "data"}', '{}', 23, '2026-01-01T00:00:00', NULL, '[]', '[]', '{}'
+        )
+        """
+    )
+    conn.commit()
+    conn.close()
+
+    st = SQLiteMemoryGraphStore(path=db_path)
+    # Fail encryption during migration
+    with patch.object(st, "_encrypt_content", side_effect=RuntimeError("Encryption hardware failed")):
+        start_res = await st.start()
+        assert isinstance(start_res, Failure)
+        assert start_res.failure().code == "STORE_START_FAILED"
+        assert "Encryption hardware failed" in start_res.failure().message
+        assert st.state == LifecycleState.FAILED
+
+    # Also verify that opportunistic re-encryption on read propagates exceptions
+    st2 = SQLiteMemoryGraphStore(path=db_path)
+    with patch.object(st2, "_encrypt_content", side_effect=RuntimeError("Opportunistic re-encryption failed")):
+        with pytest.raises(RuntimeError, match="Opportunistic re-encryption failed"):
+            st2._decrypt_content('{"legacy": "data"}', "rec_plain", conn=sqlite3.connect(":memory:"))

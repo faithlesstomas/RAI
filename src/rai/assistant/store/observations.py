@@ -50,56 +50,78 @@ class StoreObservationsMixin:
     def _init_db(self, conn: sqlite3.Connection) -> None:
         raise NotImplementedError
 
-    def _get_cipher(self) -> AESGCM:
+    def _get_cipher(self, conn: sqlite3.Connection | None = None) -> AESGCM:
         if getattr(self, "_observation_cipher", None) is not None:
             return self._observation_cipher
         key = getattr(self, "_encryption_key", None)
         if key is None:
-            key = self._get_or_create_key()
+            key = self._get_or_create_key(conn=conn)
             self._encryption_key = key
         cipher = AESGCM(key)
         self._observation_cipher = cipher
         return cipher
 
-    def _get_recorded_key_source(self) -> str | None:
+    def _get_recorded_key_source(
+        self, conn: sqlite3.Connection | None = None
+    ) -> str | None:
         db_path = getattr(self, "path", None)
         if db_path is None or str(db_path) == ":memory:":
             return None
-        if not Path(db_path).exists():
+        if conn is None and not Path(db_path).exists():
             return None
+        should_close = False
+        target_conn = conn
+        if target_conn is None:
+            target_conn = self._connect()
+            should_close = True
         try:
-            conn = self._connect()
-            try:
-                row = conn.execute(
-                    "SELECT value FROM assistant_schema_metadata WHERE key = 'observation_encryption_source'"
-                ).fetchone()
-                return str(row[0]) if row else None
-            finally:
-                conn.close()
-        except Exception:
-            return None
+            cur = target_conn.cursor()
+            cur.execute(
+                "SELECT name FROM sqlite_master WHERE type='table' AND name='assistant_schema_metadata'"
+            )
+            if cur.fetchone() is None:
+                return None
+            row = cur.execute(
+                "SELECT value FROM assistant_schema_metadata WHERE key = 'observation_encryption_source'"
+            ).fetchone()
+            return str(row[0]) if row else None
+        except sqlite3.Error as e:
+            raise RuntimeError(
+                f"Database error while reading observation encryption source: {e}"
+            ) from e
+        finally:
+            if should_close:
+                target_conn.close()
 
-    def _record_key_source(self, source: str) -> None:
+    def _record_key_source(
+        self, source: str, conn: sqlite3.Connection | None = None
+    ) -> None:
         db_path = getattr(self, "path", None)
         if db_path is None or str(db_path) == ":memory:":
             return
+        should_close = False
+        target_conn = conn
+        if target_conn is None:
+            target_conn = self._connect()
+            should_close = True
         try:
-            conn = self._connect()
-            try:
-                with conn:
-                    conn.execute(
-                        "CREATE TABLE IF NOT EXISTS assistant_schema_metadata (key TEXT PRIMARY KEY, value TEXT NOT NULL)"
-                    )
-                    conn.execute(
-                        "INSERT OR REPLACE INTO assistant_schema_metadata (key, value) VALUES ('observation_encryption_source', ?)",
-                        (source,),
-                    )
-            finally:
-                conn.close()
+            with target_conn:
+                target_conn.execute(
+                    "CREATE TABLE IF NOT EXISTS assistant_schema_metadata (key TEXT PRIMARY KEY, value TEXT NOT NULL)"
+                )
+                target_conn.execute(
+                    "INSERT OR REPLACE INTO assistant_schema_metadata (key, value) VALUES ('observation_encryption_source', ?)",
+                    (source,),
+                )
         except Exception as e:
-            logger.debug("Failed to record observation encryption source: %s", e)
+            raise RuntimeError(
+                f"Failed to record observation encryption source '{source}': {e}"
+            ) from e
+        finally:
+            if should_close:
+                target_conn.close()
 
-    def _get_or_create_key(self) -> bytes:
+    def _get_or_create_key(self, conn: sqlite3.Connection | None = None) -> bytes:
         if getattr(self, "_encryption_key", None) is not None:
             return self._encryption_key
         provider = getattr(self, "key_provider", None)
@@ -113,7 +135,7 @@ class StoreObservationsMixin:
             return self._fallback_memory_key
 
         key_file = Path(db_path).parent / ".memory_graph_key"
-        recorded_source = self._get_recorded_key_source()
+        recorded_source = self._get_recorded_key_source(conn=conn)
 
         if recorded_source == "secret_service":
             from rai.history.storage import SecretServiceKeyProvider  # noqa: PLC0415
@@ -134,7 +156,7 @@ class StoreObservationsMixin:
         if key_file.exists():
             data = key_file.read_bytes()
             if len(data) == AES_KEY_BYTES:
-                self._record_key_source("key_file")
+                self._record_key_source("key_file", conn=conn)
                 return data
             raise RuntimeError(
                 f"Corrupted encryption key file at {key_file}: invalid length {len(data)}"
@@ -144,7 +166,7 @@ class StoreObservationsMixin:
             from rai.history.storage import SecretServiceKeyProvider  # noqa: PLC0415
 
             key = SecretServiceKeyProvider().get_or_create()
-            self._record_key_source("secret_service")
+            self._record_key_source("secret_service", conn=conn)
             return key
         except Exception as e:
             logger.debug(
@@ -159,15 +181,20 @@ class StoreObservationsMixin:
             key_file.chmod(0o600)
         except OSError:
             pass
-        self._record_key_source("key_file")
+        self._record_key_source("key_file", conn=conn)
         return new_key
 
-    def _encrypt_content(self, content: dict[str, Any], record_id: str) -> str:
+    def _encrypt_content(
+        self,
+        content: dict[str, Any],
+        record_id: str,
+        conn: sqlite3.Connection | None = None,
+    ) -> str:
         plaintext = json.dumps(
             content, ensure_ascii=False, sort_keys=True, separators=(",", ":")
         ).encode("utf-8")
         nonce = os.urandom(12)
-        cipher = self._get_cipher()
+        cipher = self._get_cipher(conn=conn)
         ciphertext = cipher.encrypt(nonce, plaintext, record_id.encode("utf-8"))
         encoded = base64.b64encode(nonce + ciphertext).decode("ascii")
         return f"enc:{encoded}"
@@ -184,20 +211,17 @@ class StoreObservationsMixin:
             except Exception:
                 parsed = {"text": content_str}
             if conn is not None and isinstance(parsed, dict):
-                try:
-                    encrypted = self._encrypt_content(parsed, record_id)
-                    with conn:
-                        conn.execute(
-                            "UPDATE observation_artifacts SET content_json = ? WHERE record_id = ?",
-                            (encrypted, record_id),
-                        )
-                except Exception as e:
-                    logger.debug("Opportunistic encryption of legacy record %s failed: %s", record_id, e)
+                encrypted = self._encrypt_content(parsed, record_id, conn=conn)
+                with conn:
+                    conn.execute(
+                        "UPDATE observation_artifacts SET content_json = ? WHERE record_id = ?",
+                        (encrypted, record_id),
+                    )
             return parsed
         raw_bytes = base64.b64decode(content_str[4:])
         nonce = raw_bytes[:12]
         ciphertext = raw_bytes[12:]
-        cipher = self._get_cipher()
+        cipher = self._get_cipher(conn=conn)
         decrypted = cipher.decrypt(nonce, ciphertext, record_id.encode("utf-8"))
         return json.loads(decrypted.decode("utf-8"))
 
@@ -347,7 +371,7 @@ class StoreObservationsMixin:
                 artifact.capability,
                 artifact.request_id,
                 to_data_class_str(artifact.data_class),
-                self._encrypt_content(artifact.content, artifact.record_id),
+                self._encrypt_content(artifact.content, artifact.record_id, conn=conn),
                 artifact.schema_summary.model_dump_json(),
                 artifact.size_chars,
                 artifact.created_at.isoformat(),

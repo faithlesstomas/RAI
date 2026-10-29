@@ -410,26 +410,23 @@ class SchemaStoreMixin:
             )
 
         # Migrate any legacy plaintext observation artifacts to encrypted format
-        try:
-            legacy_rows = conn.execute(
-                "SELECT record_id, content_json FROM observation_artifacts WHERE content_json NOT LIKE 'enc:%'"
-            ).fetchall()
-            if legacy_rows and hasattr(self, "_encrypt_content"):
-                with conn:
-                    for row in legacy_rows:
-                        rec_id = str(row[0])
-                        raw_json = str(row[1])
-                        try:
-                            parsed = json.loads(raw_json)
-                        except Exception:
-                            parsed = {"text": raw_json}
-                        encrypted = self._encrypt_content(parsed, rec_id)
-                        conn.execute(
-                            "UPDATE observation_artifacts SET content_json = ? WHERE record_id = ?",
-                            (encrypted, rec_id),
-                        )
-        except Exception as e:
-            logger.debug("Plaintext observation encryption migration skipped: %s", e)
+        legacy_rows = conn.execute(
+            "SELECT record_id, content_json FROM observation_artifacts WHERE content_json NOT LIKE 'enc:%'"
+        ).fetchall()
+        if legacy_rows and hasattr(self, "_encrypt_content"):
+            with conn:
+                for row in legacy_rows:
+                    rec_id = str(row[0])
+                    raw_json = str(row[1])
+                    try:
+                        parsed = json.loads(raw_json)
+                    except Exception:
+                        parsed = {"text": raw_json}
+                    encrypted = self._encrypt_content(parsed, rec_id, conn=conn)
+                    conn.execute(
+                        "UPDATE observation_artifacts SET content_json = ? WHERE record_id = ?",
+                        (encrypted, rec_id),
+                    )
 
     async def start(self) -> Result[LifecycleState, ActionFailure]:
         async with self._lock:
