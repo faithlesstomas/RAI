@@ -8,21 +8,25 @@ from __future__ import annotations
 import ast
 import asyncio
 from dataclasses import dataclass
+from datetime import datetime, timedelta, timezone
 import json
 import logging
 import os
 import threading
-from typing import TYPE_CHECKING, Any, Dict, Optional, Tuple, Union
+from typing import TYPE_CHECKING, Any, Callable, Dict, Optional, Tuple, Union
 
 from returns.result import Failure, Result, Success
 
 from rai.assistant.records import ObservationArtifact, summarize_observation_schema
 from rai.diagnostics import trace, trace_payload
+from rai.kernel.ports import CancellationToken
 from rai.kernel.records import (
     ActionFailure,
     DataClass,
+    InferenceBudget,
     ProducerIdentity,
     _new_id,
+    _utc_now,
     max_data_class,
 )
 from rai.paths import cache_dir
@@ -237,7 +241,7 @@ class MontyObservationContext:
         return "\n\n".join(parts)
 
     async def persist_published(
-        self, store: Optional[Any]
+        self, store: Optional[object]
     ) -> Result[None, ActionFailure]:
         if store is None or not self.published_artifacts:
             return Success(None)
@@ -261,11 +265,15 @@ class MontyObservationContext:
         return Success(None)
 
 
-async def prepare_monty_observation_context(
+async def prepare_monty_observation_context(  # noqa: PLR0913, PLR0915
     session_id: Optional[str],
-    store: Optional[Any] = None,
+    store: Optional[object] = None,
     default_data_class: DataClass = DataClass.PUBLIC,
     turn_id: Optional[str] = None,
+    supervisor: Optional[object] = None,
+    budget: Optional[InferenceBudget] = None,
+    cancellation: Optional[CancellationToken] = None,
+    bounded_task_handler: Optional[Callable[[str, str], object]] = None,
 ) -> MontyObservationContext:
     """
     Prepares scoped observation bindings, publish callback, and data-class tracking for Monty REPL.
@@ -276,8 +284,10 @@ async def prepare_monty_observation_context(
     existing_obs_nums: set[int] = set()
 
     if session_id and store:
-        list_fn = getattr(store, "list_for_session", None) or getattr(
-            store, "list_observation_artifacts_for_session", None
+        list_fn = (
+            getattr(store, "list_for_session", None)
+            or getattr(store, "list_observation_artifacts_for_session", None)
+            or getattr(store, "list_session_observation_artifacts", None)
         )
         if callable(list_fn):
             try:
@@ -286,20 +296,24 @@ async def prepare_monty_observation_context(
                     list_res = await res
                 else:
                     list_res = res
-                if isinstance(list_res, Success):
-                    for art in list_res.unwrap():
-                        alias = art.artifact_id
-                        bound_artifacts[alias] = art
-                        obs_mapping[alias] = art.content
-                        if alias.startswith("obs_"):
-                            try:
-                                num = int(alias.split("_", 1)[1])
-                                existing_obs_nums.add(num)
-                                obs_mapping[num] = art.content
-                            except (IndexError, ValueError):
-                                pass
-                        if alias.isidentifier():
-                            inputs[alias] = art.content
+                items = (
+                    list_res.unwrap()
+                    if isinstance(list_res, Success)
+                    else (list_res if isinstance(list_res, (list, tuple)) else [])
+                )
+                for art in items:
+                    alias = art.artifact_id
+                    bound_artifacts[alias] = art
+                    obs_mapping[alias] = art.content
+                    if alias.startswith("obs_"):
+                        try:
+                            num = int(alias.split("_", 1)[1])
+                            existing_obs_nums.add(num)
+                            obs_mapping[num] = art.content
+                        except (IndexError, ValueError):
+                            pass
+                    if alias.isidentifier():
+                        inputs[alias] = art.content
             except Exception as exc:  # noqa: BLE001
                 logger.debug("Failed to list observations for session %s: %s", session_id, exc)
 
@@ -318,7 +332,7 @@ async def prepare_monty_observation_context(
     published_artifacts: list[ObservationArtifact] = []
 
     def publish(
-        value: Any,
+        value: object,
         name: Optional[str] = None,
         data_class: Optional[Union[DataClass, str]] = None,
     ) -> str:
@@ -378,7 +392,242 @@ async def prepare_monty_observation_context(
 
         return art_id
 
-    external_lookup = {"publish": publish}
+    def chunks(  # noqa: PLR0912
+        target: object,
+        size: int = 2000,
+        overlap: int = 200,
+    ) -> list[Any]:
+        """
+        Split text or list of records/items into chunks for bounded inspection.
+        """
+        raw_items: Any = target
+        if isinstance(target, str) and target in bound_artifacts:
+            art = bound_artifacts[target]
+            content = art.content
+            if "text" in content and isinstance(content["text"], str):
+                raw_items = content["text"]
+            elif "content" in content and isinstance(content["content"], str):
+                raw_items = content["content"]
+            elif "lines" in content and isinstance(content["lines"], (list, tuple)):
+                raw_items = "\n".join(str(x) for x in content["lines"])
+            elif "results" in content and isinstance(content["results"], (list, tuple)):
+                raw_items = list(content["results"])
+            elif "items" in content and isinstance(content["items"], (list, tuple)):
+                raw_items = list(content["items"])
+            elif "applications" in content and isinstance(content["applications"], (list, tuple)):
+                raw_items = list(content["applications"])
+            else:
+                raw_items = json.dumps(content, ensure_ascii=False)
+        elif isinstance(target, dict):
+            if "results" in target and isinstance(target["results"], (list, tuple)):
+                raw_items = list(target["results"])
+            elif "items" in target and isinstance(target["items"], (list, tuple)):
+                raw_items = list(target["items"])
+            elif "applications" in target and isinstance(target["applications"], (list, tuple)):
+                raw_items = list(target["applications"])
+            elif "text" in target and isinstance(target["text"], str):
+                raw_items = target["text"]
+            else:
+                raw_items = json.dumps(target, ensure_ascii=False)
+
+        effective_size = max(1, int(size))
+        effective_overlap = max(0, min(int(overlap), effective_size - 1))
+        step = max(1, effective_size - effective_overlap)
+
+        if isinstance(raw_items, (list, tuple)):
+            items_list = list(raw_items)
+            return [
+                items_list[i : i + effective_size]
+                for i in range(0, len(items_list), step)
+            ]
+
+        text_str = str(raw_items)
+        return [
+            text_str[i : i + effective_size]
+            for i in range(0, len(text_str), step)
+        ]
+
+    loop = asyncio.get_running_loop()
+    sub_calls = [0]
+    consumed_tokens = [0]
+
+    _MIN_QUERY_WORD_LEN = 3
+
+    def llm_query(  # noqa: PLR0915
+        text_or_chunk: object,
+        question: str,
+    ) -> str:
+        """
+        Run a schema-constrained, budget-monitored semantic query against one text chunk.
+        """
+        if cancellation is not None and cancellation.cancelled:
+            raise RuntimeError("Operation cancelled by user or deadline")
+
+        sub_calls[0] += 1
+        max_sub = 100
+        if budget is not None and budget.max_tool_calls > 0:
+            max_sub = min(max_sub, budget.max_tool_calls)
+        if sub_calls[0] > max_sub:
+            raise RuntimeError(
+                f"InferenceBudget exceeded: maximum sub-calls ({max_sub}) exceeded"
+            )
+
+        if isinstance(text_or_chunk, str):
+            chunk_text = text_or_chunk
+        elif isinstance(text_or_chunk, (dict, list)):
+            chunk_text = json.dumps(text_or_chunk, ensure_ascii=False)
+        else:
+            chunk_text = str(text_or_chunk)
+
+        est_tokens = max(1, (len(chunk_text) + len(question)) // 4)
+        consumed_tokens[0] += est_tokens
+        if budget is not None and budget.max_input_tokens > 0:
+            if consumed_tokens[0] > budget.max_input_tokens:
+                raise RuntimeError(
+                    f"InferenceBudget exceeded: token budget ({budget.max_input_tokens}) exhausted"
+                )
+
+        if budget is not None and budget.cancellation_deadline is not None:
+            now_dt = _utc_now()
+            deadline = budget.cancellation_deadline
+            if deadline.tzinfo is None:
+                deadline = deadline.replace(tzinfo=timezone.utc)
+            if now_dt >= deadline:
+                raise RuntimeError("InferenceBudget exceeded: cancellation deadline expired")
+
+        if bounded_task_handler is not None:
+            res = bounded_task_handler(chunk_text, question)
+            if not (asyncio.iscoroutine(res) or hasattr(res, "__await__")):
+                return str(res)
+
+            async def _exec_handler() -> str:
+                return str(await res)
+
+            future = asyncio.run_coroutine_threadsafe(_exec_handler(), loop)
+            return future.result(timeout=30.0)
+
+        if supervisor is not None and hasattr(supervisor, "process_bounded"):
+            from rai.kernel.records import (  # noqa: PLC0415
+                ContextManifest,
+                ContextManifestItem,
+                ContextPackage,
+                Task,
+            )
+            from rai.inference.tasks import BoundedTaskKind  # noqa: PLC0415
+
+            task = Task(
+                record_id=f"task:{_new_id()}",
+                producer=REPL_PRODUCER,
+                objective=question,
+                status="RUNNING",
+            )
+            manifest = ContextManifest(
+                record_id=f"manifest:{_new_id()}",
+                producer=REPL_PRODUCER,
+                destination="local_processor",
+                items=(
+                    ContextManifestItem(
+                        source_id="text",
+                        source_type="input_field",
+                        data_class=current_session_dc[0],
+                        fields=("text",),
+                    ),
+                ),
+                approved=True,
+            )
+            context = ContextPackage(
+                record_id=f"ctx:{_new_id()}",
+                producer=REPL_PRODUCER,
+                task_id=task.record_id,
+                manifest=manifest,
+                content={"text": chunk_text},
+            )
+            now = _utc_now()
+            task_budget = InferenceBudget(
+                record_id=f"budget:{_new_id()}",
+                producer=REPL_PRODUCER,
+                max_input_tokens=2048,
+                max_output_tokens=512,
+                max_agent_turns=1,
+                max_tool_calls=0,
+                max_images=0,
+                max_audio_seconds=0.0,
+                max_latency_seconds=20.0,
+                max_provider_cost=0.0,
+                max_ram_bytes=0,
+                max_vram_bytes=0,
+                cancellation_deadline=now + timedelta(seconds=20),
+            )
+            token = cancellation or CancellationToken()
+
+            async def _exec_supervisor() -> str:
+                claim_res = await supervisor.process_bounded(
+                    BoundedTaskKind.SEMANTIC_QUERY,
+                    task,
+                    context,
+                    task_budget,
+                    token,
+                )
+                if isinstance(claim_res, Success):
+                    return claim_res.unwrap().statement
+                return f"Error: {claim_res.failure().message}"
+
+            future = asyncio.run_coroutine_threadsafe(_exec_supervisor(), loop)
+            return future.result(timeout=30.0)
+
+        # Fallback search/heuristic for needle extraction
+        q_terms = [w.lower() for w in question.split() if len(w) > _MIN_QUERY_WORD_LEN]
+        for line in chunk_text.splitlines():
+            line_lower = line.lower()
+            if any(t in line_lower for t in q_terms):
+                return line.strip()
+        if any(t in chunk_text.lower() for t in q_terms):
+            return chunk_text[:300].strip()
+        return "Not found in this chunk."
+
+    def map_reduce(
+        target: object,
+        query: str,
+        reduce_query: Optional[str] = None,
+        size: int = 2000,
+        overlap: int = 200,
+    ) -> str:
+        """
+        Recursive-LM map-reduce: extract relevant facts per chunk and merge them.
+        """
+        target_chunks = chunks(target, size=size, overlap=overlap)
+        if not target_chunks:
+            return "No content to process."
+
+        mapped: list[str] = []
+        for c in target_chunks:
+            ans = llm_query(c, query)
+            cleaned = ans.strip() if isinstance(ans, str) else str(ans)
+            if (
+                cleaned
+                and not cleaned.lower().startswith("not found")
+                and cleaned.lower() != "none"
+            ):
+                mapped.append(cleaned)
+
+        if not mapped:
+            return "No relevant information found in any chunk."
+
+        if len(mapped) == 1:
+            return mapped[0]
+
+        combined = "\n".join(f"- {item}" for item in mapped)
+        final_prompt = (
+            reduce_query or f"Synthesize these findings to answer: {query}"
+        )
+        return llm_query(combined, final_prompt)
+
+    external_lookup = {
+        "publish": publish,
+        "chunks": chunks,
+        "llm_query": llm_query,
+        "map_reduce": map_reduce,
+    }
 
     return MontyObservationContext(
         session_id=session_id,
@@ -402,6 +651,10 @@ async def run_secure_python_code(  # noqa: PLR0911, PLR0912, PLR0913, PLR0915
     require_hitl: bool = True,
     turn_id: Optional[str] = None,
     data_class: Optional[DataClass] = None,
+    supervisor: Optional[object] = None,
+    budget: Optional[InferenceBudget] = None,
+    cancellation: Optional[CancellationToken] = None,
+    bounded_task_handler: Optional[Callable[[str, str], object]] = None,
 ) -> str:
     """
     Executes Python code securely via Tiered Sandboxing.
@@ -422,6 +675,10 @@ async def run_secure_python_code(  # noqa: PLR0911, PLR0912, PLR0913, PLR0915
         store=store,
         default_data_class=data_class or DataClass.PUBLIC,
         turn_id=turn_id,
+        supervisor=supervisor,
+        budget=budget,
+        cancellation=cancellation,
+        bounded_task_handler=bounded_task_handler,
     )
 
     # 1. Tier-1 Fast-Path: Pure Monty execution (No HITL needed)

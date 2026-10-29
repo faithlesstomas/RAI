@@ -157,6 +157,7 @@ class ApplicationContainer:
                     monty_runner=self.monty_runner,
                     profile_scope=profile_scope,
                     require_hitl=arguments.get("require_hitl", False),
+                    supervisor=self.processor_supervisor,
                 )
                 if output.startswith(("Execution Error", "Execution Failure")):
                     raise RuntimeError(output)
