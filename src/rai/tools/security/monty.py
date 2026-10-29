@@ -85,6 +85,7 @@ class MontyRunner:
         code: str,
         session_blob: Optional[bytes] = None,
         inputs: Optional[dict[str, Any]] = None,
+        external_lookup: Optional[dict[str, Any]] = None,
     ) -> Result[MontyExecutionResult, str]:
         """
         Executes a Python snippet in an isolated Monty worker.
@@ -112,7 +113,9 @@ class MontyRunner:
                 if session_blob:
                     session.load_session(session_blob)
 
-                raw_output = session.feed_run(clean_code, inputs=inputs or {})
+                raw_output = session.feed_run(
+                    clean_code, inputs=inputs or {}, external_lookup=external_lookup
+                )
                 new_blob = session.dump()
 
                 # Extract variable types for active session state feedback
@@ -122,9 +125,21 @@ class MontyRunner:
                         "{k: type(v).__name__ for k, v in locals().items() "
                         "if not k.startswith('_')}"
                     )
-                    inspected = session.feed_run(inspect_code)
+                    inspected = session.feed_run(
+                        inspect_code, external_lookup=external_lookup
+                    )
                     if isinstance(inspected, dict):
-                        variables_dict = {str(k): str(v) for k, v in inspected.items()}
+                        excluded = (
+                            set((inputs or {}).keys())
+                            | set((external_lookup or {}).keys())
+                            | {"obs", "publish"}
+                        )
+                        variables_dict = {
+                            str(k): str(v)
+                            for k, v in inspected.items()
+                            if str(k) not in excluded
+                            and not (str(k).startswith("obs_") and str(k)[4:].isdigit())
+                        }
                         # The inspection snippet itself shouldn't leak into stored snapshot
                         new_blob = session.dump()
                 except Exception as inspect_exc:

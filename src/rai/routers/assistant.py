@@ -31,6 +31,7 @@ from rai.assistant.service import AssistantService
 from rai.dependencies import get_assistant_service, get_monty_runner
 from rai.kernel.records import DataClass, ProducerIdentity, _new_id
 from rai.kernel.ports import LifecycleState
+from rai.tools.python import prepare_monty_observation_context
 from rai.tools.security.auth import create_session_token, is_authorized
 from rai.tools.security.monty import MontyRunner
 
@@ -361,9 +362,19 @@ async def execute_session_repl(
             else None
         )
 
+        ctx = await prepare_monty_observation_context(
+            session_id=session_id,
+            store=service.store,
+            default_data_class=DataClass.PUBLIC,
+        )
+
         start_t = time.perf_counter()
         eval_res = await asyncio.to_thread(
-            runner.run, request.code, session_blob=session_blob
+            runner.run,
+            request.code,
+            session_blob=session_blob,
+            inputs=ctx.inputs,
+            external_lookup=ctx.external_lookup,
         )
         duration_ms = (time.perf_counter() - start_t) * 1000.0
 
@@ -377,6 +388,20 @@ async def execute_session_repl(
             )
 
         res = eval_res.unwrap()
+        if ctx.published_artifacts:
+            persist_res = await ctx.persist_published(service.store)
+            if isinstance(persist_res, Failure):
+                failure = persist_res.failure()
+                return REPLExecuteResult(
+                    session_id=session_id,
+                    output=f"{res.output}\n\n[State Persistence Error: {failure.message}]"
+                    if res.output
+                    else f"[State Persistence Error: {failure.message}]",
+                    variables=res.variables,
+                    duration_ms=round(duration_ms, 2),
+                    status="error",
+                )
+
         if res.session_blob:
             save_res = await service.store.save_repl_session(
                 session_id,
