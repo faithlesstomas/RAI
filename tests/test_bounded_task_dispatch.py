@@ -308,7 +308,8 @@ async def test_rest_api_contracts_and_task_dispatch() -> None:
         contracts_data = contracts_resp.json()
         assert "contracts" in contracts_data
         kinds = [c["kind"] for c in contracts_data["contracts"]]
-        assert len(kinds) == 6
+        assert len(kinds) == 7
+        assert "semantic_query" in kinds
         assert "routing_hint" in kinds
         assert "episode_summarization" in kinds
 

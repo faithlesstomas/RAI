@@ -463,6 +463,7 @@ def test_registry_exposes_complete_versioned_contracts() -> None:
         BoundedTaskKind.SALIENCE_ESTIMATION,
         BoundedTaskKind.PRIVACY_RISK_ELEVATION,
         BoundedTaskKind.ROUTING_HINT,
+        BoundedTaskKind.SEMANTIC_QUERY,
     }
     for kind, contract in BOUNDED_TASK_CONTRACTS.items():
         assert contract.kind == kind
