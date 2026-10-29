@@ -121,6 +121,38 @@ class StoreObservationsMixin:
             if should_close:
                 target_conn.close()
 
+    def _has_existing_ciphertexts(
+        self, conn: sqlite3.Connection | None = None
+    ) -> bool:
+        db_path = getattr(self, "path", None)
+        if db_path is None or str(db_path) == ":memory:":
+            return False
+        if conn is None and not Path(db_path).exists():
+            return False
+        should_close = False
+        target_conn = conn
+        if target_conn is None:
+            target_conn = self._connect()
+            should_close = True
+        try:
+            cur = target_conn.cursor()
+            cur.execute(
+                "SELECT name FROM sqlite_master WHERE type='table' AND name='observation_artifacts'"
+            )
+            if cur.fetchone() is None:
+                return False
+            row = cur.execute(
+                "SELECT 1 FROM observation_artifacts WHERE content_json LIKE 'enc:%' LIMIT 1"
+            ).fetchone()
+            return row is not None
+        except sqlite3.Error as e:
+            raise RuntimeError(
+                f"Database error while checking for existing ciphertexts in {db_path}: {e}"
+            ) from e
+        finally:
+            if should_close:
+                target_conn.close()
+
     def _get_or_create_key(self, conn: sqlite3.Connection | None = None) -> bytes:
         if getattr(self, "_encryption_key", None) is not None:
             return self._encryption_key
@@ -162,17 +194,26 @@ class StoreObservationsMixin:
                 f"Corrupted encryption key file at {key_file}: invalid length {len(data)}"
             )
 
+        has_ciphertexts = self._has_existing_ciphertexts(conn=conn)
+        key: bytes | None = None
         try:
             from rai.history.storage import SecretServiceKeyProvider  # noqa: PLC0415
 
             key = SecretServiceKeyProvider().get_or_create()
-            self._record_key_source("secret_service", conn=conn)
-            return key
         except Exception as e:
+            if has_ciphertexts:
+                raise RuntimeError(
+                    f"Database at {db_path} contains existing encrypted artifacts without recorded metadata, "
+                    f"and SecretService keyring is unavailable ({e}). Aborting to prevent data loss."
+                ) from e
             logger.debug(
                 "SecretServiceKeyProvider unavailable for new store (%s), establishing key file",
                 e,
             )
+
+        if key is not None:
+            self._record_key_source("secret_service", conn=conn)
+            return key
 
         new_key = os.urandom(AES_KEY_BYTES)
         key_file.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
