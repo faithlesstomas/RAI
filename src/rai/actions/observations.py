@@ -6,7 +6,15 @@ import asyncio
 from dataclasses import dataclass
 import json
 import re
-from typing import Any, Iterable, Iterator, Sequence
+from typing import Any, Iterable, Iterator, Protocol, Sequence
+
+import re2
+
+
+
+class _PatternMatcher(Protocol):
+    def search(self, text: str) -> Any: ...  # noqa: ANN401
+
 
 from returns.result import Failure, Result, Success
 
@@ -333,7 +341,7 @@ async def _get_artifact(
 
 async def _search_text(
     text: str,
-    compiled: re.Pattern[str],
+    compiled: _PatternMatcher,
     cancellation: CancellationToken,
 ) -> Result[tuple[list[dict[str, Any]], bool], None]:
     matched: list[dict[str, Any]] = []
@@ -376,7 +384,7 @@ async def _search_text(
 
 async def _search_records(
     records: Sequence[Any],
-    compiled: re.Pattern[str],
+    compiled: _PatternMatcher,
     fields: list[str] | None,
     cancellation: CancellationToken,
 ) -> Result[tuple[list[Any], bool], None]:
@@ -395,13 +403,17 @@ async def _search_records(
             item_matched = False
             for k in search_keys:
                 val = item.get(k)
-                if val is not None and compiled.search(str(val)):
-                    item_matched = True
-                    break
+                if val is not None:
+                    s_val = _extract_scalar_for_evaluation(val, max_chars=MAX_GET_CHAR_LIMIT)
+                    if s_val is not None and compiled.search(s_val):
+                        item_matched = True
+                        break
             if item_matched:
                 matched.append(item)
-        elif compiled.search(str(item)):
-            matched.append(item)
+        else:
+            s_val = _extract_scalar_for_evaluation(item, max_chars=MAX_GET_CHAR_LIMIT)
+            if s_val is not None and compiled.search(s_val):
+                matched.append(item)
         if len(matched) >= MAX_SCAN_LIMIT:
             hit_scan_limit = True
             break
@@ -446,14 +458,17 @@ class ObservationSearch:
             return Failure(_fail(request, "ARTIFACT_NOT_FOUND", f"Artifact {ref} not found"))
 
         is_regex = bool(request.arguments.get("regex", False))
-        flags = 0 if case_sensitive else re.IGNORECASE
+        options = re2.Options()
+        options.log_errors = False
+        options.case_sensitive = case_sensitive
         if is_regex:
             try:
-                compiled = re.compile(pattern, flags)
-            except re.error as err:
+                compiled = re2.compile(pattern, options)
+            except Exception as err:
                 return Failure(_fail(request, "INVALID_REGEX", f"Invalid regex pattern: {err}"))
         else:
-            compiled = re.compile(re.escape(pattern), flags)
+            compiled = re2.compile(re2.escape(pattern), options)
+
 
         content = artifact.content
         search_coro = (

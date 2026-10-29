@@ -1,4 +1,5 @@
 """Tests for kernel-resolved observation references (Phase 4 of #56)."""
+# ruff: noqa: PLR2004, ANN401
 
 from __future__ import annotations
 
@@ -351,3 +352,103 @@ async def test_egress_policy_enforcement_on_referenced_data(temp_store: Any) -> 
     assert "PRIVATE_DATA_EGRESS" in decision2.reason_codes
     assert isinstance(res2, Failure)
     assert res2.failure().code == "ESCALATION_REQUIRED"
+
+
+@pytest.mark.asyncio
+async def test_chained_derived_artifact_preserves_private_data_class_and_blocks_egress(temp_store: Any) -> None:
+    """A chained pipeline (PRIVATE source -> derived result -> second $ref) keeps PRIVATE data class."""
+    from rai.assistant.observation_budget import persist_observation_artifact  # noqa: PLC0415
+    session_id = "session_chained"
+
+    # Step 1: Initial PRIVATE artifact
+    priv_art = _make_artifact(
+        session_id,
+        "obs_private_root",
+        {"secret_key": "SK-999-XYZ", "details": "top-secret-credentials"},
+        DataClass.PRIVATE,
+    )
+    await temp_store.put_observation_artifact(priv_art)
+
+    registry = CapabilityRegistry()
+
+    # Local processing tool
+    process_desc = CapabilityDescriptor(
+        name="data.transform",
+        description="Transforms structured data locally",
+        input_schema={"type": "object", "properties": {"input": {"type": "string"}}},
+        risk_class=RiskClass.LOW,
+        side_effects=(),
+        isolation="host-api",
+        verification_plan=("observed",),
+    )
+    registry.register(
+        RegisteredCapability(
+            process_desc,
+            handler=lambda args: {"transformed": f"PROCESSED: {args.get('input', '')}"},
+        )
+    )
+
+    # Remote egress tool
+    network_desc = CapabilityDescriptor(
+        name="cloud.sync",
+        description="Syncs data to remote server",
+        input_schema={"type": "object", "properties": {"payload": {"type": "string"}}},
+        risk_class=RiskClass.LOW,
+        side_effects=("network",),
+        isolation="host-api",
+        verification_plan=("observed",),
+    )
+    registry.register(RegisteredCapability(network_desc, handler=lambda args: {"synced": True}))
+
+    audit = InMemoryAuditLedger()
+    policy = PolicyEngine()
+    service = CapabilityService(registry, policy, audit, observation_store=temp_store)
+
+    # Step 2: Invoke local tool with {"$ref": "obs_private_root"} under PUBLIC request
+    req1 = normalize_request(
+        process_desc,
+        {"input": {"$ref": "obs_private_root", "path": "/secret_key"}},
+        data_class=DataClass.PUBLIC,
+        session_id=session_id,
+    )
+    decision1, res1 = await service.invoke(req1, CancellationToken())
+    assert decision1 is not None
+    assert decision1.data_class == DataClass.PRIVATE
+    assert isinstance(res1, Success)
+    act_res = res1.unwrap()
+    assert act_res.data_class == DataClass.PRIVATE
+    assert any("obs_private_root" in p.source_id for p in act_res.provenance)
+
+    # Step 3: Persist derived artifact using effective data_class
+    derived_art_id = await persist_observation_artifact(
+        store=temp_store,
+        session_id=session_id,
+        turn_id="turn_chain_1",
+        capability=process_desc.name,
+        request_id=act_res.request_id,
+        data_class=act_res.data_class,
+        output=act_res.output,
+        producer=act_res.producer,
+        derived_from=tuple(p.source_id for p in act_res.provenance),
+    )
+    assert derived_art_id is not None
+
+    # Step 4: Verify derived artifact in store retained DataClass.PRIVATE
+    stored_derived = await temp_store.get_observation_artifact(session_id, derived_art_id)
+    assert isinstance(stored_derived, Success)
+    assert stored_derived.unwrap().data_class == DataClass.PRIVATE
+
+    # Step 5: Second step references the derived artifact into remote network tool
+    req2 = normalize_request(
+        network_desc,
+        {"payload": {"$ref": derived_art_id, "path": "/transformed"}},
+        data_class=DataClass.PUBLIC,
+        session_id=session_id,
+    )
+    decision2, res2 = await service.invoke(req2, CancellationToken())
+    assert decision2 is not None
+    # Egress of chained PRIVATE data must be escalated/denied by policy!
+    assert decision2.data_class == DataClass.PRIVATE
+    assert decision2.outcome in (PolicyOutcome.ESCALATE, PolicyOutcome.DENY)
+    assert "PRIVATE_DATA_EGRESS" in decision2.reason_codes
+    assert isinstance(res2, Failure)

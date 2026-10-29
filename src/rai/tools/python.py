@@ -450,6 +450,7 @@ async def prepare_monty_observation_context(  # noqa: PLR0913, PLR0915
     loop = asyncio.get_running_loop()
     sub_calls = [0]
     consumed_tokens = [0]
+    consumed_output_tokens = [0]
 
     _MIN_QUERY_WORD_LEN = 3
 
@@ -463,14 +464,33 @@ async def prepare_monty_observation_context(  # noqa: PLR0913, PLR0915
         if cancellation is not None and cancellation.cancelled:
             raise RuntimeError("Operation cancelled by user or deadline")
 
+        def _record_and_return_output(statement: str) -> str:
+            est_out = max(1, len(statement) // 4)
+            consumed_output_tokens[0] += est_out
+            if budget is not None and budget.max_output_tokens > 0:
+                if consumed_output_tokens[0] > budget.max_output_tokens:
+                    raise RuntimeError(
+                        f"InferenceBudget exceeded: output token budget ({budget.max_output_tokens}) exhausted"
+                    )
+            return statement
+
         sub_calls[0] += 1
         max_sub = 100
-        if budget is not None and budget.max_tool_calls > 0:
-            max_sub = min(max_sub, budget.max_tool_calls)
+        if budget is not None:
+            if budget.max_tool_calls == 0:
+                raise RuntimeError("InferenceBudget exceeded: tool calls not permitted")
+            if budget.max_tool_calls > 0:
+                max_sub = min(max_sub, budget.max_tool_calls)
         if sub_calls[0] > max_sub:
             raise RuntimeError(
                 f"InferenceBudget exceeded: maximum sub-calls ({max_sub}) exceeded"
             )
+
+        if budget is not None and budget.max_output_tokens > 0:
+            if consumed_output_tokens[0] >= budget.max_output_tokens:
+                raise RuntimeError(
+                    f"InferenceBudget exceeded: output token budget ({budget.max_output_tokens}) exhausted"
+                )
 
         if isinstance(text_or_chunk, str):
             chunk_text = text_or_chunk
@@ -498,13 +518,13 @@ async def prepare_monty_observation_context(  # noqa: PLR0913, PLR0915
         if bounded_task_handler is not None:
             res = bounded_task_handler(chunk_text, question)
             if not (asyncio.iscoroutine(res) or hasattr(res, "__await__")):
-                return str(res)
+                return _record_and_return_output(str(res))
 
             async def _exec_handler() -> str:
                 return str(await res)
 
             future = asyncio.run_coroutine_threadsafe(_exec_handler(), loop)
-            return future.result(timeout=30.0)
+            return _record_and_return_output(future.result(timeout=30.0))
 
         if supervisor is not None and hasattr(supervisor, "process_bounded"):
             from rai.kernel.records import (  # noqa: PLC0415
@@ -543,11 +563,16 @@ async def prepare_monty_observation_context(  # noqa: PLR0913, PLR0915
                 content={"text": chunk_text},
             )
             now = _utc_now()
+            remaining_output = 512
+            if budget is not None and budget.max_output_tokens > 0:
+                remaining_output = max(
+                    1, min(512, budget.max_output_tokens - consumed_output_tokens[0])
+                )
             task_budget = InferenceBudget(
                 record_id=f"budget:{_new_id()}",
                 producer=REPL_PRODUCER,
                 max_input_tokens=2048,
-                max_output_tokens=512,
+                max_output_tokens=remaining_output,
                 max_agent_turns=1,
                 max_tool_calls=0,
                 max_images=0,
@@ -573,17 +598,17 @@ async def prepare_monty_observation_context(  # noqa: PLR0913, PLR0915
                 return f"Error: {claim_res.failure().message}"
 
             future = asyncio.run_coroutine_threadsafe(_exec_supervisor(), loop)
-            return future.result(timeout=30.0)
+            return _record_and_return_output(future.result(timeout=30.0))
 
         # Fallback search/heuristic for needle extraction
         q_terms = [w.lower() for w in question.split() if len(w) > _MIN_QUERY_WORD_LEN]
         for line in chunk_text.splitlines():
             line_lower = line.lower()
             if any(t in line_lower for t in q_terms):
-                return line.strip()
+                return _record_and_return_output(line.strip())
         if any(t in chunk_text.lower() for t in q_terms):
-            return chunk_text[:300].strip()
-        return "Not found in this chunk."
+            return _record_and_return_output(chunk_text[:300].strip())
+        return _record_and_return_output("Not found in this chunk.")
 
     def map_reduce(
         target: object,

@@ -23,11 +23,19 @@ logger = logging.getLogger(__name__)
 class SchemaStoreMixin:
     """Connection management, schema initialization, migrations, and lifecycle."""
 
-    def __init__(self, path: Path | None = None) -> None:
+    def __init__(
+        self,
+        path: Path | None = None,
+        *,
+        encryption_key: bytes | None = None,
+    ) -> None:
         self.path = path or data_dir() / "assistant" / "memory_graph.sqlite3"
         self._lock = asyncio.Lock()
         self._state = LifecycleState.CREATED
         self._initialized = False
+        self._encryption_key = encryption_key
+        self._observation_cipher = None
+
 
     @property
     def state(self) -> LifecycleState:

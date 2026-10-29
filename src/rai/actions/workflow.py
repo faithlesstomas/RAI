@@ -512,6 +512,9 @@ class BoundedStepController(InteractionController):
                     or str(capability)
                 )
                 from rai.assistant.observation_budget import persist_observation_artifact  # noqa: PLC0415
+                from rai.kernel.records import max_data_class  # noqa: PLC0415
+                action_dc = act_res.get("data_class") if isinstance(act_res, dict) else None
+                effective_dc = max_data_class(turn.data_class, action_dc)
 
                 artifact_id = await persist_observation_artifact(
                     store=self.store,
@@ -522,7 +525,7 @@ class BoundedStepController(InteractionController):
                         (act_res.get("request_id") if isinstance(act_res, dict) else None)
                         or _new_id()
                     ),
-                    data_class=turn.data_class,
+                    data_class=effective_dc,
                     output=output if isinstance(output, dict) else {"output": output},
                     producer=turn.producer,
                 )
@@ -1298,7 +1301,7 @@ class BoundedStepController(InteractionController):
                 request_id=req_id,
                 data_class=workflow.data_class,
             )
-            _, executed = await capabilities.invoke(request, cancellation)
+            decision, executed = await capabilities.invoke(request, cancellation)
             if isinstance(executed, Failure):
                 _ = self.transition_generic(
                     workflow,
@@ -1316,15 +1319,26 @@ class BoundedStepController(InteractionController):
                 if workflow.task_id.startswith("task:")
                 else workflow.task_id
             )
+            from rai.kernel.records import max_data_class  # noqa: PLC0415
+
+            effective_dc = max_data_class(
+                workflow.data_class,
+                getattr(decision, "data_class", None),
+                getattr(action_res, "data_class", None),
+            )
+            derived_from = tuple(
+                p.source_id for p in action_res.provenance if hasattr(p, "source_id")
+            )
             artifact_id = await persist_observation_artifact(
                 store=self.store,
                 session_id=workflow.session_id,
                 turn_id=turn_id,
                 capability=capability_name,
                 request_id=action_res.request_id,
-                data_class=workflow.data_class,
+                data_class=effective_dc,
                 output=action_res.output,
                 producer=action_res.producer,
+                derived_from=derived_from,
             )
             if artifact_id and isinstance(action_res.output, dict):
                 updated_output = {**action_res.output, "_artifact_id": artifact_id}

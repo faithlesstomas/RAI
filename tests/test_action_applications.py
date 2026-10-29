@@ -1,4 +1,5 @@
 """Desktop discovery preserves XDG overrides and never runs entry commands."""
+# ruff: noqa
 from pathlib import Path
 import pytest
 import shutil
@@ -253,3 +254,42 @@ async def test_application_list_matches_categories_and_generic_names(tmp_path: P
     req_odtwarzacz = normalize_request(registry.descriptor("application.list"), {"task_id": "t", "query": "odtwarzacz"})
     res_odtwarzacz = (await app_list.invoke(req_odtwarzacz, CancellationToken())).unwrap()
     assert res_odtwarzacz.output["total_count"] == 1
+    assert res_odtwarzacz.output["complete"] is True
+    assert res_odtwarzacz.output["truncated"] is False
+    assert "reason" not in res_odtwarzacz.output
+
+
+async def test_application_list_truncation_fields(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    from rai.actions.capabilities import ApplicationList, MAX_APPLICATION_RESULTS
+    path = tmp_path / "example.desktop"
+    write_entry(path)
+    app = read_application(path, path.name)
+    assert app is not None
+
+    class Backend:
+        async def discover(self) -> Result[tuple[Application, ...], str]:
+            # Generate more apps than MAX_APPLICATION_RESULTS
+            apps = [
+                Application(
+                    desktop_id=f"app{i}.desktop",
+                    name=f"App {i}",
+                    executable=f"/bin/app{i}",
+                    fingerprint=f"fp{i}",
+                    path=Path(f"/bin/app{i}"),
+                )
+                for i in range(MAX_APPLICATION_RESULTS + 5)
+            ]
+            return Success(tuple(apps))
+
+    handles = SQLiteHandleStore(tmp_path / "handles.db")
+    app_list = ApplicationList(Backend(), handles)
+    registry = CapabilityRegistry()
+    register_application_capabilities(registry, Backend(), handles)
+
+    req = normalize_request(registry.descriptor("application.list"), {"task_id": "t", "query": ""})
+    res = (await app_list.invoke(req, CancellationToken())).unwrap()
+    out = res.output
+    assert out["truncated"] is True
+    assert out["complete"] is False
+    assert out["reason"] == "max_results_exceeded"
+    assert len(out["applications"]) == MAX_APPLICATION_RESULTS

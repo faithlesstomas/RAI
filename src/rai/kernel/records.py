@@ -307,6 +307,7 @@ class ActionResult(KernelRecord):
     verification: dict[str, Any]
     terminal: Literal[True] = True
     provenance: tuple[ProvenanceReference, ...] = ()
+    data_class: DataClass | None = None
 
 
 class ActionFailure(KernelRecord):

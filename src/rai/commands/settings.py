@@ -18,6 +18,8 @@ def _assistant_config(  # noqa: PLR0912, PLR0913, PLR0915
     max_iterations: str | int | None = None,
     max_full_observations: int | None = None,
     max_context_characters: int | None = None,
+    max_observation_characters: str | int | None = None,
+    observation_retention: str | None = None,
 ) -> dict[str, object]:
     from rai import config_manager  # noqa: PLC0415
     from rai.configuration.resolution import SUPPORTED_CONTROLLERS  # noqa: PLC0415
@@ -83,6 +85,14 @@ def _assistant_config(  # noqa: PLR0912, PLR0913, PLR0915
         assistant["max_full_observations"] = int(max_full_observations)
     if max_context_characters is not None:
         assistant["max_context_characters"] = int(max_context_characters)
+    if max_observation_characters is not None:
+        assistant["max_observation_characters"] = (
+            int(max_observation_characters)
+            if str(max_observation_characters).strip().isdigit()
+            else str(max_observation_characters)
+        )
+    if observation_retention is not None:
+        assistant["observation_retention"] = str(observation_retention)
 
     config["assistant"] = assistant
 
@@ -103,6 +113,10 @@ def _assistant_config(  # noqa: PLR0912, PLR0913, PLR0915
         cli_overrides["max_full_observations"] = int(max_full_observations)
     if max_context_characters is not None:
         cli_overrides["max_context_characters"] = int(max_context_characters)
+    if max_observation_characters is not None:
+        cli_overrides["max_observation_characters"] = assistant["max_observation_characters"]
+    if observation_retention is not None:
+        cli_overrides["observation_retention"] = assistant["observation_retention"]
 
     config["_cli_overrides"] = {
         k: v

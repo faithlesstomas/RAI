@@ -303,3 +303,172 @@ async def test_history_service_cascades_observation_cleanup(
     # Verify observations for the session were purged
     post_list = (await store.list_for_session(session_id)).unwrap()
     assert len(post_list) == 0
+
+
+@pytest.mark.asyncio
+async def test_observation_content_aes_gcm_encrypted_on_disk(
+    store: SQLiteMemoryGraphStore,
+) -> None:
+    """Artifact content_json must be encrypted with AES-256-GCM and not appear as plaintext on disk."""
+    session_id = "session-encrypted-test"
+    secret_text = "SUPER_SECRET_PAYLOAD_TOKEN_778899"
+    art = ObservationArtifact(
+        artifact_id="obs_secret",
+        session_id=session_id,
+        turn_id="turn-secret",
+        capability="browser.read_page",
+        request_id="req-secret",
+        data_class=DataClass.PRIVATE,
+        content={"secret": secret_text, "nested": {"key": "value"}},
+        schema_summary=ObservationSchemaSummary(),
+        size_chars=100,
+        producer=PRODUCER,
+    )
+    saved = (await store.put(art)).unwrap()
+    assert saved.artifact_id == "obs_secret"
+
+    # Verify raw disk bytes do not contain plaintext secret
+    disk_bytes = store.path.read_bytes()
+    assert secret_text.encode("utf-8") not in disk_bytes
+
+    # Verify retrieval decrypts transparently
+    retrieved = (await store.get(session_id, "obs_secret")).unwrap()
+    assert retrieved is not None
+    assert retrieved.content["secret"] == secret_text
+    assert retrieved.content["nested"]["key"] == "value"
+
+
+@pytest.mark.asyncio
+async def test_observation_legacy_plaintext_json_compatibility(
+    store: SQLiteMemoryGraphStore,
+) -> None:
+    """Store reads legacy unencrypted JSON rows without error."""
+    session_id = "session-legacy"
+    conn = store._connect()
+    with conn:
+        store._init_db(conn)
+        conn.execute(
+            """
+            INSERT INTO observation_artifacts (
+                record_id, artifact_id, session_id, turn_id, capability,
+                request_id, data_class, content_json, schema_summary_json,
+                size_chars, created_at, expires_at, provenance_json,
+                derived_from_json, producer_json
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                "rec_legacy",
+                "obs_legacy",
+                session_id,
+                "turn-1",
+                "legacy.tool",
+                "req-leg",
+                "PUBLIC",
+                '{"legacy_field": "legacy_value"}',
+                ObservationSchemaSummary().model_dump_json(),
+                30,
+                _utc_now().isoformat(),
+                None,
+                "[]",
+                "[]",
+                PRODUCER.model_dump_json(),
+            ),
+        )
+    conn.close()
+
+    retrieved = (await store.get(session_id, "obs_legacy")).unwrap()
+    assert retrieved is not None
+    assert retrieved.content == {"legacy_field": "legacy_value"}
+
+
+@pytest.mark.asyncio
+async def test_history_service_clears_repl_session_and_artifacts(
+    tmp_path: Path, store: SQLiteMemoryGraphStore
+) -> None:
+    """HistoryService.clear_history cleans both observation artifacts and REPL sessions."""
+    from returns.result import Success  # noqa: PLC0415
+    from rai.services.history import HistoryService  # noqa: PLC0415
+
+    session_id = "session-repl-purge"
+    art = ObservationArtifact(
+        artifact_id="obs_purge",
+        session_id=session_id,
+        turn_id="turn-p",
+        capability="test",
+        request_id="req-p1",
+        data_class=DataClass.LOCAL,
+        content={"data": "to-be-deleted"},
+        schema_summary=ObservationSchemaSummary(),
+        size_chars=20,
+        producer=PRODUCER,
+    )
+    await store.put(art)
+    await store.save_repl_session(session_id, b"snapshot_bytes", {"x": "int"})
+
+    # Verify both exist
+    assert len((await store.list_for_session(session_id)).unwrap()) == 1
+    assert (await store.get_repl_session(session_id)).unwrap() is not None
+
+    hist_db = str(tmp_path / "hist_repl.db")
+    service = HistoryService(db_path=hist_db, observation_store=store)
+    res = await service.clear_history(session_id)
+    assert isinstance(res, Success)
+
+    # Verify both are purged
+    assert len((await store.list_for_session(session_id)).unwrap()) == 0
+    assert (await store.get_repl_session(session_id)).unwrap() is None
+
+
+@pytest.mark.asyncio
+async def test_retention_ttl_and_auto_pruning(store: SQLiteMemoryGraphStore) -> None:
+    """Retention TTL parsing and auto-pruning works correctly."""
+    from rai.assistant.observation_budget import parse_retention_ttl, persist_observation_artifact  # noqa: PLC0415
+
+    assert parse_retention_ttl(None) is None
+    assert parse_retention_ttl("session") is None
+    assert parse_retention_ttl("profile") is None
+    assert parse_retention_ttl("1h") == timedelta(hours=1)
+    assert parse_retention_ttl("7d") == timedelta(days=7)
+    assert parse_retention_ttl(3600) == timedelta(seconds=3600)
+
+    # Persist with retention
+    session_id = "session-retention"
+    art_id = await persist_observation_artifact(
+        store,
+        session_id=session_id,
+        turn_id="turn-1",
+        capability="test",
+        request_id="req-ret",
+        data_class=DataClass.LOCAL,
+        output={"key": "value"},
+        retention="24h",
+    )
+    assert art_id is not None
+    art = (await store.get(session_id, art_id)).unwrap()
+    assert art is not None
+    assert art.expires_at is not None
+    assert art.expires_at > _utc_now()
+
+    # Expired artifact
+    past_dt = _utc_now() - timedelta(minutes=10)
+    exp_art = ObservationArtifact(
+        artifact_id="obs_exp",
+        session_id=session_id,
+        turn_id="turn-2",
+        capability="test",
+        request_id="req-exp",
+        data_class=DataClass.LOCAL,
+        content={"key": "expired"},
+        schema_summary=ObservationSchemaSummary(),
+        size_chars=15,
+        producer=PRODUCER,
+        expires_at=past_dt,
+    )
+    await store.put(exp_art)
+
+    # get should not return expired artifact
+    assert (await store.get(session_id, "obs_exp")).unwrap() is None
+
+    # prune_expired should delete it from disk
+    pruned = (await store.prune_expired()).unwrap()
+    assert pruned >= 1

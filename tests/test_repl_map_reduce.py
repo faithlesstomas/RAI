@@ -1,4 +1,5 @@
 """Tests for semantic map-reduce and llm_query in Monty REPL."""
+# ruff: noqa: PLR2004, ANN401
 
 from __future__ import annotations
 
@@ -222,6 +223,59 @@ async def test_inference_budget_guard_limits(repl_producer: ProducerIdentity) ->
     llm_query_calls("short", "q2")
     with pytest.raises(RuntimeError, match="maximum sub-calls .* exceeded"):
         llm_query_calls("short", "q3")
+
+    # 3. Test output token exhaustion
+    budget_output = InferenceBudget(
+        record_id="budget_out",
+        producer=repl_producer,
+        max_input_tokens=10000,
+        max_output_tokens=10,  # very small output token budget
+        max_agent_turns=1,
+        max_tool_calls=10,
+        max_images=0,
+        max_audio_seconds=0.0,
+        max_latency_seconds=10.0,
+        max_provider_cost=0.0,
+        max_ram_bytes=0,
+        max_vram_bytes=0,
+        cancellation_deadline=datetime.now(timezone.utc) + timedelta(minutes=5),
+    )
+
+    def verbose_handler(chunk_text: str, question: str) -> str:
+        return "This is a very long response that exceeds ten output tokens by a substantial amount"
+
+    ctx_out = await prepare_monty_observation_context(
+        session_id="session_out",
+        budget=budget_output,
+        bounded_task_handler=verbose_handler,
+    )
+    llm_query_out = ctx_out.external_lookup["llm_query"]
+    with pytest.raises(RuntimeError, match="output token budget .* exhausted"):
+        llm_query_out("short", "q1")
+
+    # 4. Test max_tool_calls == 0
+    budget_no_tools = InferenceBudget(
+        record_id="budget_zero",
+        producer=repl_producer,
+        max_input_tokens=10000,
+        max_output_tokens=1000,
+        max_agent_turns=1,
+        max_tool_calls=0,
+        max_images=0,
+        max_audio_seconds=0.0,
+        max_latency_seconds=10.0,
+        max_provider_cost=0.0,
+        max_ram_bytes=0,
+        max_vram_bytes=0,
+        cancellation_deadline=datetime.now(timezone.utc) + timedelta(minutes=5),
+    )
+    ctx_zero = await prepare_monty_observation_context(
+        session_id="session_zero",
+        budget=budget_no_tools,
+    )
+    llm_query_zero = ctx_zero.external_lookup["llm_query"]
+    with pytest.raises(RuntimeError, match="tool calls not permitted"):
+        llm_query_zero("short", "q1")
 
 
 @pytest.mark.asyncio

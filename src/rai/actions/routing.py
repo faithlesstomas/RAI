@@ -156,6 +156,18 @@ async def route_action(  # noqa: PLR0911, PLR0912, PLR0913, PLR0915
     else:
         output = executed.unwrap().output
         from rai.assistant.observation_budget import persist_observation_artifact  # noqa: PLC0415
+        from rai.kernel.records import max_data_class  # noqa: PLC0415
+
+        effective_dc = max_data_class(
+            getattr(turn, "data_class", None),
+            getattr(decision, "data_class", None),
+            getattr(terminal, "data_class", None),
+        )
+        derived_from = (
+            tuple(p.source_id for p in terminal.provenance if hasattr(p, "source_id"))
+            if hasattr(terminal, "provenance")
+            else ()
+        )
 
         artifact_id = await persist_observation_artifact(
             store=store,
@@ -163,9 +175,10 @@ async def route_action(  # noqa: PLR0911, PLR0912, PLR0913, PLR0915
             turn_id=turn.record_id,
             capability=name,
             request_id=terminal.request_id,
-            data_class=getattr(terminal, "data_class", turn.data_class),
+            data_class=effective_dc,
             output=output,
             producer=getattr(terminal, "producer", turn.producer),
+            derived_from=derived_from,
         )
         if artifact_id:
             metadata["action_result"]["artifact_id"] = artifact_id
