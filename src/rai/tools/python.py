@@ -453,7 +453,7 @@ async def prepare_monty_observation_context(  # noqa: PLR0913, PLR0915
 
     _MIN_QUERY_WORD_LEN = 3
 
-    def llm_query(  # noqa: PLR0915
+    def llm_query(  # noqa: PLR0912, PLR0915
         text_or_chunk: object,
         question: str,
     ) -> str:

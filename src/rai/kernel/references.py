@@ -43,18 +43,18 @@ class PreflightReferenceScan:
     referenced_ids: tuple[str, ...]
 
 
-def is_artifact_reference(val: Any) -> bool:
+def is_artifact_reference(val: object) -> bool:
     """Check if a value represents a kernel observation reference object."""
     if isinstance(val, (dict, Mapping)):
         return "$ref" in val and isinstance(val["$ref"], str)
     return False
 
 
-def extract_references(data: Any) -> list[ArtifactReference]:
+def extract_references(data: object) -> list[ArtifactReference]:
     """Find all artifact references in an arbitrary nested data structure."""
     refs: list[ArtifactReference] = []
 
-    def _walk(item: Any) -> None:
+    def _walk(item: object) -> None:
         if is_artifact_reference(item):
             refs.append(
                 ArtifactReference(
@@ -91,7 +91,7 @@ def parse_json_pointer(path: str) -> Result[list[str], str]:
 
 
 def traverse_json_pointer(
-    curr: Any,
+    curr: object,
     segments: list[str],
 ) -> Result[Any, tuple[str, str]]:
     """Traverse a JSON-compatible data structure along parsed segments."""
@@ -119,7 +119,7 @@ def traverse_json_pointer(
     return Success(curr)
 
 
-async def get_artifact_for_reference(
+async def get_artifact_for_reference(  # noqa: PLR0911
     store: ObservationStore,
     session_id: str,
     ref: str,
@@ -235,7 +235,7 @@ def resolve_arguments(
 ) -> Result[dict[str, Any], tuple[str, str]]:
     """Substitute all reference objects in arguments with their concrete values."""
 
-    def _resolve_val(val: Any) -> Result[Any, tuple[str, str]]:
+    def _resolve_val(val: object) -> Result[Any, tuple[str, str]]:  # noqa: PLR0911
         if is_artifact_reference(val):
             ref_name = str(val["$ref"]).strip()
             artifact = artifacts.get(ref_name)
