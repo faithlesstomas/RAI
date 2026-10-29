@@ -6,6 +6,7 @@ from __future__ import annotations
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 import pytest
+from returns.result import Failure, Success
 
 from rai.assistant.records import (
     ObservationArtifact,
@@ -380,6 +381,14 @@ async def test_observation_legacy_plaintext_json_compatibility(
     assert retrieved is not None
     assert retrieved.content == {"legacy_field": "legacy_value"}
 
+    # Plaintext row must now be opportunistically re-encrypted on disk
+    verify_conn = store._connect()
+    row = verify_conn.execute(
+        "SELECT content_json FROM observation_artifacts WHERE record_id = 'rec_legacy'"
+    ).fetchone()
+    verify_conn.close()
+    assert row[0].startswith("enc:")
+
 
 @pytest.mark.asyncio
 async def test_history_service_clears_repl_session_and_artifacts(
@@ -472,3 +481,157 @@ async def test_retention_ttl_and_auto_pruning(store: SQLiteMemoryGraphStore) -> 
     # prune_expired should delete it from disk
     pruned = (await store.prune_expired()).unwrap()
     assert pruned >= 1
+
+
+@pytest.mark.asyncio
+async def test_auto_prune_commits_on_read_path(tmp_path: Path) -> None:
+    """_maybe_auto_prune called during read/get commits its DELETE transaction to disk."""
+    import sqlite3
+    db_path = tmp_path / "prune_commit.sqlite3"
+    st = SQLiteMemoryGraphStore(path=db_path)
+    session_id = "sess-prune-commit"
+
+    past_dt = _utc_now() - timedelta(minutes=10)
+    exp_art = ObservationArtifact(
+        artifact_id="obs_exp_commit",
+        session_id=session_id,
+        turn_id="turn-prune",
+        capability="test",
+        request_id="req-prune",
+        data_class=DataClass.LOCAL,
+        content={"foo": "bar"},
+        schema_summary=ObservationSchemaSummary(),
+        size_chars=10,
+        producer=PRODUCER,
+        expires_at=past_dt,
+    )
+    await st.put(exp_art)
+
+    # Force last prune ts to 0 so next query triggers _maybe_auto_prune
+    st._last_prune_ts = 0.0
+
+    # Execute a read query (get)
+    res = (await st.get(session_id, "obs_exp_commit")).unwrap()
+    assert res is None
+
+    # Check directly via an independent SQLite connection that the deletion was committed
+    conn = sqlite3.connect(str(db_path))
+    cursor = conn.cursor()
+    cursor.execute(
+        "SELECT count(*) FROM observation_artifacts WHERE artifact_id = 'obs_exp_commit'"
+    )
+    count = cursor.fetchone()[0]
+    conn.close()
+    assert count == 0
+
+
+@pytest.mark.asyncio
+async def test_encryption_key_source_stability_prevents_silent_switch(tmp_path: Path) -> None:
+    """When a key source is recorded, unavailability of that source raises instead of silent switching."""
+    from unittest.mock import patch
+
+    db_path = tmp_path / "key_source_stable.sqlite3"
+    key_file = tmp_path / ".memory_graph_key"
+
+    # 1. Initialize store with key_file provider (when secret service is unavailable)
+    with patch("rai.history.storage.SecretServiceKeyProvider.get_or_create", side_effect=RuntimeError("No keyring")):
+        st1 = SQLiteMemoryGraphStore(path=db_path)
+        art = ObservationArtifact(
+            artifact_id="obs_stable_key",
+            session_id="sess-stable",
+            turn_id="turn-1",
+            capability="test",
+            request_id="req-stable",
+            data_class=DataClass.LOCAL,
+            content={"secret": "safe"},
+            schema_summary=ObservationSchemaSummary(),
+            size_chars=20,
+            producer=PRODUCER,
+        )
+        saved = (await st1.put(art)).unwrap()
+    assert saved.artifact_id == "obs_stable_key"
+    assert key_file.exists()
+
+    # Check recorded source in metadata
+    conn = st1._connect()
+    cur = conn.cursor()
+    cur.execute(
+        "SELECT value FROM assistant_schema_metadata WHERE key = 'observation_encryption_source'"
+    )
+    row = cur.fetchone()
+    assert row is not None
+    assert row[0] == "key_file"
+    conn.close()
+
+    # 2. Corrupt or delete the key file -> subsequent instantiation must fail, NOT silently regenerate
+    key_file.unlink()
+    st2 = SQLiteMemoryGraphStore(path=db_path)
+    with pytest.raises(RuntimeError, match="Recorded encryption key file is missing"):
+        st2._get_or_create_key()
+    res2 = await st2.get("sess-stable", "obs_stable_key")
+    assert isinstance(res2, Failure)
+    assert "Recorded encryption key file is missing" in res2.failure().message
+
+    # 3. If source was recorded as secret_service and secret_service fails -> raises RuntimeError / returns Failure
+    db_path_ss = tmp_path / "ss_stable.sqlite3"
+    st_ss = SQLiteMemoryGraphStore(path=db_path_ss)
+    st_ss._record_key_source("secret_service")
+
+    with patch("rai.history.storage.SecretServiceKeyProvider.get_or_create", side_effect=RuntimeError("Keyring locked")):
+        st_ss_fail = SQLiteMemoryGraphStore(path=db_path_ss)
+        with pytest.raises(RuntimeError, match="Keyring locked"):
+            st_ss_fail._get_or_create_key()
+        res_ss = await st_ss_fail.put(art)
+        assert isinstance(res_ss, Failure)
+        assert "Keyring locked" in res_ss.failure().message
+
+
+@pytest.mark.asyncio
+async def test_observation_retention_propagation_and_fallback(tmp_path: Path) -> None:
+    """observation_retention configured on store or env var sets expires_at automatically."""
+    from unittest.mock import patch
+    from rai.assistant.observation_budget import persist_observation_artifact
+    import os
+
+    db_path = tmp_path / "retention_prop.sqlite3"
+    st = SQLiteMemoryGraphStore(path=db_path, observation_retention="2h")
+    session_id = "sess-prop"
+
+    # Persist without explicit retention argument -> picks up store.observation_retention
+    art_id = await persist_observation_artifact(
+        store=st,
+        session_id=session_id,
+        turn_id="turn-1",
+        capability="test",
+        request_id="req-prop1",
+        data_class=DataClass.LOCAL,
+        output={"key": "val"},
+    )
+    assert art_id is not None
+    art = (await st.get(session_id, art_id)).unwrap()
+    assert art is not None
+    assert art.expires_at is not None
+    diff = (art.expires_at - _utc_now()).total_seconds()
+    # Should be approximately 2 hours (7200s)
+    assert 7100 < diff < 7300
+
+    # Store with no retention, but env var set
+    db_path2 = tmp_path / "retention_env.sqlite3"
+    st2 = SQLiteMemoryGraphStore(path=db_path2)
+    with patch.dict(os.environ, {"RAI_OBSERVATION_RETENTION": "3d"}):
+        art_id2 = await persist_observation_artifact(
+            store=st2,
+            session_id=session_id,
+            turn_id="turn-2",
+            capability="test",
+            request_id="req-prop2",
+            data_class=DataClass.LOCAL,
+            output={"key": "val2"},
+        )
+        assert art_id2 is not None
+        art2 = (await st2.get(session_id, art_id2)).unwrap()
+        assert art2 is not None
+        assert art2.expires_at is not None
+        diff2 = (art2.expires_at - _utc_now()).total_seconds()
+        # Should be approximately 3 days (259200s)
+        assert 258000 < diff2 < 260000

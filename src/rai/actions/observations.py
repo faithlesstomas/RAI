@@ -35,10 +35,12 @@ from rai.kernel.records import (
     ActionFailure,
     ActionResult,
     CapabilityRequest,
+    DataClass,
     ProducerIdentity,
     RiskClass,
     _new_id,
     _utc_now,
+    max_data_class,
 )
 
 PRODUCER = ProducerIdentity(
@@ -72,7 +74,10 @@ def _fail(request: CapabilityRequest, code: str, message: str) -> ActionFailure:
 
 
 def _ok(
-    request: CapabilityRequest, output: dict[str, Any], verification: dict[str, Any]
+    request: CapabilityRequest,
+    output: dict[str, Any],
+    verification: dict[str, Any],
+    data_class: DataClass | None = None,
 ) -> ActionResult:
     return ActionResult(
         record_id=f"result:{request.record_id}",
@@ -82,6 +87,7 @@ def _ok(
         capability=request.capability,
         output=output,
         verification=verification,
+        data_class=data_class or request.data_class,
     )
 
 
@@ -307,15 +313,17 @@ async def _persist_derived_output(
         max_chars=MAX_GET_CHAR_LIMIT - ARTIFACT_ID_RESERVE_CHARS,
     )
     derived_from = (str(output.get("ref", "")),) if output.get("ref") else ()
+    effective_dc = max_data_class(artifact.data_class, request.data_class)
     derived_id = await persist_observation_artifact(
         store=store,
         session_id=artifact.session_id,
         turn_id=artifact.turn_id,
         capability=request.capability,
         request_id=request.record_id,
-        data_class=artifact.data_class,
+        data_class=effective_dc,
         output=output,
         derived_from=derived_from,
+        expires_at=artifact.expires_at,
     )
     if derived_id:
         output["artifact_id"] = derived_id
@@ -520,7 +528,8 @@ class ObservationSearch:
         output = await _persist_derived_output(
             self.store, artifact, request, output, list_key="matches"
         )
-        return Success(_ok(request, output, {"source_artifact_id": ref}))
+        effective_dc = max_data_class(artifact.data_class, request.data_class)
+        return Success(_ok(request, output, {"source_artifact_id": ref}, data_class=effective_dc))
 
 
 @dataclass(frozen=True, slots=True)
@@ -899,7 +908,8 @@ class ObservationFilter:
         output = await _persist_derived_output(
             self.store, artifact, request, output, list_key="results"
         )
-        return Success(_ok(request, output, {"source_artifact_id": ref}))
+        effective_dc = max_data_class(artifact.data_class, request.data_class)
+        return Success(_ok(request, output, {"source_artifact_id": ref}, data_class=effective_dc))
 
 
 
@@ -1017,7 +1027,8 @@ class ObservationSlice:
         output = await _persist_derived_output(
             self.store, artifact, request, output, list_key="items"
         )
-        return Success(_ok(request, output, {"source_artifact_id": ref}))
+        effective_dc = max_data_class(artifact.data_class, request.data_class)
+        return Success(_ok(request, output, {"source_artifact_id": ref}, data_class=effective_dc))
 
 
 async def _count_grouped_records(
@@ -1178,7 +1189,8 @@ class ObservationCount:
         output = await _persist_derived_output(
             self.store, artifact, request, output, list_key=None
         )
-        return Success(_ok(request, output, {"source_artifact_id": ref}))
+        effective_dc = max_data_class(artifact.data_class, request.data_class)
+        return Success(_ok(request, output, {"source_artifact_id": ref}, data_class=effective_dc))
 
 
 
@@ -1271,7 +1283,8 @@ class ObservationGet:
         output = _enforce_final_payload_limit(
             output, list_key=None, max_chars=MAX_GET_CHAR_LIMIT
         )
-        return Success(_ok(request, output, {"source_artifact_id": ref}))
+        effective_dc = max_data_class(artifact.data_class, request.data_class)
+        return Success(_ok(request, output, {"source_artifact_id": ref}, data_class=effective_dc))
 
 
 def register_observation_capabilities(

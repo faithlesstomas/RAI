@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import os
 from pathlib import Path
@@ -28,6 +29,7 @@ class SchemaStoreMixin:
         path: Path | None = None,
         *,
         encryption_key: bytes | None = None,
+        observation_retention: str | None = None,
     ) -> None:
         self.path = path or data_dir() / "assistant" / "memory_graph.sqlite3"
         self._lock = asyncio.Lock()
@@ -35,6 +37,7 @@ class SchemaStoreMixin:
         self._initialized = False
         self._encryption_key = encryption_key
         self._observation_cipher = None
+        self.observation_retention = observation_retention
 
 
     @property
@@ -405,6 +408,28 @@ class SchemaStoreMixin:
                 "INSERT INTO assistant_schema_metadata (key, value) VALUES (?, ?)",
                 ("domain_scope_semantics", "global-unknown-v1"),
             )
+
+        # Migrate any legacy plaintext observation artifacts to encrypted format
+        try:
+            legacy_rows = conn.execute(
+                "SELECT record_id, content_json FROM observation_artifacts WHERE content_json NOT LIKE 'enc:%'"
+            ).fetchall()
+            if legacy_rows and hasattr(self, "_encrypt_content"):
+                with conn:
+                    for row in legacy_rows:
+                        rec_id = str(row[0])
+                        raw_json = str(row[1])
+                        try:
+                            parsed = json.loads(raw_json)
+                        except Exception:
+                            parsed = {"text": raw_json}
+                        encrypted = self._encrypt_content(parsed, rec_id)
+                        conn.execute(
+                            "UPDATE observation_artifacts SET content_json = ? WHERE record_id = ?",
+                            (encrypted, rec_id),
+                        )
+        except Exception as e:
+            logger.debug("Plaintext observation encryption migration skipped: %s", e)
 
     async def start(self) -> Result[LifecycleState, ActionFailure]:
         async with self._lock:

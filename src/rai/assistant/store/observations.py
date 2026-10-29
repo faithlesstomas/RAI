@@ -61,37 +61,106 @@ class StoreObservationsMixin:
         self._observation_cipher = cipher
         return cipher
 
+    def _get_recorded_key_source(self) -> str | None:
+        db_path = getattr(self, "path", None)
+        if db_path is None or str(db_path) == ":memory:":
+            return None
+        if not Path(db_path).exists():
+            return None
+        try:
+            conn = self._connect()
+            try:
+                row = conn.execute(
+                    "SELECT value FROM assistant_schema_metadata WHERE key = 'observation_encryption_source'"
+                ).fetchone()
+                return str(row[0]) if row else None
+            finally:
+                conn.close()
+        except Exception:
+            return None
+
+    def _record_key_source(self, source: str) -> None:
+        db_path = getattr(self, "path", None)
+        if db_path is None or str(db_path) == ":memory:":
+            return
+        try:
+            conn = self._connect()
+            try:
+                with conn:
+                    conn.execute(
+                        "CREATE TABLE IF NOT EXISTS assistant_schema_metadata (key TEXT PRIMARY KEY, value TEXT NOT NULL)"
+                    )
+                    conn.execute(
+                        "INSERT OR REPLACE INTO assistant_schema_metadata (key, value) VALUES ('observation_encryption_source', ?)",
+                        (source,),
+                    )
+            finally:
+                conn.close()
+        except Exception as e:
+            logger.debug("Failed to record observation encryption source: %s", e)
+
     def _get_or_create_key(self) -> bytes:
+        if getattr(self, "_encryption_key", None) is not None:
+            return self._encryption_key
         provider = getattr(self, "key_provider", None)
         if provider is not None:
             return provider.get_or_create()
-        try:
+
+        db_path = getattr(self, "path", None)
+        if db_path is None or str(db_path) == ":memory:":
+            if not hasattr(self, "_fallback_memory_key"):
+                self._fallback_memory_key = os.urandom(AES_KEY_BYTES)
+            return self._fallback_memory_key
+
+        key_file = Path(db_path).parent / ".memory_graph_key"
+        recorded_source = self._get_recorded_key_source()
+
+        if recorded_source == "secret_service":
             from rai.history.storage import SecretServiceKeyProvider  # noqa: PLC0415
 
             return SecretServiceKeyProvider().get_or_create()
+
+        if recorded_source == "key_file":
+            if key_file.exists():
+                data = key_file.read_bytes()
+                if len(data) == AES_KEY_BYTES:
+                    return data
+                raise RuntimeError(
+                    f"Corrupted encryption key file at {key_file}: invalid length {len(data)}"
+                )
+            raise RuntimeError(f"Recorded encryption key file is missing at {key_file}")
+
+        # No source recorded yet for this database: determine initial source
+        if key_file.exists():
+            data = key_file.read_bytes()
+            if len(data) == AES_KEY_BYTES:
+                self._record_key_source("key_file")
+                return data
+            raise RuntimeError(
+                f"Corrupted encryption key file at {key_file}: invalid length {len(data)}"
+            )
+
+        try:
+            from rai.history.storage import SecretServiceKeyProvider  # noqa: PLC0415
+
+            key = SecretServiceKeyProvider().get_or_create()
+            self._record_key_source("secret_service")
+            return key
         except Exception as e:
-            logger.debug("Failed to obtain key from SecretServiceKeyProvider: %s", e)
-        db_path = getattr(self, "path", None)
-        if db_path is not None and str(db_path) != ":memory:":
-            key_file = Path(db_path).parent / ".memory_graph_key"
-            try:
-                if key_file.exists():
-                    data = key_file.read_bytes()
-                    if len(data) == AES_KEY_BYTES:
-                        return data
-                new_key = os.urandom(AES_KEY_BYTES)
-                key_file.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
-                key_file.write_bytes(new_key)
-                try:
-                    key_file.chmod(0o600)
-                except OSError:
-                    pass
-                return new_key
-            except Exception as e:
-                logger.debug("Failed to read/write key file: %s", e)
-        if not hasattr(self, "_fallback_memory_key"):
-            self._fallback_memory_key = os.urandom(AES_KEY_BYTES)
-        return self._fallback_memory_key
+            logger.debug(
+                "SecretServiceKeyProvider unavailable for new store (%s), establishing key file",
+                e,
+            )
+
+        new_key = os.urandom(AES_KEY_BYTES)
+        key_file.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+        key_file.write_bytes(new_key)
+        try:
+            key_file.chmod(0o600)
+        except OSError:
+            pass
+        self._record_key_source("key_file")
+        return new_key
 
     def _encrypt_content(self, content: dict[str, Any], record_id: str) -> str:
         plaintext = json.dumps(
@@ -103,12 +172,28 @@ class StoreObservationsMixin:
         encoded = base64.b64encode(nonce + ciphertext).decode("ascii")
         return f"enc:{encoded}"
 
-    def _decrypt_content(self, content_str: str, record_id: str) -> dict[str, Any]:
+    def _decrypt_content(
+        self,
+        content_str: str,
+        record_id: str,
+        conn: sqlite3.Connection | None = None,
+    ) -> dict[str, Any]:
         if not content_str.startswith("enc:"):
             try:
-                return json.loads(content_str)
+                parsed = json.loads(content_str)
             except Exception:
-                return {"text": content_str}
+                parsed = {"text": content_str}
+            if conn is not None and isinstance(parsed, dict):
+                try:
+                    encrypted = self._encrypt_content(parsed, record_id)
+                    with conn:
+                        conn.execute(
+                            "UPDATE observation_artifacts SET content_json = ? WHERE record_id = ?",
+                            (encrypted, record_id),
+                        )
+                except Exception as e:
+                    logger.debug("Opportunistic encryption of legacy record %s failed: %s", record_id, e)
+            return parsed
         raw_bytes = base64.b64decode(content_str[4:])
         nonce = raw_bytes[:12]
         ciphertext = raw_bytes[12:]
@@ -119,13 +204,14 @@ class StoreObservationsMixin:
     def _maybe_auto_prune(self, conn: sqlite3.Connection) -> None:
         now_ts = time.time()
         if now_ts - getattr(self, "_last_prune_ts", 0.0) > AUTO_PRUNE_INTERVAL_SECONDS:
-            self._last_prune_ts = now_ts
             try:
                 now_iso = _utc_now().isoformat()
-                conn.execute(
-                    "DELETE FROM observation_artifacts WHERE expires_at IS NOT NULL AND expires_at < ?",
-                    (now_iso,),
-                )
+                with conn:
+                    conn.execute(
+                        "DELETE FROM observation_artifacts WHERE expires_at IS NOT NULL AND expires_at < ?",
+                        (now_iso,),
+                    )
+                self._last_prune_ts = now_ts
             except Exception as e:
                 logger.debug("Failed to auto-prune expired observation artifacts: %s", e)
 
@@ -308,7 +394,11 @@ class StoreObservationsMixin:
             row = cur.fetchone()
             if row is None:
                 return Success(None)
-            return Success(observation_artifact_from_row(row, decryptor=self._decrypt_content))
+            return Success(
+                observation_artifact_from_row(
+                    row, decryptor=lambda c, r: self._decrypt_content(c, r, conn=conn)
+                )
+            )
         except Exception as exc:  # noqa: BLE001
             return Failure(
                 make_assistant_failure(
@@ -351,7 +441,9 @@ class StoreObservationsMixin:
             rows = cur.fetchall()
             return Success(
                 tuple(
-                    observation_artifact_from_row(row, decryptor=self._decrypt_content)
+                    observation_artifact_from_row(
+                        row, decryptor=lambda c, r: self._decrypt_content(c, r, conn=conn)
+                    )
                     for row in rows
                 )
             )

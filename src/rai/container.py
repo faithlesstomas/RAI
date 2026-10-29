@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 import asyncio
+import os
 from pathlib import Path
 import tempfile
 from typing import TYPE_CHECKING, Any
@@ -336,7 +337,21 @@ class ApplicationContainer:
                     Path(tempfile.mkdtemp(prefix="rai-assistant-tests-"))
                     / "memory_graph.sqlite3"
                 )
-            self._memory_graph_store = SQLiteMemoryGraphStore(path=path)
+            asst_cfg = self.config.get("assistant")
+            retention = (
+                self.config.get("observation_retention")
+                or (
+                    asst_cfg.get("observation_retention")
+                    if isinstance(asst_cfg, dict)
+                    else None
+                )
+                or os.environ.get("RAI_OBSERVATION_RETENTION")
+                or "session"
+            )
+            self._memory_graph_store = SQLiteMemoryGraphStore(
+                path=path,
+                observation_retention=retention,
+            )
         return self._memory_graph_store
 
     @property
@@ -488,6 +503,7 @@ class ApplicationContainer:
                 bypass_intent_recognizer=runtime.bypass_intent_recognizer,
                 store=self.memory_graph_store,
                 max_observation_characters=runtime.max_observation_characters,
+                observation_retention=runtime.observation_retention,
             )
             from .assistant.controllers.direct import DirectController  # noqa: PLC0415
 
@@ -504,6 +520,7 @@ class ApplicationContainer:
                     context_builder=context_builder,
                     max_cycles=runtime.max_iterations,
                     store=self.memory_graph_store,
+                    observation_retention=runtime.observation_retention,
                 )
             else:
                 active_controller = DirectController(
