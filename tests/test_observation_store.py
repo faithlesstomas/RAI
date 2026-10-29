@@ -726,3 +726,98 @@ async def test_schema_migration_fails_closed_on_encryption_error(tmp_path: Path)
     with patch.object(st2, "_encrypt_content", side_effect=RuntimeError("Opportunistic re-encryption failed")):
         with pytest.raises(RuntimeError, match="Opportunistic re-encryption failed"):
             st2._decrypt_content('{"legacy": "data"}', "rec_plain", conn=sqlite3.connect(":memory:"))
+
+
+@pytest.mark.asyncio
+async def test_unrecorded_ciphertexts_with_unavailable_keyring_aborts_without_fallback(
+    tmp_path: Path,
+) -> None:
+    """When a database contains existing ciphertexts without recorded source metadata,
+
+    an unavailable SecretService must fail closed immediately instead of creating a new key file.
+    """
+    import sqlite3
+    from unittest.mock import patch
+
+    db_path = tmp_path / "legacy_encrypted.sqlite3"
+    key_file = tmp_path / ".memory_graph_key"
+    assert not key_file.exists()
+
+    conn = sqlite3.connect(str(db_path))
+    conn.execute(
+        """
+        CREATE TABLE observation_artifacts (
+            record_id TEXT PRIMARY KEY,
+            content_json TEXT NOT NULL
+        )
+        """
+    )
+    conn.execute(
+        "INSERT INTO observation_artifacts VALUES ('rec1', 'enc:c29tZXJhbmRvbWNpcGhlcnRleHQ=')"
+    )
+    conn.commit()
+    conn.close()
+
+    st = SQLiteMemoryGraphStore(path=db_path)
+    with patch(
+        "rai.history.storage.SecretServiceKeyProvider.get_or_create",
+        side_effect=RuntimeError("Keyring daemon locked or unreachable"),
+    ):
+        with pytest.raises(
+            RuntimeError,
+            match="contains existing encrypted artifacts without recorded metadata",
+        ):
+            st._get_or_create_key()
+
+    # Crucial: key file must NOT have been generated as fallback
+    assert not key_file.exists()
+
+
+@pytest.mark.asyncio
+async def test_keyring_retrieval_succeeds_but_metadata_recording_fails_raises_without_fallback(
+    tmp_path: Path,
+) -> None:
+    """If keyring retrieval succeeds but recording its source to the database fails,
+
+    the method must fail closed rather than falling back to generating a key file.
+    """
+    from unittest.mock import patch
+
+    db_path = tmp_path / "metadata_fail.sqlite3"
+    key_file = tmp_path / ".memory_graph_key"
+    assert not key_file.exists()
+
+    st = SQLiteMemoryGraphStore(path=db_path)
+    with patch(
+        "rai.history.storage.SecretServiceKeyProvider.get_or_create",
+        return_value=b"k" * 32,
+    ):
+        with patch.object(
+            st,
+            "_record_key_source",
+            side_effect=RuntimeError("Database lock or disk full"),
+        ):
+            with pytest.raises(RuntimeError, match="Database lock or disk full"):
+                st._get_or_create_key()
+
+    # Crucial: key file must NOT have been generated as fallback
+    assert not key_file.exists()
+
+
+def test_has_existing_ciphertexts_database_error_raises_fail_closed(
+    tmp_path: Path,
+) -> None:
+    """A database error while checking for ciphertexts raises RuntimeError."""
+    import sqlite3
+    from unittest.mock import MagicMock
+
+    db_path = tmp_path / "corrupt.sqlite3"
+    st = SQLiteMemoryGraphStore(path=db_path)
+    mock_conn = MagicMock()
+    mock_conn.cursor.side_effect = sqlite3.DatabaseError("Corrupt database pages")
+
+    with pytest.raises(
+        RuntimeError,
+        match="Database error while checking for existing ciphertexts",
+    ):
+        st._has_existing_ciphertexts(conn=mock_conn)
